@@ -29,7 +29,7 @@ export type FakeOptions = {
 	/** Does the wake transport have somewhere to send? Default true. */
 	wakeReady?: boolean;
 	/** The status the wake transport answers with. Default 202. */
-	wakeStatus?: () => number;
+	wakeStatus?: (deliveryId: string) => number;
 };
 
 /** The adapter, plus the handles a test drives it and reads it with. Scalar handles are read live, so assigning them takes effect. */
@@ -62,7 +62,8 @@ export type FakeAdapter = Adapter & {
 	setDeskBusy(g: Gate): void;
 	setDeskReady(ready: boolean): void;
 	setWakeReady(ready: boolean): void;
-	setWakeStatus(f: () => number): void;
+	/** The webhook's answer to each wake, given its delivery id. */
+	setWakeStatus(f: (deliveryId: string) => number): void;
 };
 
 export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
@@ -107,7 +108,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		ready: () => wakeReady,
 		send: async (deliveryId, message) => {
 			fake.attempts++;
-			const s = status();
+			const s = status(deliveryId);
 			if (s < 300) handles.wakes.push({ deliveryId, message });
 			return { ok: s < 300, status: s };
 		},
@@ -167,7 +168,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		setDeskBusy(g: Gate) { deskBusy = g; },
 		setDeskReady(ready: boolean) { deskReady = ready; },
 		setWakeReady(ready: boolean) { wakeReady = ready; },
-		setWakeStatus(f: () => number) { status = f; },
+		setWakeStatus(f: (deliveryId: string) => number) { status = f; },
 	});
 	return fake;
 }

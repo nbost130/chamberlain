@@ -171,21 +171,28 @@ sequenceDiagram
 6. **Sending it.** `relay.ts`, oldest row first: if the row has used `maxAttempts` attempts it becomes `dead_letter`; otherwise
    `attempts + 1` is **committed**, then the POST is made, then the row is committed `delivered`. A row that failed waits one minute,
    then four, before its next attempt.
-   **A rights pointer is checked at send time.** A wake that carries the one-line "rights unchanged" pointer instead of the full rights
-   block is stamped, when it is queued, with the Steward thread and session and the rights hash it was composed for (`rights_for`,
-   migration 9, frozen with the row; a digest carries every member's stamp). Just before an attempt of a stamped Steward row the relay asks
-   the engine (`rightsFirst`) whether that still holds: the same Steward thread and session, a rights record with the same hash, and the same
-   rights and rulings. If not (a new Steward, a compaction, changed rulings), a **rights-first wake** is queued in one transaction: a
-   standalone wake with the full block, composed for the current Steward, under `<id>:rights-first`. It is sent first, and the row follows it
-   in the same serial job **exactly as it was queued**: no row's text is ever rewritten or searched. The outbox refuses a known id, and a row
-   whose rights-first wake exists is never asked about again, so it happens once per row; a crash between the two sends each once on restart.
-   While the rights-first wake is failing or dead-lettered the row waits and uses no attempt; if the operator cancels it, the row goes as
-   queued. The rights-first wake updates the rights record when it is delivered, like any wake, so later wakes carry the pointer again. The
-   `rights-first` log line names both ids and the reason. A Steward wake queued **before** the stamps existed has none, and its text cannot be
-   trusted to say which pointer form it carries, so migration 10 stamps **every** undelivered Steward wake with no stamp (a pending or
-   dead-lettered row, or a held wake, receiver NULL), whatever its text, as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`), and
-   `legacy-import.ts` stamps every wake it brings in the same way. Which Steward it was composed for is unknown, so the check never holds and
-   the full rights always go ahead of it.
+   **The rights go before any row that depends on them, keyed by state, checked before every attempt.** Every wake's rights text is
+   stamped when it is queued with the Steward thread and session and the rights hash it was composed for (`rights_for`, migration 9, frozen
+   with the row; a digest carries its members' stamps). A `full` stamp is on a wake that carries the whole block; a pointer stamp (the
+   one-line "rights unchanged") or a `legacy-unstamped` stamp makes the row **depend** on the Steward already holding the rights. The
+   durable **rights record** (state `rights-sent`) says which Steward thread and session hold which rights hash, and only a delivered full
+   block writes it: when a row with a `full` stamp is delivered, the relay writes the record from that stamp **in the same transaction**
+   that marks the row delivered (a redelivery after a crash writes it the same way; nothing is kept in memory). Before **every** attempt of a
+   dependent Steward row (a retry, a restart, and a digest as one row included), the relay asks the engine for the current state
+   (`rightsNow`: the Steward thread, its session, the rights hash) and goes only if the record shows exactly that state. Otherwise it queues
+   the **prerequisite** for that state in one transaction, a standalone full-rights wake stamped `full` with the state, under
+   `<id>:rights-first:<key>` (`key`: a short hash of thread, session and rights hash), sends it, asks again, and sends the row **exactly as it
+   was queued**: no row's text is ever rewritten or searched. The outbox refuses a known id, so a state gets one prerequisite per row; a new
+   state (the Steward replaced after the prerequisite went and the row failed) gets a new one. One that ended without the record showing it
+   (cancelled, or a compaction cleared the record after it was delivered) gives way to `<key>:2`, `:3`. While the prerequisite is failing or
+   dead-lettered the row waits and uses no attempt; to give the row up, cancel it. A prerequisite for a state that has passed is cancelled,
+   never sent on its own after newer rights (`rights-first-obsolete`). When the rights cannot be read, the prerequisite carries the
+   unreadable notice, writes no record, and once it is delivered the row goes. The `rights-first` log line names both ids and the reason. A
+   Steward wake queued **before** the stamps existed has none, so migration 10 stamps **every** undelivered Steward wake with no stamp (a
+   pending or dead-lettered row, or a held wake, receiver NULL), whatever its text, as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`),
+   and `legacy-import.ts` stamps every wake it brings in the same way: it then depends on the record like a pointer. A digest keeps each
+   member's text byte for byte, repeated rights blocks included (they cost tokens, not correctness), and keeps a full stamp only from an item
+   whose text it carries (a folded item's block is not sent).
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
    ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the

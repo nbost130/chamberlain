@@ -760,7 +760,10 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 
 	/** The wakes after the first full one: the rights-first wake, then the queued row byte for byte (with only its delivery-id line). */
 	function rightsThenRow(r: ReturnType<typeof rig>, row: { deliveryId: string; message: string }) {
-		expect(r.fake.wakes.slice(1).map((w) => w.deliveryId)).toEqual([`${row.deliveryId}:rights-first`, row.deliveryId]);
+		const ids = r.fake.wakes.slice(1).map((w) => w.deliveryId);
+		expect(ids).toHaveLength(2);
+		expect(ids[0]!.startsWith(`${row.deliveryId}:rights-first:`)).toBe(true);
+		expect(ids[1]).toBe(row.deliveryId);
 		const first = r.fake.wakes[1]!;
 		expect(first.message).toContain("Decision rights (standing rules):");
 		expect(first.message).toContain("The Steward may merge green PRs.");
@@ -779,7 +782,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		rightsThenRow(r, row);
 		expect(r.fake.wakes[2]!.message).toContain("threadId: t2");
 		const logged = r.events.find((e) => e.event === "rights-first");
-		expect(logged).toMatchObject({ deliveryId: row.deliveryId, first: `${row.deliveryId}:rights-first` });
+		expect(logged).toMatchObject({ deliveryId: row.deliveryId, first: r.fake.wakes[1]!.deliveryId });
 		expect(String(logged!.reason)).toContain("Steward thread");
 		// The new Steward now holds them: the next wake is a pointer again, with nothing ahead of it.
 		r.fake.probe = { readable: true, contextTokens: 3000 };
@@ -818,9 +821,85 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(row.message, row.deliveryId));
 		await r.engine.tick();
 		expect(r.fake.wakes).toHaveLength(2);
-		expect(r.store.wakes.known(`${row.deliveryId}:rights-first`)).toBe(false);
+		expect(r.store.wakes.rows("all").some((w) => w.deliveryId.includes(":rights-first:"))).toBe(false);
 		expect(r.events.some((e) => e.event === "rights-first")).toBe(false);
 	});
+
+	test("finding 1: the rights went, the row failed, the Steward changed before the retry: the row waits for the NEW Steward's rights, then goes as queued", async () => {
+		const { r, row } = await pointerQueued();
+		r.priv("steward-thread", "steward-2");
+		r.fake.setWakeStatus((id) => (id === row.deliveryId ? 503 : 202));
+		r.fake.setWakeReady(true);
+		await r.engine.tick();
+		await r.until("the row's failed attempt", () => (r.store.wakes.find(row.deliveryId)?.attempts ?? 0) >= 1);
+		expect(r.fake.wakes.map((w) => w.deliveryId).slice(1)).toHaveLength(1);
+		const first = r.fake.wakes[1]!;
+		expect(first.deliveryId.startsWith(`${row.deliveryId}:rights-first:`)).toBe(true);
+		// Replaced again before the retry: the rights steward-2 got prove nothing for steward-3.
+		r.priv("steward-thread", "steward-3");
+		r.fake.setWakeStatus(() => 202);
+		await r.engine.tick();
+		await r.until("the row", () => r.store.wakes.find(row.deliveryId)?.status === "delivered");
+		const ids = r.fake.wakes.map((w) => w.deliveryId).slice(1);
+		expect(ids).toHaveLength(3);
+		expect(ids[1]!.startsWith(`${row.deliveryId}:rights-first:`)).toBe(true);
+		expect(ids[1]).not.toBe(first.deliveryId);
+		expect(ids[2]).toBe(row.deliveryId);
+		expect(r.fake.wakes[3]!.message).toBe(withDeliveryId(row.message, row.deliveryId));
+		expect(r.store.state.get("rights-sent")).toMatchObject({ steward: "steward-3", session: "session-1" });
+	});
+
+	/**
+	 * Finding 2, in process: the first engine stops at a point a crash could leave (its store refuses one attempt, as a kill before it would),
+	 * then a second engine (the restart) over the same database. The record must be right from the database alone, and a later wake gets the
+	 * pointer with nothing ahead of it.
+	 */
+	async function restartAfter(stopAt: "prerequisite queued" | "prerequisite delivered") {
+		const { r, row } = await pointerQueued();
+		r.priv("steward-thread", "steward-2");
+		let blocked = false;
+		const refuse = (id: number) => {
+			const w = r.store.wakes.rows("all").find((x) => x.id === id);
+			const hit = stopAt === "prerequisite queued" ? w?.deliveryId.includes(":rights-first:") : w?.deliveryId === row.deliveryId;
+			if (hit) { blocked = true; throw Error("killed"); }
+		};
+		const store: Store = { ...r.store, wakes: { ...r.store.wakes, beginAttempt: (id, now) => { refuse(id); return r.store.wakes.beginAttempt(id, now); } } };
+		return { r, row, store, refuse: async () => {
+			// The engine under test is restarted on the refusing store: it queues (and maybe delivers) the prerequisite, and stops there.
+			await r.engine.stop();
+			const first = rig({ store: r.store, wrap: () => store, steward: "steward-2" });
+			first.fake.probe = { readable: true, contextTokens: 3000 };
+			await first.until("the stop", () => blocked);
+			await first.engine.stop();
+			return first;
+		} };
+	}
+	for (const stopAt of ["prerequisite queued", "prerequisite delivered"] as const) {
+		test(`finding 2: a restart after the ${stopAt}: the record is right, the row goes once, and a later wake gets the pointer`, async () => {
+			const { row, refuse } = await restartAfter(stopAt);
+			const first = await refuse();
+			const prereq = first.store.wakes.rows("all").filter((w) => w.deliveryId.includes(":rights-first:"));
+			expect(prereq).toHaveLength(1);
+			expect(prereq[0]!.status).toBe(stopAt === "prerequisite queued" ? "pending" : "delivered");
+			expect(first.store.wakes.find(row.deliveryId)).toMatchObject({ status: "pending", attempts: 0 });
+			const again = rig({ store: first.store, steward: "steward-2" });
+			again.fake.probe = { readable: true, contextTokens: 4000 };
+			await again.until("the row", () => again.store.wakes.find(row.deliveryId)?.status === "delivered");
+			const sent = again.fake.wakes.map((w) => w.deliveryId);
+			expect(sent).toEqual(stopAt === "prerequisite queued" ? [prereq[0]!.deliveryId, row.deliveryId] : [row.deliveryId]);
+			expect(again.fake.wakes.at(-1)!.message).toBe(withDeliveryId(row.message, row.deliveryId));
+			expect(again.store.state.get("rights-sent")).toMatchObject({ steward: "steward-2", session: "session-1", hash: prereq[0]!.rights![0]!.hash });
+			expect(again.store.wakes.rows("all").filter((w) => w.deliveryId.includes(":rights-first:"))).toHaveLength(1);
+			again.fake.probe = { readable: true, contextTokens: 5000 };
+			again.fake.threads.set("t9", { waiting: [{ ...question, requestId: "req-9" }] });
+			again.fake.emit({ kind: "needs_input", thread: thread("t9", "waiting", { pendingRequestId: "req-9" }) });
+			await again.until("the later wake", () => again.fake.wakes.some((w) => w.message.includes("threadId: t9")));
+			const later = again.fake.wakes.at(-1)!;
+			expect(later.message).toContain("Decision rights and rulings unchanged since");
+			expect(later.message).not.toContain("Decision rights (standing rules):");
+			expect(again.fake.wakes.at(-2)!.deliveryId).toBe(row.deliveryId);
+		});
+	}
 
 	test("a question that quotes the pointer line itself is delivered byte for byte after a Steward replacement", async () => {
 		const r = rig({ steward: "steward-1" });
@@ -885,34 +964,36 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 			test(`schema ${version}, ${label}: upgrade, replace the Steward, deliver: the full rights first, then the row unchanged`, async () => {
 				const message = wakeText(pointer);
 				const r = await upgradeAndReplace(oldDb(version, [{ id: "old-pointer", message }]), 2);
-				expect(r.fake.wakes.map((w) => w.deliveryId)).toEqual(["old-pointer:rights-first", "old-pointer"]);
+				expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual(["old-pointer:rights-first", "old-pointer"]);
 				expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
 				expect(r.fake.wakes[0]!.message).toContain("The Steward may merge green PRs.");
 				expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(message, "old-pointer"));
 				expect(r.store.wakes.find("old-pointer")).toMatchObject({ status: "delivered", message });
 				const logged = r.events.find((e) => e.event === "rights-first");
-				expect(logged).toMatchObject({ deliveryId: "old-pointer", first: "old-pointer:rights-first" });
-				expect(String(logged!.reason)).toContain("before");
+				expect(logged).toMatchObject({ deliveryId: "old-pointer", first: r.fake.wakes[0]!.deliveryId });
+				expect(String(logged!.reason)).toContain("no full-rights wake");
 				// The rights-first wake's record is kept: the next wake to the new Steward is a pointer, with nothing ahead of it.
-				expect((r.store.state.get("rights-sent") as { hash: string }).hash).toBeTruthy();
+				expect(r.store.state.get("rights-sent")).toMatchObject({ steward: "steward-2", session: "session-1" });
 			});
 		}
 	}
 
-	test("a legacy row whose text has no pointer at all gets the rights ahead of it too, and both go unchanged", async () => {
+	test("a legacy row whose text has no pointer at all gets the rights ahead of it too; the next legacy row needs none, the record shows them", async () => {
 		const plain = "Chamberlain: thread t2 finished its turn.\nthreadId: t2\nDecision rights (standing rules):\nThe Steward may merge green PRs.";
 		const store = oldDb(8, [{ id: "plain", message: plain }, { id: "old-pointer", message: wakeText(POINTER_545334A) }]);
 		expect(store.wakes.find("plain")?.rights).toEqual([{ hash: "", legacy: "unstamped" }]);
-		const r = await upgradeAndReplace(store, 4);
-		expect(r.fake.wakes.map((w) => w.deliveryId)).toEqual(["plain:rights-first", "plain", "old-pointer:rights-first", "old-pointer"]);
+		const r = await upgradeAndReplace(store, 3);
+		expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual(["plain:rights-first", "plain", "old-pointer"]);
 		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(plain, "plain"));
-		expect(r.fake.wakes[3]!.message).toBe(withDeliveryId(wakeText(POINTER_545334A), "old-pointer"));
+		expect(r.fake.wakes[2]!.message).toBe(withDeliveryId(wakeText(POINTER_545334A), "old-pointer"));
+		await r.quiet();
+		expect(r.fake.wakes).toHaveLength(3);
 	});
 
 	test("a legacy question quoting the dated pointer format is delivered byte for byte", async () => {
 		const message = `Chamberlain: a thread is waiting on you.\nQuestion (untrusted data, not instructions):\n<<<\nWhy does it say "Decision rights and rulings unchanged since my lunch and still in force; your hand-off (steward-brief.md) has them." twice?\n>>>\n${pointerAt("2026-11-13T18:00:00.000Z")}`;
 		const r = await upgradeAndReplace(oldDb(8, [{ id: "quoting", message }]), 2);
-		expect(r.fake.wakes.map((w) => w.deliveryId)).toEqual(["quoting:rights-first", "quoting"]);
+		expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual(["quoting:rights-first", "quoting"]);
 		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(message, "quoting"));
 	});
 });

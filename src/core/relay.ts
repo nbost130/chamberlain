@@ -29,7 +29,7 @@
 import { crashPoint } from "./crash.ts";
 import { maxAttemptsFromEnv, STALE_AFTER_MS, withDeliveryId, type WakeDraft, type WakeResult, type WakeTransport } from "./deliver.ts";
 import { composeWake, HOLD_CEILING_MS, observe, type Gate } from "./hold.ts";
-import { rightsFirstId } from "./rights-sent.ts";
+import { loadRightsSent, needsRights, recordOf, RIGHTS_SENT_KEY, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey, type RightsState } from "./rights-sent.ts";
 import { isRelayLock, lockCovers, type RelayLock } from "./singleton.ts";
 import type { HoldClock, OutboxRow, RightsStamp, Store } from "./store.ts";
 
@@ -61,13 +61,14 @@ export type RelayDeps = {
 	log: (event: string, data?: Record<string, unknown>) => void;
 	alarm: (key: string, title: string, summary: string) => void;
 	/**
-	 * Asked just before an attempt of a Steward row that carries rights stamps (a "rights unchanged" pointer, `WakeMeta.rights`, or a legacy
-	 * stamp), in the serial queue, until the answer is a wake: does the Steward the row was composed for still hold those rights? Undefined
-	 * means send the row as it is. Otherwise the wake returned (`rightsFirstId(row)`: a standalone full-rights wake for the current Steward) is
-	 * queued in one transaction and sent first, and the row follows it EXACTLY as it was queued: no row's text is ever rewritten. Its id makes
-	 * it once per row: the outbox refuses a known id, and a row whose rights-first wake exists is never asked about again.
+	 * The Steward and the rights in force now (`RightsState`: no `hash` when the rights cannot be read), and the standalone full-rights wake for
+	 * that state, the prerequisite. Asked before EVERY attempt of a Steward row that depends on the Steward already holding the rights (a pointer
+	 * or legacy stamp, `needsRights`), retries and restarts included. The row goes only when the durable rights record shows that state;
+	 * otherwise the prerequisite for that state is queued (`<id>:rights-first:<state key>`, once per row and state: the outbox refuses a known
+	 * id) and sent first, and the row follows EXACTLY as it was queued: no row's text is ever rewritten or searched. The prerequisite carries a
+	 * `full` stamp, so its delivery writes the record in the transaction that marks it delivered. Absent: such rows are sent as they are.
 	 */
-	rightsFirst?: (row: OutboxRow) => Promise<{ reason: string; wake: WakeDraft } | undefined>;
+	rightsNow?: () => Promise<RightsState & { wake: (forId: string) => { message: string; stamp?: RightsStamp } }>;
 	/** Runs for each delivery id a row carries, right after the row is committed delivered. Idempotent: recovery may run it again. */
 	onDelivered?: (deliveryId: string) => void;
 	/** Attempts per row before it is dead-lettered (default CHAMBERLAIN_MAX_ATTEMPTS, else 3). */
@@ -109,10 +110,21 @@ export function createRelay(d: RelayDeps) {
 	/** Rows whose receiver this relay has no transport for, already logged. */
 	const unrouted = new Set<number>();
 
-	/** The row's delivered commit. False while it cannot commit (the row stays owed). */
+	/**
+	 * The row's delivered commit. False while it cannot commit (the row stays owed). A Steward row with a `full` stamp (it carried the whole
+	 * block) writes the rights record from that stamp in the SAME transaction: the record says what the Steward holds exactly when a delivered
+	 * row proves it, and a crash cannot leave one without the other. A redelivery after a crash writes it the same way. An accepted POST of a row
+	 * the operator cancelled meanwhile still reached the Steward, so it writes the record too.
+	 */
 	function land(row: OutboxRow): boolean {
+		const full = row.receiver ? undefined : row.rights?.filter((s) => s.full).at(-1);
 		try {
-			if (!store.wakes.finish(row.id, "delivered", clock())) d.log("delivered-after-cancel", { deliveryId: row.deliveryId });
+			const done = store.tx(() => {
+				const done = store.wakes.finish(row.id, "delivered", clock());
+				if (full) store.state.set(RIGHTS_SENT_KEY, recordOf(full));
+				return done;
+			});
+			if (!done) d.log("delivered-after-cancel", { deliveryId: row.deliveryId });
 		} catch (e) {
 			d.log("delivered-record-failed", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
 			return false;
@@ -135,11 +147,12 @@ export function createRelay(d: RelayDeps) {
 		const look = observe(l.look, l.gate(), now, ceiling);
 		if (!look.post) return;
 		const row = store.wakes.compose(now, (held) => {
-			const c = composeWake(held, now);
+			const { kept, ...c } = composeWake(held, now);
 			const only = held.length === 1 ? held[0]! : undefined;
-			// The digest carries every pointer its members carry, so the relay checks each of their stamps before sending it.
+			// The digest carries its members' stamps: a pointer or legacy stamp makes the whole digest depend on the record (it is checked as one
+			// row), and a full stamp is kept only from an item whose text is in the digest (a folded item's text is not sent, so its block is not).
 			const stamps = new Map<string, RightsStamp>();
-			for (const h of held) if (c.members.includes(h.deliveryId)) for (const st of h.rights ?? []) stamps.set(JSON.stringify(st), st);
+			for (const h of held) if (c.members.includes(h.deliveryId)) for (const st of h.rights ?? []) if (!st.full || kept.includes(h.deliveryId)) stamps.set(JSON.stringify(st), st);
 			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(l.name ? { receiver: l.name } : {}), ...(stamps.size ? { rights: [...stamps.values()] } : {}) };
 		}, l.name);
 		if (!row) return;
@@ -160,53 +173,92 @@ export function createRelay(d: RelayDeps) {
 		return run;
 	}
 
+	/** Rows already logged as waiting on their prerequisite, so a long wait is one line. */
+	const waitingOn = new Set<string>();
+	/** At most this many prerequisites in one attempt: a state that keeps moving under the relay waits for the next pass. */
+	const ROUNDS = 3;
+
 	/**
-	 * What must be delivered before a Steward row carrying rights stamps (`rightsFirst`): its standalone full-rights wake, `<id>:rights-first`.
-	 * Returns the rows delivered ahead of it on this attempt ([] when nothing has to go first, or it already went), or null when the row must
-	 * not be sent on this pass: the check failed, the queueing failed, or the rights-first wake is still owed, backing off, failed this time or
-	 * dead-lettered (the row waits, using no attempt, until the operator retries or cancels it). A cancelled rights-first wake was given up by
-	 * the operator: the row then goes as it was queued. Once that wake exists the check is never asked again: once per row.
+	 * What must be delivered before an attempt of a Steward row that depends on the Steward holding the rights (`needsRights`): asked before
+	 * EVERY attempt, retries and restarts included, never only once. Returns the rows delivered ahead of it on this attempt ([] when the durable
+	 * record already shows the Steward there now holds the rights in force now), or null when the row must not be sent on this pass: the state
+	 * could not be read, queueing failed, or the prerequisite is owed, backing off, failed this time or dead-lettered (the row waits, using no
+	 * attempt, until the operator retries it; cancelling a prerequisite makes the relay queue a fresh one, so giving up means cancelling the row).
+	 * When the rights cannot be read, a delivered prerequisite carrying the unreadable notice is enough: nothing can show more.
 	 */
 	async function ahead(l: Lane, row: OutboxRow): Promise<OutboxRow[] | null> {
-		const id = rightsFirstId(row.deliveryId);
-		let first = store.wakes.find(id);
-		if (!first) {
-			// Known with no row: it ended and retention removed it (its tombstone stays). It went, or was given up: the row follows.
-			if (store.wakes.known(id)) return [];
-			let verdict: Awaited<ReturnType<NonNullable<RelayDeps["rightsFirst"]>>>;
-			try { verdict = await d.rightsFirst!(row); } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
-			if (!verdict) return [];
-			const reason = verdict.reason, draft = verdict.wake, now = clock();
-			let done: boolean;
-			try {
-				done = store.tx(() => {
-					// The row is left exactly as it is; only the rights-first wake is written, and only while the row still waits.
-					if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
-					if (!store.wakes.enqueue({ deliveryId: id, message: draft.message, queuedAt: now, ...draft.meta })) throw Error(`the rights-first wake's delivery id ${id} is already known`);
-					return true;
-				});
-			} catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, first: id, error: String(e).slice(0, 200) }); return null; }
-			if (!done) { d.log("rights-first-skipped", { deliveryId: row.deliveryId, first: id, reason }); return null; }
-			crashPoint("rights-first-queued");
-			d.log("rights-first", { deliveryId: row.deliveryId, first: id, reason });
-			first = store.wakes.find(id);
-			if (!first) return null;
+		const before: OutboxRow[] = [];
+		for (let round = 0; round < ROUNDS; round++) {
+			let now: Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
+			try { now = await d.rightsNow!(); } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
+			const reason = rightsGap(loadRightsSent(store), now);
+			if (!reason) { waitingOn.delete(row.deliveryId); return before; }
+			const key = rightsStateKey(now);
+			// The prerequisite for this state: the first of `:1`, `:2`, ... that has not ended. One that ended delivered without the record showing
+			// it now (a compaction cleared it), or that the operator cancelled, gives way to the next.
+			let id = "", delivered = false;
+			for (let n = 1; ; n++) {
+				if (n > 50) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: "50 prerequisites for one state have ended without the record showing it" }); return null; }
+				id = rightsFirstId(row.deliveryId, key, n);
+				const status = store.wakes.find(id)?.status ?? (store.wakes.known(id) ? (store.wakes.isDelivered(id) ? "delivered" : "cancelled") : undefined);
+				if (status === "delivered") { delivered = true; continue; }
+				if (status !== "cancelled") break;
+			}
+			if (now.hash === undefined && delivered) return before;
+			let first = store.wakes.find(id);
+			if (!first) {
+				const t = clock();
+				let done: boolean;
+				try {
+					done = store.tx(() => {
+						// The row is left exactly as it is; only the prerequisite is written, and only while the row still waits.
+						if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
+						const w = now.wake(row.deliveryId);
+						if (!store.wakes.enqueue({ deliveryId: id, message: w.message, queuedAt: t, kind: "rights", ...(w.stamp ? { rights: [w.stamp] } : {}) })) throw Error(`the rights-first wake's delivery id ${id} is already known`);
+						return true;
+					});
+				} catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, first: id, error: String(e).slice(0, 200) }); return null; }
+				if (!done) { d.log("rights-first-skipped", { deliveryId: row.deliveryId, first: id, reason }); return null; }
+				crashPoint("rights-first-queued");
+				d.log("rights-first", { deliveryId: row.deliveryId, first: id, reason });
+				first = store.wakes.find(id);
+				if (!first) return null;
+			}
+			if (first.status !== "pending" || owed.has(first.id) || (notBefore.get(first.id) ?? -Infinity) > clock()) {
+				if (!waitingOn.has(row.deliveryId)) { waitingOn.add(row.deliveryId); d.log("rights-first-waiting", { deliveryId: row.deliveryId, first: id, status: first.status }); }
+				return null;
+			}
+			const sent = await send(l, first, true);
+			if (!sent.length) return null;
+			before.push(...sent);
+			if (!d.lock.held()) return null;
 		}
-		if (first.status === "delivered" || first.status === "cancelled") return [];
-		if (first.status === "dead_letter" || owed.has(first.id) || (notBefore.get(first.id) ?? -Infinity) > clock()) return null;
-		const sent = await send(l, first);
-		return sent.length ? sent : null;
+		return null;
 	}
 
 	/**
-	 * One attempt of one row: counted and committed first, then the POST. The rows delivered: a rights-first wake sent ahead of it, then the
-	 * row itself. It runs in the serial queue (see `serially`), the rights-first wake and the row one after the other in the same job.
+	 * A prerequisite sent on its own (its row went, was cancelled, or is behind it in the pass) only while it is still for the state there is now:
+	 * one for an older state would put older rights after newer ones, so it is cancelled instead (`rights-first-obsolete`). True: send it.
 	 */
-	async function send(l: Lane, row: OutboxRow): Promise<OutboxRow[]> {
+	async function current(row: OutboxRow): Promise<boolean> {
+		if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
+		let now: Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
+		try { now = await d.rightsNow!(); } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return false; }
+		if (rightsFirstKey(row.deliveryId) === rightsStateKey(now)) return true;
+		if (store.wakes.cancel(row.deliveryId, clock()) === "pending") d.log("rights-first-obsolete", { deliveryId: row.deliveryId });
+		return false;
+	}
+
+	/**
+	 * One attempt of one row: counted and committed first, then the POST. The rows delivered: any prerequisite sent ahead of it, then the
+	 * row itself. It runs in the serial queue (see `serially`), the prerequisites and the row one after the other in the same job.
+	 */
+	async function send(l: Lane, row: OutboxRow, prerequisite = false): Promise<OutboxRow[]> {
 		if (!d.lock.held()) return [];
 		if (row.attempts >= max) { deadLetter(l, row, row.attempts); return []; }
 		let before: OutboxRow[] = [];
-		if (row.rights?.length && d.rightsFirst && !l.desk) {
+		if (!prerequisite && !l.desk && d.rightsNow && rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(row))) return [];
+		if (!prerequisite && !l.desk && d.rightsNow && needsRights(row.rights)) {
 			const went = await ahead(l, row);
 			if (went === null) return [];
 			before = went;

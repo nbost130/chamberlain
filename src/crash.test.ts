@@ -277,7 +277,7 @@ describe("relay path: the real daemon dies at each step of sending a row, and it
 });
 
 describe("rights first: the real daemon dies between a Steward row's full-rights wake and the row, and the restart sends each once", () => {
-	const ID = "Q-rite1", ROW = "legacy:row:1", FIRST = `${ROW}:rights-first`;
+	const ID = "Q-rite1", ROW = "legacy:row:1", LATER = "legacy:row:2";
 	const TEXT = "[chamberlain] needs_input: a wake queued before the stamps existed.\nDecision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
 	/** A legacy-stamped Steward row (an upgrade or an import): the relay must send the full rights ahead of it. */
 	async function legacyRow() {
@@ -286,35 +286,59 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 		w.store.wakes.enqueue({ deliveryId: ROW, message: TEXT, queuedAt: Date.now(), kind: "needs_input", rights: [LEGACY_STAMP] });
 		return w;
 	}
-	/** Exactly one POST of each, the rights first, the row byte for byte as queued, and both rows delivered once. */
+	/** The one prerequisite the relay queued for the row: keyed by the state (`<row>:rights-first:<key>`) and stamped with it, as a full block. */
+	const prerequisite = (w: World) => {
+		const all = w.store.wakes.rows("all").filter((r) => r.deliveryId.startsWith(`${ROW}:rights-first:`));
+		expect(all).toHaveLength(1);
+		expect(all[0]!.rights).toHaveLength(1);
+		expect(all[0]!.rights![0]!.full).toBe(true);
+		return all[0]!;
+	};
+	/** Exactly one POST of each, the rights first, the row byte for byte as queued, both delivered once, and the record from the prerequisite's stamp. */
 	function oneOfEach(w: World) {
-		expect(accepted.map((a) => a.deliveryId)).toEqual([FIRST, ROW]);
+		const first = prerequisite(w);
+		expect(accepted.map((a) => a.deliveryId)).toEqual([first.deliveryId, ROW]);
 		expect(accepted[0]!.message).toContain("Decision rights (standing rules):");
 		expect(accepted[0]!.message).toContain("The Steward may merge green PRs.");
 		expect(accepted[1]!.message).toBe(withDeliveryId(TEXT, ROW));
-		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "delivered", attempts: 1 }, { delivery_id: FIRST, status: "delivered", attempts: 1 }]);
+		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "delivered", attempts: 1 }, { delivery_id: first.deliveryId, status: "delivered", attempts: 1 }]);
+		const { full: _full, used: _used, ...stamp } = first.rights![0]!;
+		expect(w.store.state.get("rights-sent")).toEqual(stamp);
+	}
+	/** A later row that depends on the rights goes alone: the durable record, not the dead process's memory, shows the Steward holds them. */
+	async function laterGoesAlone(w: World) {
+		w.store.wakes.enqueue({ deliveryId: LATER, message: "a later wake", queuedAt: Date.now(), kind: "needs_input", rights: [LEGACY_STAMP] });
+		await daemon(w, () => accepted.length >= 3);
+		expect(accepted.map((a) => a.deliveryId).slice(2)).toEqual([LATER]);
+		expect(w.store.wakes.rows("all").filter((r) => r.deliveryId.includes(":rights-first:"))).toHaveLength(1);
 	}
 
-	test("killed right after the rights-first wake was queued: nothing was sent; the restart sends it, then the row, once each", async () => {
+	test("killed right after the rights-first wake was queued: nothing was sent; the restart sends it, then the row, once each, and writes the record", async () => {
 		const w = await legacyRow();
 		await diedAt(w.spawn(daemonArgs, "rights-first-queued"), "rights-first-queued");
-		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "pending", attempts: 0 }, { delivery_id: FIRST, status: "pending", attempts: 0 }]);
+		const first = prerequisite(w);
+		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "pending", attempts: 0 }, { delivery_id: first.deliveryId, status: "pending", attempts: 0 }]);
+		expect(w.store.state.get("rights-sent")).toBeUndefined();
 		expect(accepted).toHaveLength(0);
 		await daemon(w, () => accepted.length >= 2);
 		oneOfEach(w);
 		await daemon(w);
 		oneOfEach(w);
+		await laterGoesAlone(w);
 	}, TIMEOUT);
 
-	test("killed right after the rights-first wake was delivered, before the row: the restart sends only the row, once", async () => {
+	test("killed right after the rights-first wake was delivered, before the row: the record was written with it; the restart sends only the row, once", async () => {
 		const w = await legacyRow();
 		await diedAt(w.spawn(daemonArgs, "delivered"), "delivered");
-		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "pending", attempts: 0 }, { delivery_id: FIRST, status: "delivered", attempts: 1 }]);
-		expect(accepted.map((a) => a.deliveryId)).toEqual([FIRST]);
+		const first = prerequisite(w);
+		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "pending", attempts: 0 }, { delivery_id: first.deliveryId, status: "delivered", attempts: 1 }]);
+		expect(accepted.map((a) => a.deliveryId)).toEqual([first.deliveryId]);
+		expect(w.store.state.get("rights-sent")).toMatchObject({ hash: first.rights![0]!.hash });
 		await daemon(w, () => accepted.length >= 2);
 		oneOfEach(w);
 		await daemon(w);
 		oneOfEach(w);
+		await laterGoesAlone(w);
 	}, TIMEOUT);
 });
 

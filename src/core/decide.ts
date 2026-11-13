@@ -169,11 +169,15 @@ export function needsCompact(usedTokens: number | undefined, limit: number, cool
 }
 
 /** What the Steward was last sent of its rights: the hash of the rights and rulings, its context size then, and when the full text last went out. */
-export type RightsSent = { hash: string; used?: number; at?: string };
+/**
+ * What the Steward was last delivered of its rights (the durable `rights-sent` record): the hash, its context size then (raised every minute),
+ * when the full text went out, and the Steward thread and session it went to (absent in a record written before they were kept).
+ */
+export type RightsSent = { hash: string; used?: number; at?: string; steward?: string; session?: string };
 /** The one line a wake carries when the rights and rulings have not changed since the full text went out at `at`. The hand-off holds them. */
 export const rightsUnchanged = (at?: string) => `Decision rights and rulings unchanged since ${at ?? "your last wake"} and still in force; your hand-off (steward-brief.md) has them.`;
 export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Hold anything on the ASK list and tell ${principal()}.`;
-/** The marker that starts the full rights block in a wake; hold.ts folds repeated copies of everything after it. */
+/** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
 /**
  * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they

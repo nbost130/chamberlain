@@ -307,7 +307,8 @@ export function importLegacy(store: Store, dirs: string[], o: ImportOptions = {}
 		for (const c of closures) if (typeof c.id === "string") store.items.resolve(HELD, c.id, Date.parse(c.t) || now, { closedAt: c.t, how: c.how });
 
 		// Wakes still pending or held, unless they delivered. Each is a Steward wake composed for the old system's Steward, whatever rights line
-		// its text carries, so each is stamped legacy (LEGACY_STAMP): the relay sends the full rights ahead of it, and its text goes as it is.
+		// its text carries, so each is stamped legacy (LEGACY_STAMP): it depends on the rights record like a pointer, so the relay sends the full
+		// rights ahead of it unless the record shows the Steward there now holds them, and its text goes as it is.
 		for (const [owner, list] of [["daemon", pendingDaemon], ["queue-web", pendingPage]] as const) {
 			for (const w of Array.isArray(list) ? list : []) {
 				if (typeof w.deliveryId !== "string" || typeof w.message !== "string") { report.skipped.push({ what: `pending wakes (${owner})`, why: "a wake without an id and a message" }); continue; }

@@ -28,7 +28,7 @@ import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
 import { privateFile as readPrivateFile } from "./private.ts";
 import { settleReport } from "./report.ts";
-import { openRightsSent, rightsFirstId, rightsFirstMessage, rightsFor, rightsHighWater, rightsStamp, staleRights } from "./rights-sent.ts";
+import { fullStamp, openRightsSent, rightsFirstMessage, rightsFor, rightsHash, rightsHighWater, rightsStamp } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
 import type { OutboxRow, Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
@@ -143,8 +143,6 @@ export function createEngine(d: EngineDeps) {
 	}
 	// The daemon is the one relay (relay.ts): every process writes wakes as outbox rows, and only this sends them. Holdable wakes wait
 	// while the Steward is busy and go as one digest (hold.ts).
-	/** Rights records of wakes this process queued, by delivery id: what the Steward holds once that wake is delivered. */
-	const firedRights = new Map<string, RightsSent>();
 	// The Alert Desk (alert-desk.ts), when the adapter has a desk thread, is a second RECEIVER of this one relay, never a second relay: its rows
 	// (receiver "desk") go to its own transport and wait on its own gate, and every POST, the Steward's or the desk's, goes through the one
 	// serial queue (relay.ts). A busy desk holds only its own wakes.
@@ -152,12 +150,8 @@ export function createEngine(d: EngineDeps) {
 	const relay = createRelay({
 		store, lock: d.lock, wake: homeAdapter.wake, ...(has(homeAdapter, "compact") ? { compact: homeAdapter.compact } : {}), gate: stewardGate, log, alarm, ...d.relay,
 		...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
-		rightsFirst: (row) => rightsAhead(row),
-		onDelivered: (id) => {
-			recordAnswerDelivered(store, id);
-			const r = firedRights.get(id);
-			if (r) { firedRights.delete(id); rightsSent.set(r); }
-		},
+		rightsNow,
+		onDelivered: (id) => recordAnswerDelivered(store, id),
 	});
 	const outbox = createOutbox({ store, log, dry: DRY, ...(d.relay?.now ? { now: d.relay.now } : {}), queued: () => { void relay.pass(); } });
 	const { deliver } = outbox;
@@ -345,9 +339,12 @@ export function createEngine(d: EngineDeps) {
 			}
 			const what = { needs_input: "is waiting for your answer or approval", failed: failedWhat, turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
 			const afk = readAfk(store);
-			const rights = wakeRights(afk ? mandateLine(afk) : "");
-			// A pointer is stamped with the Steward it was composed for: the relay checks it again just before sending (rightsAhead).
-			const stamp = rights.record && !rights.full ? rightsStamp(rights.record, privateFile("steward-thread"), await stewardSession()) : undefined;
+			const session = await stewardSession();
+			const rights = wakeRights(afk ? mandateLine(afk) : "", { session });
+			// Stamped with the Steward it was composed for. A pointer makes the relay check the durable record before every attempt (rightsNow); a
+			// full block writes the record when the row is delivered, in the same transaction.
+			const steward = privateFile("steward-thread");
+			const stamp = rights.record ? (rights.full ? fullStamp(rights.record, steward, session) : rightsStamp(rights.record, steward, session)) : undefined;
 			const message = [
 				`[chamberlain] ${c.kind}: thread "${clip(live.title, 80)}" ${what}.`,
 				waitNote,
@@ -362,9 +359,9 @@ export function createEngine(d: EngineDeps) {
 			// Every key decided above is recorded in the transaction that queues this wake: both exist or neither does.
 			// If another process (a second daemon, or the same one before a restart) already recorded any of these keys, this wake would be a second one for
 			// the same event: the database says so, inside this transaction, and nothing is queued.
-			// The Steward holds these rights once this wake is delivered, not before: until then the next wake is built from the old record.
+			// The Steward holds these rights once this wake is delivered, not before: the relay writes the record from its stamp then.
 			const deliveryId = `${c.key}:${Date.now()}`;
-			if (deliver(message, deliveryId, { kind: c.kind, thread: live.id, ...(stamp ? { rights: [stamp] } : {}) }, () => mine.map(markNotified).every(Boolean)) === "queued" && rights.record) firedRights.set(deliveryId, rights.record);
+			deliver(message, deliveryId, { kind: c.kind, thread: live.id, ...(stamp ? { rights: [stamp] } : {}) }, () => mine.map(markNotified).every(Boolean));
 		}
 
 		/** Keeps what the engine knows of the thread, and answers what the new state means for the ledgers and the Steward. */
@@ -473,19 +470,21 @@ export function createEngine(d: EngineDeps) {
 	const probe = () => (has(homeAdapter, "stewardProbe") ? homeAdapter.stewardProbe() : undefined);
 
 	/**
-	 * The rights a wake carries. The full text goes after anything that could have cost the Steward its copy, and a
-	 * restart reads back what was sent (rights-sent.ts), and doubt sends it again. The away mandate is state, so it goes
-	 * every time.
+	 * The rights a wake carries. The full text goes after anything that could have cost the Steward its copy, and doubt sends it again: the
+	 * durable record (rights-sent.ts, written by the relay when a full block is delivered) must name this Steward thread and session. The away
+	 * mandate is state, so it goes every time.
 	 */
 	const rightsSent = openRightsSent(store, (e) => log("rights-sent-unsaved", { error: String(e).slice(0, 200) }));
-	function wakeRights(mandate: string, o: { full?: boolean } = {}): { text: string; record?: RightsSent; full?: boolean } {
+	function wakeRights(mandate: string, o: { full?: boolean; session?: string | undefined } = {}): { text: string; record?: RightsSent; full?: boolean } {
 		const rules = rightsRules();
 		if (rules === undefined) {
 			alarm("rights-unreadable", "chamberlain cannot read the decision rights", "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.");
 			return { text: [rightsUnreadable(), mandate].filter(Boolean).join("\n") };
 		}
 		const id = privateFile("steward-thread");
-		return rightsFor(o.full ? undefined : rightsSent.get(), id, rules, mandate, id ? probe()?.contextTokens : undefined);
+		const sent = rightsSent.get();
+		const held = !o.full && sent && sent.steward === id && sent.session === o.session ? sent : undefined;
+		return rightsFor(held, id, rules, mandate, id ? probe()?.contextTokens : undefined);
 	}
 	/** The decision rights and the in-force rulings, as one text, or undefined when either cannot be read. */
 	function rightsRules(): string | undefined {
@@ -499,25 +498,20 @@ export function createEngine(d: EngineDeps) {
 	}
 
 	/**
-	 * The relay's check just before it sends a Steward row carrying rights stamps. The row is immutable and was composed for the Steward of its
-	 * time; if that Steward has been replaced (a new thread or session), or the rights record or the rights no longer match, or the row was
-	 * queued before stamps existed (a legacy stamp), a pointer in it would tell a Steward that never had them that they are unchanged. Then a
-	 * standalone wake with the full block, composed for the Steward that is there now, goes AHEAD of it under `<id>:rights-first`, and the row
-	 * follows exactly as it was queued. The rights-first wake's record is kept once it is delivered, like any wake's, so later wakes carry the
-	 * pointer again; the row's own record (composed for the old Steward) is dropped, so its delivery does not put the old record back.
+	 * The Steward and the rights in force now, for the relay's check before every attempt of a row that depends on the Steward holding them
+	 * (relay.ts, `rightsNow`), and the standalone prerequisite for that state: the full block (or the unreadable notice), stamped `full` with the
+	 * state it was composed for, so its delivery writes the durable record. The row it goes ahead of follows exactly as it was queued.
 	 */
-	async function rightsAhead(row: OutboxRow) {
-		const stamps = row.rights;
-		if (!stamps?.length) return undefined;
-		const steward = privateFile("steward-thread");
-		const reason = staleRights(stamps, { steward, session: await stewardSession(), record: rightsSent.get(), rules: rightsRules() });
-		if (!reason) return undefined;
-		// No record: the full block, whatever the size check would say.
-		const full = wakeRights("", { full: true });
-		const deliveryId = rightsFirstId(row.deliveryId);
-		for (const m of row.members) firedRights.delete(m.deliveryId);
-		if (full.record) firedRights.set(deliveryId, full.record);
-		return { reason, wake: { deliveryId, message: rightsFirstMessage(row.deliveryId, full.text), meta: { kind: "rights" } } };
+	async function rightsNow() {
+		const steward = privateFile("steward-thread"), session = await stewardSession(), rules = rightsRules();
+		const hash = rules === undefined ? undefined : rightsHash(steward, rules);
+		return {
+			...(steward ? { steward } : {}), ...(session ? { session } : {}), ...(hash ? { hash } : {}),
+			wake: (forId: string) => {
+				const full = wakeRights("", { full: true, session });
+				return { message: rightsFirstMessage(forId, full.text), ...(full.record ? { stamp: fullStamp(full.record, steward, session) } : {}) };
+			},
+		};
 	}
 
 	/** The rulings a wake carries: the in-force ones with their IDs. */

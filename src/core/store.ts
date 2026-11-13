@@ -165,21 +165,26 @@ export interface AwayStore {
 
 /** What a wake is about, so a repeat can be told from a new event. A wake about no thread (a sweep) has a kind alone. */
 /**
- * What a wake carrying the "rights unchanged" pointer was composed for: the Steward's thread and session, the rights hash (rights-sent.ts)
- * and when the full text last went out (the pointer names it). The relay checks it just before each POST (`RelayDeps.rightsFirst`).
+ * What a wake's rights text was composed for: the Steward's thread and session, the rights hash (rights-sent.ts) and when the full text last
+ * went out (a pointer names it). A pointer or legacy stamp makes the row depend on the Steward already holding the rights: before every attempt
+ * the relay sends a full-rights prerequisite ahead of it unless the durable rights record shows the Steward there now holds the rights in
+ * force now. A `full` stamp is on a wake that carries the whole block: when that row is delivered, the relay writes the rights record from it
+ * in the same transaction.
  */
 export type RightsStamp = {
 	steward?: string; session?: string; hash: string; at?: string;
+	/** The wake carries the full block, composed for this state; `used` is the Steward's context size then (the record's high-water mark). */
+	full?: true; used?: number;
 	/**
 	 * "unstamped": a Steward wake queued before the stamps existed (migration 10 marks every undelivered Steward row and held wake that has no
-	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it never
-	 * holds: the relay always sends the full rights ahead of it.
+	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it depends
+	 * on the record like a pointer does.
 	 */
 	legacy?: "unstamped";
 };
 export type WakeMeta = {
 	kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string;
-	/** One stamp per rights pointer the wake carries (a digest can carry several); absent when it carries none. */
+	/** One stamp per rights text the wake carries, a pointer or the full block (a digest can carry several); absent when it carries none. */
 	rights?: RightsStamp[];
 };
 /** Which receiver's wakes a read is about: `null` is the Steward's, a name is that receiver's, and `undefined` is every receiver's. */
@@ -199,7 +204,7 @@ export type OutboxStatus = "pending" | "delivered" | "dead_letter" | "cancelled"
 /** One outbox row. Everything but status, attempts and the two times is frozen when the row is created (a database trigger refuses a change). */
 export type OutboxRow = {
 	id: number; deliveryId: string; message: string; kind?: string; thread?: string; receiver?: string; createdAt: number;
-	/** The rights stamps it was composed with (`WakeMeta.rights`): checked just before each POST. */
+	/** The rights stamps it was composed with (`WakeMeta.rights`): checked just before each attempt, and a full one is recorded at delivery. */
 	rights?: RightsStamp[];
 	/** For a digest: how many held wakes were folded into a later one about the same thread and kind. */
 	folded: number;

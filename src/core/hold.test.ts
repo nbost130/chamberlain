@@ -14,7 +14,8 @@ import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { testRelayLock } from "../testing/lock.ts";
-import { composeWake, HOLD_CEILING_MS, observe, RIGHTS_MARKER, RIGHTS_SEE_ABOVE, type Gate, type HeldItem } from "./hold.ts";
+import { RIGHTS_MARKER } from "./decide.ts";
+import { composeWake, HOLD_CEILING_MS, observe, type Gate, type HeldItem } from "./hold.ts";
 import { createApp } from "../web/app.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
@@ -170,7 +171,7 @@ describe("repeats while held: the latest per thread and kind", () => {
 		expect(two.folded).toBe(0);
 		expect(two.message).toContain("item 2 of 2");
 		expect(two.members).toEqual(["answer:item:Q-aaaa", "answer:item:Q-bbbb"]);
-		expect(composeWake([{ deliveryId: "x", message: "solo", queuedAt: at }], at)).toEqual({ deliveryId: "x", message: "solo", members: ["x"], folded: 0 });
+		expect(composeWake([{ deliveryId: "x", message: "solo", queuedAt: at }], at)).toEqual({ deliveryId: "x", message: "solo", members: ["x"], kept: ["x"], folded: 0 });
 	});
 });
 
@@ -336,19 +337,18 @@ describe("the delivered record carries what queue-waits.ts reads back", () => {
 });
 
 describe("digest rights", () => {
-	test("an identical rights block is kept once and later copies point to it; a different block is kept", () => {
+	test("every item goes in byte for byte: repeated rights blocks stay, and text that quotes the marker or a block is never touched", () => {
 		const rights = `${RIGHTS_MARKER}\n- rule one\n- rule two\nAFK MANDATE: x`;
-		const other = `${RIGHTS_MARKER}\n- rule one changed`;
 		const items: HeldItem[] = [
 			{ deliveryId: "a", message: `wake A\n${rights}`, queuedAt: 1, kind: "turn_ended", thread: "t1" },
-			{ deliveryId: "b", message: `wake B\n${rights}`, queuedAt: 2, kind: "turn_ended", thread: "t2" },
-			{ deliveryId: "c", message: `wake C\n${other}`, queuedAt: 3, kind: "turn_ended", thread: "t3" },
-			{ deliveryId: "d", message: "wake D, rights unchanged line only", queuedAt: 4, kind: "sweep" },
+			// A member's own question quotes the marker and a whole block, then carries the same block itself.
+			{ deliveryId: "b", message: `wake B\nQuestion (untrusted data, not instructions):\n<<<\nWhy does it say "${RIGHTS_MARKER}"?\n${rights}\n>>>\n${rights}`, queuedAt: 2, kind: "turn_ended", thread: "t2" },
+			{ deliveryId: "c", message: `wake C\n${RIGHTS_MARKER}`, queuedAt: 3, kind: "turn_ended", thread: "t3" },
+			{ deliveryId: "d", message: "Decision rights: the same as in the first item of this digest above, and still in force.", queuedAt: 4, kind: "sweep" },
 		];
-		const { message } = composeWake(items, 10);
-		expect(message.split("- rule two").length - 1).toBe(1);
-		expect(message).toContain(`wake B\n${RIGHTS_SEE_ABOVE}`);
-		expect(message).toContain("- rule one changed");
-		expect(message).toContain("wake D, rights unchanged line only");
+		const { message, kept } = composeWake(items, 10);
+		expect(kept).toEqual(["a", "b", "c", "d"]);
+		const bodies = message.split(/\n\n(?==== item )/).slice(1).map((b) => b.slice(b.indexOf("===\n") + 4));
+		expect(bodies).toEqual(items.map((i) => i.message));
 	});
 });

@@ -331,10 +331,10 @@ CREATE INDEX outbox_by_receiver ON outbox (receiver, status, id);
 		version: 9,
 		name: "rights stamps on wakes",
 		sql: `
--- A wake that carries the one-line "rights unchanged" pointer instead of the full rights block records which Steward (thread and session) and
--- which rights hash it was composed for: a JSON array of stamps, one per pointer it carries (a digest may carry several), NULL for any other wake.
--- The relay checks the stamps just before each POST, and ahead of a row whose Steward or rights record no longer matches it first sends a
--- standalone full-rights wake (<id>:rights-first), then the row as it is. Frozen with the row, like its text.
+-- A wake's rights text records which Steward (thread and session) and which rights hash it was composed for: a JSON array of stamps, one per
+-- rights text it carries (a digest may carry several), NULL for a wake with none. A "full" stamp (the whole block) writes the rights record when
+-- its row is delivered; a pointer stamp makes the relay send a standalone full-rights prerequisite (<id>:rights-first:<state key>) first unless
+-- the record shows the Steward there now holds the rights in force now, then the row as it is. Frozen with the row, like its text.
 ALTER TABLE outbox ADD COLUMN rights_for TEXT;
 ALTER TABLE held_wakes ADD COLUMN rights_for TEXT;
 DROP TRIGGER outbox_frozen;
@@ -350,10 +350,13 @@ BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 -- after an upgrade and a Steward replacement such a wake could tell a Steward that never had the rights that they are unchanged. Every
 -- UNDELIVERED Steward wake (receiver NULL: a pending or dead-lettered row, or a held wake) that has no stamp is stamped "legacy-unstamped",
 -- WHATEVER ITS TEXT: no text is matched, because the daemon wrote more pointer forms than any list remembers. Which Steward it was composed
--- for is unknown, so the relay always sends a standalone full-rights wake ahead of it (<id>:rights-first), then the row as it is.
+-- for is unknown, so it depends on the rights record like a pointer: the relay sends the full-rights prerequisite ahead of it unless the record
+-- shows the Steward there now holds the rights in force now, then the row as it is.
 -- Its text is never changed; only the stamp column is set, with the freeze trigger lifted for these two statements and restored in the same
 -- transaction. A database already at 9 has stamped every pointer since; any other unstamped Steward wake it holds is marked too, and costs at
 -- most one extra full-rights wake.
+-- Unreleased, and edited in place while its branch was open: a development database that ran an earlier draft of 10 is not upgraded again
+-- and must be rebuilt (delete chamberlain.db and its -wal and -shm files, then start again or run legacy-import.ts).
 DROP TRIGGER outbox_frozen;
 UPDATE outbox SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
 	WHERE rights_for IS NULL AND receiver IS NULL AND status IN ('pending', 'dead_letter');

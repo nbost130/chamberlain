@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { rightsUnchanged } from "./decide.ts";
-import { loadRightsSent, openRightsSent, parseRightsSent, RIGHTS_SENT_KEY, rightsFor, rightsHash, rightsHighWater, rightsStamp, saveRightsSent, staleRights, LEGACY_STAMP, rightsFirstId, rightsFirstMessage } from "./rights-sent.ts";
+import { fullStamp, loadRightsSent, needsRights, openRightsSent, parseRightsSent, recordOf, RIGHTS_SENT_KEY, rightsFor, rightsFirstId, rightsFirstKey, rightsFirstMessage, rightsGap, rightsHash, rightsHighWater, rightsStamp, rightsStateKey, saveRightsSent, LEGACY_STAMP } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 
 const STEWARD = "steward-thread-1";
@@ -114,7 +114,7 @@ describe("a database that refuses the write", () => {
 	/** The real store with its state writes switched off, as a locked or full database would behave. */
 	const refusing = (s: Store, on: { value: boolean }): Store => ({ ...s, state: { ...s.state, set: (k, v) => { if (on.value) throw Error("database is locked"); s.state.set(k, v); }, delete: (k) => { if (on.value) throw Error("database is locked"); s.state.delete(k); } } });
 
-	test("a reset that fails is reported, and retried by the next minute's set even though memory already matches", () => {
+	test("a reset that fails is reported, and the record read back is the database's, never a copy in memory", () => {
 		const s = memStore();
 		daemonWake(s, 80_000);
 		const refuse = { value: true };
@@ -122,13 +122,18 @@ describe("a database that refuses the write", () => {
 		const ledger = openRightsSent(refusing(s, refuse), (e) => errors.push(e));
 		ledger.set(undefined);
 		expect(errors).toHaveLength(1);
-		expect(ledger.get()).toBeUndefined();
-		expect(loadRightsSent(s)).toBeDefined();
-		// The minute check, once the database takes writes again: memory is already undefined, so only the retry flag sends it on.
+		expect(ledger.get()).toEqual(loadRightsSent(s));
 		refuse.value = false;
-		ledger.set(rightsHighWater(ledger.get(), 90_000));
+		ledger.set(undefined);
+		expect(ledger.get()).toBeUndefined();
 		expect(loadRightsSent(s)).toBeUndefined();
-		expect(errors).toHaveLength(1);
+	});
+	test("a record another writer (the relay) puts in the database is what the next read sees", () => {
+		const s = memStore();
+		const ledger = openRightsSent(s);
+		expect(ledger.get()).toBeUndefined();
+		saveRightsSent({ hash: rightsHash(STEWARD, RULES), steward: STEWARD, session: "s1" }, s);
+		expect(ledger.get()).toEqual({ hash: rightsHash(STEWARD, RULES), steward: STEWARD, session: "s1" });
 	});
 });
 
@@ -138,6 +143,8 @@ describe("the record", () => {
 		expect(parseRightsSent({ hash, used: 1, at: AT })).toEqual({ hash, used: 1, at: AT });
 		expect(parseRightsSent({ hash })).toEqual({ hash });
 		expect(parseRightsSent({ hash, at: 5 })).toBeUndefined();
+		expect(parseRightsSent({ hash, steward: STEWARD, session: "s1" })).toEqual({ hash, steward: STEWARD, session: "s1" });
+		expect(parseRightsSent({ hash, session: 7 })).toBeUndefined();
 	});
 	test("is one state row holding the hash and the size", () => {
 		const s = memStore();
@@ -146,40 +153,51 @@ describe("the record", () => {
 	});
 });
 
-describe("a queued pointer checked against the Steward it is about to reach", () => {
+describe("the durable record decides whether a row that depends on the rights may go", () => {
 	const record = { hash: rightsHash(STEWARD, RULES), used: 80_000, at: AT };
-	const stamp = rightsStamp(record, STEWARD, "session-1");
-	const now = { steward: STEWARD, session: "session-1", record, rules: RULES };
-	test("the stamp names the thread, the session, the hash and the pointer's time", () => {
-		expect(stamp).toEqual({ steward: STEWARD, session: "session-1", hash: record.hash, at: AT });
+	const now = { steward: STEWARD, session: "session-1", hash: record.hash };
+	const held = { ...record, steward: STEWARD, session: "session-1" };
+	test("a pointer stamp names the thread, the session, the hash and the pointer's time; a full stamp adds the size and proves the record", () => {
+		expect(rightsStamp(record, STEWARD, "session-1")).toEqual({ steward: STEWARD, session: "session-1", hash: record.hash, at: AT });
+		const full = fullStamp(record, STEWARD, "session-1");
+		expect(full).toEqual({ steward: STEWARD, session: "session-1", hash: record.hash, at: AT, used: 80_000, full: true });
+		expect(recordOf(full)).toEqual(held);
 	});
-	test("holds for the same Steward, session, record and rights", () => {
-		expect(staleRights([stamp], now)).toBeUndefined();
-		// Rights that cannot be read now are no reason to doubt a record that still matches.
-		expect(staleRights([stamp], { ...now, rules: undefined })).toBeUndefined();
+	test("only a pointer or a legacy stamp makes a row depend on the record", () => {
+		expect(needsRights(undefined)).toBe(false);
+		expect(needsRights([fullStamp(record, STEWARD, "s")])).toBe(false);
+		expect(needsRights([rightsStamp(record, STEWARD, "s")])).toBe(true);
+		expect(needsRights([LEGACY_STAMP])).toBe(true);
+		expect(needsRights([fullStamp(record, STEWARD, "s"), LEGACY_STAMP])).toBe(true);
 	});
-	test("a new thread, a new session, a cleared or changed record, or changed rulings each make it stale", () => {
-		expect(staleRights([stamp], { ...now, steward: "steward-thread-2" })).toContain("Steward thread changed");
-		expect(staleRights([stamp], { ...now, session: "session-2" })).toContain("session changed");
-		expect(staleRights([stamp], { ...now, session: undefined })).toContain("session changed");
-		expect(staleRights([stamp], { ...now, record: undefined })).toContain("record no longer matches");
-		expect(staleRights([stamp], { ...now, record: { ...record, hash: rightsHash(STEWARD, "other") } })).toContain("record no longer matches");
-		expect(staleRights([stamp], { ...now, rules: `${RULES}\nR-2 new` })).toContain("rulings changed");
-		// One stale stamp in a digest is enough.
-		expect(staleRights([stamp, { ...stamp, steward: "old" }], now)).toContain("Steward thread changed");
+	test("it shows the state only for the same thread, session and hash", () => {
+		expect(rightsGap(held, now)).toBeUndefined();
+		expect(rightsGap(undefined, now)).toContain("no full-rights wake");
+		expect(rightsGap(held, { ...now, steward: "steward-thread-2" })).toContain("Steward thread changed");
+		expect(rightsGap(held, { ...now, session: "session-2" })).toContain("session changed");
+		expect(rightsGap(held, { steward: STEWARD, hash: record.hash })).toContain("session changed");
+		expect(rightsGap(held, { ...now, hash: rightsHash(STEWARD, `${RULES}\nR-2 new`) })).toContain("rulings changed");
+		// A record written before the thread and session were kept never shows a state that has a session.
+		expect(rightsGap(record, now)).toContain("Steward thread changed");
+		expect(rightsGap(held, { steward: STEWARD, session: "session-1" })).toContain("cannot be read");
 	});
-	test("a wake queued before the stamps existed (legacy-unstamped) is always stale", () => {
-		expect(LEGACY_STAMP).toEqual({ hash: "", legacy: "unstamped" });
-		expect(staleRights([LEGACY_STAMP], now)).toContain("before");
-		expect(staleRights([stamp, LEGACY_STAMP], now)).toContain("before");
+	test("the prerequisite's id is the row's and the state's: a new state is a new id, the same state the same id", () => {
+		const k = rightsStateKey(now);
+		expect(k).toMatch(/^[0-9a-f]{16}$/);
+		expect(rightsStateKey({ ...now })).toBe(k);
+		expect(rightsStateKey({ ...now, session: "session-2" })).not.toBe(k);
+		expect(rightsStateKey({ ...now, hash: undefined })).not.toBe(k);
+		expect(rightsFirstId("w1", k)).toBe(`w1:rights-first:${k}`);
+		expect(rightsFirstId("w1", k, 2)).toBe(`w1:rights-first:${k}:2`);
+		expect(rightsFirstKey(rightsFirstId("w1", k))).toBe(k);
+		expect(rightsFirstKey(rightsFirstId("digest:abc", k, 3))).toBe(k);
+		expect(rightsFirstKey("w1")).toBeUndefined();
 	});
-	test("the rights-first wake is standalone: one id per row, the full block as given, the row it goes ahead of named", () => {
-		expect(rightsFirstId("w1")).toBe("w1:rights-first");
+	test("the rights-first wake is standalone: the full block as given, the row it goes ahead of named", () => {
 		const text = rightsFirstMessage("w1", FULL);
 		expect(text.startsWith("[chamberlain] rights:")).toBe(true);
 		expect(text).toContain("(w1)");
 		expect(text.endsWith(`\n${FULL}`)).toBe(true);
-		// A rule text with $& in it is copied as it is: nothing is a replacement pattern any more.
 		expect(rightsFirstMessage("w1", "rules cost $& and $1")).toContain("rules cost $& and $1");
 	});
 });
