@@ -1,13 +1,14 @@
 # The Alert Desk
 
 Alerts get their own standing thread, the **desk**, instead of a Steward wake kind. Alert sources append one JSON line each to an inbox file; the
-daemon drains it (`src/core/alert-desk.ts`), dedupes per alert family through the item system, and queues wakes for the `desk` receiver. A second
-relay (the same `createRelay`, `receiver: "desk"`) sends them through the adapter's `alertDesk` capability, with the desk thread's own busy gate, so
+daemon drains it (`src/core/alert-desk.ts`), dedupes per alert family through the item system, and queues wakes for the `desk` receiver. The daemon's
+one relay sends them, as a second receiver (`receivers: { desk }`), through the adapter's `alertDesk` capability and the relay's one serial POST
+queue, with the desk thread's own busy gate, so
 the hold-and-digest path folds a burst of families into one wake and a busy desk never holds the Steward's wakes. The desk's standing prompt is
 `docs/alert-desk-prompt.md`.
 
 ```
-alert sources ──> ~/.cache/alert-desk/inbox.jsonl ──> drainAlertDesk (items decide) ──> outbox (receiver desk) ──> desk relay ──> desk thread
+alert sources ──> ~/.cache/alert-desk/inbox.jsonl ──> drainAlertDesk (items decide) ──> outbox (receiver desk) ──> the relay (desk lane) ──> desk thread
  (any process,       one JSON line,                    window, 24 h repeat, cap          held while the desk is busy
   one O_APPEND write) {v,source,family,title,body,ts,severity}                             and sent as one digest
 ```
@@ -97,4 +98,4 @@ morning wake, which runs the Morning sweep in the desk's prompt (the operator's 
 
 (The rollback needs the backup in the go-live steps above.) Migration 8 adds a nullable `receiver` column to `outbox` and `held_wakes` (NULL is the Steward, as every row so far) and freezes it with the row.
 `store.wakes.held(lane)` and `rows(status, lane)` read one receiver's wakes (`null`: the Steward's, a name: that receiver's, nothing: all of them);
-`compose` takes one receiver's held wakes only. The Steward's relay passes `null`, the desk's passes `"desk"`.
+`compose` takes one receiver's held wakes only. The relay passes `null` for the Steward's lane and `"desk"` for the desk's.

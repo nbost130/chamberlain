@@ -220,7 +220,7 @@ export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transc
 
 /**
  * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
- * (src/core/alert-desk.ts) into wakes for the `desk` receiver, and a second relay sends them here, so the desk holds and digests on its own
+ * (src/core/alert-desk.ts) into wakes for the `desk` receiver, and the one relay sends them here (a second receiver, through its one serial queue), so the desk holds and digests on its own
  * thread's state, never the Steward's.
  */
 export type AlertDeskLane = {

@@ -108,7 +108,7 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`snapshot()`** returns a fresh, whole read of every thread on the server, `{ complete, threads: [{ id, archived, settled, pendingRequestId, status }] }`, taken now over a connection of its own and never from the watcher's cache. It rejects when the server cannot be reached. The held-ledger reconciler closes a hold on a thread only from this: an unreachable server, a partial answer or an adapter without it leaves that thread unknown.
 - **`compact`** is a wake transport whose `send` takes no message.
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
-  gate. With it the core drains the alert inbox into wakes for the `desk` receiver and a second relay sends them (docs/alert-desk.md). The T3 adapter
+  gate. With it the core drains the alert inbox into wakes for the `desk` receiver and the one relay sends them to this transport, through its one serial queue (docs/alert-desk.md). The T3 adapter
   reads `desk-wake-url` and `desk-thread` from the config directory; without the URL `wake.ready()` is false and nothing is drained.
 - **Wording**: `serverLine()` and `approvalHint` adapt the sentences a wake says about the server and about approvals.
 

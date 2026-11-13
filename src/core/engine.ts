@@ -145,19 +145,20 @@ export function createEngine(d: EngineDeps) {
 	// while the Steward is busy and go as one digest (hold.ts).
 	/** Rights records of wakes this process queued, by delivery id: what the Steward holds once that wake is delivered. */
 	const firedRights = new Map<string, RightsSent>();
+	// The Alert Desk (alert-desk.ts), when the adapter has a desk thread, is a second RECEIVER of this one relay, never a second relay: its rows
+	// (receiver "desk") go to its own transport and wait on its own gate, and every POST, the Steward's or the desk's, goes through the one
+	// serial queue (relay.ts). A busy desk holds only its own wakes.
+	const deskLane = has(homeAdapter, "alertDesk") ? homeAdapter.alertDesk : undefined;
 	const relay = createRelay({
 		store, lock: d.lock, wake: homeAdapter.wake, ...(has(homeAdapter, "compact") ? { compact: homeAdapter.compact } : {}), gate: stewardGate, log, alarm, ...d.relay,
+		...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
 		onDelivered: (id) => {
 			recordAnswerDelivered(store, id);
 			const r = firedRights.get(id);
 			if (r) { firedRights.delete(id); rightsSent.set(r); }
 		},
 	});
-	// The Alert Desk (alert-desk.ts): a second receiver with its own relay, transport and gate, when the adapter has a desk thread. A busy desk
-	// holds only its own wakes. Both relays hold the one lock, and the desk's reads only its own rows (relay.ts, `receiver`).
-	const deskLane = has(homeAdapter, "alertDesk") ? homeAdapter.alertDesk : undefined;
-	const deskRelay = deskLane ? createRelay({ store, lock: d.lock, wake: deskLane.wake, receiver: DESK_RECEIVER, gate: () => deskLane.isBusy(), log, alarm, ...d.relay }) : undefined;
-	const outbox = createOutbox({ store, log, dry: DRY, ...(d.relay?.now ? { now: d.relay.now } : {}), queued: () => { void relay.pass(); void deskRelay?.pass(); } });
+	const outbox = createOutbox({ store, log, dry: DRY, ...(d.relay?.now ? { now: d.relay.now } : {}), queued: () => { void relay.pass(); } });
 	const { deliver } = outbox;
 
 	let recovery: Recovery | undefined;
@@ -596,10 +597,9 @@ export function createEngine(d: EngineDeps) {
 	/** One pass of the once-a-minute housekeeping. The interval runs it; tests call it. */
 	async function tick() {
 		try { heartbeat(); } catch (e) { log("heartbeat-error", { error: String(e) }); }
-		try { relay.audit(); deskRelay?.audit(); } catch (e) { log("relay-audit-error", { error: String(e).slice(0, 200) }); }
+		try { relay.audit(); } catch (e) { log("relay-audit-error", { error: String(e).slice(0, 200) }); }
 		// The relay polls on its own; a pass here too costs nothing (passes are one at a time) and makes the heartbeat a full look.
 		const checks: Promise<unknown>[] = [relay.pass(), stewardCheck().catch((e) => log("steward-check-error", { error: String(e) }))];
-		if (deskRelay) checks.push(deskRelay.pass());
 		if (d.housekeeping !== false) {
 			checks.push(holdReconcileTick());
 			if (deskLane) {
@@ -621,19 +621,17 @@ export function createEngine(d: EngineDeps) {
 		// The relay starts beside the watchers: its first pass sends whatever a dead process left pending.
 		relay.start().then(() => log("startup-recovered"));
 		recovery?.restore();
-		void deskRelay?.start();
 		started = Promise.all(watchers.map((w) => w.run())).then(() => undefined);
 		return started;
 	}
 	async function stop() {
 		clearInterval(interval);
 		await relay.stop();
-		await deskRelay?.stop();
 		for (const w of watchers) w.stop();
 		recovery?.stop();
 		await started;
 	}
 
-	return { start, stop, tick, relay, deskRelay, outbox, watchers, stewardGate, alarm, log, notified: () => new Set(store.items.list({ source: NOTIFICATION_LOG }).map((i) => i.dedupKey)) };
+	return { start, stop, tick, relay, outbox, watchers, stewardGate, alarm, log, notified: () => new Set(store.items.list({ source: NOTIFICATION_LOG }).map((i) => i.dedupKey)) };
 }
 export type Engine = ReturnType<typeof createEngine>;

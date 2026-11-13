@@ -17,7 +17,7 @@ export type { HeldItem, HoldClock, WakeMeta };
 export type Gate = "idle" | "busy" | "unknown";
 /**
  * The only wakes that may wait for their thread to go idle: a thread finishing a turn, the routine sweep, and the Alert Desk's alerts (which
- * go to the desk's own relay and gate, never held behind the Steward). Everything
+ * wait on the desk's own gate, never held behind the Steward). Everything
  * else (a question or approval, a failure, a decision-queue answer, any kind not named here) goes out at once.
  */
 export const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk"]);

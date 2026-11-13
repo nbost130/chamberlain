@@ -4,7 +4,7 @@
  * Alert sources append one JSON line each to an inbox file (default ~/.cache/alert-desk/inbox.jsonl; CHAMBERLAIN does not care who
  * writes it). This module drains the file and decides, per alert FAMILY, whether the desk is woken. It is backend-agnostic: it reads
  * a file, uses the item system for every decision about what notifies, and hands wake text to the outbox for the `desk` receiver. The
- * second relay (core/relay.ts, `receiver: "desk"`) sends it through the adapter's `alertDesk` capability, with the desk thread's own
+ * one relay (core/relay.ts, the `desk` lane of `receivers`) sends it through the adapter's `alertDesk` capability, with the desk thread's own
  * gate, so the hold-and-digest path folds a burst of families into one wake and a busy desk never holds the Steward's wakes.
  *
  * The inbox line (one object per line, one O_APPEND write per line):
