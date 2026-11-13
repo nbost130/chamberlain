@@ -85,34 +85,28 @@ describe("closeHeldForCard", () => {
 	};
 	const open = (store: ReturnType<typeof memStore>) => heldOpen(store).map((h) => h.what);
 
-	test("closes the approval held under that request id", () => {
-		const store = seed([{ requestId: "r1" }, { requestId: "r2" }]);
-		expect(closeHeldForCard(store, "main", "th", "r1", "answered")).toBe(1);
-		expect(open(store)).toEqual(["w1"]);
+	test("(B) never closes a daemon's card hold, which closes only with its pointer question (card-hold.ts closeCard)", () => {
+		const store = seed([{ server: "main", requestId: "r1", card: { server: "main", threadId: "th", requestId: "r1" } }, { requestId: "r2" }]);
+		expect(closeHeldForCard(store, "main", "th", "answered")).toBe(0);
+		expect(open(store)).toEqual(["w0", "w1"]);
 	});
 
-	test("closes a card held against that thread, and leaves other threads alone", () => {
-		const store = seed([{ threadId: "th" }, { threadId: "other" }]);
-		expect(closeHeldForCard(store, "main", "th", "r9", "answered")).toBe(1);
-		expect(open(store)).toEqual(["w1"]);
+	test("closes a Steward's hold on that thread, and leaves other threads and other servers alone", () => {
+		const store = seed([{ threadId: "th" }, { threadId: "other" }, { threadId: "th", server: "second" }, { threadId: "th", server: "main" }]);
+		expect(closeHeldForCard(store, "main", "th", "answered")).toBe(2);
+		expect(open(store)).toEqual(["w1", "w2"]);
 	});
 
 	test("a hold with no card link stays open: it is a decision, not a card", () => {
 		const store = seed([{ thread: "th" }]);
-		expect(closeHeldForCard(store, "main", "th", "r1", "answered")).toBe(0);
+		expect(closeHeldForCard(store, "main", "th", "answered")).toBe(0);
 		expect(open(store)).toEqual(["w0"]);
-	});
-
-	test("a card hold is keyed by (server, request ID): the same request ID on another server, and another card on the thread, stay open", () => {
-		const store = seed([{ server: "main", requestId: "r1", card: { server: "main", threadId: "th", requestId: "r1" } }, { server: "second", requestId: "r1", card: { server: "second", threadId: "th", requestId: "r1" } }, { server: "main", requestId: "r2", card: { server: "main", threadId: "th", requestId: "r2" } }]);
-		expect(closeHeldForCard(store, "main", "th", "r1", "answered")).toBe(1);
-		expect(open(store)).toEqual(["w1", "w2"]);
 	});
 
 	test("closing twice closes nothing the second time", () => {
 		const store = seed([{ threadId: "th" }]);
-		closeHeldForCard(store, "main", "th", "r1", "answered");
-		expect(closeHeldForCard(store, "main", "th", "r1", "answered")).toBe(0);
+		closeHeldForCard(store, "main", "th", "answered");
+		expect(closeHeldForCard(store, "main", "th", "answered")).toBe(0);
 	});
 });
 

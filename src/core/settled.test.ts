@@ -100,6 +100,19 @@ describe("title overlap (rule 3)", () => {
 		expect(find(store, { title: "Acme deployment database rollback?" }).matches.map((m) => m.id)).toEqual(["Q-ign01"]);
 		expect(titlesOverlap("Acme deployment", "Acme deployment database rollback?", new Set(["acme"]))).toBeUndefined();
 	});
+	test("(C) an ignored word never counts as a distinctive word, in a two-word title or a longer one", () => {
+		const ignore = new Set(["acme"]);
+		// "deploy" is generic, so without the ignore "acme" is the one distinctive word that makes these match.
+		expect(titlesOverlap("Acme deploy", "Acme deploy window")).toEqual(["acme", "deploy"]);
+		expect(titlesOverlap("Acme deploy", "Acme deploy window", ignore)).toBeUndefined();
+		expect(titlesOverlap("Acme deploy", "Acme deploy", ignore)).toBeUndefined();
+		// Longer: two distinctive words are needed, and "acme" may not be one of them.
+		expect(titlesOverlap("Acme billing approve merge", "Acme billing approve merge today")).toEqual(["acme", "billing", "approve", "merge"]);
+		expect(titlesOverlap("Acme billing approve merge", "Acme billing approve merge today", ignore)).toBeUndefined();
+		const store = memStore();
+		answered(store, "Q-ignc1", "Acme deploy");
+		expect(find(store, { title: "Acme deploy window?" }, { ignoreWords: ["acme"] }).matches).toEqual([]);
+	});
 	test("a true repeat still matches with the product name ignored, and the match names no ignored word", () => {
 		const store = memStore();
 		answered(store, "Q-ign02", "Acme billing invoice retry policy");

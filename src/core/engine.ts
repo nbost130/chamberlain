@@ -7,8 +7,8 @@
  */
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { mandateLine, readAfk } from "./afk.ts";
-import { cardWaitOf, closeCard, holdCard, reconcileCardHolds, type CardThreadRead } from "./card-hold.ts";
+import { closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
+import { cardWaitOf, holdCard, reconcileCardHolds, type CardThreadRead } from "./card-hold.ts";
 import type { Question } from "./questions.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
@@ -379,12 +379,14 @@ export function createEngine(d: EngineDeps) {
 			this.states.set(next.id, next);
 			// An answer given in the thread reaches no one else, so the ledger closes here or it shows a settled decision as waiting.
 			if (prev?.pendingRequestId && prev.pendingRequestId !== next.pendingRequestId) {
+				// The thread's one pending ID changing does not say which card resolved: a thread can wait on two, and the state names one.
+				// A card hold and its question close only when a read of the thread's waiting cards no longer lists that card's
+				// (server, request ID): the card reconciler does that read now. The Steward's own holds on the thread close here, as before.
 				try {
-					// Keyed by (server, request ID): the same request ID on another server is another card.
-					const { holds, questions } = closeCard(store, { server: this.srv.name, threadId: next.id, requestId: prev.pendingRequestId }, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
-					if (holds) log("held-closed", { server: this.srv.name, threadId: next.id, closed: holds });
-					if (questions) log("card-question-closed", { server: this.srv.name, threadId: next.id, closed: questions });
+					const closed = closeHeldForCard(store, this.srv.name, next.id, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
+					if (closed) log("held-closed", { server: this.srv.name, threadId: next.id, closed });
 				} catch (e) { log("held-close-error", { server: this.srv.name, threadId: next.id, error: String(e) }); }
+				void cardReconcileTick();
 			}
 			if (turnBegan(prev, next)) { this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id))); recovery?.moved(next.id); }
 			if (prev && LIVE.has(prev.status) && ["completed", "idle"].includes(next.status)) recovery?.healthy(next.id);
@@ -657,8 +659,11 @@ export function createEngine(d: EngineDeps) {
 	 * or archived, is gone. Anything else is unknown, and its cards stay open.
 	 */
 	let reconcilingCards: Promise<void> | undefined;
+	/** Asked for while a pass ran: that pass may have read before the change, so one more runs after it. */
+	let cardsAgain = false;
 	function cardReconcileTick(): Promise<void> {
-		reconcilingCards ??= (async () => {
+		if (reconcilingCards) { cardsAgain = true; return reconcilingCards; }
+		reconcilingCards = (async () => {
 			const snaps = new Map<string, Promise<CardThreadRead | Map<string, boolean>>>();
 			const snapshotOf = (w: Watcher) => {
 				if (!snaps.has(w.srv.name)) snaps.set(w.srv.name, (async () => {
@@ -681,7 +686,7 @@ export function createEngine(d: EngineDeps) {
 				const { closed } = await reconcileCardHolds(store, read);
 				for (const c of closed) log("card-reconciled", { server: c.server, threadId: c.threadId, requestId: c.requestId });
 			} catch (e) { log("held-reconcile-error", { pass: "cards", error: String(e).slice(0, 200) }); }
-		})().finally(() => { reconcilingCards = undefined; });
+		})().finally(() => { reconcilingCards = undefined; if (cardsAgain) { cardsAgain = false; void cardReconcileTick(); } });
 		return reconcilingCards;
 	}
 

@@ -6,10 +6,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import { heldOpen } from "./afk.ts";
+import { closeHeldForCard, heldOpen } from "./afk.ts";
 import type { WaitingItem } from "./adapter.ts";
 import { cardQuestion, cardWaitOf, closeCard, closeCardQuestions, holdCard, openCards, questionForCard, reconcileCardHolds } from "./card-hold.ts";
-import { reconcileItemHolds } from "./hold-reconcile.ts";
+import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
 import { askQuestion, getQuestion, isUrgent, questionStates, ranked } from "./questions.ts";
 import { findSettled } from "./settled.ts";
 import { openStore } from "./sqlite-store.ts";
@@ -183,5 +183,46 @@ describe("(2)(3) card holds reconcile against the cards actually waiting, keyed 
 		expect(heldOpen(store).map((h) => h.server)).toEqual(["second"]);
 		expect(closeCard(store, { server: "second", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({ questions: 1, holds: 1 });
 		expect(heldOpen(store)).toEqual([]);
+	});
+});
+
+describe("(A)(B) one hold per card, and a card hold closes only with its pointer question", () => {
+	test("(A) two cards on one thread: two holds, two questions; the reconciler keeps the one still listed", async () => {
+		const store = memStore();
+		holdCard(store, cardWaitOf(approval, AT));
+		holdCard(store, cardWaitOf(secretCard, AT));
+		expect(heldOpen(store)).toHaveLength(2);
+		expect(questionStates(store).size).toBe(2);
+		const r = await reconcileCardHolds(store, async () => ({ state: "read", waiting: new Set(["req-s1"]) }));
+		expect(r.closed.map((c) => c.requestId)).toEqual(["req-a1"]);
+		expect(heldOpen(store).map((h) => h.card!.requestId)).toEqual(["req-s1"]);
+	});
+	test("(B) the ref pass never closes a card hold through its thread, even one that names the thread as a ref", async () => {
+		const store = memStore();
+		const { item } = holdCard(store, cardWaitOf(approval, AT));
+		const h = store.items.list({ source: "held" })[0]!;
+		store.items.patch("held", h.dedupKey, { threadId: "th-1", ref: { threadId: "th-1" } });
+		const settled = { machine: "main", healthy: true, complete: true, get: () => ({ archived: true, settled: true, pendingRequestId: null, status: "idle" }) };
+		const r = await reconcileRefHolds({ store, snapshots: async () => [settled] });
+		expect(r.closed).toBe(0);
+		expect(heldOpen(store)).toHaveLength(1);
+		expect(getQuestion(store, item)!.status).toBe("open");
+	});
+	test("(B) a card hold and its question close in one transaction: a failure closing the hold leaves the question open", () => {
+		const store = memStore();
+		const { item } = holdCard(store, cardWaitOf(approval, AT));
+		const resolve = store.items.resolve.bind(store.items);
+		store.items.resolve = ((source: string, ...rest: unknown[]) => { if (source === "held") throw Error("disk full"); return (resolve as (...a: unknown[]) => unknown)(source, ...rest); }) as typeof store.items.resolve;
+		expect(() => closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toThrow("disk full");
+		store.items.resolve = resolve;
+		expect(getQuestion(store, item)!.status).toBe("open");
+		expect(heldOpen(store)).toHaveLength(1);
+		expect(closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({ questions: 1, holds: 1 });
+	});
+	test("(B) a thread's close (the live path's Steward-hold close) never closes a card hold", () => {
+		const store = memStore();
+		holdCard(store, cardWaitOf(approval, AT));
+		expect(closeHeldForCard(store, "main", "th-1", "x")).toBe(0);
+		expect(heldOpen(store)).toHaveLength(1);
 	});
 });

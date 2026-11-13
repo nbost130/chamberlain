@@ -20,7 +20,7 @@
  * server, the thread and the request ID, is stored on the hold (`card`) and on the question (`server`, `threadId`,
  * `cardRequest`), so `reconcileCardHolds` can close a card that resolved or vanished while the daemon was down.
  */
-import { appendHeld, closeHeldForCard, heldOpen, isCardHold, type CardRef, type Held } from "./afk.ts";
+import { appendHeld, closeHeldForCard, closeHeldWhere, heldOpen, isCardHold, type CardRef, type Held } from "./afk.ts";
 import type { WaitingItem, WaitKind } from "./adapter.ts";
 import { askQuestion, newItemId, questionStates, QUEUE, type Question } from "./questions.ts";
 import type { Store } from "./store.ts";
@@ -113,14 +113,16 @@ export function closeCardQuestions(store: Store, server: string, requestId: stri
 }
 
 /**
- * The card (server, request ID) resolved or vanished: its open pointer questions close as answered on the card and its open
- * holds close, in one transaction. Idempotent: a second call closes nothing.
+ * The card (server, request ID) resolved or vanished: its open pointer questions close as answered on the card, its open card
+ * holds close, and so do the Steward's holds that name its thread, all in ONE transaction, so a card hold never closes without
+ * its pointer question or the other way round. This is the only code that closes a card hold. Idempotent: a second call closes nothing.
  */
 export function closeCard(store: Store, c: CardRef, how: string, now = new Date()): { questions: number; holds: number } {
-	return store.tx(() => ({
-		questions: closeCardQuestions(store, c.server, c.requestId, now.getTime()),
-		holds: closeHeldForCard(store, c.server, c.threadId, c.requestId, how),
-	}));
+	return store.tx(() => {
+		const questions = closeCardQuestions(store, c.server, c.requestId, now.getTime());
+		const cards = closeHeldWhere(store, (h) => (sameCard(cardRefOf(h), c) ? how : undefined), now);
+		return { questions, holds: cards + closeHeldForCard(store, c.server, c.threadId, how) };
+	});
 }
 
 /** What a fresh read of one thread on one server says: the request IDs waiting there now, the thread gone, or nothing known. */

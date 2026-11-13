@@ -141,16 +141,13 @@ export function noteHeld(store: Store, id: string, text: string, now = new Date(
 /** The queue item a hold waits on: its structured `item` field and nothing else. The prose is never read. */
 export const itemIdOf = (h: Held): string | undefined => (h.item && ITEM_ID.test(h.item) ? h.item : undefined);
 /**
- * A card or approval left its thread on `server`: close what was held against it. A card hold is keyed by (server, request
- * ID): another server's card with the same request ID, and another card on the same thread, stay open. A Steward's hold
- * that names the card's thread (and no request) closes when that thread's card leaves, on the same server when it names one.
- * A hold with no card link is a decision, so it stays.
+ * A card or approval left thread `threadId` on `server`: close the Steward's holds that name that thread (and no request),
+ * on the same server when they name one. A daemon's card hold is never closed here: it closes only with its pointer question,
+ * in one transaction, when its own (server, request ID) is no longer waiting (card-hold.ts `closeCard`). A hold with no card
+ * link is a decision, so it stays.
  */
-export const closeHeldForCard = (store: Store, server: string, threadId: string, requestId: string, how: string): number =>
-	closeWhere(store, (h) => {
-		if (isCardHold(h)) { const c = h.card ?? { server: h.server, requestId: h.requestId }; return (c.server === undefined || c.server === server) && c.requestId === requestId; }
-		return h.threadId !== undefined && h.threadId === threadId && (h.server === undefined || h.server === server);
-	}, how);
+export const closeHeldForCard = (store: Store, server: string, threadId: string, how: string): number =>
+	closeWhere(store, (h) => !isCardHold(h) && h.threadId !== undefined && h.threadId === threadId && (h.server === undefined || h.server === server), how);
 /**
  * Pure: why a hold is not a hold. A hold is a real wait on the operator, and an FYI waits on nothing, so the ledger refuses it
  * in code and points at the decision log. Only an opening counts: the thread, or the text, STARTS with "FYI", "for your

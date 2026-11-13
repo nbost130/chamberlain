@@ -146,9 +146,10 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 		expect(questionStates(r.store).size).toBe(1);
 		expect(heldOpen(r.store)).toHaveLength(1);
 		expect(r.fake.posted).toHaveLength(1);
-		// Answered on the card: the card leaves the thread, and the question and the hold close with it.
+		// Answered on the card: the card leaves the thread, and the question and the hold close with it (after a read of the thread's cards).
+		r.fake.threads.set("t1", { waiting: [] });
 		r.fake.emit({ kind: "state", thread: thread("t1", "running", { title: "Release" }) });
-		await r.until("the question closed", () => r.events.some((e) => e.event === "card-question-closed"));
+		await r.until("the card reconciled", () => r.events.some((e) => e.event === "card-reconciled"));
 		expect(getQuestion(r.store, qs[0]!.id)!.status).toBe("answered-on-card");
 		expect(heldOpen(r.store)).toEqual([]);
 		expect(r.fake.wakes).toEqual([]);
@@ -1229,5 +1230,29 @@ describe("(2)(3) card holds after a restart, and across servers", () => {
 		await e.engine.tick();
 		expect(heldOpen(store).map((h) => h.server)).toEqual(["beta"]);
 		expect([...questionStates(store).values()].map((q) => [q.server, q.status]).sort()).toEqual([["alpha", "answered-on-card"], ["beta", "open"]]);
+	});
+});
+
+describe("(A)(D) one thread waiting on two cards keeps a hold per card; the live path closes only the card that left", () => {
+	test("the thread's one pending ID moving from a1 to a2 closes nothing while a1 still waits; a1 closes when it stops waiting", async () => {
+		const r = rig();
+		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		const a1: WaitingItem = { type: "approval_request", requestId: "a1", label: "deploy", questions: [] };
+		const a2: WaitingItem = { type: "secret_request", requestId: "a2", label: "API_KEY", questions: [] };
+		r.fake.threads.set("t1", { waiting: [a1, a2] });
+		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
+		await r.until("both holds", () => heldOpen(r.store).length === 2);
+		expect(heldOpen(r.store).map((h) => h.card!.requestId).sort()).toEqual(["a1", "a2"]);
+		// The state now names a2, but a1 still waits in the thread: neither its hold nor its question may close.
+		r.fake.emit({ kind: "state", thread: thread("t1", "waiting", { pendingRequestId: "a2" }) });
+		await r.quiet();
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.card!.requestId).sort()).toEqual(["a1", "a2"]);
+		expect([...questionStates(r.store).values()].map((q) => q.status)).toEqual(["open", "open"]);
+		// a1 is answered in its thread: only a1 closes, hold and question together.
+		r.fake.threads.set("t1", { waiting: [a2] });
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.card!.requestId)).toEqual(["a2"]);
+		expect([...questionStates(r.store).values()].map((q) => [q.cardRequest, q.status]).sort()).toEqual([["a1", "answered-on-card"], ["a2", "open"]]);
 	});
 });

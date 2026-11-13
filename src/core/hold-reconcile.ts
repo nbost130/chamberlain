@@ -131,6 +131,8 @@ const parts = (ref: string) => { const m = ref.match(/^([^/]+)\/([^#:]+)[#:](.+)
 
 /** The refs of one hold that the reconciler acts on: well-formed fields only. A card's thread is `ref.threadId`, or the hold's own card link. */
 export function refsOf(h: Held): { kind: Kind; key: string; value: string; server?: string }[] {
+	// A daemon's card hold waits on its card alone, and closes only with its pointer question (card-hold.ts closeCard): never through a ref.
+	if (isCardHold(h)) return [];
 	const r: HoldRef = cleanRef(h.ref) ?? {};
 	const thread = r.threadId ?? (h.threadId && REF_SHAPES.threadId.test(h.threadId) ? h.threadId : undefined);
 	/** The server the thread lives on, when the hold says: the only way a missing thread can count as gone. */

@@ -495,9 +495,11 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
   the same request ID never close or suppress each other's. The hold stores its card (`card`: server, thread ID, request ID) and the
   question its `server`, `threadId` and `cardRequest`, so closing needs nothing in memory. **A card hold closes only when its card
   resolves**: the page refuses an answer to a pointer (409, "act on the card itself"), its options never say the card was handled, and
-  the item reconciler skips a card hold unless its question was closed by the card (`answered-on-card`). The card closes its question
-  and hold when it leaves its thread (seen live), and `reconcileCardHolds` checks every open card on every tick and on every watcher
-  connection: a card no longer waiting in a fresh read of its thread, or whose thread is gone from a whole fresh snapshot, closes
+  the item reconciler skips a card hold unless its question was closed by the card (`answered-on-card`). One hold per card, never
+  per thread: a thread waiting on two cards has two holds and two questions. A card hold and its question close together, in one
+  transaction (`closeCard`, the only code that closes a card hold); the ref pass and the thread close skip card holds. When a
+  thread's one pending request ID changes, nothing is closed on that alone (the thread may still wait on the old card):
+  `reconcileCardHolds` runs at once, and on every tick and every watcher connection, and checks every open card: a card no longer waiting in a fresh read of its thread, or whose thread is gone from a whole fresh snapshot, closes
   exactly once, so a card answered or withdrawn while the daemon was down does not stay open. A server that is not connected, or a
   read that fails, says nothing, and its cards stay open.
   Which cards exist and their kind come from the adapter's `Inspector.waiting`, normalized to `WaitKind`; the core reads only the
