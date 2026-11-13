@@ -234,3 +234,29 @@ describe("reportKey", () => {
 		expect(reportKey([{ ...steward, text: "go" }], false, new Set())).toBeUndefined();
 	});
 });
+
+describe("the failure dedupe key names the run (2026-11-13: a second failure was swallowed)", () => {
+	const failedKeys = (prev: ThreadState, next: ThreadState) => decide(prev, next, none).filter((c) => c.kind === "failed").map((c) => c.key);
+
+	test("two failures of one thread on different runs get different keys, so both fire", () => {
+		const first = failedKeys({ ...base, latestRunId: "run-1" }, { ...base, status: "failed", latestRunId: "run-1" });
+		const second = failedKeys({ ...base, latestRunId: "run-2" }, { ...base, status: "failed", latestRunId: "run-2" });
+		expect(first).toEqual(["t1:failed:run-1:running"]);
+		expect(second).toEqual(["t1:failed:run-2:running"]);
+		expect(first[0]).not.toBe(second[0]);
+	});
+
+	test("the same run seen failing twice keeps one key, so it still fires once", () => {
+		const a = failedKeys({ ...base, latestRunId: "run-1" }, { ...base, status: "failed", latestRunId: "run-1" });
+		const b = failedKeys({ ...base, latestRunId: "run-1" }, { ...base, status: "failed", latestRunId: "run-1" });
+		expect(a).toEqual(b);
+	});
+
+	test("a backend that names no run keeps the old key", () => {
+		expect(failedKeys(base, { ...base, status: "failed" })).toEqual(["t1:failed:running"]);
+	});
+
+	test("normalizeThread carries the run id through", () => {
+		expect(normalizeThread({ id: "t", title: "T", status: "failed", latestRunId: "run-9" }).latestRunId).toBe("run-9");
+	});
+});

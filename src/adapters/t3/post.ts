@@ -3,12 +3,14 @@
  * tabbed view (the page, inline) and never a question card, so nothing in that thread blocks. With the page down it
  * is a one-line notice. The queue item is already recorded, so a failed post leaves the question on the page.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile } from "../../core/private.ts";
 import { CONF, PrincipalPoss } from "../../core/config.ts";
 import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
 import { cardTag, type Question } from "../../core/questions.ts";
-import { t3BaseDir } from "./settings.ts";
+import { pingViaCli, t3Cli } from "./ping.ts";
+
+export { t3Cli };
 
 /** Pure: the shell the Decisions thread renders: the tabbed view (Waiting, Rulings, Recent), opened on this item. */
 export const dashShell = (base: string, id: string) =>
@@ -43,17 +45,6 @@ export function decisionsDownMessage(i: Question): string {
 	].join("\n");
 }
 
-/** The T3 CLI: T3CODE_CLI_PATH, then <t3 base dir>/bin/t3, then the newest installed runtime. */
-export function t3Cli(): string {
-	if (process.env.T3CODE_CLI_PATH) return process.env.T3CODE_CLI_PATH;
-	const base = t3BaseDir();
-	if (existsSync(`${base}/bin/t3`)) return `${base}/bin/t3`;
-	const root = `${base}/runtime/versions`;
-	const vs = existsSync(root) ? readdirSync(root).filter((v) => existsSync(`${root}/${v}/t3`)).sort((a, b) => Bun.semver.order(a, b)) : [];
-	if (!vs.length) throw Error("ask: no T3 CLI found (set T3CODE_CLI_PATH)");
-	return `${root}/${vs.at(-1)}/t3`;
-}
-
 function threadFile(name: string, conf = CONF): string | undefined {
 	const p = `${conf}/${name}`;
 	if (!existsSync(p)) return undefined;
@@ -69,9 +60,8 @@ export function postCard(i: Question, conf = CONF, base?: string): PostResult {
 	const thread = threadFile("decisions-thread", conf);
 	if (!thread) throw Error("ask: decisions-thread is missing or empty");
 	const text = base ? decisionsMessage(i, base) : decisionsDownMessage(i);
-	const r = Bun.spawnSync([t3Cli(), "thread", "send", thread, "-"], { stdin: Buffer.from(text), stdout: "pipe", stderr: "pipe", timeout: 60_000 });
-	const detail = (r.stdout.toString() + r.stderr.toString()).trim().slice(0, 300);
-	return { ok: r.exitCode === 0, detail, where: base ? "view" : "notice" };
+	const r = pingViaCli(thread, text);
+	return { ok: r.ok, detail: r.detail, where: base ? "view" : "notice" };
 }
 
 

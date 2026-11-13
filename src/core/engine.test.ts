@@ -10,7 +10,8 @@ import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts"
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { heldOpen } from "./afk.ts";
-import type { OptionalCapability, ThreadInput, WaitingItem } from "./adapter.ts";
+import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
+import type { Judge } from "./judge.ts";
 import { createEngine, type EngineDeps } from "./engine.ts";
 import type { HeldItem } from "./hold.ts";
 import type { Store } from "./store.ts";
@@ -416,5 +417,151 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
 		expect(heldOpen(r.store).map((h) => h.what).join("\n")).toContain("command or permission approval: deploy");
 		expect(r.engine.notified().has("req:a1")).toBe(true);
+	});
+});
+
+describe("stalled-thread recovery, end to end through the fake", () => {
+	const STREAM: RunFailure = { runId: "run-1", class: "unknown", message: "The provider event stream closed unexpectedly. Retry the turn." };
+	const FAST = { graceMs: 40, rateLimitWaitMs: 80, secondFailureWindowMs: 5_000, breakerWindowMs: 5_000, breakerQuietMs: 5_000 };
+	const m1: TurnItem = { type: "user_message", id: "m1", text: "do the thing", createdBy: "user", creationSource: "user" };
+	/** A rig whose engine has recovery on, with fast timing and a judge that answers from the test. */
+	function make(judged: { verdict: string; reason: string } | "fail" = { verdict: "do_not_retry", reason: "it keeps failing" }) {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-recover-`);
+		dirs.push(root);
+		const conf = `${root}/conf`;
+		mkdirSync(conf, { recursive: true, mode: 0o700 });
+		writeFileSync(`${conf}/decision-rights.md`, "rights", { mode: 0o600 });
+		const store = memStore();
+		const fake = createFakeAdapter();
+		const events: Logged[] = [];
+		const asked: Record<string, any>[] = [];
+		const judgeCalls: unknown[] = [];
+		const clock = { t: Date.now() };
+		const engine = createEngine({
+			conf, lock: testRelayLock(store), store, housekeeping: false,
+			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
+			log: (event, data) => events.push({ event, ...data }),
+			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
+			relay: { retryAfterMs: () => 0, now: () => clock.t },
+			recover: FAST,
+			ask: async (raw) => { asked.push(raw as Record<string, any>); },
+			judge: async (trigger, brief) => { judgeCalls.push({ trigger, brief }); return judged === "fail" ? { ok: false, backend: "haiku", error: "haiku judge exited 1" } : { ok: true, backend: "haiku", ...judged }; },
+		});
+		engines.push(engine);
+		void engine.start();
+		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
+		const failRun = (id: string, runId: string, failure: RunFailure, over: Partial<ThreadInput> = {}) => {
+			fake.threads.set(id, { ...(fake.threads.get(id) ?? {}), failure, instruction: { items: [m1], state: "complete", byMachine: false } });
+			fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: runId, ...over }) });
+			fake.emit({ kind: "state", thread: thread(id, "failed", { latestRunId: runId, ...over }) });
+		};
+		return { fake, events, asked, judgeCalls, until, failRun, quiet: (ms = 120) => Bun.sleep(ms) };
+	}
+
+	test("a stream failure is retried by the daemon after the grace, as the daemon, and the Steward is not woken", async () => {
+		const x = make();
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("the retry", () => x.fake.sends.length === 1);
+		expect(x.fake.sends[0]).toMatchObject({ threadId: "t1", seed: "recover:run-1", identity: "daemon" });
+		expect(x.fake.sends[0]!.text).toMatch(/automatic retry/);
+		await x.quiet();
+		expect(x.fake.wakes).toEqual([]);
+	});
+
+	test("someone writing in the thread during the grace stands the retry down", async () => {
+		const x = make();
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("the failure is read", () => x.events.some((e) => e.event === "recover-scheduled"));
+		x.fake.threads.set("t1", { ...x.fake.threads.get("t1")!, instruction: { items: [m1, { type: "user_message", id: "m2", text: "restart", createdBy: "user", creationSource: "user" }], state: "complete", byMachine: false } });
+		await x.until("the stand-down", () => x.events.some((e) => e.event === "recover-stand-down"));
+		await x.quiet(100);
+		expect(x.fake.sends).toEqual([]);
+		expect(x.fake.wakes).toEqual([]);
+	});
+
+	test("a second failure after the retry goes to the judge, and its verdict reaches the Steward as the failed wake", async () => {
+		const x = make();
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("the retry", () => x.fake.sends.length === 1);
+		x.failRun("t1", "run-2", { ...STREAM, runId: "run-2" });
+		await x.until("the verdict wake", () => x.fake.wakes.length === 1);
+		const msg = x.fake.wakes[0]!.message;
+		expect(msg).toContain("run failed twice (stream closed) after an automatic retry");
+		expect(msg).toContain("haiku judge: do not retry — it keeps failing");
+		expect(x.judgeCalls).toHaveLength(1);
+		expect(x.asked).toEqual([]);
+		expect(x.fake.sends).toHaveLength(1);
+	});
+
+	test("an ask_principal verdict also asks the principal through the decision queue", async () => {
+		const x = make({ verdict: "ask_principal", reason: "a limit" });
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("the retry", () => x.fake.sends.length === 1);
+		x.failRun("t1", "run-2", { ...STREAM, runId: "run-2" });
+		await x.until("the wake", () => x.fake.wakes.length === 1);
+		expect(x.asked).toHaveLength(1);
+		expect(x.asked[0]).toMatchObject({ kind: "only-you", threadId: "t1", server: "fake" });
+		expect(x.fake.wakes[0]!.message).toContain("The principal has been asked on the decision queue.");
+	});
+
+	test("a judge that cannot answer still wakes the Steward, saying so", async () => {
+		const x = make("fail");
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("the retry", () => x.fake.sends.length === 1);
+		x.failRun("t1", "run-2", { ...STREAM, runId: "run-2" });
+		await x.until("the wake", () => x.fake.wakes.length === 1);
+		expect(x.fake.wakes[0]!.message).toContain("the judge could not answer (haiku judge exited 1)");
+	});
+
+	test("two failures on different runs both fire a wake (the dedupe key names the run)", async () => {
+		const x = make();
+		const auth: RunFailure = { runId: "run-1", class: "provider_error", code: "api_error", message: "Claude could not authenticate." };
+		x.failRun("t1", "run-1", auth);
+		await x.until("the first wake", () => x.fake.wakes.length === 1);
+		x.failRun("t1", "run-2", { ...auth, runId: "run-2" });
+		await x.until("the second wake", () => x.fake.wakes.length === 2);
+		expect(new Set(x.fake.wakes.map((w) => w.deliveryId.split(":").slice(0, 4).join(":"))).size).toBe(2);
+		expect(x.fake.sends).toEqual([]);
+	});
+
+	test("a never-retry failure wakes the Steward at once, naming why, and sends nothing", async () => {
+		const x = make();
+		x.failRun("t1", "run-1", { runId: "run-1", class: "provider_error", code: "api_error_403", message: "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare" });
+		await x.until("the wake", () => x.fake.wakes.length === 1);
+		expect(x.fake.wakes[0]!.message).toContain("not retried automatically: a 403 / Cloudflare block");
+		await x.quiet();
+		expect(x.fake.sends).toEqual([]);
+	});
+
+	test("a waiting thread, and the Steward's own thread, are never retried", async () => {
+		const x = make();
+		x.failRun("w", "run-1", STREAM, { backgroundTasks: 1 });
+		await x.until("the wake", () => x.fake.wakes.length === 1);
+		expect(x.fake.wakes[0]!.message).toContain("not retried automatically: waiting: a watch, gate or background task is parked");
+		await x.quiet(100);
+		expect(x.fake.sends).toEqual([]);
+	});
+
+	test("three failures of one kind raise exactly one alarm through the decision queue, and stop every retry", async () => {
+		const x = make();
+		for (const [i, id] of ["a", "b", "c"].entries()) x.failRun(id, `run-${i + 1}`, { ...STREAM, runId: `run-${i + 1}` });
+		await x.until("the alarm", () => x.asked.length === 1);
+		x.failRun("d", "run-4", { ...STREAM, runId: "run-4" });
+		await x.quiet(250);
+		expect(x.asked).toHaveLength(1);
+		expect(x.asked[0]).toMatchObject({ kind: "only-you", tag: "Outage" });
+		expect(x.asked[0]!.title).toContain("3");
+		expect(x.fake.sends).toEqual([]);
+		expect(x.fake.wakes).toEqual([]);
+	});
+
+	test("an adapter that cannot read a failure keeps the plain failed wake, with no retry", async () => {
+		const r = rig({ capabilities: ["send"] });
+		r.fake.emit({ kind: "state", thread: thread("t1", "running") });
+		r.fake.emit({ kind: "state", thread: thread("t1", "failed", { latestRunId: "run-1" }) });
+		await r.until("the wake", () => r.fake.wakes.length === 1);
+		expect(r.fake.wakes[0]!.message).toContain('run failed.');
+		expect(r.fake.wakes[0]!.message).not.toContain("not retried automatically");
+		expect(r.fake.sends).toEqual([]);
 	});
 });

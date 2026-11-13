@@ -18,6 +18,10 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isPrivateFile } from "../../core/private.ts";
 import { connect, type Rpc } from "./rpc.ts";
+import { createRpcPing, messageCommand, openWithin, readToken, redact, stableId, within, CALL_TIMEOUT_MS } from "./ping.ts";
+
+// The one send path lives in ./ping.ts; these are re-exported because the page and the tests import them from here.
+export { redact, stableId, within, CALL_TIMEOUT_MS };
 import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { normalizeWaitKind } from "./state.ts";
 import { tagIn } from "../../core/questions.ts";
@@ -38,8 +42,6 @@ const RECOMMENDED = /\s*\(Recommended[^)]*\)\s*$/i;
 /** Pure: a fingerprint of everything the card asks (ids, text, options in order, multiSelect). */
 export const cardSig = (questions: unknown) => createHash("sha256").update(JSON.stringify(questions ?? null)).digest("hex").slice(0, 16);
 /** Pure: the message with every secret in it replaced, for logs and error bodies. */
-export const redact = (msg: string, secrets: (string | undefined)[]) => secrets.reduce<string>((m, s) => (s ? m.split(s).join("[redacted]") : m), msg);
-
 /** Pure: the question cards in one thread's turn items, as queue entries. Everything else waiting is left out. */
 export function cardsFrom(server: string, canAnswer: boolean, thread: ShellThread, items: TurnItem[], link?: string): MirrorCard[] {
 	const out: MirrorCard[] = [];
@@ -105,18 +107,6 @@ function readOnly(server: string, thread: ShellThread, i: TurnItem, kind: string
 	};
 }
 
-const readToken = (conf: string, file: string | null | undefined): string | undefined => {
-	if (!file) return undefined;
-	try {
-		const p = `${conf}/${file}`;
-		if (!isPrivateFile(statSync(p))) return undefined;
-		return readFileSync(p, "utf8").trim() || undefined;
-	} catch {
-		// EMPTY_CATCH_OK: no token file means that server is read-only (or unread); the caller logs the outcome.
-		return undefined;
-	}
-};
-
 /** The first shell snapshot of a server: every thread with its waiting request, if any. */
 async function snapshot(rpc: Rpc, timeoutMs = 10_000): Promise<ShellThread[]> {
 	return await new Promise<ShellThread[]>((resolve, reject) => {
@@ -151,20 +141,6 @@ export function goalCard(server: string, canAnswer: boolean, thread: ShellThread
 	};
 }
 
-/** Pure: a UUID-shaped ID fixed by its seed, so a retried send carries the same command and message IDs. */
-export const stableId = (seed: string) => {
-	const h = createHash("sha256").update(seed).digest("hex");
-	return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
-};
-
-/** A call that hasn't answered by then fails, so one hung server can't stall the poll. */
-export const CALL_TIMEOUT_MS = 10_000;
-export function within<T>(p: Promise<T>, ms = CALL_TIMEOUT_MS, what = "T3 call"): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	return Promise.race([p, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error(`${what} timed out after ${ms} ms`)), ms); })]).finally(() => clearTimeout(timer));
-}
-
-
 export type WaitingDeps = {
 	server: Server;
 	conf: string;
@@ -189,13 +165,7 @@ export function createT3Waiting(d: WaitingDeps) {
 	const GOAL_WINDOW_MS = 7 * 24 * 3600_000;
 	const GOAL_READS_PER_POLL = 40;
 	const project = (rpc: { request: Rpc["request"] }, threadId: string) => within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as Promise<{ turnItems?: TurnItem[]; runs?: { status?: string }[] }>;
-	/** Opens a connection with a deadline. One that arrives after it is closed at once, so no socket or timer lingers. */
-	const open_ = (token: string) => {
-		let late = false;
-		const p = conn(s.origin, token);
-		p.then((rpc) => { if (late) rpc.ws.close(); }, () => {});
-		return within(p, ms, "connect").catch((e) => { late = true; throw e; });
-	};
+	const open_ = (token: string) => openWithin(conn, s.origin, token, ms);
 
 	async function listWaiting(o: ListWaitingOptions): Promise<MirrorCard[]> {
 		const token = readToken(d.conf, s.tokenFile);
@@ -275,7 +245,7 @@ export function createT3Waiting(d: WaitingDeps) {
 					if (!live) return stale("that goal was already answered in its thread", true);
 					const now = goalCard(card.server, true, { id: card.threadId, title: card.threadTitle }, live);
 					if (busy || now.sig !== sig || now.sig !== card.sig) return stale("the goal changed since you saw it, or the thread is busy: refresh and try again");
-					await dispatch({ type: "message.dispatch", commandId: ids.commandId, threadId: card.threadId, messageId: ids.messageId, text: live.goal, attachments: [], createdBy: "user", creationSource: "server", dispatchMode: { type: "start_immediately" } }, "send");
+					await dispatch(messageCommand({ threadId: card.threadId, text: live.goal, seed: key, identity: "operator", start: true }), "send");
 					d.log("mirror-goal-accepted", { id: card.id, server: card.server, threadId: card.threadId, threadTitle: card.threadTitle, goal: live.goal });
 					return { ok: true, choice: "Goal accepted" };
 				}
@@ -310,32 +280,8 @@ export function createT3Waiting(d: WaitingDeps) {
 		}
 	}
 
-	/**
-	 * Sends one message into a thread as the Steward: T3's `message.dispatch` over the server's RPC with its operate token,
-	 * the command `answer` sends a goal with and `t3x send` uses. Like `t3x send`, it steers a run that is going, or starts
-	 * one, and it is signed as the Steward's (agent, mcp), so the thread's report-back wakes the Steward as a hand relay
-	 * would. `seed` fixes its command and message IDs, so T3 can drop a repeat of the same send.
-	 */
-	async function send(threadId: string, text: string, seed: string): Promise<{ ok: boolean; detail: string }> {
-		const token = readToken(d.conf, s.operateTokenFile);
-		if (!token) return { ok: false, detail: `${s.name} has no operate token here, so the page can't send to its threads` };
-		try {
-			const rpc = await open_(token);
-			try {
-				const proj = await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as { runs?: { id?: string; status?: string }[] };
-				const active = [...(proj.runs ?? [])].reverse().find((r) => ["running", "waiting", "starting"].includes(String(r.status)))?.id;
-				await within(rpc.request("orchestration.dispatchCommand", {
-					type: "message.dispatch", commandId: stableId(`cmd\0${seed}`), threadId, messageId: stableId(`msg\0${seed}`), text, attachments: [],
-					createdBy: "agent", creationSource: "mcp", dispatchMode: active ? { type: "steer_active", targetRunId: active } : { type: "start_immediately" },
-				}), ms, "send");
-				return { ok: true, detail: `sent to ${s.name}:${threadId}` };
-			} finally {
-				rpc.ws.close();
-			}
-		} catch (e) {
-			return { ok: false, detail: redact(String(e), [token]).slice(0, 200) };
-		}
-	}
+	/** The adapter's `send`: the one ping (./ping.ts), signed as the Steward unless the caller names another identity. */
+	const send = createRpcPing({ server: s, conf: d.conf, connect: conn, timeoutMs: ms });
 
 	return { listWaiting, answer, send };
 }

@@ -4,7 +4,7 @@
  * record becomes a normalized state for the core; the same socket serves the on-demand reads (`inspect`).
  */
 import { statSync } from "node:fs";
-import type { AdapterEnv, Inspector, WaitingItem, WaitQuestion, WatchSink } from "../../core/adapter.ts";
+import type { AdapterEnv, Inspector, RunFailure, WaitingItem, WaitQuestion, WatchSink } from "../../core/adapter.ts";
 import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { failedRead } from "../../core/history.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
@@ -12,6 +12,7 @@ import { historyGet, readWhenConnected } from "./history.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
 import { normalizeWaitKind, toState } from "./state.ts";
+import { failureOf } from "./failure.ts";
 
 const TOKEN_MAX_AGE_DAYS = 25;
 
@@ -95,8 +96,8 @@ export class T3Link {
 		}
 	}
 
-	private async projection(threadId: string): Promise<{ turnItems?: any[]; subagents?: { status?: string }[] }> {
-		return (await this.rpc!.request("orchestration.getThreadProjection", { threadId })) as { turnItems?: any[]; subagents?: { status?: string }[] };
+	private async projection(threadId: string): Promise<{ turnItems?: any[]; runs?: any[]; subagents?: { status?: string }[] }> {
+		return (await this.rpc!.request("orchestration.getThreadProjection", { threadId })) as { turnItems?: any[]; runs?: any[]; subagents?: { status?: string }[] };
 	}
 
 	readonly inspector: Inspector = {
@@ -120,6 +121,12 @@ export class T3Link {
 				.map((i) => ({ type: normalizeWaitKind(String(i.type)) as WaitingItem["type"], requestId: String(i.requestId ?? i.id), label: String(i.label ?? i.prompt ?? i.questions?.[0]?.header ?? ""), questions: (i.questions ?? []) as WaitQuestion[] }));
 		},
 		/** The thread's latest instruction, past T3's window if it has to be. HTTP can work while the socket is down, and then the state is stale, so no socket is a failed read. */
+		/** The thread's newest failed run and the error T3 recorded for it (src/adapters/t3/failure.ts). */
+		failure: async (threadId): Promise<RunFailure | undefined> => {
+			if (!this.rpc) return undefined;
+			const p = await this.projection(threadId);
+			return failureOf(p.runs ?? [], p.turnItems ?? []);
+		},
 		instruction: (threadId) => readWhenConnected(Boolean(this.rpc), threadId, historyGet(this.srv.origin, () => this.token())).catch((e) => failedRead(String(e).slice(0, 200))),
 	};
 }

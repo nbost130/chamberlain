@@ -171,6 +171,7 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `servers.json` | optional | The T3 servers to watch. See below. |
 | `web.json` | for the page | The page's bind address and options. See below. |
 | `sweep.json` | optional | Your own routine checks. See below. |
+| `judge.json` | optional | Which backend judges each trigger: `{"triggers": {"stalled-recovery": {"backend": "haiku"}}, "backends": {"haiku": {"command": [...]}, "custom": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. Default: `stalled-recovery` to Haiku through the inference tool, when it is installed. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
 | `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off. See [`src/core/rules.ts`](src/core/rules.ts) and [`examples/operating-rules.json`](examples/operating-rules.json). |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `src/adapters/t3/switch-steward.ts` during a hand-off; the old URL is kept for one-rename rollback. |
