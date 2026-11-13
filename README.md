@@ -173,7 +173,7 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `sweep.json` | optional | Your own routine checks. See below. |
 | `judge.json` | optional | Which backend judges each trigger: `{"triggers": {"stalled-recovery": {"backend": "haiku"}}, "backends": {"haiku": {"command": [...]}, "custom": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. Default: `stalled-recovery` to Haiku through the inference tool, when it is installed. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
-| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off. See [`src/core/rules.ts`](src/core/rules.ts) and [`examples/operating-rules.json`](examples/operating-rules.json). |
+| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See [Operating rules](#operating-rules) below. |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `src/adapters/t3/switch-steward.ts` during a hand-off; the old URL is kept for one-rename rollback. |
 | `*-token` files | optional | Any `tokenFile` or `operateTokenFile` a server or `web.json` names. |
 
@@ -181,7 +181,30 @@ The away record, the rulings (ids R1, R2, ...), the butlers and everything held 
 are rows in the database (below), written by `afk.ts`, `ruling.ts`, `butler.ts` and the page.
 | `daemon.env` | optional | `KEY=value` lines for systemd's `EnvironmentFile`. |
 
-**`settings.json`** (all keys optional; each has an environment override):
+**Operating rules.** `operating-rules.json` lifts the lines a Steward acts on out of your own markdown files when the hand-off
+is built, so there is no second copy to drift ([`examples/operating-rules.json`](examples/operating-rules.json)):
+
+```json
+{ "schemaVersion": 2,
+  "intro": "The rest of these files is for builders. Read them when a rule seems missing.",
+  "sources": [
+    { "path": "~/notes/hosts/this-host.md",
+      "sections": [ { "table": "Deltas", "rows": ["| `timeout`", "| Shell idioms"], "as": "On this host" } ] },
+    { "path": "~/notes/OPERATING_RULES.md",
+      "sections": [ ["Secrets", "whole"], ["Working style", ["- Whole issue", "- Smallest change"]] ] } ] }
+```
+
+- `sources` are read in order, and each one's selectors in order; `intro`, if set, comes first.
+- `[heading, "whole" | [line prefixes]]` takes the `## heading` section, every line or one line per prefix.
+  `{ "section": heading, "lines": ..., "as": heading }` is the same with a heading of its own.
+- `{ "table": heading, "rows": "whole" | [row prefixes], "as": heading }` takes the one markdown table under `## heading`: its
+  header and separator rows, then every body row or one row per prefix. Text around the table is left out.
+- A heading that is gone or doubled, a prefix that matches no line or several, a wrapped rule, or a table that is missing,
+  headerless or not alone under its heading stops the excerpt. That source is then copied whole, with a warning on stderr,
+  and the other sources are still excerpted.
+- The 0.1 form, `{ "source": path, "sections": [...] }`, still works: it is one source.
+
+
 
 | Key | Environment | Default | Meaning |
 | --- | --- | --- | --- |

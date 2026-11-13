@@ -1,8 +1,20 @@
 {
   "schemaVersion": 2,
-  "source": "~/notes/OPERATING_RULES.md",
-  "sections": [
-    ["Secrets", "whole"],
-    ["Working style", ["- Whole issue", "- Smallest change", "- Do not skip a gate"]]
+  "intro": "The rest of these files is for builders, and each stays canonical. Read them when a rule seems missing.",
+  "sources": [
+    {
+      "path": "~/notes/hosts/this-host.md",
+      "sections": [
+        { "table": "Deltas", "rows": ["| `timeout`", "| Shell idioms"], "as": "On this host" }
+      ]
+    },
+    {
+      "path": "~/notes/OPERATING_RULES.md",
+      "sections": [
+        ["Secrets", "whole"],
+        ["Working style", ["- Whole issue", "- Smallest change", "- Do not skip a gate"]],
+        { "section": "Repo", "lines": ["- Merge when CI"], "as": "Landing" }
+      ]
+    }
   ]
 }

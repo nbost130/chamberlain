@@ -15,7 +15,7 @@ install -m 600 examples/decision-rights.md ~/.config/chamberlain/decision-rights
 | `web.json` | `web.json` | The Decisions page. `host` must be loopback or a Tailscale address; the other keys are optional. |
 | `sweep.json` + `sweep-check.sh` | `sweep.json` | A routine check that prints findings as JSON. The command is run directly, not through a shell. |
 | `decision-rights.md` | `decision-rights.md` | The Steward's standing rules, in your words. |
-| `operating-rules.json` | `operating-rules.json` | Which lines of your own rules file the Steward's hand-off copies in. |
+| `operating-rules.json` | `operating-rules.json` | Which lines of your own rules files the Steward's hand-off copies in: sections, chosen lines and a host table, from two sources. |
 
 Token files (`read-token`, `operate-token`, ...) hold one token each and are created with the `t3 auth session issue`
 command shown in the README; they are never kept in this repository.
