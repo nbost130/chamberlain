@@ -2,7 +2,9 @@
 
 The Steward is one permanent thread that compacts when its context grows. Chamberlain measures it once an hour,
 from the Steward's own Claude Code transcript, so a slipping Steward is noticed before it costs decisions. It makes
-no model call, hands off nothing by itself, and asks the operator once per session through the decision queue.
+no model call. On a HAND OFF verdict it starts the hand-off itself, once per native session, as an ordinary wake
+through the outbox; an adapter that cannot say how its Steward hands off (no `handoffInstruction`) falls back to
+asking the operator once per session through the decision queue.
 
 ## What it reads
 
