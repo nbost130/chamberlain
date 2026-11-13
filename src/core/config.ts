@@ -34,7 +34,15 @@ export type Settings = {
 	alertCommand?: string;
 	/** The Steward's context size, in tokens, past which the daemon sends a compact. Default 350000. */
 	compactTokens?: number;
+	/** How ask.ts and `afk.ts hold` decide a question is already settled (src/core/settled.ts). */
+	settledMatch?: SettledMatch;
 };
+/**
+ * The settled check's one tunable rule. `titleOverlap: false` matches on exact refs only (a commit, a run, an item, or a PR,
+ * branch or thread beside the same topic). `ignoreWords` are words that head many unrelated questions in your setup (a
+ * project or product name), so sharing one says nothing about the topic.
+ */
+export type SettledMatch = { titleOverlap?: boolean; ignoreWords?: string[] };
 
 /** Pure: the settings a parsed file holds, or the first thing wrong with it. */
 export function parseSettings(raw: unknown): Settings {
@@ -49,6 +57,16 @@ export function parseSettings(raw: unknown): Settings {
 	};
 	const compactTokens = o.compactTokens;
 	if (compactTokens !== undefined && (typeof compactTokens !== "number" || !Number.isFinite(compactTokens) || compactTokens <= 0)) throw Error('settings.json: "compactTokens" must be a positive number');
+	const sm = o.settledMatch;
+	let settledMatch: SettledMatch | undefined;
+	if (sm !== undefined) {
+		if (sm === null || typeof sm !== "object" || Array.isArray(sm)) throw Error('settings.json: "settledMatch" must be an object');
+		const { titleOverlap, ignoreWords, ...extra } = sm as Record<string, unknown>;
+		if (Object.keys(extra).length) throw Error(`settings.json: "settledMatch" has unknown keys: ${Object.keys(extra).join(", ")}`);
+		if (titleOverlap !== undefined && typeof titleOverlap !== "boolean") throw Error('settings.json: "settledMatch.titleOverlap" must be true or false');
+		if (ignoreWords !== undefined && (!Array.isArray(ignoreWords) || ignoreWords.some((w) => typeof w !== "string" || !w.trim()))) throw Error('settings.json: "settledMatch.ignoreWords" must be a list of words');
+		settledMatch = { ...(titleOverlap !== undefined ? { titleOverlap } : {}), ...(ignoreWords !== undefined ? { ignoreWords: (ignoreWords as string[]).map((w) => w.trim()) } : {}) };
+	}
 	return {
 		schemaVersion: SCHEMA_VERSION,
 		...(str("principalName") ? { principalName: str("principalName") } : {}),
@@ -56,6 +74,7 @@ export function parseSettings(raw: unknown): Settings {
 		...(str("t3StateDb") ? { t3StateDb: str("t3StateDb") } : {}),
 		...(str("alertCommand") ? { alertCommand: str("alertCommand") } : {}),
 		...(compactTokens !== undefined ? { compactTokens: compactTokens as number } : {}),
+		...(settledMatch ? { settledMatch } : {}),
 	};
 }
 

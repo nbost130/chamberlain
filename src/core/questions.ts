@@ -4,6 +4,7 @@
  * rows. ask.ts, the page and the daemon all write through the Store, so none rewrites another's lines. What a question
  * looks like now is composed from those rows (`questionStates`).
  */
+import { randomBytes } from "node:crypto";
 import type { Store } from "./store.ts";
 import { principal, Principal } from "./config.ts";
 import type { Ruling } from "./rulings.ts";
@@ -24,6 +25,8 @@ export type Question = {
 	options: Option[];
 	recommended?: number;
 	proposedRuling?: string;
+	/** An ISO date or date-time the proposed ruling stops being in force; omitted for a standing one. */
+	proposedExpires?: string;
 	evidence?: Evidence[];
 	thread: string;
 	server: string;
@@ -33,6 +36,18 @@ export type Question = {
 	tag?: string;
 	/** A secret is answered in its own thread, never on the page. */
 	secret?: boolean;
+	/**
+	 * `false` marks a question that can wait: it is recorded and listed below every urgent one, and nothing is posted where
+	 * the operator reads, so no notification goes out. Absent means urgent, so every question asked before this field is unchanged.
+	 */
+	urgent?: false;
+	/** Why this was asked although a settled record matched it (ask.ts `notSettled`). Kept for the audit. */
+	notSettled?: string;
+	/**
+	 * The backend request ID of the card this question points to (the daemon's hold for an approval, secret or link card,
+	 * src/core/card-hold.ts). The question is answered on that card, and closes when the card leaves its thread.
+	 */
+	cardRequest?: string;
 	createdAt: string;
 };
 
@@ -47,6 +62,8 @@ export type QuestionState = Question & {
 };
 
 export const QUEUE = "queue";
+/** A new question's ID: `Q-` and a short time-ordered, random tail. */
+export const newItemId = () => `Q-${Date.now().toString(36).slice(-5)}${randomBytes(2).toString("hex")}`;
 export const evidenceRoot = (state: string) => `${state}/evidence`;
 /** Question IDs are minted by ask.ts and are the only names the evidence route accepts as a directory. */
 export const ITEM_ID = /^Q-[a-z0-9]{4,16}$/;
@@ -55,11 +72,28 @@ export const cardTag = (id: string) => `[${id}]`;
 export const tagIn = (text: string): string | undefined => text.match(/\[(Q-[a-z0-9]{4,16})\]/)?.[1];
 
 /**
+ * Pure: an item that can never wait. A secret (`secret: true` or the tag "Secret"), an approval (the tag "Approval") and a
+ * daemon's card pointer (`cardRequest`: an approval, secret or link card) are ALWAYS urgent: `urgent: false` on one is
+ * ignored wherever it comes from (ask.ts says so on stderr), so none is ever posted late or listed under NOT URGENT.
+ */
+export const alwaysUrgent = (q: Pick<Question, "secret" | "tag" | "cardRequest">): boolean =>
+	q.secret === true || (typeof q.cardRequest === "string" && q.cardRequest !== "") || /^\s*(approval|secret)\s*$/i.test(q.tag ?? "");
+/** Pure: is this item urgent? Absent `urgent` is urgent, and so is every item `alwaysUrgent` names, whatever its field says. */
+export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean => q.urgent !== false || alwaysUrgent(q);
+/** Pure: the item with an `urgent: false` it may not have removed. Every write and every read of a question goes through it. */
+export function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
+	if (q.urgent !== false || !alwaysUrgent(q)) return q;
+	const { urgent: _dropped, ...rest } = q;
+	return rest as T;
+}
+
+/**
  * Puts a question on the queue as an item (triggered but silenced: its answer, not its arrival, is what wakes the Steward) and
  * records its evidence rows, in one transaction. Asking the same id twice changes nothing.
  */
 export function askQuestion(store: Store, q: Question, now = Date.now()) {
-	const { evidence, ...rest } = q;
+	// An approval or a secret is always urgent: a demotion is dropped here, so no path that files a question can store one.
+	const { evidence, ...rest } = withUrgency(q);
 	store.tx(() => {
 		if (store.items.get(QUEUE, q.id)) return;
 		store.items.observe({ source: QUEUE, kind: "question", dedupKey: q.id, mode: "silenced", ...(q.threadId ? { subject: { kind: "thread", id: q.threadId } } : {}), payload: rest, now });
@@ -81,7 +115,8 @@ export function questionStates(store: Store): Map<string, QuestionState> {
 		// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
 			const answered = claim !== undefined || i.status === "resolved";
 		out.set(i.dedupKey, {
-			...q,
+			// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
+			...withUrgency(q),
 			...(ev?.length ? { evidence: ev.map((e): Evidence => ({ type: e.type, ...(e.name ? { path: e.name } : {}), ...(e.url ? { url: e.url } : {}), ...(e.caption ? { caption: e.caption } : {}) })) } : {}),
 			status: i.payload.answeredOnCard === true ? "answered-on-card" : answered ? "answered" : "open",
 			...(claim?.answer ? { answer: claim.answer as Answer } : {}),
@@ -103,10 +138,14 @@ const KIND_RANK: Record<Kind, number> = { "only-you": 0, product: 1, ruling: 2, 
 /** How many threads an item holds up, read from its blocks text ("blocks 3 threads", "holds 2 PRs"). */
 export const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
 
-/** Pure: the open queue, ranked. Only-you first, then what blocks the most, then the oldest. "Not now" sinks to the end. */
+/**
+ * Pure: the open queue, ranked. Non-urgent questions sit below every urgent one; within each of the two, "not now" sinks
+ * to the end, then only-you first, then what blocks the most, then the oldest.
+ */
 export function ranked(items: Iterable<QuestionState>): QuestionState[] {
 	return [...items].filter((i) => i.status === "open").sort((a, b) =>
-		Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt))
+		Number(!isUrgent(a)) - Number(!isUrgent(b))
+		|| Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt))
 		|| KIND_RANK[a.kind] - KIND_RANK[b.kind]
 		|| blockWeight(b.blocks) - blockWeight(a.blocks)
 		|| a.createdAt.localeCompare(b.createdAt));

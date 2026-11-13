@@ -96,3 +96,51 @@ test("a secret or a link request is shown with where to answer it, and nothing t
 	expect(p.app.innerHTML).toContain("a secret is entered in its own thread");
 	expect(p.app.innerHTML).not.toContain("data-cact=\"answer\"");
 });
+
+async function list(items: Record<string, unknown>[]): Promise<string> {
+	const app: any = { innerHTML: "", className: "", addEventListener() {} };
+	const document = { getElementById: (id: string) => (id === "app" ? app : { textContent: "", className: "", hidden: false }), addEventListener() {}, querySelector: () => null, activeElement: null };
+	const base = { options: [{ label: "A" }, { label: "B" }], recommended: 0, status: "open", context: "", thread: "t", server: "s", batchable: false, createdAt: new Date().toISOString() };
+	const fetch = async () => ({ ok: true, status: 200, json: async () => ({ items: items.map((i) => ({ ...base, ...i })), rulings: [] }) });
+	const noop = () => {};
+	new Function("document", "window", "location", "history", "matchMedia", "fetch", "setTimeout", "clearTimeout", "setInterval", readFileSync(new URL("./static/app.js", import.meta.url), "utf8"))(
+		document, { addEventListener: noop }, { pathname: "/" }, {}, () => ({ matches: false }), fetch, () => 0, noop, () => 0);
+	await new Promise((r) => setTimeout(r, 10));
+	return app.innerHTML;
+}
+
+test("(a) a non-urgent question is listed below every urgent one, under NOT URGENT, and says so", async () => {
+	const html = await list([
+		{ id: "Q-nu-only", kind: "only-you", title: "Waits a while", urgent: false },
+		{ id: "Q-idea1", kind: "idea", title: "An idea" },
+		{ id: "Q-prod1", kind: "product", title: "A product call" },
+	]);
+	const at = (t: string) => html.indexOf(t);
+	expect(at("A product call")).toBeGreaterThan(-1);
+	expect(at("A product call")).toBeLessThan(at("An idea"));
+	expect(at("An idea")).toBeLessThan(at("Waits a while"));
+	expect(html).toMatch(/NOT URGENT · [^<]+/);
+	expect(at("NOT URGENT")).toBeLessThan(at("Waits a while"));
+	expect(html).toContain('<span class="later">not urgent</span>');
+	expect(html.match(/not urgent<\/span>/g)).toHaveLength(1);
+});
+test("(a) a queue with no non-urgent question renders as before", async () => {
+	const html = await list([{ id: "Q-prod1", kind: "product", title: "A product call" }]);
+	expect(html).not.toContain("NOT URGENT");
+	expect(html).not.toContain("not urgent");
+});
+test("(a) an approval, a secret and a card pointer stay under the urgent groups even when their row says urgent: false", async () => {
+	const html = await list([
+		{ id: "Q-apr01", kind: "only-you", title: "Approval row", tag: "Approval", urgent: false },
+		{ id: "Q-sec01", kind: "only-you", title: "Secret row", secret: true, urgent: false },
+		{ id: "Q-ptr01", kind: "only-you", title: "Pointer row", cardRequest: "req-1", tag: "Approval", urgent: false },
+		{ id: "Q-nu001", kind: "idea", title: "Can wait row", urgent: false },
+	]);
+	const at = (t: string) => html.indexOf(t);
+	for (const t of ["Approval row", "Secret row", "Pointer row"]) {
+		expect(at(t)).toBeGreaterThan(-1);
+		expect(at(t)).toBeLessThan(at("NOT URGENT"));
+	}
+	expect(at("NOT URGENT")).toBeLessThan(at("Can wait row"));
+	expect(html.match(/not urgent<\/span>/g)).toHaveLength(1);
+});

@@ -7,7 +7,7 @@ import { readHealth, HEALTH_CONFIG } from "../core/steward-health.ts";
 import { closeHeldForItem } from "../core/afk.ts";
 import { answerDeliveryId, batchable, claimWake, enqueueClaim, fallbackWake, finishRelay, notNow, PAGE, pageClaim, questionStates, ranked, readRelay, recordAnswerDelivered, recoverClaims, startRelay, wokenBy, type Answer, type Claim, type ClaimRelay, type QuestionState } from "../core/questions.ts";
 import { CHALLENGE_TTL_MS, consumeChallenge, issueChallenge, newSession, SESSION_COOKIE, sessionOf } from "../core/challenge.ts";
-import { citations, confirmRuling, editRuling, inForceRuling, readRulings, retireRuling } from "../core/rulings.ts";
+import { citations, confirmRuling, editRuling, expiresProblem, inForceNow, isExpired, readRulings, recordInForce, retireRuling, stageRulings, type Clock } from "../core/rulings.ts";
 import type { Store } from "../core/store.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { checkCard, needsConfirmation, type SendToThread } from "./waiting.ts";
@@ -27,7 +27,7 @@ export type AppDeps = {
 	mirror?: Pick<import("./waiting.ts").Waiting, "list" | "answer"> & Partial<Pick<import("./waiting.ts").Waiting, "unreachable">>;
 	staticDir: string;
 	testMode?: boolean;
-	/** The clock the confirmation challenges use. Default Date.now; tests move it. */
+	/** The clock the confirmation challenges and the rulings (what has expired) use. Default Date.now; tests move it. */
 	now?: () => number;
 };
 
@@ -87,6 +87,7 @@ export function createApp(d: AppDeps) {
 	};
 
 	const state = () => questionStates(d.store);
+	const clock: Clock = () => d.now?.() ?? Date.now();
 	const rulings = () => readRulings(d.store);
 	const decisions = () => d.store.decisions.list();
 
@@ -174,6 +175,9 @@ export function createApp(d: AppDeps) {
 			if (!i) return { status: 404, body: { error: "no such item" } };
 			if (i.status !== "open") return { status: 409, body: { error: i.status === "answered" ? "already answered" : "already answered on its card in T3" } };
 			if (i.secret) return { status: 400, body: { error: "a secret is entered in its own thread, never on this page" } };
+			// A card pointer closes only when its card does. An answer here would take it off the queue (and its hold off the ledger) while the
+			// card still waits, so it is refused, and the refusal says where to act.
+			if (i.cardRequest) return { status: 409, body: { error: "this question points to a card waiting in its thread: act on the card itself; this question and its hold close only when the card does" } };
 			if (!Number.isInteger(body.choice) || body.choice < 0 || body.choice >= i.options.length) return { status: 400, body: { error: "choose one of the options" } };
 			const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 4000) : undefined;
 			const label = i.options[body.choice]!.label;
@@ -181,6 +185,9 @@ export function createApp(d: AppDeps) {
 			const wantsRuling = body.saveRuling === true && by === "page";
 			const decides = wantsRuling ? ((typeof body.rulingWording === "string" && body.rulingWording.trim()) || i.proposedRuling) : undefined;
 			if (wantsRuling && !decides) return { status: 400, body: { error: "there is no ruling wording to save" } };
+			const expiryProblem = decides && i.proposedExpires ? expiresProblem(i.proposedExpires) : undefined;
+			if (expiryProblem) return { status: 400, body: { error: `the proposed ruling's expiry ${expiryProblem}: save it without a ruling, or write a new one` } };
+			if (decides && i.proposedExpires && isExpired({ expires: i.proposedExpires }, clock())) return { status: 400, body: { error: `the proposed ruling expired on ${i.proposedExpires}: save it without a ruling, or write a new one` } };
 			const taken = (owner: string) => ({ status: 409, body: { error: owner === PAGE ? "already answered" : "already answered on its card in T3" } });
 			const held = wokenBy(d.store, i.id);
 			if (held !== undefined) return taken(held);
@@ -190,11 +197,14 @@ export function createApp(d: AppDeps) {
 			const base: Answer = { choice: body.choice, label, ...(note ? { note } : {}), by, t: new Date().toISOString(), deliveryId: answerDeliveryId(i.id) };
 			const made: { claim?: Claim; lost?: Claim } = {};
 			d.store.tx(() => {
-				const ruling = decides ? inForceRuling(readRulings(d.store), `${label}${note ? `. ${note}` : ""}`, decides.trim(), "card", `saved and confirmed by the principal on the queue page, answering ${i.id}`, i.id) : undefined;
+				// The ruling is recorded in the list in memory (an identical live ruling is that ruling, so saving twice adds nothing) and saved
+				// only once the claim is won, in this same transaction.
+				const staged = stageRulings(d.store);
+				const ruling = decides ? recordInForce(staged.list, `${label}${note ? `. ${note}` : ""}`, decides.trim(), "card", `saved and confirmed by the principal on the queue page, answering ${i.id}`, i.id, i.proposedExpires ? { expires: i.proposedExpires } : undefined, clock()) : undefined;
 				const c = pageClaim(i, ruling ? { ...base, ruling: { id: ruling.id, decides: ruling.decides } } : base, ruling);
 				const r = claimWake(d.store, c);
 				if (!r.won) { made.lost = r.claim; return; }
-				if (ruling) d.store.rulings.save(ruling);
+				if (ruling) staged.commit();
 				// A thread-routed answer's wake is only its fallback: it is written if the direct send fails (follow).
 				if (!c.relay) enqueueClaim(d.store, c);
 				made.claim = c;
@@ -245,7 +255,7 @@ export function createApp(d: AppDeps) {
 	function rulingsView() {
 		const list = rulings();
 		const cites = citations(decisions());
-		return list.map((r) => ({ ...r, cited: cites.get(r.id)?.length ?? 0, recent: (cites.get(r.id) ?? []).slice(0, 3) }));
+		return list.map((r) => ({ ...r, expired: r.status === "in-force" && isExpired(r, clock()), cited: cites.get(r.id)?.length ?? 0, recent: (cites.get(r.id) ?? []).slice(0, 3) }));
 	}
 
 	async function api(req: Request, url: URL, inline: boolean): Promise<Response> {
@@ -254,7 +264,7 @@ export function createApp(d: AppDeps) {
 			const s = state();
 			const open = ranked(s.values()).map(view);
 			const list = rulings();
-			return json({ items: open, cards: d.mirror?.list() ?? [], unreachable: d.mirror?.unreachable?.() ?? [], health: readHealth(d.store) ?? null, healthLimits: HEALTH_CONFIG, inForce: list.filter((r) => r.status === "in-force").length, unconfirmed: list.filter((r) => r.status !== "retired" && !r.confirmed).length, testMode: Boolean(d.testMode) });
+			return json({ items: open, cards: d.mirror?.list() ?? [], unreachable: d.mirror?.unreachable?.() ?? [], health: readHealth(d.store) ?? null, healthLimits: HEALTH_CONFIG, inForce: inForceNow(list, clock()).length, unconfirmed: list.filter((r) => r.status !== "retired" && !r.confirmed).length, testMode: Boolean(d.testMode) });
 		}
 		if (req.method === "GET" && parts[1] === "items" && parts[2] && parts.length === 3) {
 			const i = state().get(parts[2]);
@@ -311,10 +321,10 @@ export function createApp(d: AppDeps) {
 			const [id, action] = [parts[2], parts[3]];
 			const decides = typeof body.decides === "string" ? body.decides : undefined;
 			try {
-				const r = action === "confirm" ? confirmRuling(d.store, id, decides)
-					: action === "edit" ? editRuling(d.store, id, decides ?? "")
-					: action === "once" ? retireRuling(d.store, id, "only this once")
-					: action === "retire" ? retireRuling(d.store, id, "retired")
+				const r = action === "confirm" ? confirmRuling(d.store, id, decides, clock)
+					: action === "edit" ? editRuling(d.store, id, decides ?? "", clock)
+					: action === "once" ? retireRuling(d.store, id, "only this once", undefined, undefined, clock)
+					: action === "retire" ? retireRuling(d.store, id, "retired", undefined, undefined, clock)
 					: undefined;
 				if (!r) return fail(404, "unknown action");
 				d.log("ruling-changed", { id, action });

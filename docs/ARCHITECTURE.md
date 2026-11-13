@@ -55,7 +55,7 @@ flowchart TB
 
 | Directory | What lives there | May import |
 | --- | --- | --- |
-| `src/core/` | Everything that is true whatever the backend: the rules that decide a wake (`decide.ts`), the hold and digest logic (`hold.ts`), the outbox's producer side (`deliver.ts`) and its one message relay (`relay.ts`, held to one per state directory by `singleton.ts`), the **`Store` interface** (`store.ts`) and its one SQLite implementation (`sqlite-store.ts`, `migrations.ts`), the item system (`alert.ts`, `source.ts`, `sweep.ts`), the decision queue and its one-wake claims (`questions.ts`), rulings, away mode, butlers, the hand-off (`brief.ts`), operating rules, history, the config files' schema version and its migration, and the engine (`engine.ts`) that ties them to an adapter. Core logic depends on the `Store` interface only; `sqlite-store.ts` is the one module that opens the database. | itself only |
+| `src/core/` | Everything that is true whatever the backend (the Alert Desk's inbox drain, `alert-desk.ts`, is here: it decides through the item system and queues wakes for the `desk` receiver, which the one relay sends as a second receiver, through the same serial queue): the rules that decide a wake (`decide.ts`), the hold and digest logic (`hold.ts`), the outbox's producer side (`deliver.ts`) and its one message relay (`relay.ts`, held to one per state directory by `singleton.ts`, and to one per lock handle by `createRelay` itself; every receiver, the Steward and the Alert Desk, is a lane of it), the **`Store` interface** (`store.ts`) and its one SQLite implementation (`sqlite-store.ts`, `migrations.ts`), the item system (`alert.ts`, `source.ts`, `sweep.ts`), the decision queue and its one-wake claims (`questions.ts`), rulings, away mode, butlers, the hand-off (`brief.ts`), operating rules, history, the config files' schema version and its migration, and the engine (`engine.ts`) that ties them to an adapter. Core logic depends on the `Store` interface only; `sqlite-store.ts` is the one module that opens the database. | itself only |
 | `src/cli/` | One-time tools: the importer (`import.ts`) that reads the old file layout into the database. | `src/core/` |
 | `src/adapters/<name>/` | Every fact about one backend: its protocol, its tokens, its database, its wording. One folder per backend. | `src/core/` and its own folder |
 | `src/adapters/index.ts` | The registry: a name to a factory, one line per backend. The only file that names more than one adapter. | everything under `src/adapters/` |
@@ -85,6 +85,7 @@ optional ones it has in `capabilities`. The core and the page degrade cleanly wh
 | `inspect` | optional | Reads of one thread for building a wake: last message, what it waits on, subagents, its latest instruction. | a turn end wakes once per turn with no excerpt or question; there is no report gating |
 | `send` | optional | Sends a message into a thread as the Steward. | an option routed straight to its thread goes to the Steward instead |
 | `stewardProbe` | optional | The Steward's context size, stall and whether a compaction may go. | no stall alarm, no size tracking, no compaction |
+| `handoffInstruction` | optional | How the Steward starts its own hand-off on this backend; the health check's HAND OFF verdict queues that wake. | the operator is asked to hand off instead |
 | `compact` | optional | How a compaction request reaches the Steward. | the daemon only alarms that the Steward is over its size |
 
 Thread states use one vocabulary whatever the backend says (`running`, `queued`, `starting`, `preparing`, `waiting`,
@@ -99,8 +100,16 @@ necessary. Only the relay (`src/core/relay.ts`), in the daemon, calls a wake tra
 compaction request, which has no row), and it cannot be built without the held one-relay lock: `createRelay` and `createEngine` take the
 handle `holdRelayLock` returns, and refuse anything else, including a handle for another database: the handle records the device and inode
 of the file it locked, and `createRelay` checks them against the file its store opened (`lockCovers`, `src/core/singleton.ts`). Every POST the relay makes, a wake or a compaction, goes through **one serial
-queue** inside the relay, so the webhook never has two requests in flight (a compaction waits behind the wake being sent, and is not
-retried: it has no row). No other process opens a connection to a wake webhook: the page and every
+queue** inside the relay, so no two requests are ever in flight (a compaction waits behind the wake being sent, and is not
+retried: it has no row). That holds across **receivers** too: the Alert Desk's wakes (rows whose `receiver` column, migration 8, is `desk`) go
+to the desk's own webhook, but through the same relay and the same queue, never a second relay. Each row's receiver picks its transport; each
+receiver keeps its own busy gate, per-receiver order, failure count, dead letters and alarm keys (`desk:wake-delivery` and so on). Rows
+(pending or dead-lettered) and held wakes for a receiver that is no longer configured, say the desk removed from config while its wakes
+still waited, are never dropped and never sent to another receiver: each audit raises that receiver's `<receiver>:wake-unconfigured`
+alarm, naming it and the count, on the same repeat policy as every alarm. `bun src/wakes.ts list` shows each row with its receiver, and
+`bun src/wakes.ts cancel <id>` gives one up; configuring the receiver again sends them. `createRelay`
+refuses a second relay on a lock that already has one, so with `holdRelayLock` refusing a second lock in a process there is one relay per
+store and per process (`src/architecture.test.ts` checks both the one call site and the run-time refusal). No other process opens a connection to a wake webhook: the page and every
 command-line tool reach the Steward only by writing to the database (inserting a row, or `wakes.ts` changing an existing row's status).
 `src/architecture.test.ts` fails if any other module calls a transport (including by destructuring or aliasing it) or POSTs, if
 production code imports or names a path under `src/testing/` (`testRelay` and its stub lock live there), or if production code has a
@@ -162,6 +171,35 @@ sequenceDiagram
 6. **Sending it.** `relay.ts`, oldest row first: if the row has used `maxAttempts` attempts it becomes `dead_letter`; otherwise
    `attempts + 1` is **committed**, then the POST is made, then the row is committed `delivered`. A row that failed waits one minute,
    then four, before its next attempt.
+   **The rights go before any row that depends on them, keyed by state, checked before every attempt.** Every wake's rights text is
+   stamped when it is queued with the Steward thread and session and the rights hash it was composed for (`rights_for`, migration 9, frozen
+   with the row; a digest carries its members' stamps). A `full` stamp is on a wake that carries the whole block; a pointer stamp (the
+   one-line "rights unchanged") or a `legacy-unstamped` stamp makes the row **depend** on the Steward already holding the rights. The
+   durable **rights record** (state `rights-sent`) says which Steward thread and session hold which rights hash, and only a delivered full
+   block writes it: when a row with a `full` stamp is delivered, the relay writes the record from that stamp **in the same transaction**
+   that marks the row delivered (a redelivery after a crash writes it the same way; nothing is kept in memory). The record lives under a
+   **rights epoch**, an integer in the same state row: a compaction bumps it and drops the record in one write **inside the relay's serial
+   job for the compaction, before its POST** (every wake job queued ahead of it has settled by then), and a context shrink seen by the
+   minute check bumps it the same way. Every full stamp records the epoch it was composed under, and a delivered full stamp writes the
+   record only while that epoch is still the current one: a full block that was in flight when the compaction was asked for, or whose
+   delivered commit was owed across it, is marked delivered and writes nothing (`rights-full-stale`), so it can never restore the record
+   the compaction took away. The row is never deleted, so the epoch only rises. Before **every** attempt of a
+   dependent Steward row (a retry, a restart, and a digest as one row included), the relay asks the engine for the current state
+   (`rightsNow`: the Steward thread, its session, the rights hash; the relay adds the current epoch) and goes only if the record shows exactly
+   that state. Otherwise it queues
+   the **prerequisite** for that state in one transaction, a standalone full-rights wake stamped `full` with the state, under
+   `<id>:rights-first:<key>` (`key`: a short hash of thread, session, rights hash and epoch), sends it, asks again, and sends the row **exactly as it
+   was queued**: no row's text is ever rewritten or searched. The outbox refuses a known id, so a state gets one prerequisite per row; a new
+   state (the Steward replaced after the prerequisite went and the row failed) gets a new one. One that ended without the record showing it
+   (cancelled, or a compaction cleared the record after it was delivered) gives way to `<key>:2`, `:3`. While the prerequisite is failing or
+   dead-lettered the row waits and uses no attempt; to give the row up, cancel it. A prerequisite for a state that has passed is cancelled,
+   never sent on its own after newer rights (`rights-first-obsolete`). When the rights cannot be read, the prerequisite carries the
+   unreadable notice, writes no record, and once it is delivered the row goes. The `rights-first` log line names both ids and the reason. A
+   Steward wake queued **before** the stamps existed has none, so migration 10 stamps **every** undelivered Steward wake with no stamp (a
+   pending or dead-lettered row, or a held wake, receiver NULL), whatever its text, as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`),
+   and `legacy-import.ts` stamps every wake it brings in the same way: it then depends on the record like a pointer. A digest keeps each
+   member's text byte for byte, repeated rights blocks included (they cost tokens, not correctness), and keeps a full stamp only from an item
+   whose text it carries (a folded item's block is not sent).
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
    ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the
@@ -353,7 +391,7 @@ start with exit code 3, the way a config file from a newer build is.
 | table `confirmation_challenges` | the single-use confirmations an approval answer must present (hashed, expiring) | the page |
 | tables `claims`, `relays`, `evidence` | a question's one-wake claim (wake text, delivery id, the answer, any ruling), its one direct send, and rows pointing at its evidence files | the page |
 | tables `outbox`, `outbox_members`, `held_wakes` | the transactional outbox: one row per wake to send (pending, delivered, dead_letter, cancelled), the ids each row carries (its own, or a digest's members, each bound to one row ever), and holdable wakes not yet composed | rows: daemon, page; status: the daemon's relay and `wakes.ts` |
-| tables `rulings`, `decisions`, `butlers`, `away` | the rulings ledger, the Steward's self-answers, the butler ledger, the away record | the Steward's tools and the page |
+| tables `rulings`, `decisions`, `butlers`, `away` | the rulings ledger (see [Rulings](#rulings)), the Steward's self-answers, the butler ledger, the away record | the Steward's tools and the page |
 | table `events` | every wake, skip, alarm and answer; read with SQL by the return brief and `queue-waits.ts` | daemon, page |
 | table `state` | the sweep clock, `rights-sent`, `steward-health`, `heartbeat` | daemon |
 | files, beside the database | `evidence/<item>/` (copied in by `ask.ts`, served by the page, listed by `evidence` rows) and `steward-brief.md` | `ask.ts`, `brief.ts` |
@@ -419,6 +457,73 @@ would-be notifications in the `sweep` log event.
 (`relays`) and its evidence rows. A question is answered when its claim exists, and `resolved` when that wake is delivered (or the
 direct send is delivered); set aside with "not now" it is `acknowledged`, still answerable and ranked last.
 
+### Queue first, hold second, settled never twice
+
+Anything that waits on the operator is a **question** first and a **hold** second, and neither is made for something already
+settled. All of it is the one item system: a hold is an item of source `held` whose payload names its question (`item`), a
+question is an item of source `queue`, and "settled" is a read of states that already exist. No ledger was added and no
+schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live in the JSON payload, which older builds ignore).
+
+- **Queue first.** `afk.ts hold` requires `--item <Q-id>` naming a question that is on the queue and still open; it refuses no
+  item, an unknown one, or one already answered. ask.ts takes `"urgent": false` for a question that can wait: it is recorded,
+  ranked below every urgent one (`ranked`, then grouped under NOT URGENT on the page), and nothing is posted where the operator
+  reads, so it sends no notification. **An approval (tag `Approval`), a secret (`secret: true` or tag `Secret`) and a card
+  pointer (`cardRequest`) are always urgent** (`alwaysUrgent`, `src/core/questions.ts`): ask.ts ignores `urgent: false` on one with a
+  note on stderr and posts it as urgent, `askQuestion` drops the field on every write, `questionStates` drops it on every read (a row
+  an older build stored), and the page groups by the same rule, so no path can demote one.
+- **Holds close by their item field only** (`heldForItem`, `itemIdOf`, pass 1 of `hold-reconcile.ts`). An item ID written in a
+  hold's text links it to nothing.
+- **Settled never twice** (`src/core/settled.ts`). Before ask.ts records a question and before `afk.ts hold` writes a hold, the
+  subject is checked against three sources read from the Store: answered questions, rulings in force now (a proposal is not
+  settled, and neither is a ruling that has expired, been superseded or been retired: its topic is open again), and the `decisions` log. Open questions never count. The rules, in order, and each match names the one it used:
+  1. *Strong refs* name one thing, so one shared is a match: a commit SHA (7+ hex with a digit and a letter), a run ID given as a
+     field, a question ID in the title or `--item` (an ID in the context is a pointer to earlier work and does not count).
+  2. *Weak refs* name a subject that gets many questions (a PR or issue number, a branch, a thread title of 12+ characters), so
+     they match only beside the **same topic**: three shared distinctive words, at least half of the shorter title's.
+  3. *Title overlap* (`settledMatch.titleOverlap`, on by default): a two-word title must appear as one phrase (at most one word
+     between) with a word that is not a generic workflow word; a longer title needs three shared words, three quarters of the
+     shorter side, two distinctive, and against a long text every shared word inside a window of `2n + 2` words.
+  Words are lower-cased, stop words dropped and a plural `s` removed from words over four letters; `ignoreWords` (case-insensitive)
+  and the principal's name are dropped before every count, the title overlap's as well as the topic's, so with `Acme` ignored a
+  settled "Acme deployment" does not block "Acme deployment database rollback?". The rule favours precision: a paraphrase ("Should we call it Atlas?" after "Rename
+  the project to Atlas") is a documented miss that costs one question, while a false match costs a `notSettled` override with a
+  reason, stored on the record. A malformed record is skipped and counted in the output, never silently. The daemon's own alarms
+  are filed with `notSettled: "raised by the daemon: a live system alarm"`, since a live alarm recurs by nature.
+- **Card holds** (`src/core/card-hold.ts`). While the operator is away, the engine holds an approval, secret or link card behind
+  a **pointer question** that it files in the same transaction as the notification record and the hold: one per card, keyed by
+  **(server, request ID)** everywhere (filing, the `req:<server>:<id>` notification key, closing, reconciling), so two servers that use
+  the same request ID never close or suppress each other's. The hold stores its card (`card`: server, thread ID, request ID) and the
+  question its `server`, `threadId` and `cardRequest`, so closing needs nothing in memory. **A card hold closes only when its card
+  resolves**: the page refuses an answer to a pointer (409, "act on the card itself"), its options never say the card was handled, and
+  the item reconciler skips a card hold unless its question was closed by the card (`answered-on-card`). One hold per card, never
+  per thread: a thread waiting on two cards has two holds and two questions. A card hold and its question close together, in one
+  transaction (`closeCard`, the only code that closes a card hold); the ref pass and the thread close skip card holds. When a
+  thread's one pending request ID changes, nothing is closed on that alone (the thread may still wait on the old card):
+  `reconcileCardHolds` runs at once, and on every tick and every watcher connection, and checks every open card. **A card closes
+  only on positive evidence**: its hold and pointer question close together, in one transaction, only when a read of its own
+  thread on its own server (`WaitingRead` `ok: true`, docs/ADAPTERS.md) started after the hold was written and shows the card's
+  own item (a request type, keyed `requestId ?? id`, on the same thread) in a terminal status (`resolved`; for T3 `completed`,
+  `cancelled`, `failed` or `interrupted`, with no other item of that card still going). "Started after" is the store's durable
+  sequence (migration 12, `Store.sequence`): the hold records a value when it is written and the reconciler takes a new one
+  before each read; the wall clock is never compared, so a clock rollback cannot stall or hasten a close. A hold written while
+  the read was out stays, with its question. Every card hold names its server, so no card is resolved across servers. It closes exactly once, so a card resolved while the daemon was down does not stay open. **Absence
+  never closes anything.** A backend's read can be a bounded window of the thread's history (T3's thread projection is: the
+  server builds it with `buildBoundedThreadProjection`, bounded by item count and bytes, and the RPC drops its `hasMoreHistory`
+  flag), so a card that still waits can be missing from it. A card missing from a read, a thread that is gone, archived or
+  missing from a snapshot, and a card item with a missing or invalid request ID or status or an unknown status (skipped by the
+  adapter, logged as `card-item-ignored`) all leave the hold open; no snapshot is consulted. A server that is not connected (a `mayBeOffline` one asleep included), a read that spans a disconnect,
+  throws, or comes back in an unexpected shape is `ok: false`: it says nothing, and the daemon logs `card-read-unavailable` once
+  per episode (`card-read-recovered` when reads work again). A hold with no evidence (not seen waiting, not seen resolved) for
+  longer than `cardUnverifiedAlarmMs` (default 24 hours, `CHAMBERLAIN_CARD_UNVERIFIED_ALARM_MS`; tracked in the store as a
+  `card-unverified` item, so a restart does not reset it) raises an alarm through the normal repeat policy, naming the hold, the
+  card and the hand close command (`afk.ts close-card <server> <request id> "<how>"`; `afk.ts close <id>` on a card hold does the
+  same). Only the operator closes it then. A failed waiting read on the wake path, or one that skipped a card item, is not
+  "nothing waiting" either: the thread's own status stands for the request and the wake goes.
+  Which cards exist and their kind come from the adapter's `Inspector.waiting`, normalized to `WaitKind`; the core reads only the
+  kind, the request ID and the label (`cardWaitOf`), never the card's questions, options or a value. A secret card's pointer is
+  itself `secret`, so it is never posted and the page shows it only as a link to its thread; any other pointer is posted once,
+  best effort, through the adapter's `post`.
+
 ### What the guarantee covers, and where it stops
 
 **Covered: a fact that must survive a restart, or be seen by both processes.** Each is a database row, and the database is what
@@ -465,6 +570,54 @@ monitor*), and a reviewer should ask of any new map or set: "if this process die
 **Adding a monitor.** Implement `ItemSource` (`name`, optional `mode`, `run()` returning findings or throwing when it cannot
 see) and run it from the sweep. It gets identity, de-duplication, the repeat policy, the error state, shadow mode and the wake for
 free, and no other state of its own.
+
+## Rulings
+
+Rulings (`src/core/rulings.ts`, table `rulings`) are the principal's standing decisions. Four properties are kept in the store layer, so
+every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets them and none has to remember to check:
+
+- **Recording is idempotent.** `propose` and `addInForce` run their read, their duplicate check and their write in one `updateRulings`
+  transaction, which is `BEGIN IMMEDIATE` (the database's write lock, taken when the transaction starts). Words and a decision that match a
+  live ruling (proposed or in force, not expired; case and runs of whitespace ignored) return that ruling, flagged `duplicate`, and write
+  nothing new. A held proposal said again as a rule goes in force; an unconfirmed card answer said again is confirmed. A retired or expired
+  ruling can be said again as a new one. The page's "save as a ruling" goes through the same `recordInForce`, inside its answer transaction, so
+  two questions saved with one wording give one ruling. There is no unique index on the text: whether two texts are "the same" is a
+  comparison in code (and an expired ruling must stay restatable), which a column constraint cannot express.
+- **Expiry is read, never applied.** A ruling's `expires` is compared with a clock every time the rulings are read: `Clock` is
+  `() => number` and every function takes one (the page's is its injectable `now`). Past it, `renderInForce` leaves the ruling out of every
+  wake and the page marks it expired; the row is not rewritten. The hand-off's rulings section also names the expired ones
+  ("Expired, NOT in force") so a Steward does not act on one from memory. Setting an expiry that is unreadable, has no zone, does not exist
+  (2026-02-30, 2027-02-29T09:00:00Z, month 13, hour 24: parsed strictly and its fields read back, never rolled into the next day) or is
+  already past is refused, by the CLI, `ask.ts` and the page alike; the importer keeps such a value and notes it, so the ruling counts as expired. An expired ruling cannot be confirmed.
+- **Supersession is one write.** A ruling's `supersedes` retires the named rulings in the same transaction that puts it in force (for a proposal:
+  the transaction that confirms it); a missing id is an error and changes nothing. Only the principal's word changes what is in force: a
+  repeat that names `supersedes` adds the ids its held ruling does not yet replace to that ruling, in the same transaction, and reports them
+  (`supersedesAdded`), so a held proposal retires them when it is confirmed, and the principal's own repeat (`addInForce`, `ruling.ts
+  --stated-in-chat`, the page) of a ruling already in force retires them at once. A *proposal* that repeats a ruling already in force
+  changes nothing at all, no `supersedes`, no expiry, no retirement, and says so (`alreadyInForce`, with the ids it did not add in
+  `supersedesNotAdded`): "already recorded as R1 (in force); nothing new added".
+- **The supersede graph has no cycle.** Its edges are every live ruling's `supersedes`, proposed and in force. A new edge that would close
+  a cycle (R1 → R2 → R1, or longer), or a ruling that would supersede itself, is refused inside the same `BEGIN IMMEDIATE` write, with the
+  cycle named, and nothing is written. Confirming a ruling re-checks the whole graph, so a cycle that came in another way (an imported
+  ledger) cannot be put in force.
+- **A ruling that leaves force keeps its record**: `retiredHow` (`retired`, `only this once`, `superseded`, `duplicate`, `expired`, `repeat`),
+  `retiredWhy` and `supersededBy`. A replacing ruling must itself be live.
+
+Migration 11 only adds: the columns (`expires`, `until_event`, `supersedes`, `superseded_by`, `retired_why`, `retired_reason`), NULL for every
+row already there, and two triggers. `retired_how` and its CHECK are left as they were, because SQLite cannot change a CHECK in place and a table
+rebuild would drop any index or trigger added to `rulings` and, with foreign keys on, delete the rows of a table that references it `ON DELETE
+CASCADE`. A housekeeping retirement is stored as `retired_how = 'retired'` with the reason in `retired_reason`, which the triggers hold to
+`superseded`, `duplicate`, `expired` or `repeat`; the store reads the pair back as one `retiredHow`. A build that does not
+know migration 11 refuses the database, like any newer one (`DatabaseTooNewError`). **Development databases:** migrations 10 and 11 were edited in
+place before release, so a database that ran an earlier draft of either records the version and is never upgraded again; it must be rebuilt
+(delete `chamberlain.db` and its `-wal` and `-shm` files, then start again or run `legacy-import.ts`). A draft build that knew an earlier 11 also
+opens a database this 11 made without refusing it. Only databases from unreleased builds are affected. `legacy-import.ts` brings the same fields in from an old
+`rulings.jsonl`, leaves out and notes any that are malformed, and never carries the earlier system's own bookkeeping.
+
+Migration 12 only adds: `store_sequence`, one row holding a durable counter, created at 0, with triggers that refuse a second row, a delete
+and any update that does not raise it. `Store.sequence.next()` raises it in a transaction and returns the new value, which is greater than
+every value any process took before; the card reconciler uses it to tell that a read started after a hold was written, without the wall
+clock. Nothing existing changes, and a build that does not know migration 12 refuses the database (`DatabaseTooNewError`).
 
 ## Why these seams
 

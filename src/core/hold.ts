@@ -8,7 +8,6 @@
  * sending are relay.ts's.
  */
 import { createHash } from "node:crypto";
-import { RIGHTS_MARKER } from "./decide.ts";
 import type { HeldItem, HoldClock, WakeMeta } from "./store.ts";
 
 export type { HeldItem, HoldClock, WakeMeta };
@@ -16,10 +15,11 @@ export type { HeldItem, HoldClock, WakeMeta };
 /** What the Steward's thread is doing. Unknown (an unreadable source) holds like busy: the ceiling still lets a wake out. */
 export type Gate = "idle" | "busy" | "unknown";
 /**
- * The only wakes that may wait for the Steward to go idle: a thread finishing a turn, the routine sweep. Everything
+ * The only wakes that may wait for their thread to go idle: a thread finishing a turn, the routine sweep, and the Alert Desk's alerts (which
+ * wait on the desk's own gate, never held behind the Steward). Everything
  * else (a question or approval, a failure, a decision-queue answer, any kind not named here) goes out at once.
  */
-export const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep"]);
+export const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk"]);
 export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta && HOLDABLE_KINDS.has(meta.kind));
 
 /** A Steward busy this long gets the digest anyway, and never more than one such digest per window. */
@@ -35,8 +35,8 @@ export const OBSERVE_GAP_MS = 5 * 60_000;
  * the latest is kept; the rest are folded into it and counted. Every item, folded or not, is a member: it is delivered with
  * the wake and is never sent again.
  */
-export function composeWake(items: HeldItem[], now: number): { deliveryId: string; message: string; members: string[]; folded: number } {
-	if (items.length === 1) return { deliveryId: items[0]!.deliveryId, message: items[0]!.message, members: [items[0]!.deliveryId], folded: 0 };
+export function composeWake(items: HeldItem[], now: number): { deliveryId: string; message: string; members: string[]; kept: string[]; folded: number } {
+	if (items.length === 1) return { deliveryId: items[0]!.deliveryId, message: items[0]!.message, members: [items[0]!.deliveryId], kept: [items[0]!.deliveryId], folded: 0 };
 	const sorted = [...items].sort((a, b) => a.queuedAt - b.queuedAt);
 	const latest = new Map<string, HeldItem>();
 	const key = (i: HeldItem) => (i.kind && i.thread ? `${i.kind}\u0000${i.thread}` : undefined);
@@ -53,31 +53,17 @@ export function composeWake(items: HeldItem[], now: number): { deliveryId: strin
 	const members = sorted.map((i) => i.deliveryId);
 	const deliveryId = `digest:${createHash("sha1").update([...members].sort().join("\n")).digest("hex").slice(0, 16)}`;
 	const head = `[chamberlain] digest: ${sorted.length} wake${sorted.length === 1 ? "" : "s"} were held while you were busy and arrive together as this one wake, oldest first. Treat each item below as its own wake; each keeps its delivery ID, and if one reaches you twice the second is a repeat.${folded ? ` ${folded} earlier wake${folded === 1 ? "" : "s"} about the same thread and kind ${folded === 1 ? "was" : "were"} folded into the latest, which is all that is kept.` : ""}`;
-	// Each held wake carries the decision rights (in full after a compaction). The digest keeps the first copy and
-	// points later identical copies at it, so one wake never repeats the same rules block several times.
-	const seenRights = new Set<string>();
+	// Each item's text goes in exactly as it was queued: nothing in it is searched or replaced, a repeated rights block included (it costs
+	// tokens, never correctness).
 	const blocks = kept.map((i, n) => {
 		const f = folds.get(i) ?? [];
 		const waited = Math.max(0, Math.round((now - i.queuedAt) / 60_000));
 		return [
 			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
-			dedupeRights(i.message, seenRights),
+			i.message,
 		].join("\n");
 	});
-	return { deliveryId, message: [head, ...blocks].join("\n\n"), members, folded };
-}
-
-/** The marker that starts the full rights block (rights-sent.ts). Everything from it to the message's end is rules + mandate. */
-export { RIGHTS_MARKER };
-export const RIGHTS_SEE_ABOVE = "Decision rights: the same as in the first item of this digest above, and still in force.";
-
-/** Pure: the message with its rights tail replaced by a pointer when an identical tail was already shown in this digest. */
-export function dedupeRights(message: string, shown: Set<string>): string {
-	const at = message.indexOf(RIGHTS_MARKER);
-	if (at < 0) return message;
-	const tail = message.slice(at);
-	if (!shown.has(tail)) { shown.add(tail); return message; }
-	return message.slice(0, at) + RIGHTS_SEE_ABOVE;
+	return { deliveryId, message: [head, ...blocks].join("\n\n"), members, kept: kept.map((i) => i.deliveryId), folded };
 }
 
 /**

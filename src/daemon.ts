@@ -7,6 +7,7 @@
 import { CONF, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { createEngine } from "./core/engine.ts";
+import { ghRead } from "./core/gh.ts";
 import { maintain } from "./core/maintain.ts";
 import { makeLog } from "./core/log.ts";
 import { startup } from "./core/migrate.ts";
@@ -53,12 +54,17 @@ const engine = createEngine({
 	store,
 	servers,
 	dry: process.env.CHAMBERLAIN_DRY === "1",
+	// Stalled-thread recovery is OFF until CHAMBERLAIN_RECOVER=1 (src/core/recover.ts): merging it changes nothing until it is turned on.
+	recover: process.env.CHAMBERLAIN_RECOVER === "1",
 	exclude: (process.env.CHAMBERLAIN_EXCLUDE ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 	log,
 	sweepPromptFile: new URL("../docs/steward-sweep-prompt.md", import.meta.url).pathname,
-	// The Steward-health hand-off question goes through ask.ts like any other.
+	// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).
+	gh: ghRead,
+	// The Steward-health hand-off question goes through ask.ts like any other, asked only when the adapter cannot start the hand-off itself.
+	// A live alarm recurs by nature, so it is never "already settled": the daemon says so, and the question records it.
 	ask: async (raw) => {
-		const child = Bun.spawn([process.execPath, new URL("./ask.ts", import.meta.url).pathname, JSON.stringify(raw)], { stdout: "ignore", stderr: "ignore" });
+		const child = Bun.spawn([process.execPath, new URL("./ask.ts", import.meta.url).pathname, JSON.stringify({ notSettled: "raised by the daemon: a live system alarm", ...raw })], { stdout: "ignore", stderr: "ignore" });
 		if (await child.exited !== 0) throw Error("steward-health ask failed; queue checked again on retry");
 	},
 });

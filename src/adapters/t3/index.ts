@@ -36,7 +36,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		const id = env.steward();
 		return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
 	};
-	const capabilities: OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"];
+	const capabilities: OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk", "handoffInstruction"];
 	return {
 		id: "t3",
 		capabilities,
@@ -54,12 +54,22 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		},
 		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
 		inspect: link.inspector,
+		snapshot: () => link.snapshot(),
 		send: waiting.send,
 		stewardProbe: () => {
 			const id = env.steward();
 			return id ? t3Probe(t3StateDbPath(), id) : { readable: true };
 		},
 		compact: compactWake,
+		handoffInstruction: () => "Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",
+		// The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained.
+		alertDesk: {
+			wake: webhookWake(() => env.readPrivate("desk-wake-url")),
+			isBusy: (): Gate => {
+				const id = env.readPrivate("desk-thread");
+				return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
+			},
+		},
 		serverLine: () => t3ServerLine(srv),
 		approvalHint: "The t3_pending_request tool cannot answer it.",
 	};

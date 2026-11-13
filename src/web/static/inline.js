@@ -157,7 +157,7 @@
 
 	function card(it) {
 		const c = el("div", "dq-card");
-		c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), el("div", "dq-title", it.title));
+		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
 		if (it.context) c.append(context(it.context));
 		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
 		if (imgs.length) {
@@ -166,6 +166,7 @@
 			c.append(ev);
 		}
 		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); return c; }
+		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the card itself, in its thread. This question closes only when the card does.")); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
@@ -273,7 +274,7 @@
 				if (!live.length) { panes.Rulings.replaceChildren(el("div", "dq-empty", "No rulings in force.")); return; }
 				panes.Rulings.replaceChildren(...live.map((x) => {
 					const row = el("div", "dq-row");
-					const meta = `${x.id} · ${x.status === "in-force" ? (x.confirmed ? "in force" : "in force, unconfirmed") : "proposed"}${x.cited ? ` · cited ${x.cited}×` : ""}`;
+					const meta = `${x.id} · ${x.expired ? `expired ${x.expires}` : x.status === "in-force" ? (x.confirmed ? "in force" : "in force, unconfirmed") : "proposed"}${x.cited ? ` · cited ${x.cited}×` : ""}`;
 					row.append(el("div", "dq-meta", meta), el("div", "dq-ctx", x.decides));
 					return row;
 				}), el("div", "dq-meta", "Change a ruling on the queue page."));

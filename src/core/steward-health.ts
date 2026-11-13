@@ -120,8 +120,27 @@ export const HEALTH_KEY = "steward-health";
 export function readHealth(store: Store): Health | undefined {
 	try { return store.state.get<Health>(HEALTH_KEY); } catch { return undefined; }
 }
-/** One daemon owns this tick; queue tags survive a crash between ask.ts and our result write. */
-export function healthTicker(deps: { store: Store; collect: () => Promise<Health>; ask: (raw: object) => Promise<void>; now?: () => number; /** The server name shown on the hand-off question: the one the Steward runs on. */ server?: () => string }) {
+/** The delivery id of a session's hand-off wake. The outbox knows an id for good (pending, delivered or dead-lettered), so one session is told once. */
+export const handoffDeliveryId = (session: string) => `steward-handoff:${session}`;
+/** The wake that starts the hand-off itself. `instruction` is the adapter's words for how the Steward starts one on its backend (`Adapter.handoffInstruction`). */
+export const handoffWakeMessage = (h: Health, instruction: string) =>
+	`[chamberlain] steward-handoff: your quality signals have slipped (format slips or repeat reads past their limits), and compaction does not fix that. ${instruction} This hand-off starts by itself from the daemon's health check: do not ask first.\n${h.report}`;
+
+/**
+ * One daemon owns this tick. A HAND OFF verdict starts the hand-off itself when the adapter can say how (`handoff`: it queues the hand-off
+ * wake in the outbox, so the relay's attempts, pauses and dead-letter rules apply and nothing is sent from here). Without that, or without
+ * a session to name, it asks the operator through the decision queue (`ask`), as before; its queue tag survives a crash between ask.ts and
+ * our result write. Either way a session is handled once: the outbox row (or the queue item) is the record, so a restart or a compaction
+ * never repeats it.
+ */
+export function healthTicker(deps: {
+	store: Store; collect: () => Promise<Health>; now?: () => number;
+	/** Queues the hand-off wake for this session, under `handoffDeliveryId(session)`. Absent (the adapter cannot say how a Steward hands off): the operator is asked instead. */
+	handoff?: (h: Health, session: string) => void;
+	ask?: (raw: object) => Promise<void>;
+	/** The server name shown on the hand-off question: the one the Steward runs on. */
+	server?: () => string;
+}) {
 	let busy = false;
 	return async () => {
 		const now = (deps.now ?? Date.now)(), prior = readHealth(deps.store);
@@ -133,10 +152,11 @@ export function healthTicker(deps: { store: Store; collect: () => Promise<Health
 				h = { at: new Date(now).toISOString(), verdict: "WATCH", replies: 0, breaks: 0, selfReads: 0, threadRereads: 0, elevated: [], unknown: ["Steward transcript unavailable"], report: "" }; h.report = formatHealth(h);
 			}
 			deps.store.state.set(HEALTH_KEY, h);
-			if (h.verdict === "HAND OFF" && h.session) {
-				const tag = `steward-health:${h.session}`;
-				if (!deps.store.items.list({ source: "queue" }).some((i) => i.payload.tag === tag)) await deps.ask({ kind: "only-you", title: "Steward quality has slipped and needs a handoff", context: h.report + "\nQuality signals (format slips or repeat reads) are past their limits, which compaction does not fix. Recommend /steward-handoff; nothing starts automatically.", options: [{ label: "Hand off now" }, { label: "Not yet" }], recommended: 0, thread: "Steward", server: deps.server?.() ?? "main", threadId: h.thread, tag });
-			}
+			if (h.verdict !== "HAND OFF" || !h.session) return;
+			if (deps.handoff) { deps.handoff(h, h.session); return; }
+			if (!deps.ask) return;
+			const tag = `steward-health:${h.session}`;
+			if (!deps.store.items.list({ source: "queue" }).some((i) => i.payload.tag === tag)) await deps.ask({ kind: "only-you", title: "Steward quality has slipped and needs a handoff", context: h.report + "\nQuality signals (format slips or repeat reads) are past their limits, which compaction does not fix. Recommend /steward-handoff; nothing starts automatically.", options: [{ label: "Hand off now" }, { label: "Not yet" }], recommended: 0, thread: "Steward", server: deps.server?.() ?? "main", threadId: h.thread, tag });
 		} finally { busy = false; }
 	};
 }

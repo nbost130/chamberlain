@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { heldOpen } from "../core/afk.ts";
+import { holdCard, reconcileCardHolds } from "../core/card-hold.ts";
+import { reconcileItemHolds } from "../core/hold-reconcile.ts";
 import { askQuestion, claimWake, getQuestion, pageClaim, questionStates, recordAnswerDelivered, type Question } from "../core/questions.ts";
 import { addInForce, propose, readRulings } from "../core/rulings.ts";
 import { openStore } from "../core/sqlite-store.ts";
@@ -29,7 +32,7 @@ process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
  * (unless `relay: false`: no daemon running). `app.idle()` waits for the page and then lets the relay run. Pass `root` to build fresh
  * instances over the disk another setup left: a restart.
  */
-function setup(opts: { status?: (n: number) => number; root?: string; relay?: boolean } = {}) {
+function setup(opts: { status?: (n: number) => number; root?: string; relay?: boolean; now?: () => number } = {}) {
 	const root = opts.root ?? mkdtempSync(`${tmpdir()}/chamberlain-web-`);
 	const state = `${root}/state`;
 	const store = openStore(dbPath(state));
@@ -40,7 +43,7 @@ function setup(opts: { status?: (n: number) => number; root?: string; relay?: bo
 	const posts: { deliveryId: string; message: string }[] = [];
 	let n = 0;
 	const { drain } = testRelay(store, fetchWake(() => "http://webhook.test/wake", (async (_u: string, init: RequestInit) => { posts.push(JSON.parse(String(init.body))); return new Response(null, { status: opts.status ? opts.status(++n) : 202 }); }) as unknown as typeof fetch));
-	const page = createApp({ store, state, log: () => {}, hosts: [HOST], staticDir: `${root}/static` });
+	const page = createApp({ store, state, log: () => {}, hosts: [HOST], staticDir: `${root}/static`, ...(opts.now ? { now: opts.now } : {}) });
 	const app = { ...page, idle: async () => { await page.idle(); if (opts.relay !== false) await drain(); } };
 	/** server.ts's heartbeat (the app's recovery), then the daemon's relay. */
 	const tick = async () => { await page.recover(); await drain(); };
@@ -161,6 +164,41 @@ describe("answering an item", () => {
 		// The page's record is derived from the claim: the item reads answered and delivered.
 		expect(getQuestion(first.store, "Q-abcd")).toMatchObject({ status: "answered", delivered: true });
 	});
+	test("(4) a card pointer's \"leave it\" answer is refused: the hold stays open while the card waits, and closes only when the card does", async () => {
+		const s = setup();
+		const { item: id } = holdCard(s.store, { thread: "Release", server: "main", threadId: "th-1", requestId: "a1", type: "approval_request", label: "bun run deploy" });
+		const q = getQuestion(s.store, id)!;
+		// No option says the card was handled.
+		expect(q.options.map((o) => o.label).join(" | ")).not.toMatch(/answered|done|handled|approved/i);
+		const leave = q.options.findIndex((o) => /leave/i.test(o.label));
+		const r = await s.post(`/api/items/${id}/answer`, { choice: leave });
+		expect(r.status).toBe(409);
+		expect((await r.json()).error).toContain("act on the card itself");
+		await s.app.idle();
+		expect(s.posts).toHaveLength(0);
+		expect(s.store.claims.list("queue")).toEqual([]);
+		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
+		expect(await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set(["a1"]), resolved: new Set<string>() }))).toEqual({ closed: [], verified: [expect.objectContaining({ requestId: "a1" })], unverified: [], failed: [] });
+		expect(heldOpen(s.store)).toHaveLength(1);
+		expect(getQuestion(s.store, id)!.status).toBe("open");
+		// The card resolves: now, and only now, the question and the hold close.
+		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set<string>(), resolved: new Set(["a1"]) }))).closed).toHaveLength(1);
+		expect(heldOpen(s.store)).toEqual([]);
+		expect(getQuestion(s.store, id)!.status).toBe("answered-on-card");
+	});
+	test("(4) a pointer answered before this fix (a claim already on it) does not close its hold while the card waits", async () => {
+		const s = setup();
+		const { item: id } = holdCard(s.store, { thread: "Release", server: "main", threadId: "th-1", requestId: "a1", type: "approval_request", label: "deploy" });
+		const q = getQuestion(s.store, id)!;
+		claimWake(s.store, pageClaim(q, { choice: 1, label: "Leave it for now", by: "page", t: new Date().toISOString(), deliveryId: `answer:item:${id}` }));
+		expect(getQuestion(s.store, id)!.status).toBe("answered");
+		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
+		expect(heldOpen(s.store)).toHaveLength(1);
+		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set(["a1"]), resolved: new Set<string>() }))).closed).toEqual([]);
+		expect(heldOpen(s.store)).toHaveLength(1);
+		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set<string>(), resolved: new Set(["a1"]) }))).closed).toHaveLength(1);
+		expect(heldOpen(s.store)).toEqual([]);
+	});
 	test("a secret item is never answered on the page", async () => {
 		const s = setup();
 		s.add(item("Q-secr", { kind: "only-you", secret: true, options: [] }));
@@ -261,6 +299,80 @@ describe("rulings from the page", () => {
 		expect(readRulings(s.store).find((x) => x.id === "R1")).toMatchObject({ status: "retired", retiredHow: "only this once" });
 		const view = (await (await s.get("/api/rulings")).json()) as { rulings: { id: string }[] };
 		expect(view.rulings.map((x) => x.id)).toContain("R1");
+	});
+	test("a ruling saved from a question with proposedExpires carries the expiry, and the page marks it expired when the clock passes it", async () => {
+		let t = Date.parse("2026-11-13T12:00:00Z");
+		const s = setup({ now: () => t });
+		s.add(item("Q-abcd", { proposedExpires: "2026-11-20" }));
+		const { ruling } = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		await s.app.idle();
+		expect(readRulings(s.store).find((x) => x.id === ruling)).toMatchObject({ status: "in-force", expires: "2026-11-20" });
+		const inForceCount = async () => ((await (await s.get("/api/queue")).json()) as { inForce: number }).inForce;
+		const view = async () => ((await (await s.get("/api/rulings")).json()) as { rulings: { id: string; expired: boolean }[] }).rulings;
+		expect(await inForceCount()).toBe(2);
+		expect((await view()).find((r) => r.id === ruling)!.expired).toBe(false);
+		t = Date.parse("2026-11-21T00:00:00Z");
+		expect(await inForceCount()).toBe(1);
+		expect((await view()).find((r) => r.id === ruling)).toMatchObject({ expired: true, status: "in-force" });
+		expect((await view()).find((r) => r.id === "R1")!.expired).toBe(false);
+		// An expired ruling cannot be confirmed from the page.
+		const c = await s.post(`/api/rulings/${ruling}/confirm`, {});
+		expect(c.status).toBe(400);
+		expect(((await c.json()) as { error: string }).error).toContain("expired on 2026-11-20");
+	});
+	test("saving a ruling whose proposed expiry has passed is refused before anything is claimed", async () => {
+		let t = Date.parse("2026-11-13T12:00:00Z");
+		const s = setup({ now: () => t });
+		s.add(item("Q-abcd", { proposedExpires: "2026-11-14" }));
+		t = Date.parse("2026-11-15T00:00:00Z");
+		const before = readRulings(s.store).length;
+		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true });
+		expect(r.status).toBe(400);
+		expect(((await r.json()) as { error: string }).error).toContain("expired on 2026-11-14");
+		expect(readRulings(s.store)).toHaveLength(before);
+		expect(getQuestion(s.store, "Q-abcd")!.status).toBe("open");
+		// Answering without saving a ruling still works.
+		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 })).status).toBe(200);
+	});
+	test("saving a ruling whose stored proposed expiry does not exist is refused with that reason, before anything is claimed", async () => {
+		const s = setup({ now: () => Date.parse("2026-11-13T12:00:00Z") });
+		s.add(item("Q-abcd", { proposedExpires: "2027-02-30T09:00:00Z" }));
+		const before = readRulings(s.store).length;
+		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true });
+		expect(r.status).toBe(400);
+		expect(((await r.json()) as { error: string }).error).toContain('"2027-02-30T09:00:00Z" is not a real date and time');
+		expect(readRulings(s.store)).toHaveLength(before);
+		expect(getQuestion(s.store, "Q-abcd")!.status).toBe("open");
+	});
+	test("two questions saved with the same wording and choice give one ruling, and both answers cite it", async () => {
+		const s = setup();
+		s.add(item("Q-abcd"));
+		s.add(item("Q-efgh"));
+		const a = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		const b = (await (await s.post("/api/items/Q-efgh/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		await s.app.idle();
+		expect(b.ruling).toBe(a.ruling);
+		expect(readRulings(s.store).filter((x) => x.decides === "Lead with a photo")).toHaveLength(1);
+		expect(s.posts.map((p) => p.message).filter((m) => m.includes(`saved as ${a.ruling}`))).toHaveLength(2);
+	});
+	test("saving a ruling the Steward already proposed in the same words puts that proposal in force, not a second ruling", async () => {
+		const s = setup();
+		const p = propose(s.store, "A · One", "Lead with a photo");
+		s.add(item("Q-abcd"));
+		const r = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		await s.app.idle();
+		expect(r.ruling).toBe(p.id);
+		expect(readRulings(s.store).find((x) => x.id === p.id)).toMatchObject({ status: "in-force", confirmed: true });
+		expect(readRulings(s.store).filter((x) => x.decides === "Lead with a photo")).toHaveLength(1);
+	});
+	test("a refused second answer saves no ruling, and does not promote a held proposal", async () => {
+		const s = setup();
+		const p = propose(s.store, "A · One", "Lead with a photo");
+		s.add(item("Q-abcd"));
+		expect((await s.post("/api/items/Q-abcd/answer", { choice: 1 })).status).toBe(200);
+		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true });
+		expect(r.status).toBe(409);
+		expect(readRulings(s.store).find((x) => x.id === p.id)!.status).toBe("proposed");
 	});
 	test("the rulings page counts citations by ID from the decision log", async () => {
 		const s = setup();

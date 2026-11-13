@@ -120,7 +120,8 @@ The webhook dies if its bound thread is deleted.
 
 **4. Write the Steward's rules.** `~/.config/chamberlain/decision-rights.md` is your standing decision rights, in your own
 words: what the Steward may decide, what it must ask you. It is copied verbatim into every wake (in full after a
-compaction, otherwise as a one-line "unchanged"). Start from [`examples/decision-rights.md`](examples/decision-rights.md).
+compaction or after you change it, otherwise as a one-line pointer to the hand-off that holds it; the away mandate rides
+every wake and never makes the rules count as changed). Start from [`examples/decision-rights.md`](examples/decision-rights.md).
 Set your name for the wakes with `principalName` in `settings.json` ([`examples/settings.json`](examples/settings.json));
 without it they say "the operator".
 
@@ -164,21 +165,67 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `read-token` | T3 adapter: yes (or per-server `tokenFile`) | An `orchestration:read` token for the default server. Never logged. |
 | `wake-url` | T3 adapter: to deliver | The webhook URL of the scheduled task bound to the Steward's thread. Never logged. |
 | `steward-thread` | recommended | The Steward's thread id (for another adapter, whatever id it uses for the Steward). The daemon never wakes the Steward about itself, and uses it for the busy gate, stall alarm and compaction. |
-| `decision-rights.md` | recommended | Your standing rules, in your words, verbatim in every wake. Without it a wake tells the Steward to hold anything on the ASK list. |
+| `decision-rights.md` | recommended | Your standing rules, in your words, verbatim in a wake whenever it may be new to the Steward (a one-line pointer otherwise). Without it a wake tells the Steward to hold anything on the ASK list. |
 | `decisions-thread` | T3 adapter: for the inline view | The pinned Decisions thread's id. `ask.ts` posts there and refuses to run without it. |
 | `compact-url` | T3 adapter: optional | Webhook whose task prompt is `/compact`. Without it the daemon only alarms that the Steward is over its size. |
 | `settings.json` | optional | See below. |
 | `servers.json` | optional | The T3 servers to watch. See below. |
 | `web.json` | for the page | The page's bind address and options. See below. |
 | `sweep.json` | optional | Your own routine checks. See below. |
+| `judge.json` | optional | Which backend judges each trigger, with backend names of your own: `{"triggers": {"stalled-recovery": {"backend": "small-model"}}, "backends": {"small-model": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. There is **no default**: without this file nothing is judged, the daemon logs `judge-off` with why at start, and a second failure goes to the Steward unjudged. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
-| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off. See [`src/core/rules.ts`](src/core/rules.ts) and [`examples/operating-rules.json`](examples/operating-rules.json). |
+| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See below. |
+| `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See below. |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `src/adapters/t3/switch-steward.ts` during a hand-off; the old URL is kept for one-rename rollback. |
 | `*-token` files | optional | Any `tokenFile` or `operateTokenFile` a server or `web.json` names. |
 
 The away record, the rulings (ids R1, R2, ...), the butlers and everything held for your return are no longer files: they
 are rows in the database (below), written by `afk.ts`, `ruling.ts`, `butler.ts` and the page.
 | `daemon.env` | optional | `KEY=value` lines for systemd's `EnvironmentFile`. |
+
+**`operating-rules.json`** lifts the lines a Steward acts on out of your own markdown files when the hand-off
+is built, so there is no second copy to drift ([`examples/operating-rules.json`](examples/operating-rules.json)):
+
+```json
+{ "schemaVersion": 2,
+  "intro": "The rest of these files is for builders. Read them when a rule seems missing.",
+  "sources": [
+    { "path": "~/notes/hosts/this-host.md",
+      "sections": [ { "table": "Deltas", "rows": ["| `timeout`", "| Shell idioms"], "as": "On this host" } ] },
+    { "path": "~/notes/OPERATING_RULES.md",
+      "sections": [ ["Secrets", "whole"], ["Working style", ["- Whole issue", "- Smallest change"]] ] } ] }
+```
+
+- `sources` are read in order, and each one's selectors in order; `intro`, if set, comes first.
+- `[heading, "whole" | [line prefixes]]` takes the `## heading` section, every line or one line per prefix.
+  `{ "section": heading, "lines": ..., "as": heading }` is the same with a heading of its own.
+- `{ "table": heading, "rows": "whole" | [row prefixes], "as": heading }` takes the one markdown table under `## heading`: its
+  header and separator rows, then every body row or one row per prefix. Text around the table is left out.
+- `{ "path": ..., "sections": "whole" }` copies that source whole. It is the only way a whole file reaches the hand-off.
+- A heading that is gone or doubled, a prefix that matches no line or several, a wrapped rule, or a table that is missing,
+  headerless or not alone under its heading stops that selector. It contributes **nothing**, with a `WARNING` on stderr
+  naming the source, the selector and why; the source's other selectors and the other sources are still excerpted. (Until
+  this release a failed excerpt copied the whole source instead, which could put text you never selected in front of the
+  Steward.)
+- The 0.1 form, `{ "source": path, "sections": [...] }`, still works: it is one source.
+
+**`brief.d/`** (brief fragments): procedure that belongs to your project, not to Chamberlain, goes in `brief.d/` in the config
+directory ([`examples/brief.d/`](examples/brief.d/)), and `bun src/brief.ts steward` appends it to the generic hand-off:
+
+- Only regular files whose names end in `.md` are used. A symlink, a directory or any other entry is ignored, with a
+  warning on stderr. No `brief.d/` is fine.
+- Fragments become the Steward's instructions, so they are checked like authority config. `brief.d/` must be a real
+  directory (not a symlink), owned by you (the daemon's effective user), and not group- or world-writable; otherwise no
+  fragment is read, with one warning. Each fragment must be owned by you and not group- or world-writable: `0600` and
+  `0644` are fine, `0664` is not. A refused fragment is skipped with a warning naming it and why; the others are still
+  used, and the hand-off always comes out. The same goes for one that cannot be read: a `brief.d/` you can write but not
+  read (`0300`) gives no fragment, and an unreadable fragment is skipped, each with a warning naming the path and the
+  error. With a umask of `002`, set the modes yourself:
+  `chmod 755 brief.d && chmod 644 brief.d/*.md`.
+- Fragments are sorted by filename in byte order (so `10-repo.md` before `20-landing.md`, and `B.md` before `a.md`), and
+  each is appended verbatim, its own headings kept as written, after the generic brief and before any
+  `## Open work at hand-over` section. Blank lines at a fragment's start and end are dropped, so fragments sit exactly one
+  blank line apart. Nothing is substituted in a fragment.
 
 **`settings.json`** (all keys optional; each has an environment override):
 
@@ -189,6 +236,7 @@ are rows in the database (below), written by `afk.ts`, `ruling.ts`, `butler.ts` 
 | `t3StateDb` | `CHAMBERLAIN_T3_STATE_DB` | `<t3BaseDir>/userdata/statev2.sqlite` | T3's state database, opened read-only. |
 | `alertCommand` | `CHAMBERLAIN_ALERT_CMD` | none | Run for each alarm as `<command> warning <title> <summary>`, with `CHAMBERLAIN_ALARM_KEY` in its environment. Without one, alarms are only logged. |
 | `compactTokens` | `CHAMBERLAIN_COMPACT_TOKENS` | `350000` | Steward context size above which the daemon sends `/compact`. |
+| `settledMatch` | none | `{"titleOverlap": true, "ignoreWords": []}` | How ask.ts and `afk.ts hold` decide a question is already settled ([ARCHITECTURE.md, "Queue first, hold second"](docs/ARCHITECTURE.md#queue-first-hold-second-settled-never-twice)). `titleOverlap: false` matches on exact refs only; `ignoreWords` lists words (a project or product name) that head many unrelated questions and so say nothing about the topic. |
 
 **`servers.json`**: `{ "schemaVersion": 2, "servers": [ ... ] }`. One watcher runs per server, through the adapter the entry names; every wake carries `server:`. The Steward's own server (the one with no `environmentId`, else the first) is the one whose adapter wakes it.
 
@@ -286,7 +334,7 @@ already in the state directory is never replaced.
 | table `items` | The one item system: sweep findings, decision-queue questions, alarms, the notification log of what already woke the Steward, what is held for your return. |
 | tables `claims`, `relays`, `evidence` | A question's answer flow: the one-wake claim (unique per item, carrying the wake text and its delivery id), the one direct send of a thread-routed answer, and rows pointing at its evidence files. |
 | tables `outbox`, `outbox_members`, `held_wakes`, `wake_tombstones` | The transactional outbox: one row per wake to send (`pending`, `delivered`, `dead_letter` or `cancelled`), the delivery ids each row carries (bound to that row for good), turn ends and sweeps held while the Steward is busy, which become one digest row, and one permanent tombstone per delivery id that was delivered or cancelled, which outlives retention of its row. |
-| tables `rulings`, `decisions`, `butlers`, `away` | The rulings ledger, the Steward's self-answers, the butler ledger and the away record. |
+| tables `rulings`, `decisions`, `butlers`, `away` | The rulings ledger (with each ruling's expiry, what it supersedes and why it left force), the Steward's self-answers, the butler ledger and the away record. |
 | table `events` | The log: every wake, skip, alarm and answer. `queue-waits.ts` and the return brief read it with SQL. |
 | table `state` | Small named records: the sweep clock, what rights text the Steward last received, the latest health verdict, the heartbeat. |
 | table `migrations` | The schema's version history (see [Schema versions](#schema-versions)). |
@@ -304,6 +352,7 @@ already in the state directory is never replaced.
 | `CHAMBERLAIN_DRY` | unset | `1`: the daemon watches and logs, and posts nothing. |
 | `CHAMBERLAIN_VERBOSE` | unset | Also print each log line to stdout. |
 | `CHAMBERLAIN_EXCLUDE` | unset | Comma-separated thread ids to never wake about. |
+| `CHAMBERLAIN_RECOVER` | unset (off) | `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge.json`; without it, to the Steward unjudged). Needs the server's operate token. See [`docs/GLOSSARY.md`](docs/GLOSSARY.md#recovering-a-failed-thread). |
 | `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn must stay quiet before it is reported (a PR update often follows). |
 | `CHAMBERLAIN_REPORT_HOLD_MS` | `3600000` | How long a report waits on a thread's own background work before it goes anyway. |
 | `CHAMBERLAIN_STALL_MS` | `1200000` | How long queued wakes may sit with nothing moving in the Steward's thread before an alarm. |
@@ -321,10 +370,10 @@ already in the state directory is never replaced.
 | --- | --- | --- |
 | `bun src/daemon.ts` | you | The watcher, and the one process that sends wakes. One per state directory: a second exits 5. |
 | `bun src/web/server.ts [--test]` | you | The Decisions page. |
-| `bun src/ask.ts '<json>'` | the Steward | Put one question on the queue and in the Decisions thread. |
-| `bun src/core/ruling.ts [--stated-in-chat] "<words>" "<decides>"` | the Steward | Record a proposed (or, stated in chat, in-force) ruling. |
+| `bun src/ask.ts '<json>'` | the Steward | Put one question on the queue and in the Decisions thread. `proposedRuling` is the ruling you may save with your answer; add `proposedExpires` (a date or a date-time with a zone) when it is about one run, launch or week, and the saved ruling expires by itself. `"urgent": false` lists it below the urgent ones and posts nothing. A question already settled (an answer, a ruling, a logged decision) is refused with exit 2 and what it matched on; `"notSettled": "<why>"` overrides it. |
+| `bun src/core/ruling.ts [--stated-in-chat] [--expires <ISO>] [--until "<event>"] [--supersedes R32,R16] [--] "<words>" "<decides>"` | the Steward | Record a proposed (or, stated in chat, in-force) ruling. Recording the same words and decision again adds nothing and prints the id already held. `--expires` (a date, through the end of that day UTC, or a date-time with a zone) makes it time-bound: it drops out of every wake after that and the rulings page marks it expired. `--until` is a note for a bound only a person can judge, shown and never enforced. `--supersedes` names the rulings it replaces: they leave force when this one is in force. `list` shows every ruling. |
 | `bun src/core/decided.ts "<thread>" "<decision>" "R12: why"` | the Steward | Log a self-answer, citing rulings by id. `decided.ts list [n]` shows the last n. |
-| `bun src/core/afk.ts enter\|status\|hold\|held\|close\|brief\|exit` | you, the Steward | The away record and the held-for-return ledger. |
+| `bun src/core/afk.ts enter\|status\|hold\|held\|note\|close\|brief\|exit` | you, the Steward | The away record and the held-for-return ledger. `hold` requires `--item <Q-id>` of an open question (queue first, hold second) and takes `--not-settled "<why>"`, `--pr`, `--issue`, `--branch`, `--run`, `--thread`; it refuses a wait already settled. The daemon closes a hold when its item is answered or its PR, issue, branch or thread is done. GitHub reads use `gh` (or `CHAMBERLAIN_GH`). |
 | `bun src/brief.ts steward [--mode test\|live]` | you | Print the Steward's hand-off. |
 | `bun src/wakes.ts list\|retry <id>\|cancel <id>` | you | The outbox: what is pending, held and dead-lettered; retry a dead letter; cancel a row for good. See [Dead letters](#dead-letters). |
 | `bun src/adapters/t3/peek.ts <server> <threadId>` | the Steward | The end of a thread in plain lines, a tenth of what `t3_thread_read` costs. |

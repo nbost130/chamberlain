@@ -312,6 +312,113 @@ INSERT OR IGNORE INTO wake_tombstones (delivery_id, outcome, ended_at)
 	SELECT m.delivery_id, o.status, COALESCE(o.finished_at, 0) FROM outbox o JOIN outbox_members m ON m.outbox_id = o.id WHERE o.status IN ('delivered', 'cancelled');
 `,
 	},
+	{
+		version: 8,
+		name: "wake receivers (the Alert Desk lane)",
+		sql: `
+-- A wake goes to a receiver (Alertmanager's term for the integration a notification is sent to). NULL is the Steward, as every row so far;
+-- "desk" is the Alert Desk's own thread, with its own transport and gate in the one relay. A held wake waits for ITS receiver's thread to go idle, and a
+-- digest only ever holds one receiver's wakes. The receiver is frozen with the row, like its text.
+ALTER TABLE outbox ADD COLUMN receiver TEXT;
+ALTER TABLE held_wakes ADD COLUMN receiver TEXT;
+DROP TRIGGER outbox_frozen;
+CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver ON outbox
+BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
+CREATE INDEX outbox_by_receiver ON outbox (receiver, status, id);
+`,
+	},
+	{
+		version: 9,
+		name: "rights stamps on wakes",
+		sql: `
+-- A wake's rights text records which Steward (thread and session) and which rights hash it was composed for: a JSON array of stamps, one per
+-- rights text it carries (a digest may carry several), NULL for a wake with none. A "full" stamp (the whole block) writes the rights record when
+-- its row is delivered; a pointer stamp makes the relay send a standalone full-rights prerequisite (<id>:rights-first:<state key>) first unless
+-- the record shows the Steward there now holds the rights in force now, then the row as it is. Frozen with the row, like its text.
+ALTER TABLE outbox ADD COLUMN rights_for TEXT;
+ALTER TABLE held_wakes ADD COLUMN rights_for TEXT;
+DROP TRIGGER outbox_frozen;
+CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver, rights_for ON outbox
+BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
+`,
+	},
+	{
+		version: 10,
+		name: "undelivered Steward wakes from before the rights stamps",
+		sql: `
+-- A wake queued before migration 9 has no stamp, whatever pointer line (or none) its text carries, and the relay checks only stamped rows, so
+-- after an upgrade and a Steward replacement such a wake could tell a Steward that never had the rights that they are unchanged. Every
+-- UNDELIVERED Steward wake (receiver NULL: a pending or dead-lettered row, or a held wake) that has no stamp is stamped "legacy-unstamped",
+-- WHATEVER ITS TEXT: no text is matched, because the daemon wrote more pointer forms than any list remembers. Which Steward it was composed
+-- for is unknown, so it depends on the rights record like a pointer: the relay sends the full-rights prerequisite ahead of it unless the record
+-- shows the Steward there now holds the rights in force now, then the row as it is.
+-- Its text is never changed; only the stamp column is set, with the freeze trigger lifted for these two statements and restored in the same
+-- transaction. A database already at 9 has stamped every pointer since; any other unstamped Steward wake it holds is marked too, and costs at
+-- most one extra full-rights wake.
+-- Unreleased, and edited in place while its branch was open: a development database that ran an earlier draft of 10 is not upgraded again
+-- and must be rebuilt (delete chamberlain.db and its -wal and -shm files, then start again or run legacy-import.ts).
+DROP TRIGGER outbox_frozen;
+UPDATE outbox SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
+	WHERE rights_for IS NULL AND receiver IS NULL AND status IN ('pending', 'dead_letter');
+UPDATE held_wakes SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
+	WHERE rights_for IS NULL AND receiver IS NULL;
+CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver, rights_for ON outbox
+BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
+`,
+	},
+	{
+		version: 11,
+		name: "ruling expiry, supersession and housekeeping retirements",
+		sql: `
+-- A ruling can now be time-bound and can replace others. expires: an ISO date (through the end of that day, UTC) or date-time, after which the ruling is no
+-- longer in force (it is read against a clock, never rewritten by a timer; the row stays). until_event: a time bound only a person can judge ("until the
+-- launch"), shown and never enforced. supersedes: the ids a ruling replaces (a JSON array). superseded_by and retired_why say, for a ruling that left force
+-- for a housekeeping reason, which ruling took its place and why.
+-- The housekeeping reason itself (superseded, duplicate, expired, repeat) goes in retired_reason, on a row whose retired_how is 'retired'. retired_how and its
+-- CHECK are left exactly as they are: SQLite cannot change a CHECK in place, and rebuilding the table would drop any index or trigger added to it and, with
+-- foreign keys on, delete the rows of any table that references it ON DELETE CASCADE. So this migration only adds: columns (NULL for every row already
+-- there) and two triggers that hold retired_reason to its four values, which a plain CREATE TRIGGER can add.
+-- Unreleased, and edited in place while its branch was open. DEVELOPMENT DATABASES ONLY: a database that ran an earlier draft of 10 or 11 (11's draft
+-- rebuilt the table) records version 11 and is never upgraded again, so it must be rebuilt (delete chamberlain.db and its -wal and -shm files, then start
+-- again or run legacy-import.ts). The reverse is not caught either: a draft build that knew an earlier 11 opens a database this 11 made, because the
+-- version number is the same, so do not point a draft build at it. A database migrated only by released builds has neither problem.
+ALTER TABLE rulings ADD COLUMN retired_reason TEXT;
+ALTER TABLE rulings ADD COLUMN retired_why TEXT;
+ALTER TABLE rulings ADD COLUMN superseded_by TEXT;
+ALTER TABLE rulings ADD COLUMN supersedes TEXT CHECK (supersedes IS NULL OR json_valid(supersedes));
+ALTER TABLE rulings ADD COLUMN expires TEXT;
+ALTER TABLE rulings ADD COLUMN until_event TEXT;
+CREATE TRIGGER rulings_retired_reason_insert BEFORE INSERT ON rulings
+	WHEN NEW.retired_reason IS NOT NULL AND (NEW.retired_reason NOT IN ('superseded', 'duplicate', 'expired', 'repeat') OR NEW.retired_how IS NOT 'retired')
+BEGIN SELECT RAISE(ABORT, 'retired_reason must be superseded, duplicate, expired or repeat, on a retired row'); END;
+CREATE TRIGGER rulings_retired_reason_update BEFORE UPDATE OF retired_reason, retired_how ON rulings
+	WHEN NEW.retired_reason IS NOT NULL AND (NEW.retired_reason NOT IN ('superseded', 'duplicate', 'expired', 'repeat') OR NEW.retired_how IS NOT 'retired')
+BEGIN SELECT RAISE(ABORT, 'retired_reason must be superseded, duplicate, expired or repeat, on a retired row'); END;
+`,
+	},
+	{
+		version: 12,
+		name: "the store's monotonic sequence",
+		sql: `
+-- One durable counter, taken in a transaction (Store.sequence.next): every value is greater than every value taken before it, by any
+-- process, whatever the wall clock says. A card hold records the value when it is written and the card reconciler takes a new one before
+-- each read, so "this read started after this hold was written" compares two sequence values, never two clock readings (a clock that
+-- rolls back cannot reorder them). One row, created here at 0; triggers refuse a second row, a delete, and any update that does not raise
+-- the value. Additive only: nothing existing changes. A build that knows only migrations up to 11 refuses this database.
+CREATE TABLE store_sequence (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	value INTEGER NOT NULL CHECK (value >= 0)
+);
+INSERT INTO store_sequence (id, value) VALUES (1, 0);
+CREATE TRIGGER store_sequence_one_row BEFORE INSERT ON store_sequence
+BEGIN SELECT RAISE(ABORT, 'the store sequence has exactly one row'); END;
+CREATE TRIGGER store_sequence_no_delete BEFORE DELETE ON store_sequence
+BEGIN SELECT RAISE(ABORT, 'the store sequence has exactly one row'); END;
+CREATE TRIGGER store_sequence_monotonic BEFORE UPDATE ON store_sequence
+	WHEN NEW.value <= OLD.value OR NEW.id IS NOT OLD.id
+BEGIN SELECT RAISE(ABORT, 'the store sequence only increases'); END;
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

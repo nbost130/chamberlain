@@ -164,7 +164,33 @@ export interface AwayStore {
 // ---- wakes: the transactional outbox, held items ----------------------------------------------------
 
 /** What a wake is about, so a repeat can be told from a new event. A wake about no thread (a sweep) has a kind alone. */
-export type WakeMeta = { kind: string; thread?: string };
+/**
+ * What a wake's rights text was composed for: the Steward's thread and session, the rights hash (rights-sent.ts) and when the full text last
+ * went out (a pointer names it). A pointer or legacy stamp makes the row depend on the Steward already holding the rights: before every attempt
+ * the relay sends a full-rights prerequisite ahead of it unless the durable rights record shows the Steward there now holds the rights in
+ * force now. A `full` stamp is on a wake that carries the whole block: when that row is delivered, the relay writes the rights record from it
+ * in the same transaction.
+ */
+export type RightsStamp = {
+	steward?: string; session?: string; hash: string; at?: string;
+	/** The wake carries the full block, composed for this state; `used` is the Steward's context size then (the record's high-water mark). */
+	full?: true; used?: number;
+	/** The rights epoch the wake was composed under (rights-sent.ts): a delivered full stamp writes the record only while it is still current. Absent is 0. */
+	epoch?: number;
+	/**
+	 * "unstamped": a Steward wake queued before the stamps existed (migration 10 marks every undelivered Steward row and held wake that has no
+	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it depends
+	 * on the record like a pointer does.
+	 */
+	legacy?: "unstamped";
+};
+export type WakeMeta = {
+	kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string;
+	/** One stamp per rights text the wake carries, a pointer or the full block (a digest can carry several); absent when it carries none. */
+	rights?: RightsStamp[];
+};
+/** Which receiver's wakes a read is about: `null` is the Steward's, a name is that receiver's, and `undefined` is every receiver's. */
+export type Lane = string | null | undefined;
 /** A wake as a producer hands it in: its one delivery id, its text, when it was made and what it is about. */
 export type WakeRow = { deliveryId: string; message: string; queuedAt: number } & Partial<WakeMeta>;
 /** A holdable wake waiting for the Steward to go idle. Not yet bound to any outbox row. */
@@ -179,7 +205,9 @@ export type HoldClock = { busySince?: number; seenAt?: number; lastPostAt?: numb
 export type OutboxStatus = "pending" | "delivered" | "dead_letter" | "cancelled";
 /** One outbox row. Everything but status, attempts and the two times is frozen when the row is created (a database trigger refuses a change). */
 export type OutboxRow = {
-	id: number; deliveryId: string; message: string; kind?: string; thread?: string; createdAt: number;
+	id: number; deliveryId: string; message: string; kind?: string; thread?: string; receiver?: string; createdAt: number;
+	/** The rights stamps it was composed with (`WakeMeta.rights`): checked just before each attempt, and a full one is recorded at delivery. */
+	rights?: RightsStamp[];
 	/** For a digest: how many held wakes were folded into a later one about the same thread and kind. */
 	folded: number;
 	status: OutboxStatus; attempts: number; lastAttemptAt?: number; finishedAt?: number;
@@ -198,16 +226,16 @@ export interface WakeStore {
 	enqueue(w: WakeRow): boolean;
 	/** A producer's holdable wake: held until the relay composes it into a row. False (nothing written) when the id is already known. */
 	hold(w: HeldItem): boolean;
-	/** Every held item, oldest first. */
-	held(): HeldItem[];
+	/** Every held item, oldest first. `lane` picks one receiver's (`null`: the Steward's); without it, all of them. */
+	held(lane?: Lane): HeldItem[];
 	/**
 	 * The relay's composition, ONE transaction: `compose` picks the row from the items held now; the row is inserted with its members bound
 	 * (a member already bound to another row is refused by the primary key, and the whole composition with it) and they leave the held store.
 	 * Undefined when nothing is held.
 	 */
-	compose(now: number, compose: (held: HeldItem[]) => Composed): OutboxRow | undefined;
-	/** Rows by status (default pending), oldest first. */
-	rows(status?: OutboxStatus | "all"): OutboxRow[];
+	compose(now: number, compose: (held: HeldItem[]) => Composed, lane?: Lane): OutboxRow | undefined;
+	/** Rows by status (default pending), oldest first. `lane` picks one receiver's rows; without it, all of them. */
+	rows(status?: OutboxStatus | "all", lane?: Lane): OutboxRow[];
 	/** The row an id belongs to: as its own delivery id or as a member. */
 	find(deliveryId: string): OutboxRow | undefined;
 	/** Is this id bound to a delivered row? */
@@ -264,6 +292,17 @@ export interface StateStore {
 	update<T>(key: string, fn: (prior: T | undefined) => T | undefined): T | undefined;
 }
 
+/**
+ * One durable, monotonic counter (migration 12). `next` raises it by one in a transaction and returns the new value, which is
+ * greater than every value any process took before it. It orders events without the wall clock: a card hold records a value
+ * when it is written, and a read taken with a greater value started after that hold was committed.
+ */
+export interface SequenceStore {
+	next(): number;
+	/** The newest value taken (0 before any). */
+	current(): number;
+}
+
 export interface Store {
 	/** The database file, or ":memory:". */
 	readonly path: string;
@@ -281,6 +320,7 @@ export interface Store {
 	readonly challenges: ChallengeStore;
 	readonly events: EventStore;
 	readonly state: StateStore;
+	readonly sequence: SequenceStore;
 }
 
 /** The database file's name in the state directory. */

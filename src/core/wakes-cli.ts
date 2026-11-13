@@ -2,6 +2,8 @@
  * The operator's commands for the outbox (`bun src/wakes.ts`). `list` shows what is waiting, `retry <id>` gives a dead-lettered row another
  * full set of attempts, `cancel <id>` gives a pending or dead-lettered row up and keeps it as a tombstone, so nothing enqueues it again.
  * Pure over a Store and an output function, so it is tested without a process. An id may be a row's own or one of a digest's members.
+ * Each row names its receiver when it is not the Steward ("for desk"), so rows for a receiver removed from config (the relay's
+ * `<receiver>:wake-unconfigured` alarm) can be found here and cancelled.
  *
  * Before retrying, look at the Steward's thread: a dead-lettered wake may well have reached the Steward, and the Steward treats a delivery
  * id it has already handled as a repeat. retry works only on a dead letter, which the relay never has in flight, so it cannot add a POST
@@ -12,7 +14,7 @@ import type { OutboxRow, Store } from "./store.ts";
 
 export const WAKES_USAGE = "usage: bun src/wakes.ts list\n       bun src/wakes.ts retry <delivery id>\n       bun src/wakes.ts cancel <delivery id>";
 const iso = (ms: number | undefined) => (ms === undefined ? "-" : new Date(ms).toISOString());
-const line = (r: OutboxRow, max: number) => `  ${r.deliveryId}  ${r.attempts}/${max} attempts  created ${iso(r.createdAt)}  last tried ${iso(r.lastAttemptAt)}${r.members.length > 1 || r.members[0]?.deliveryId !== r.deliveryId ? `  members ${r.members.map((m) => m.deliveryId).join(", ")}` : ""}`;
+const line = (r: OutboxRow, max: number) => `  ${r.deliveryId}${r.receiver ? `  for ${r.receiver}` : ""}  ${r.attempts}/${max} attempts  created ${iso(r.createdAt)}  last tried ${iso(r.lastAttemptAt)}${r.members.length > 1 || r.members[0]?.deliveryId !== r.deliveryId ? `  members ${r.members.map((m) => m.deliveryId).join(", ")}` : ""}`;
 
 /** Runs one command. Returns the exit code: 0 done, 1 no row has that id or it is not in a state the command applies to, 2 usage. */
 export function runWakesCli(store: Store, argv: readonly string[], out: (line: string) => void, env: Record<string, string | undefined> = process.env): number {

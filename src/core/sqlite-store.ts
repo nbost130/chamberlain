@@ -19,9 +19,9 @@ import { decideNotification, NOTIFY_ONCE } from "./notification.ts";
 import type { Butler } from "./butler.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { DIR_MODE, enforceMode, FILE_MODE } from "./private.ts";
-import type { Ruling } from "./rulings.ts";
+import { HOUSEKEEPING, type RetiredHow, type Ruling } from "./rulings.ts";
 import { SchemaTooNewError } from "./schema.ts";
-import type { AwayRecord, Challenge, ChallengeVerdict, ClaimRecord, DecisionRow, EventQuery, EvidenceRow, HeldItem, Item, ItemFilter, ItemStatus, LogEvent, Observation, Observed, OutboxRow, OutboxStatus, RelayRecord, Store, WakeRow } from "./store.ts";
+import type { AwayRecord, Challenge, ChallengeVerdict, ClaimRecord, DecisionRow, EventQuery, EvidenceRow, HeldItem, Item, ItemFilter, ItemStatus, LogEvent, Observation, Observed, OutboxRow, OutboxStatus, RelayRecord, RightsStamp, Store, WakeRow } from "./store.ts";
 
 /** The database was written by a newer Chamberlain than this build. */
 export class DatabaseTooNewError extends SchemaTooNewError {
@@ -257,17 +257,23 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		id: r.id as string, date: r.date as string, words: r.words as string, decides: r.decides as string,
 		source: r.source as Ruling["source"], status: r.status as Ruling["status"], confirmed: r.confirmed === 1,
 		...(r.confirmed_at ? { confirmedAt: r.confirmed_at as string } : {}), ...(r.retired_at ? { retiredAt: r.retired_at as string } : {}),
-		...(r.retired_how ? { retiredHow: r.retired_how as "retired" | "only this once" } : {}), ...(r.item ? { item: r.item as string } : {}),
+		...(r.retired_reason || r.retired_how ? { retiredHow: (r.retired_reason ?? r.retired_how) as RetiredHow } : {}), ...(r.retired_why ? { retiredWhy: r.retired_why as string } : {}),
+		...(r.superseded_by ? { supersededBy: r.superseded_by as string } : {}), ...(r.supersedes ? { supersedes: parse<string[]>(r.supersedes) } : {}),
+		...(r.expires ? { expires: r.expires as string } : {}), ...(r.until_event ? { until: r.until_event as string } : {}), ...(r.item ? { item: r.item as string } : {}),
 		history: parse<Ruling["history"]>(r.history) ?? [],
 	});
 	const rulings: Store["rulings"] = {
 		list: () => all("SELECT * FROM rulings ORDER BY seq").map(toRuling),
 		save(r) {
+			// A housekeeping reason is stored as retired_how 'retired' plus retired_reason (migration 11); the page's two are retired_how alone.
+			const reason = r.retiredHow && HOUSEKEEPING.has(r.retiredHow) ? r.retiredHow : null;
 			run(
-				`INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				`INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, retired_reason, retired_why, superseded_by, supersedes, expires, until_event, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT (id) DO UPDATE SET date = excluded.date, words = excluded.words, decides = excluded.decides, source = excluded.source, status = excluded.status, confirmed = excluded.confirmed,
-				 confirmed_at = excluded.confirmed_at, retired_at = excluded.retired_at, retired_how = excluded.retired_how, item = excluded.item, history = excluded.history`,
-				r.id, Number(r.id.slice(1)), r.date, r.words, r.decides, r.source, r.status, r.confirmed ? 1 : 0, r.confirmedAt ?? null, r.retiredAt ?? null, r.retiredHow ?? null, r.item ?? null, JSON.stringify(r.history ?? []),
+				 confirmed_at = excluded.confirmed_at, retired_at = excluded.retired_at, retired_how = excluded.retired_how, retired_reason = excluded.retired_reason, retired_why = excluded.retired_why, superseded_by = excluded.superseded_by,
+				 supersedes = excluded.supersedes, expires = excluded.expires, until_event = excluded.until_event, item = excluded.item, history = excluded.history`,
+				r.id, Number(r.id.slice(1)), r.date, r.words, r.decides, r.source, r.status, r.confirmed ? 1 : 0, r.confirmedAt ?? null, r.retiredAt ?? null, reason ? "retired" : (r.retiredHow ?? null), reason, r.retiredWhy ?? null, r.supersededBy ?? null,
+				r.supersedes?.length ? JSON.stringify(r.supersedes) : null, r.expires ?? null, r.until ?? null, r.item ?? null, JSON.stringify(r.history ?? []),
 			);
 		},
 	};
@@ -317,9 +323,16 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 	};
 
 	// ---- wakes --------------------------------------------------------------------------------------
-	const toHeld = (r: Row): HeldItem => ({ deliveryId: r.delivery_id as string, message: (r.message as string | undefined) ?? "", queuedAt: r.queued_at as number, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}) });
+	/** The stamps a row or held item carries (migration 9): a JSON array, or nothing. Unreadable is treated as a stamp nothing matches, so the relay sends the full rights ahead of it: doubt sends them again. */
+	const stampsOf = (r: Row): { rights?: RightsStamp[] } => {
+		if (r.rights_for === null || r.rights_for === undefined) return {};
+		try { const v = JSON.parse(r.rights_for as string); if (Array.isArray(v) && v.length) return { rights: v as RightsStamp[] }; } catch {}
+		return { rights: [{ hash: "" }] };
+	};
+	const stampText = (w: { rights?: RightsStamp[] }) => (w.rights?.length ? JSON.stringify(w.rights) : null);
+	const toHeld = (r: Row): HeldItem => ({ deliveryId: r.delivery_id as string, message: (r.message as string | undefined) ?? "", queuedAt: r.queued_at as number, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}), ...(r.receiver ? { receiver: r.receiver as string } : {}), ...stampsOf(r) });
 	const toRow = (r: Row): OutboxRow => ({
-		id: r.id as number, deliveryId: r.delivery_id as string, message: r.message as string, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}),
+		id: r.id as number, deliveryId: r.delivery_id as string, message: r.message as string, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}), ...(r.receiver ? { receiver: r.receiver as string } : {}), ...stampsOf(r),
 		createdAt: r.created_at as number, folded: r.folded as number, status: r.status as OutboxStatus, attempts: r.attempts as number,
 		...(r.last_attempt_at !== null ? { lastAttemptAt: r.last_attempt_at as number } : {}), ...(r.finished_at !== null ? { finishedAt: r.finished_at as number } : {}),
 		members: all("SELECT * FROM outbox_members WHERE outbox_id = ? ORDER BY queued_at, rowid", r.id).map(toHeld),
@@ -329,16 +342,16 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 	const find = (id: string) => { const r = one("SELECT o.* FROM outbox o WHERE o.delivery_id = ? OR o.id = (SELECT outbox_id FROM outbox_members WHERE delivery_id = ?)", id, id); return r ? toRow(r) : undefined; };
 	/** Inserts a row and binds its members, inside the caller's transaction. */
 	function insertRow(w: WakeRow & { folded?: number }, members: HeldItem[]): number {
-		const id = run("INSERT INTO outbox (delivery_id, message, kind, thread, created_at, folded) VALUES (?, ?, ?, ?, ?, ?)", w.deliveryId, w.message, w.kind ?? null, w.thread ?? null, w.queuedAt, w.folded ?? 0).lastInsertRowid as number;
+		const id = run("INSERT INTO outbox (delivery_id, message, kind, thread, receiver, rights_for, created_at, folded) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", w.deliveryId, w.message, w.kind ?? null, w.thread ?? null, w.receiver ?? null, stampText(w), w.queuedAt, w.folded ?? 0).lastInsertRowid as number;
 		for (const m of members) run("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, ?, ?)", m.deliveryId, id, m.queuedAt, m.kind ?? null, m.thread ?? null);
 		return id;
 	}
 	const wakes: Store["wakes"] = {
 		enqueue: (w) => tx(() => { if (known(w.deliveryId)) return false; insertRow(w, [w]); return true; }),
-		hold: (w) => tx(() => { if (known(w.deliveryId)) return false; run("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, thread) VALUES (?, ?, ?, ?, ?)", w.deliveryId, w.message, w.queuedAt, w.kind ?? null, w.thread ?? null); return true; }),
-		held: () => all("SELECT * FROM held_wakes ORDER BY seq").map(toHeld),
-		compose: (now, compose) => tx(() => {
-			const held = wakes.held();
+		hold: (w) => tx(() => { if (known(w.deliveryId)) return false; run("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, thread, receiver, rights_for) VALUES (?, ?, ?, ?, ?, ?, ?)", w.deliveryId, w.message, w.queuedAt, w.kind ?? null, w.thread ?? null, w.receiver ?? null, stampText(w)); return true; }),
+		held: (lane) => (lane === undefined ? all("SELECT * FROM held_wakes ORDER BY seq") : all("SELECT * FROM held_wakes WHERE receiver IS ? ORDER BY seq", lane)).map(toHeld),
+		compose: (now, compose, lane) => tx(() => {
+			const held = wakes.held(lane);
 			if (!held.length) return undefined;
 			const c = compose(held);
 			const members = held.filter((h) => c.members.includes(h.deliveryId));
@@ -346,7 +359,9 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 			for (const m of members) run("DELETE FROM held_wakes WHERE delivery_id = ?", m.deliveryId);
 			return toRow(one("SELECT * FROM outbox WHERE id = ?", id)!);
 		}),
-		rows: (status = "pending") => (status === "all" ? all("SELECT * FROM outbox ORDER BY id") : all("SELECT * FROM outbox WHERE status = ? ORDER BY id", status)).map(toRow),
+		rows: (status = "pending", lane) => (lane === undefined
+			? (status === "all" ? all("SELECT * FROM outbox ORDER BY id") : all("SELECT * FROM outbox WHERE status = ? ORDER BY id", status))
+			: (status === "all" ? all("SELECT * FROM outbox WHERE receiver IS ? ORDER BY id", lane) : all("SELECT * FROM outbox WHERE status = ? AND receiver IS ? ORDER BY id", status, lane))).map(toRow),
 		find,
 		isDelivered: (id) => (find(id)?.status ?? (one("SELECT outcome FROM wake_tombstones WHERE delivery_id = ?", id)?.outcome as string | undefined)) === "delivered",
 		known,
@@ -413,7 +428,13 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		prune: (before) => run("DELETE FROM events WHERE t < ?", before).changes,
 	};
 
-	return { path, tx, close: () => db.close(), items, claims, evidence, rulings, decisions, butlers, away, wakes, challenges, events, state };
+	// ---- the sequence (migration 12) -------------------------------------------------------------------
+	const sequence: Store["sequence"] = {
+		next: () => tx(() => one("UPDATE store_sequence SET value = value + 1 WHERE id = 1 RETURNING value")!.value as number),
+		current: () => one("SELECT value FROM store_sequence WHERE id = 1")!.value as number,
+	};
+
+	return { path, tx, close: () => db.close(), items, claims, evidence, rulings, decisions, butlers, away, wakes, challenges, events, state, sequence };
 }
 
 /**

@@ -16,6 +16,8 @@
  *   - no `inspect`         a turn end wakes once per turn, with no excerpt, question or report gating
  *   - no `stewardProbe`    no stall alarm, no context-size tracking, no compaction
  *   - no `compact`         the daemon only alarms that the Steward is over its size
+ *   - no `alertDesk`       alerts are not routed to a desk thread: the inbox is never drained
+ *   - no `handoffInstruction`  a HAND OFF verdict is put to the operator as a question; the daemon does not start the hand-off itself
  *   - no `transcriptPath`  Steward health reports "unavailable"
  */
 import type { Gate } from "./hold.ts";
@@ -50,6 +52,8 @@ export type ThreadState = {
 	backgroundTasks: number;
 	/** Background work that is the thread's own. A watched PR counts as a task in T3, and it can wait for days. */
 	backgroundWork: number;
+	/** The id of the thread's newest run, when the backend names one. A failure is told apart from the last one by it (src/core/decide.ts). */
+	latestRunId?: string | null;
 };
 
 /** What an adapter hands over: the three fields every backend has, and any of the rest it can fill in. */
@@ -71,6 +75,7 @@ export const normalizeThread = (t: ThreadInput): ThreadState => ({
 	linkedPrDone: t.linkedPrDone ?? false,
 	backgroundTasks: t.backgroundTasks ?? 0,
 	backgroundWork: t.backgroundWork ?? 0,
+	latestRunId: t.latestRunId ?? null,
 });
 
 // ---- watch ---------------------------------------------------------------------------------------
@@ -105,18 +110,56 @@ export type WaitQuestion = { question?: string; options?: { label?: string; desc
 export type WaitingItem = { type: WaitKind; requestId: string; label: string; questions: WaitQuestion[] };
 
 /**
+ * A read of one thread's cards. `ok: true`: the backend was connected for the whole read and answered in the shape the adapter
+ * expects. It is NOT a complete list of the thread's cards: a backend may return a bounded window of the thread's history (T3
+ * does), so a card missing from it says nothing about that card.
+ *   - `cards`: the cards seen waiting now, for the wake path.
+ *   - `resolved`: request IDs of cards whose OWN item the read saw in a terminal status (resolved: answered, declined,
+ *     cancelled, failed or interrupted). This is the ONLY evidence that closes a card hold (card-hold.ts). An adapter that
+ *     cannot tell leaves it out, and its card holds close only by hand.
+ *   - `ignored`: why a card item was skipped (a missing or invalid request ID or status, an unknown status, two items of one
+ *     card that disagree). A skipped item is never evidence of anything; the core logs the reasons.
+ * Everything else is `ok: false` with a reason: a server that is down or not connected now (a `mayBeOffline` server asleep
+ * included), a thread the backend cannot find, any error, an answer in a shape the adapter does not expect. `waiting` never rejects.
+ */
+export type WaitingRead = { ok: true; cards: WaitingItem[]; resolved?: string[]; ignored?: string[] } | { ok: false; reason: string };
+
+/** Pure: does a value from an adapter keep the `WaitingRead` contract? The core treats anything else as `ok: false`. */
+export function isWaitingRead(r: unknown): r is WaitingRead {
+	if (!r || typeof r !== "object") return false;
+	const o = r as Record<string, unknown>;
+	if (o.ok === false) return typeof o.reason === "string";
+	const strings = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string" && x !== ""));
+	return o.ok === true && Array.isArray(o.cards) && strings(o.resolved) && strings(o.ignored)
+		&& o.cards.every((c) => !!c && typeof c === "object" && typeof (c as WaitingItem).requestId === "string" && (c as WaitingItem).requestId !== "" && typeof (c as WaitingItem).type === "string");
+}
+
+/**
  * Reads of one thread, made on demand when a wake is being built. A read that fails rejects; the core logs it and carries
  * on with a neutral value (no excerpt, no question, no subagents). `instruction` never rejects: its state says what happened.
  */
+/**
+ * Why a run failed, as the backend records it. `class`, `code` and `message` are the backend's own words; src/core/recover.ts reads
+ * them in code and never asks a model what kind of failure it was. `interrupted` is true when someone stopped the run: a stop is not an outage.
+ */
+export type RunFailure = { runId: string; /** The run's ordinal in its thread: monotonic, so a retry's message id never repeats across stretches. */ ordinal?: number; class?: string; code?: string; message: string; retryable?: boolean; resetAt?: string; interrupted?: boolean };
+
+/** What a fresh read of a thread shows, taken right before a ping: its newest run and whether anything is going or waiting. */
+export type RunLook = { latestRunId?: string; latestStatus?: string; /** a run is queued, starting, running or waiting */ active: boolean; /** a card, approval, secret or question is open */ waiting: boolean };
+
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
 	lastMessage(threadId: string): Promise<string>;
-	/** What the thread is waiting on now. */
-	waiting(threadId: string): Promise<WaitingItem[]>;
+	/** What the thread is waiting on now. Never rejects; only an `ok: true` read may be believed (see `WaitingRead`). */
+	waiting(threadId: string): Promise<WaitingRead>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
 	runningSubagents(threadId: string): Promise<number>;
 	/** The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means). */
 	instruction(threadId: string): Promise<InstructionRead>;
+	/** The newest failed run of the thread and its error. Absent: the adapter cannot say, and stalled-thread recovery stays off for its threads. */
+	failure?(threadId: string): Promise<RunFailure | undefined>;
+	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */
+	look?(threadId: string): Promise<RunLook | undefined>;
 };
 
 // ---- post ----------------------------------------------------------------------------------------
@@ -194,7 +237,24 @@ export type Transcript = {
 
 // ---- the adapter ---------------------------------------------------------------------------------
 
-export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact";
+/** What a snapshot knows of one thread. */
+export type ThreadFactsRow = { id: string; archived: boolean; settled: boolean; pendingRequestId: string | null; status: string };
+/** A whole read of an adapter's server. `complete` is false when the answer may be partial, and then it says nothing about a thread it lacks. */
+export type ThreadSnapshot = { complete: boolean; threads: ThreadFactsRow[] };
+
+export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot" | "alertDesk" | "handoffInstruction";
+
+/**
+ * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
+ * (src/core/alert-desk.ts) into wakes for the `desk` receiver, and the one relay sends them here (a second receiver, through its one serial queue), so the desk holds and digests on its own
+ * thread's state, never the Steward's.
+ */
+export type AlertDeskLane = {
+	/** How a wake reaches the desk thread. Its `ready()` is false until the operator has made the desk (no URL), and then nothing is drained. */
+	wake: WakeTransport;
+	/** Does the desk thread have a turn running or queued? Like `Adapter.isBusy`, for the desk's thread. */
+	isBusy(): Gate;
+};
 
 export interface Adapter {
 	/** The registry name: "t3", "fake". */
@@ -225,12 +285,25 @@ export interface Adapter {
 	transcriptPath?(): Promise<Transcript>;
 	/** Reads of one thread, for building a wake. */
 	readonly inspect?: Inspector;
-	/** Sends a message into a thread as the Steward, once for one `seed`. Used for an option routed straight to its thread. */
-	send?(threadId: string, text: string, seed: string): Promise<{ ok: boolean; detail: string }>;
+	/** Sends a message into a thread, once for one `seed`: the daemon's one ping. Signed as the Steward unless `identity` says otherwise ("daemon": its own retry, which instructs nobody). Used for an option routed straight to its thread and for stalled-thread recovery. */
+	send?(threadId: string, text: string, seed: string, identity?: "steward" | "daemon" | "operator"): Promise<{ ok: boolean; detail: string }>;
 	/** The Steward's size, stall and compaction state. */
 	stewardProbe?(): StewardProbe;
+	/**
+	 * A fresh, whole read of every thread on this adapter's server, taken now over a connection of its own: never the watcher's
+	 * cache. Rejects when the server cannot be reached. The held-ledger reconciler closes a hold on a thread only from this.
+	 */
+	snapshot?(): Promise<ThreadSnapshot>;
 	/** How a compaction request reaches the Steward. Its `send` takes no message. */
 	readonly compact?: WakeTransport;
+	/** The Alert Desk thread: its wake transport and busy gate. */
+	readonly alertDesk?: AlertDeskLane;
+	/**
+	 * How the Steward starts its own hand-off on this backend: one or two sentences the hand-off wake carries (T3: run the `/steward-handoff`
+	 * command). When the Steward-health check says HAND OFF the daemon queues that wake itself. An adapter without this capability leaves
+	 * the hand-off to the operator: the daemon asks them instead.
+	 */
+	handoffInstruction?(): string;
 
 	// -- wording --
 
@@ -286,7 +359,7 @@ export type AdapterEntry = { create: AdapterFactory; brief?: (ctx: { repo: strin
 export function has<K extends OptionalCapability>(a: Adapter, cap: K): a is Adapter & Required<Pick<Adapter, CapabilityMethod[K]>> {
 	return a.capabilities.includes(cap);
 }
-type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact" };
+type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot"; alertDesk: "alertDesk"; handoffInstruction: "handoffInstruction" };
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
 export function conformance(a: Adapter): string[] {
@@ -294,7 +367,7 @@ export function conformance(a: Adapter): string[] {
 	if (!a.id) bad.push("no id");
 	for (const m of ["watch", "isBusy", "post"] as const) if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
 	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function") bad.push("required capability wake needs ready() and send()");
-	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact };
+	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot, alertDesk: a.alertDesk, handoffInstruction: a.handoffInstruction };
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);
 		if (declared && !impl) bad.push(`declares ${cap} but does not implement it`);

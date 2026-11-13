@@ -40,6 +40,199 @@ describe("opening the database", () => {
 		db.close();
 	});
 
+	test("a v0.1.1 database (migrations 1 to 7) upgrades in place: its wakes keep going to the Steward", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v0.1.1.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 7)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		db.exec(`INSERT INTO outbox (id, delivery_id, message, created_at) VALUES (1, 'w1', 'm', 1);
+			INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('w1', 1, 1);
+			INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h1', 'held', 2, 'turn');`);
+		db.close();
+		const s = openStore(path);
+		open.push(s);
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(LATEST_MIGRATION);
+		after.close();
+		expect(s.wakes.rows("pending", null).map((r) => r.deliveryId)).toEqual(["w1"]);
+		expect(s.wakes.held(null).map((h) => h.deliveryId)).toEqual(["h1"]);
+		expect(s.wakes.rows("pending", "desk")).toEqual([]);
+	});
+
+	test("an upgrade marks every undelivered, unstamped Steward wake legacy whatever its text, and never touches the text", () => {
+		const OLD = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
+		const legacy = [{ hash: "", legacy: "unstamped" as const }];
+		for (const version of [7, 8, 9]) {
+			const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+			dirs.push(d);
+			const path = `${d}/v${version}.db`;
+			const db = raw(path);
+			db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+			for (const m of MIGRATIONS.filter((x) => x.version <= version)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+			const rows: [string, string, string][] = [["p1", `a\n${OLD}\nb`, "pending"], ["plain", "Decision rights (standing rules):\nmerge green PRs", "pending"], ["dl", "x", "dead_letter"], ["done", `x\n${OLD}`, "delivered"], ["gone", `x\n${OLD}`, "cancelled"]];
+			rows.forEach(([id, message, status], i) => {
+				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status) VALUES (?, ?, ?, 1, ?)").run(i + 1, id, message, status);
+				db.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES (?, ?, 1)").run(id, i + 1);
+			});
+			db.exec("INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h-plain', 'held', 2, 'turn')");
+			// From schema 8, a wake can be for another receiver (the desk): never the Steward's, so never marked.
+			if (version >= 8) {
+				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status, receiver) VALUES (9, 'desk-row', ?, 1, 'pending', 'desk')").run(`x\n${OLD}`);
+				db.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('desk-row', 9, 1)").run();
+				db.exec("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, receiver) VALUES ('h-desk', 'held', 2, 'turn', 'desk')");
+			}
+			db.close();
+			const s = openStore(path);
+			open.push(s);
+			const stamps = (id: string) => s.wakes.find(id)?.rights;
+			expect([stamps("p1"), stamps("plain"), stamps("dl")]).toEqual([legacy, legacy, legacy]);
+			expect([stamps("done"), stamps("gone"), stamps("desk-row")]).toEqual([undefined, undefined, undefined]);
+			expect(Object.fromEntries(s.wakes.held().map((h) => [h.deliveryId, h.rights]))).toEqual({ "h-plain": legacy, ...(version >= 8 ? { "h-desk": undefined } : {}) });
+			// The text itself is never touched: rows stay immutable, only the stamp column is set, and the freeze trigger is back.
+			expect(s.wakes.find("p1")?.message).toBe(`a\n${OLD}\nb`);
+			const after = raw(path);
+			expect(() => after.exec("UPDATE outbox SET rights_for = NULL WHERE delivery_id = 'p1'")).toThrow("immutable");
+			after.close();
+		}
+	});
+
+	test("a database already at migration 9 keeps its stamps: a stamped pointer is not re-marked", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v9.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 9)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		const stamp = [{ steward: "s1", session: "x", hash: "h", at: "2026-11-13T18:00:00.000Z" }];
+		db.query("INSERT INTO outbox (id, delivery_id, message, created_at, rights_for) VALUES (1, 'w', ?, 1, ?)").run("Decision rights and rulings unchanged since 2026-11-13T18:00:00.000Z and still in force; your hand-off (steward-brief.md) has them.", JSON.stringify(stamp));
+		db.close();
+		const s = openStore(path);
+		open.push(s);
+		expect(s.wakes.find("w")?.rights).toEqual(stamp);
+	});
+
+	test("a database at migration 10 gains the ruling fields: every ruling kept as it was, the new columns empty, the new retirement reasons allowed", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v10.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		const ins = db.query("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+		ins.run("R1", 1, "2026-11-01", "w1", "d1", "chat", "in-force", 1, "2026-11-01T09:00:00.000Z", null, null, null, '[{"t":"x","what":"stated"}]');
+		ins.run("R2", 2, "2026-11-02", "w2", "d2", "card", "proposed", 0, null, null, null, "Q-abc12", "[]");
+		ins.run("R10", 10, "2026-11-03", "w3", "d3", "card", "retired", 1, "2026-11-03T09:00:00.000Z", "2026-11-04T09:00:00.000Z", "only this once", null, "[]");
+		const before = db.query("SELECT * FROM rulings ORDER BY seq").all() as Record<string, unknown>[];
+		db.close();
+		const s = openStore(path);
+		open.push(s);
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(LATEST_MIGRATION);
+		expect(LATEST_MIGRATION).toBeGreaterThanOrEqual(11);
+		expect(after.query("SELECT version FROM migrations WHERE version = 11").get()).toEqual({ version: 11 });
+		// Every old column is as it was; the new ones are NULL.
+		const rows = after.query("SELECT * FROM rulings ORDER BY seq").all() as Record<string, unknown>[];
+		expect(rows.map((r) => Object.fromEntries(Object.keys(before[0]!).map((k) => [k, r[k]])))).toEqual(before);
+		for (const r of rows) for (const k of ["retired_why", "superseded_by", "supersedes", "expires", "until_event"]) expect(r[k]).toBeNull();
+		after.close();
+		expect(s.rulings.list().map((r) => [r.id, r.status, r.confirmed, r.retiredHow, r.item])).toEqual([["R1", "in-force", true, undefined, undefined], ["R2", "proposed", false, undefined, "Q-abc12"], ["R10", "retired", true, "only this once", undefined]]);
+		// The new reasons and fields are accepted now, and an unknown reason still is not.
+		s.rulings.save({ ...s.rulings.list()[0]!, status: "retired", retiredHow: "duplicate", retiredWhy: "twice", supersededBy: "R2", expires: "2026-12-01", supersedes: ["R10"] });
+		expect(s.rulings.list()[0]).toMatchObject({ retiredHow: "duplicate", retiredWhy: "twice", supersededBy: "R2", expires: "2026-12-01", supersedes: ["R10"] });
+		expect(() => s.rulings.save({ ...s.rulings.list()[0]!, retiredHow: "bogus" as never })).toThrow();
+		// Ids and order are unchanged: the next id continues after the highest.
+		s.rulings.save({ id: "R11", date: "d", words: "w", decides: "d", source: "chat", status: "in-force", confirmed: true, history: [] });
+		expect(s.rulings.list().map((r) => r.id)).toEqual(["R1", "R2", "R10", "R11"]);
+	});
+
+	test("migration 11 keeps what others added to the rulings table: an index, a trigger, and a child table's ON DELETE CASCADE rows", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v10c.db`;
+		const db = raw(path);
+		db.exec("PRAGMA foreign_keys = ON");
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w1', 'd1', 'chat', 'in-force', 1, '[]'), ('R2', 2, 'd', 'w2', 'd2', 'card', 'proposed', 0, '[]')");
+		db.exec("CREATE INDEX rulings_by_words ON rulings (words)");
+		db.exec("CREATE TABLE ruling_audit (n INTEGER PRIMARY KEY, id TEXT, what TEXT)");
+		db.exec("CREATE TRIGGER rulings_audit AFTER UPDATE OF status ON rulings BEGIN INSERT INTO ruling_audit (id, what) VALUES (NEW.id, NEW.status); END");
+		db.exec("CREATE TABLE ruling_notes (n INTEGER PRIMARY KEY, ruling TEXT NOT NULL REFERENCES rulings (id) ON DELETE CASCADE, note TEXT)");
+		db.exec("INSERT INTO ruling_notes (ruling, note) VALUES ('R1', 'first'), ('R1', 'second'), ('R2', 'third')");
+		db.close();
+		const s = openStore(path);
+		open.push(s);
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(LATEST_MIGRATION);
+		expect(after.query("SELECT name FROM sqlite_master WHERE name IN ('rulings_by_words', 'rulings_audit') ORDER BY name").all()).toEqual([{ name: "rulings_audit" }, { name: "rulings_by_words" }]);
+		expect(after.query("SELECT ruling, note FROM ruling_notes ORDER BY n").all()).toEqual([{ ruling: "R1", note: "first" }, { ruling: "R1", note: "second" }, { ruling: "R2", note: "third" }]);
+		// The child's foreign key still points at rulings, and the added trigger still fires.
+		expect(after.query("SELECT \"table\" AS t FROM pragma_foreign_key_list('ruling_notes')").all()).toEqual([{ t: "rulings" }]);
+		after.close();
+		s.rulings.save({ ...s.rulings.list()[0]!, status: "retired", retiredHow: "superseded", retiredWhy: "replaced by R2", supersededBy: "R2" });
+		const again = raw(path);
+		expect(again.query("SELECT id, what FROM ruling_audit").all()).toEqual([{ id: "R1", what: "retired" }]);
+		expect(again.query("SELECT COUNT(*) AS n FROM ruling_notes").get()).toEqual({ n: 3 });
+		expect(again.query("PRAGMA foreign_key_check").all()).toEqual([]);
+		again.close();
+	});
+
+	for (const version of [7, 8, 9, 10]) {
+		test(`a database at migration ${version} upgrades: its rulings kept, every retirement reason storable, an unknown one refused`, () => {
+			const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+			dirs.push(d);
+			const path = `${d}/v${version}r.db`;
+			const db = raw(path);
+			db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+			for (const m of MIGRATIONS.filter((x) => x.version <= version)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+			db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, retired_at, retired_how, history) VALUES ('R1', 1, 'd', 'w1', 'd1', 'chat', 'in-force', 1, NULL, NULL, '[]'), ('R2', 2, 'd', 'w2', 'd2', 'card', 'retired', 1, 't', 'only this once', '[]')");
+			db.close();
+			const s = openStore(path);
+			open.push(s);
+			expect(s.rulings.list().map((r) => [r.id, r.status, r.retiredHow])).toEqual([["R1", "in-force", undefined], ["R2", "retired", "only this once"]]);
+			const base = s.rulings.list()[0]!;
+			for (const how of ["retired", "only this once", "superseded", "duplicate", "expired", "repeat"] as const) {
+				s.rulings.save({ ...base, status: "retired", retiredHow: how, retiredWhy: "why" });
+				expect(s.rulings.list()[0]!.retiredHow).toBe(how);
+			}
+			expect(() => s.rulings.save({ ...base, status: "retired", retiredHow: "bogus" as never })).toThrow();
+		});
+	}
+
+	test("the database itself holds retired_reason to its four values, and only on a row retired_how 'retired'", () => {
+		const { s, path } = file();
+		s.rulings.save({ id: "R1", date: "d", words: "w", decides: "d", source: "chat", status: "in-force", confirmed: true, history: [] });
+		s.close();
+		const db = raw(path);
+		expect(() => db.exec("UPDATE rulings SET retired_how = 'retired', retired_reason = 'bogus' WHERE id = 'R1'")).toThrow(/retired_reason/);
+		expect(() => db.exec("UPDATE rulings SET retired_how = 'only this once', retired_reason = 'duplicate' WHERE id = 'R1'")).toThrow(/retired_reason/);
+		expect(() => db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, retired_how, retired_reason) VALUES ('R2', 2, 'd', 'w', 'd', 'chat', 'retired', 1, NULL, 'expired')")).toThrow(/retired_reason/);
+		db.exec("UPDATE rulings SET status = 'retired', retired_how = 'retired', retired_reason = 'repeat' WHERE id = 'R1'");
+		expect(db.query("SELECT retired_how, retired_reason FROM rulings").get()).toEqual({ retired_how: "retired", retired_reason: "repeat" });
+		db.close();
+	});
+
+	test("migration 11 is one transaction: a failure leaves the database at 10, rulings untouched", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v10b.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w', 'd', 'chat', 'in-force', 1, '[]')");
+		// A leftover trigger of the same name makes the migration fail part-way, after its columns are added.
+		db.exec("CREATE TRIGGER rulings_retired_reason_update AFTER UPDATE ON rulings BEGIN SELECT 1; END");
+		db.close();
+		expect(() => openStore(path)).toThrow();
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(10);
+		expect(after.query("SELECT id FROM rulings").all()).toEqual([{ id: "R1" }]);
+		expect(after.query("SELECT name FROM pragma_table_info('rulings') WHERE name = 'expires'").all()).toEqual([]);
+		after.close();
+	});
+
 	test("a database newer than this build is refused with a clear error", () => {
 		const { s, path } = file();
 		s.close();
@@ -402,5 +595,32 @@ describe("confirmation challenges", () => {
 		expect(s.challenges.prune(1000)).toBe(2);
 		expect(s.challenges.consume("live", { ...want, cardId: "C-live" }, 1001)).toBe("ok");
 		expect(s.challenges.consume("dead", want, 1001)).toBe("unknown");
+	});
+});
+
+describe("the sequence (migration 12): durable and monotonic, never the clock", () => {
+	test("next() only rises, survives a reopen, and the table refuses a second row, a delete and any update that does not raise it", () => {
+		const dir = mkdtempSync(`${tmpdir()}/chamberlain-seq-`);
+		const s1 = openStore(`${dir}/chamberlain.db`);
+		expect(s1.sequence.current()).toBe(0);
+		expect([s1.sequence.next(), s1.sequence.next(), s1.sequence.next()]).toEqual([1, 2, 3]);
+		s1.close();
+		const s2 = openStore(`${dir}/chamberlain.db`);
+		expect(s2.sequence.next()).toBe(4);
+		s2.close();
+		const db = new Database(`${dir}/chamberlain.db`);
+		expect(() => db.exec("INSERT INTO store_sequence (id, value) VALUES (2, 9)")).toThrow();
+		expect(() => db.exec("DELETE FROM store_sequence")).toThrow("exactly one row");
+		expect(() => db.exec("UPDATE store_sequence SET value = 1")).toThrow("only increases");
+		expect(() => db.exec("UPDATE store_sequence SET value = 4")).toThrow("only increases");
+		db.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+	test("a value taken inside a transaction that rolls back is not kept: the next one is not lower than any committed value", () => {
+		const s = openStore(":memory:");
+		s.sequence.next();
+		expect(() => s.tx(() => { s.sequence.next(); throw Error("abort"); })).toThrow("abort");
+		expect(s.sequence.next()).toBe(2);
+		s.close();
 	});
 });

@@ -7,25 +7,34 @@
  */
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { appendHeld, closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
-import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
-import { alertCommand, compactTokens, PrincipalPoss, principal } from "./config.ts";
+import { closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
+import { cardWaitOf, holdCard, reconcileCardHolds, trackUnverified, unverifiedAlarm, type CardThreadRead } from "./card-hold.ts";
+import type { Question } from "./questions.ts";
+import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
+import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem, type WaitingRead, isWaitingRead } from "./adapter.ts";
+import { alertCommand, compactTokens, PrincipalPoss, principal, REPO } from "./config.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
+import { DESK_RECEIVER, drainAlertDesk, inboxPath } from "./alert-desk.ts";
 import type { RelayLock } from "./singleton.ts";
-import { decide, idleKey, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
+import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type Outcome, type Recovery, type RecoverState, type RecoverTiming } from "./recover.ts";
+
+/** The key in the database's state table where recovery keeps what it must remember across a restart. */
+const RECOVER_KEY = "recover";
+import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
+import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
 import type { Gate } from "./hold.ts";
 import { failedRead, skipEvent, type InstructionRead } from "./history.ts";
 import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
 import { privateFile as readPrivateFile } from "./private.ts";
 import { settleReport } from "./report.ts";
-import { openRightsSent, rightsFor, rightsHighWater } from "./rights-sent.ts";
+import { epochOf, fullStamp, openRightsSent, rightsFirstMessage, rightsFor, rightsHash, rightsHighWater, rightsStamp } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
-import type { Store } from "./store.ts";
+import type { OutboxRow, Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
-import { HEALTH_CONFIG, healthTicker, liveHealth } from "./steward-health.ts";
+import { HEALTH_CONFIG, handoffDeliveryId, handoffWakeMessage, healthTicker, liveHealth, type Health } from "./steward-health.ts";
 import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
 import { BUSY_TURNS, commitsAhead, configuredSources, renderSweepPrompt, runawaySource, SWEEP_MS, sweepAction, sweepClock, sweepMessage, type BusyFact, type SweepClock } from "./sweep.ts";
 
@@ -41,8 +50,10 @@ export type EngineTiming = {
 	quietMs: number;
 	/** The heartbeat: the once-a-minute housekeeping. */
 	tickMs: number;
+	/** How long a card hold may go with no evidence (not seen waiting, not seen resolved) before the engine raises an alarm. */
+	cardUnverifiedAlarmMs: number;
 };
-export const DEFAULT_TIMING: EngineTiming = { debounceMs: 2500, lagMs: 3000, quietMs: Number(process.env.CHAMBERLAIN_REPORT_QUIET_MS ?? 180_000), tickMs: Number(process.env.CHAMBERLAIN_TICK_MS ?? 60_000) };
+export const DEFAULT_TIMING: EngineTiming = { debounceMs: 2500, lagMs: 3000, quietMs: Number(process.env.CHAMBERLAIN_REPORT_QUIET_MS ?? 180_000), tickMs: Number(process.env.CHAMBERLAIN_TICK_MS ?? 60_000), cardUnverifiedAlarmMs: Number(process.env.CHAMBERLAIN_CARD_UNVERIFIED_ALARM_MS ?? 24 * 3_600_000) };
 
 export type EngineDeps = {
 	conf: string;
@@ -61,7 +72,7 @@ export type EngineDeps = {
 	timing?: Partial<EngineTiming>;
 	/** Extra relay options (tests: the pause between attempts, the attempts, the hold ceiling, a clock). */
 	relay?: Partial<Pick<RelayDeps, "retryAfterMs" | "maxAttempts" | "staleAfterMs" | "now" | "ceilingMs">>;
-	/** Runs `ask.ts` for the Steward-health hand-off question. Undefined: that question is not asked. */
+	/** Runs `ask.ts` for the Steward-health hand-off question, asked only when the adapter cannot start the hand-off itself (no `handoffInstruction`). Undefined: that question is not asked. */
 	ask?: (raw: object) => Promise<void>;
 	/** The Steward's compaction size, in tokens. */
 	compactAt?: number;
@@ -69,9 +80,17 @@ export type EngineDeps = {
 	sweepPromptFile?: string;
 	/** Run the routine sweep and the Steward-health check. Off for a bare watcher. */
 	housekeeping?: boolean;
+	/** Stalled-thread recovery (src/core/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
+	recover?: boolean | Partial<RecoverTiming>;
+	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
+	judge?: Judge;
+	/** Reads GitHub for the held-ledger reconciler (src/core/gh.ts). Undefined: holds that name a PR, issue or branch are not checked. */
+	gh?: GhRead;
 };
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
+/** Pure: a word quoted for a POSIX shell, so a command printed in an alarm can be pasted as it is. */
+const shellWord = (s: string) => (/^[A-Za-z0-9_.:@%+=,/-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 /** What an adapter without a history reports for every thread: nothing says who instructed it. */
 const NO_HISTORY: InstructionRead = { items: [], state: "complete", byMachine: false };
 const QUEUE_READ_FAILURES_MAX = 5;
@@ -130,24 +149,28 @@ export function createEngine(d: EngineDeps) {
 	}
 	// The daemon is the one relay (relay.ts): every process writes wakes as outbox rows, and only this sends them. Holdable wakes wait
 	// while the Steward is busy and go as one digest (hold.ts).
-	/** Rights records of wakes this process queued, by delivery id: what the Steward holds once that wake is delivered. */
-	const firedRights = new Map<string, RightsSent>();
+	// The Alert Desk (alert-desk.ts), when the adapter has a desk thread, is a second RECEIVER of this one relay, never a second relay: its rows
+	// (receiver "desk") go to its own transport and wait on its own gate, and every POST, the Steward's or the desk's, goes through the one
+	// serial queue (relay.ts). A busy desk holds only its own wakes.
+	const deskLane = has(homeAdapter, "alertDesk") ? homeAdapter.alertDesk : undefined;
 	const relay = createRelay({
 		store, lock: d.lock, wake: homeAdapter.wake, ...(has(homeAdapter, "compact") ? { compact: homeAdapter.compact } : {}), gate: stewardGate, log, alarm, ...d.relay,
-		onDelivered: (id) => {
-			recordAnswerDelivered(store, id);
-			const r = firedRights.get(id);
-			if (r) { firedRights.delete(id); rightsSent.set(r); }
-		},
+		...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
+		rightsNow,
+		onDelivered: (id) => recordAnswerDelivered(store, id),
 	});
 	const outbox = createOutbox({ store, log, dry: DRY, ...(d.relay?.now ? { now: d.relay.now } : {}), queued: () => { void relay.pass(); } });
 	const { deliver } = outbox;
+
+	let recovery: Recovery | undefined;
 
 	/** One watcher per server: its own thread table, debounce timers, connection and resume state. */
 	class Watcher {
 		states = new Map<string, ThreadState>();
 		timers = new Map<string, ReturnType<typeof setTimeout>>();
 		connected = false;
+		/** Counts every change of `connected`: a read whose epoch moved while it was out spanned a disconnect, so it is not believed. */
+		epoch = 0;
 		version: string | undefined;
 		lastOk = Date.now();
 		lastEventAt = 0;
@@ -156,6 +179,10 @@ export function createEngine(d: EngineDeps) {
 		/** Every card seen on a thread, and those already open when its current turn began. */
 		cardsSeen = new Map<string, Set<string>>();
 		oldCards = new Map<string, Set<string>>();
+		/** Card items the adapter skipped, already logged: one line per thread and reason. */
+		ignoredLogged = new Set<string>();
+		/** A note recovery asks the next failed wake of a thread to carry, when its retry could not be made. */
+		forced = new Map<string, string>();
 		private readonly inspect: Inspector | undefined;
 		constructor(public srv: ServerEntry, public adapter: Adapter) {
 			this.inspect = has(adapter, "inspect") ? adapter.inspect : undefined;
@@ -200,8 +227,29 @@ export function createEngine(d: EngineDeps) {
 		}
 
 		private lastMessage = (threadId: string) => (this.inspect ? this.inspect.lastMessage(threadId) : Promise.resolve(""));
-		private subagents = (threadId: string) => (this.inspect ? this.inspect.runningSubagents(threadId) : Promise.resolve(0));
-		private waitingItems = (threadId: string): Promise<WaitingItem[]> => (this.inspect ? this.inspect.waiting(threadId) : Promise.resolve([]));
+		subagents = (threadId: string) => (this.inspect ? this.inspect.runningSubagents(threadId) : Promise.resolve(0));
+		/**
+		 * What a thread waits on, as a `WaitingRead`. Only `ok: true` is a listing: a thrown read, an answer that breaks the contract,
+		 * or a read that spanned a disconnect is `ok: false`. An adapter with no `inspect` lists nothing, and says so as `ok: true`
+		 * (the needs-input path then wakes on the thread's own status; the card reconciler never reads through this).
+		 */
+		waitingRead = async (threadId: string): Promise<WaitingRead> => {
+			if (!this.inspect) return { ok: true, cards: [] };
+			if (!this.connected) return { ok: false, reason: `${this.srv.name} is not connected` };
+			const epoch = this.epoch;
+			const r: unknown = await this.inspect.waiting(threadId).catch((e: unknown) => ({ ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) }));
+			if (!isWaitingRead(r)) return { ok: false, reason: "the adapter's waiting read did not keep the WaitingRead contract" };
+			if (r.ok && (!this.connected || this.epoch !== epoch)) return { ok: false, reason: `${this.srv.name} disconnected during the read` };
+			// A card item the adapter skipped is never evidence; it is logged once per thread and reason.
+			for (const why of r.ok ? r.ignored ?? [] : []) {
+				const k = `${threadId}\0${why}`;
+				if (this.ignoredLogged.has(k)) continue;
+				if (this.ignoredLogged.size > 1000) this.ignoredLogged.clear();
+				this.ignoredLogged.add(k);
+				log("card-item-ignored", { server: this.srv.name, threadId, reason: clip(why, 200) });
+			}
+			return r;
+		};
 
 		/** A thread that went idle with open work: an open PR, or commits on its branch that have not merged. */
 		async idleWork(th: ThreadState, read: InstructionRead): Promise<{ key: string; work: string } | undefined> {
@@ -243,6 +291,7 @@ export function createEngine(d: EngineDeps) {
 			let idleLine = "";
 			let waitNote = "";
 			let question = "";
+			let failedWhat = "run failed";
 			// With no history to read, nothing says who instructed a thread: every top-level turn end is its own report.
 			const reportOf = (key: string | undefined) => (this.inspect ? key : notified.has(c.key) ? undefined : c.key);
 			if (c.kind === "turn_ended") {
@@ -283,27 +332,37 @@ export function createEngine(d: EngineDeps) {
 				}
 			} else if (c.kind === "needs_input") {
 				if (!live.pendingRequestId && live.status !== "waiting") return;
-				let items = await this.waitingItems(live.id).catch(this.readFailed("waiting items", live.id, [] as WaitingItem[]));
+				let read = await this.waitingRead(live.id);
 				// The projection can lag the status by a moment: look once more before calling the wait empty.
-				if (this.inspect && !items.length && !live.pendingRequestId) { await Bun.sleep(t.lagMs); items = await this.waitingItems(live.id).catch(this.readFailed("waiting items", live.id, [] as WaitingItem[])); }
-				// With nothing to read the thread's own status is the request.
-				const route = routeNeedsInput(items, Boolean(live.pendingRequestId) || !this.inspect, Boolean(readAfk(store)));
+				if (this.inspect && read.ok && !read.cards.length && !live.pendingRequestId) { await Bun.sleep(t.lagMs); read = await this.waitingRead(live.id); }
+				// A failed read is not "nothing waiting": it is logged, and the thread's own status is the request, so it still wakes.
+				if (!read.ok) log("read-failed", { server: this.srv.name, threadId: live.id, what: "waiting items", error: read.reason });
+				const items: WaitingItem[] = read.ok ? read.cards : [];
+				// With nothing to read, or a card item the adapter had to skip, the thread's own status is the request: a skipped card
+				// must not read as "nothing waiting".
+				const route = routeNeedsInput(items, Boolean(live.pendingRequestId) || !this.inspect || !read.ok || Boolean(read.ignored?.length), Boolean(readAfk(store)));
 				if (route === "skip-empty") { log("skip-empty-wait", { server: this.srv.name, threadId: live.id }); return; }
+				// A request is seen once per (server, request ID): two servers may use the same request ID.
+				const reqKey = (requestId: string) => `req:${this.srv.name}:${requestId}`;
 				if (route === "hold") {
-					for (const i of items.filter((x) => !notified.has(`req:${x.requestId}`))) {
-						// The record that it was seen and the hold the operator will read are one transaction: a crash between them
-						// would leave the request marked seen with nothing held for their return.
+					for (const i of items.filter((x) => !notified.has(reqKey(x.requestId)))) {
+						// The record that it was seen, the question that points to the card and the hold the operator will read are one
+						// transaction: a crash between them would leave the request marked seen with nothing on the queue or held.
+						// Only the card's kind, request ID and label travel (card-hold.ts); its questions and any value never do.
+						let filed: Question | undefined;
 						store.tx(() => {
-							markNotified(`req:${i.requestId}`);
-							appendHeld(store, { thread: clip(live.title, 80), server: this.srv.name, requestId: i.requestId, what: `${i.type === "secret_request" ? "secret request" : i.type === "link_request" ? "approval to link two machines" : "command or permission approval"}${i.label ? `: ${clip(i.label, 100)}` : ""}`, taken: "left parked" });
+							markNotified(reqKey(i.requestId));
+							filed = holdCard(store, cardWaitOf(i, { thread: live.title, server: this.srv.name, threadId: live.id })).question;
 						});
 						log("held-by-daemon", { server: this.srv.name, threadId: live.id, kind: i.type });
+						// A new pointer question is shown where the operator reads, like any other; a secret's never is. Best effort: it is on the queue page either way.
+						if (filed && !filed.secret && !DRY) await this.adapter.post(filed, {}).then((r) => { if (!r.ok) log("card-question-post-failed", { server: this.srv.name, threadId: live.id, detail: clip(r.detail, 200) }); }, (e) => log("card-question-post-failed", { server: this.srv.name, threadId: live.id, detail: String(e).slice(0, 200) }));
 					}
 					return;
 				}
-				const fresh = items.filter((i) => !notified.has(`req:${i.requestId}`));
+				const fresh = items.filter((i) => !notified.has(reqKey(i.requestId)));
 				if (items.length && !fresh.length) { log("skip-request-seen", { server: this.srv.name, threadId: live.id }); return; }
-				for (const i of fresh) stage(`req:${i.requestId}`);
+				for (const i of fresh) stage(reqKey(i.requestId));
 				const kinds = new Set(fresh.map((i) => i.type));
 				if (kinds.has("secret_request")) waitNote = `WAITING ON: a SECRET request. Never answer it and never supply a value; it is ${PrincipalPoss()} alone.`;
 				else if (kinds.has("approval_request")) waitNote = `WAITING ON: a command or permission APPROVAL. ${this.adapter.approvalHint ? `${this.adapter.approvalHint} ` : ""}Read the command and tell ${principal()}.`;
@@ -312,10 +371,21 @@ export function createEngine(d: EngineDeps) {
 				// Carrying the question saves the Steward a thread read on most wakes.
 				question = questionText(fresh.flatMap((i) => i.questions));
 				excerpt = await this.lastMessage(live.id).catch(this.readFailed("last message", live.id, ""));
-			} else if (c.kind === "failed" && live.status !== "failed") return;
-			const what = { needs_input: "is waiting for your answer or approval", failed: "run failed", turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
+			} else if (c.kind === "failed") {
+				if (live.status !== "failed") return;
+				const h = await this.recover(live);
+				if (h.stop) return;
+				if (h.note) waitNote = h.note;
+				if (h.what) failedWhat = h.what;
+			}
+			const what = { needs_input: "is waiting for your answer or approval", failed: failedWhat, turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
 			const afk = readAfk(store);
-			const rights = wakeRights(afk ? mandateLine(afk) : "");
+			const session = await stewardSession();
+			const rights = wakeRights(afk ? mandateLine(afk) : "", { session });
+			// Stamped with the Steward it was composed for. A pointer makes the relay check the durable record before every attempt (rightsNow); a
+			// full block writes the record when the row is delivered, in the same transaction.
+			const steward = privateFile("steward-thread");
+			const stamp = rights.record ? (rights.full ? fullStamp(rights.record, steward, session) : rightsStamp(rights.record, steward, session)) : undefined;
 			const message = [
 				`[chamberlain] ${c.kind}: thread "${clip(live.title, 80)}" ${what}.`,
 				waitNote,
@@ -330,9 +400,9 @@ export function createEngine(d: EngineDeps) {
 			// Every key decided above is recorded in the transaction that queues this wake: both exist or neither does.
 			// If another process (a second daemon, or the same one before a restart) already recorded any of these keys, this wake would be a second one for
 			// the same event: the database says so, inside this transaction, and nothing is queued.
-			// The Steward holds these rights once this wake is delivered, not before: until then the next wake is built from the old record.
+			// The Steward holds these rights once this wake is delivered, not before: the relay writes the record from its stamp then.
 			const deliveryId = `${c.key}:${Date.now()}`;
-			if (deliver(message, deliveryId, { kind: c.kind, thread: live.id }, () => mine.map(markNotified).every(Boolean)) === "queued" && rights.record) firedRights.set(deliveryId, rights.record);
+			deliver(message, deliveryId, { kind: c.kind, thread: live.id, ...(stamp ? { rights: [stamp] } : {}) }, () => mine.map(markNotified).every(Boolean));
 		}
 
 		/** Keeps what the engine knows of the thread, and answers what the new state means for the ledgers and the Steward. */
@@ -342,14 +412,42 @@ export function createEngine(d: EngineDeps) {
 			this.states.set(next.id, next);
 			// An answer given in the thread reaches no one else, so the ledger closes here or it shows a settled decision as waiting.
 			if (prev?.pendingRequestId && prev.pendingRequestId !== next.pendingRequestId) {
+				// The thread's one pending ID changing does not say which card resolved: a thread can wait on two, and the state names one.
+				// A card hold and its question close only when a read of the thread shows that card's own item, matched on (server,
+				// request ID), in a terminal status: the card reconciler does that read now. The Steward's own holds on the thread close here, as before.
 				try {
-					const closed = closeHeldForCard(store, next.id, prev.pendingRequestId, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
+					const closed = closeHeldForCard(store, this.srv.name, next.id, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
 					if (closed) log("held-closed", { server: this.srv.name, threadId: next.id, closed });
 				} catch (e) { log("held-close-error", { server: this.srv.name, threadId: next.id, error: String(e) }); }
+				void cardReconcileTick();
 			}
-			if (turnBegan(prev, next)) this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id)));
+			if (turnBegan(prev, next)) { this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id))); recovery?.moved(next.id); }
+			if (prev && LIVE.has(prev.status) && ["completed", "idle"].includes(next.status)) recovery?.healthy(next.id);
 			if (next.pendingRequestId) this.cardsSeen.set(next.id, (this.cardsSeen.get(next.id) ?? new Set()).add(next.pendingRequestId));
 			return prev;
+		}
+
+		/**
+		 * Stalled-thread recovery for one failed thread (src/core/recover.ts). It either settles the failure without a wake (a retry is
+		 * scheduled, the outage breaker holds, it was seen already), or says how the ordinary failed wake should read. An adapter that
+		 * cannot read a failure or send, a dry run, and a recovery turned off all keep the wake exactly as it was.
+		 */
+		private async recover(live: ThreadState): Promise<{ stop?: true; note?: string; what?: string }> {
+			const forced = this.forced.get(live.id);
+			if (forced) { this.forced.delete(live.id); return { note: forced }; }
+			if (!recovery || DRY || !this.adapter.inspect?.failure || !this.adapter.inspect.look || !has(this.adapter, "send")) return {};
+			const h: Handling = await recovery.onFailure(live);
+			const o = outcomeOf(h, { thread: live.title, server: this.srv.name, threadId: live.id }, timing);
+			if (o.ask) await raise(o.ask);
+			return { ...(o.stop ? { stop: true as const } : {}), ...(o.note ? { note: o.note } : {}), ...(o.what ? { what: o.what } : {}) };
+		}
+
+		/** Wakes the Steward about a failure whose retry could not be made, with the note why. */
+		forceFailedWake(threadId: string, note: string) {
+			const th = this.states.get(threadId);
+			if (!th) return;
+			this.forced.set(threadId, note);
+			this.schedule({ kind: "failed", thread: th, key: `${threadId}:failed:recover:${Date.now()}` });
 		}
 
 		private schedule(c: Candidate) {
@@ -371,7 +469,8 @@ export function createEngine(d: EngineDeps) {
 		run(): Promise<void> {
 			return this.adapter.watch({
 				event: (e) => this.onEvent(e),
-				connected: (up, info) => { this.connected = up; if (!up) this.lastOk = Date.now(); if (info?.version) this.version = info.version; },
+				// A fresh connection is when a restart can first see which held cards resolved while the daemon was down.
+				connected: (up, info) => { if (up !== this.connected) this.epoch++; this.connected = up; if (!up) this.lastOk = Date.now(); if (info?.version) this.version = info.version; if (up) void cardReconcileTick(); },
 				log: (event, data) => log(event, data),
 			}, this.controller.signal).catch((e) => log("watch-error", { server: this.srv.name, error: String(e instanceof Error ? e.message : e).slice(0, 200) }));
 		}
@@ -380,6 +479,36 @@ export function createEngine(d: EngineDeps) {
 	const defaultServerLine = (srv: ServerEntry) => (srv.environmentId ? `server: ${srv.name} (linked: environmentId ${srv.environmentId})` : `server: ${srv.name} (this server)`);
 
 	const watchers = d.servers.map((x) => new Watcher(x.server, x.adapter));
+	const watcherOf = (threadId: string) => watchers.find((w) => w.states.has(threadId));
+	const timing = { ...DEFAULT_RECOVER_TIMING, ...(typeof d.recover === "object" ? d.recover : {}) };
+	/** Raises a decision-queue item recovery asked for: the one outage alarm, or a verdict that needs the principal. With no queue wired, an outage falls back to the dead-man alarm. */
+	async function raise(a: NonNullable<Outcome["ask"]>) {
+		log(a.why === "breaker" ? "recover-breaker-alarm" : "recover-ask", { kind: a.kind, count: a.count });
+		if (d.ask) await d.ask(a.item).catch((e) => log("recover-ask-failed", { error: String(e).slice(0, 200) }));
+		else if (a.why === "breaker") alarm(`recover-breaker:${a.kind}`, `chamberlain: ${a.count} "${a.kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
+	}
+	const judge = d.judge ?? createJudge({ config: () => { const r = readJudgeConfig(conf); if (r.error) log("judge-config-error", { error: r.error }); return r.config; }, log });
+	// The judge's backend is an explicit setting (judge.json), with no default. Without one, recovery still retries once, and a second failure
+	// goes to the Steward unjudged: say so once, at start, so an operator who expected a verdict can see why there is none.
+	if (!d.judge && d.recover !== undefined && d.recover !== false) {
+		const off = judgeOff(readJudgeConfig(conf).config, "stalled-recovery");
+		if (off) log("judge-off", { trigger: "stalled-recovery", why: off });
+	}
+	recovery = d.recover === undefined || d.recover === false ? undefined : createRecovery({
+		store: { load: () => store.state.get<RecoverState>(RECOVER_KEY), save: (s) => store.state.set(RECOVER_KEY, s) },
+		look: async (id) => watcherOf(id)?.adapter.inspect?.look?.(id),
+		stewardId: () => privateFile("steward-thread"),
+		decisionsId: () => privateFile("decisions-thread"),
+		state: (id) => watcherOf(id)?.states.get(id),
+		children: async (id) => { const w = watcherOf(id); return w ? w.liveChildren(id) + (await w.subagents(id).catch(() => 0)) : 0; },
+		readFailure: async (id) => watcherOf(id)?.adapter.inspect?.failure?.(id),
+		instructionId: async (id) => { const w = watcherOf(id); if (!w) return "unknown"; const r = await w.instructionRead(id); return r.state === "complete" ? lastInstruction(r.items)?.id ?? "none" : "unknown"; },
+		ping: async (id, text, seed) => { const w = watcherOf(id); const a = w?.adapter; return a && has(a, "send") ? a.send(id, text, seed, "daemon") : { ok: false, detail: "no adapter can send to this thread" }; },
+		judge: (trigger, brief) => judge(trigger, brief),
+		wake: (id, _kind, note) => watcherOf(id)?.forceFailedWake(id, note),
+		log,
+		...(typeof d.recover === "object" ? { timing: d.recover } : {}),
+	});
 	const stewardNow = privateFile("steward-thread");
 	if (stewardNow) EXCLUDE.add(stewardNow);
 
@@ -387,19 +516,49 @@ export function createEngine(d: EngineDeps) {
 	const probe = () => (has(homeAdapter, "stewardProbe") ? homeAdapter.stewardProbe() : undefined);
 
 	/**
-	 * The rights a wake carries. The full text goes after anything that could have cost the Steward its copy, and a
-	 * restart reads back what was sent (rights-sent.ts), and doubt sends it again. The away mandate is state, so it goes
-	 * every time.
+	 * The rights a wake carries. The full text goes after anything that could have cost the Steward its copy, and doubt sends it again: the
+	 * durable record (rights-sent.ts, written by the relay when a full block is delivered) must name this Steward thread and session. The away
+	 * mandate is state, so it goes every time.
 	 */
 	const rightsSent = openRightsSent(store, (e) => log("rights-sent-unsaved", { error: String(e).slice(0, 200) }));
-	function wakeRights(mandate: string): { text: string; record?: RightsSent } {
-		const [rights, rulings] = [privateFile("decision-rights.md"), stewardRulings()];
-		if (!rights || !rulings) {
+	function wakeRights(mandate: string, o: { full?: boolean; session?: string | undefined } = {}): { text: string; record?: RightsSent; full?: boolean } {
+		const rules = rightsRules();
+		if (rules === undefined) {
 			alarm("rights-unreadable", "chamberlain cannot read the decision rights", "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.");
 			return { text: [rightsUnreadable(), mandate].filter(Boolean).join("\n") };
 		}
 		const id = privateFile("steward-thread");
-		return rightsFor(rightsSent.get(), id, `${rights}\n${rulings}`, mandate, id ? probe()?.contextTokens : undefined);
+		// The epoch this wake is composed under, read with the record: its full stamp writes the record only while that epoch is current.
+		const sent = rightsSent.get(), epoch = rightsSent.epoch();
+		const held = !o.full && sent && sent.steward === id && sent.session === o.session && epochOf(sent) === epoch ? sent : undefined;
+		return rightsFor(held, id, rules, mandate, id ? probe()?.contextTokens : undefined, new Date().toISOString(), epoch);
+	}
+	/** The decision rights and the in-force rulings, as one text, or undefined when either cannot be read. */
+	function rightsRules(): string | undefined {
+		const [rights, rulings] = [privateFile("decision-rights.md"), stewardRulings()];
+		return rights && rulings ? `${rights}\n${rulings}` : undefined;
+	}
+	/** The Steward's current session, when the adapter can say (`transcriptPath`). Undefined when it cannot, or the read fails. */
+	async function stewardSession(): Promise<string | undefined> {
+		if (!has(homeAdapter, "transcriptPath")) return undefined;
+		try { return (await homeAdapter.transcriptPath()).session; } catch { return undefined; }
+	}
+
+	/**
+	 * The Steward and the rights in force now, for the relay's check before every attempt of a row that depends on the Steward holding them
+	 * (relay.ts, `rightsNow`), and the standalone prerequisite for that state: the full block (or the unreadable notice), stamped `full` with the
+	 * state it was composed for, so its delivery writes the durable record. The row it goes ahead of follows exactly as it was queued.
+	 */
+	async function rightsNow() {
+		const steward = privateFile("steward-thread"), session = await stewardSession(), rules = rightsRules();
+		const hash = rules === undefined ? undefined : rightsHash(steward, rules);
+		return {
+			...(steward ? { steward } : {}), ...(session ? { session } : {}), ...(hash ? { hash } : {}),
+			wake: (forId: string) => {
+				const full = wakeRights("", { full: true, session });
+				return { message: rightsFirstMessage(forId, full.text), ...(full.record ? { stamp: fullStamp(full.record, steward, session) } : {}) };
+			},
+		};
 	}
 
 	/** The rulings a wake carries: the in-force ones with their IDs. */
@@ -423,8 +582,11 @@ export function createEngine(d: EngineDeps) {
 		const p = probe();
 		if (!p) return;
 		const used = p.contextTokens;
-		// Keep the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen.
-		rightsSent.set(rightsHighWater(rightsSent.get(), used));
+		// Keep the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen. A shrink invalidates the
+		// record by bumping the epoch, so a full block composed before it cannot restore the record when it lands.
+		const sent = rightsSent.get(), high = rightsHighWater(sent, used);
+		if (high) rightsSent.set(high);
+		else if (sent) { rightsSent.set(undefined); log("rights-invalidated", { reason: "context shrink", used }); }
 		// A 202 only means queued. This is the check that the Steward is actually working through them.
 		// One failed read is the backend busy. A run of them means both checks here can no longer see, and that must not be silent.
 		queueReadFailures = p.readable ? 0 : queueReadFailures + 1;
@@ -437,7 +599,8 @@ export function createEngine(d: EngineDeps) {
 		if (blocked) return;
 		lastCompactAt = Date.now();
 		if (!relay.compactReady()) { alarm("steward-compact", "chamberlain cannot compact the Steward", `The Steward's context is ${used} tokens and no compaction target is configured.`); return; }
-		rightsSent.set(undefined);
+		// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
+		// here, before the job runs, let a full block already in flight land after and restore it.
 		log("fire", { server: "steward", kind: "compact", threadId: id, used });
 		if (DRY) return;
 		// The compaction target is a task whose prompt is /compact, so it takes no message. Only the log line is shared with wakes. The request goes out through the relay, the only code that calls a transport.
@@ -492,17 +655,90 @@ export function createEngine(d: EngineDeps) {
 	}
 
 	const ask = d.ask;
-	const healthTick = ask && has(homeAdapter, "transcriptPath")
-		? healthTicker({ store, server: () => home.name, collect: () => liveHealth(() => homeAdapter.transcriptPath!()), ask })
+	const healthTick = has(homeAdapter, "transcriptPath")
+		? healthTicker({
+			store, server: () => home.name, collect: () => liveHealth(() => homeAdapter.transcriptPath!()), ...(ask ? { ask } : {}),
+			// A HAND OFF verdict starts the hand-off itself when the adapter says how: a wake, as an outbox row like any other, so the relay's attempts and dead-letter rules apply. Without that capability the operator is asked.
+			...(has(homeAdapter, "handoffInstruction") ? { handoff: (h: Health, session: string) => { outbox.deliver(handoffWakeMessage(h, homeAdapter.handoffInstruction()), handoffDeliveryId(session), { kind: "handoff" }); } } : {}),
+		})
 		: undefined;
+
+	/**
+	 * The held ledger's reconciler (src/core/hold-reconcile.ts). Items: every tick, database only. Refs: every ten minutes,
+	 * against GitHub and the watchers' thread tables.
+	 */
+	let reconcilingRefs = false;
+	/** A fresh snapshot of every server, taken now through its adapter. An adapter that cannot take one reads as unreachable: its threads stay unknown. */
+	const freshSnapshots = () => takeSnapshots(d.servers.map((x) => ({ name: x.server.name, fetch: async () => { if (!has(x.adapter, "snapshot")) throw Error("no snapshot capability"); return x.adapter.snapshot(); } })));
+	async function holdReconcileTick() {
+		try {
+			const { closed } = reconcileItemHolds(store);
+			if (closed) log("held-closed-for-item", { closed, by: "reconciler" });
+		} catch (e) { log("held-reconcile-error", { pass: "items", error: String(e).slice(0, 200) }); }
+		if (reconcilingRefs) return;
+		reconcilingRefs = true;
+		try {
+			const r = await reconcileRefHolds({ store, ...(d.gh ? { gh: d.gh } : {}), snapshots: freshSnapshots });
+			if (r.ran && (r.closed || r.errors)) log("held-reconciled", { ...r });
+		} catch (e) { log("held-reconcile-error", { pass: "refs", error: String(e).slice(0, 200) }); }
+		finally { reconcilingRefs = false; }
+	}
+
+	/**
+	 * Card holds against what their threads show (card-hold.ts `reconcileCardHolds`): every tick and on every (re)connection, so
+	 * a card resolved while the daemon was down closes its question and hold, exactly once. A card closes ONLY on positive
+	 * evidence: a read of its own thread on its own server (`WaitingRead` `ok: true`) that shows the card's own item in a
+	 * terminal status (`resolved`). Absence closes nothing: a backend's read may be a bounded window of the thread's history, and
+	 * a thread that is gone, archived or missing from a snapshot proves nothing; no snapshot is consulted. A server not connected
+	 * now (a `mayBeOffline` one asleep included), a read that throws, is malformed or spans a disconnect, are all `ok: false`.
+	 * A card with no evidence for `cardUnverifiedAlarmMs` raises an alarm (the normal repeat policy) naming its hold, the card
+	 * and the hand close command; only the operator closes it then. A server whose reads fail is logged once per episode, and
+	 * once more when they recover.
+	 */
+	let reconcilingCards: Promise<void> | undefined;
+	/** Asked for while a pass ran: that pass may have read before the change, so one more runs after it. */
+	let cardsAgain = false;
+	/** Servers whose card reads are failing now, with the first reason: one log line per episode. */
+	const cardReadFailing = new Map<string, string>();
+	const closeCardCommand = (server: string, requestId: string) => `bun ${REPO}/src/core/afk.ts close-card ${shellWord(server)} ${shellWord(requestId)} "<how it closed>"`;
+	function cardReconcileTick(): Promise<void> {
+		if (reconcilingCards) { cardsAgain = true; return reconcilingCards; }
+		reconcilingCards = (async () => {
+			const read = async (server: string, threadId: string): Promise<CardThreadRead> => {
+				const w = watchers.find((x) => x.srv.name === server);
+				if (!w) return { ok: false, reason: `no watcher for ${server}` };
+				if (!has(w.adapter, "inspect")) return { ok: false, reason: `${server} has no inspect capability` };
+				if (!w.connected) return { ok: false, reason: `${server} is not connected` };
+				const r = await w.waitingRead(threadId);
+				return r.ok ? { ok: true, waiting: new Set(r.cards.map((i) => i.requestId)), resolved: new Set(r.resolved ?? []) } : { ok: false, reason: r.reason };
+			};
+			try {
+				const r = await reconcileCardHolds(store, read);
+				for (const c of r.closed) log("card-reconciled", { server: c.server, threadId: c.threadId, requestId: c.requestId });
+				const failing = new Set(r.failed.map((f) => f.server));
+				for (const f of r.failed) if (!cardReadFailing.has(f.server)) { cardReadFailing.set(f.server, f.reason); log("card-read-unavailable", { server: f.server, reason: f.reason }); }
+				for (const server of [...cardReadFailing.keys()]) if (!failing.has(server)) { cardReadFailing.delete(server); log("card-read-recovered", { server }); }
+				for (const u of trackUnverified(store, r, t.cardUnverifiedAlarmMs)) {
+					const a = unverifiedAlarm(u, closeCardCommand(u.card.server, u.card.requestId));
+					log("card-unverified", { server: u.card.server, requestId: u.card.requestId, threadId: u.card.threadId ?? null, holds: u.card.holds.map((h) => h.id), reason: clip(u.reason, 200) });
+					alarm(a.key, a.title, a.summary);
+				}
+			} catch (e) { log("held-reconcile-error", { pass: "cards", error: String(e).slice(0, 200) }); }
+		})().finally(() => { reconcilingCards = undefined; if (cardsAgain) { cardsAgain = false; void cardReconcileTick(); } });
+		return reconcilingCards;
+	}
 
 	/** One pass of the once-a-minute housekeeping. The interval runs it; tests call it. */
 	async function tick() {
 		try { heartbeat(); } catch (e) { log("heartbeat-error", { error: String(e) }); }
 		try { relay.audit(); } catch (e) { log("relay-audit-error", { error: String(e).slice(0, 200) }); }
 		// The relay polls on its own; a pass here too costs nothing (passes are one at a time) and makes the heartbeat a full look.
-		const checks: Promise<unknown>[] = [relay.pass(), stewardCheck().catch((e) => log("steward-check-error", { error: String(e) }))];
+		const checks: Promise<unknown>[] = [relay.pass(), stewardCheck().catch((e) => log("steward-check-error", { error: String(e) })), cardReconcileTick()];
 		if (d.housekeeping !== false) {
+			checks.push(holdReconcileTick());
+			if (deskLane) {
+				try { drainAlertDesk({ store, outbox, inbox: inboxPath(process.env, process.env.HOME ?? ""), conf, now: d.relay?.now?.() ?? Date.now(), canDeliver: !DRY && deskLane.wake.ready(), log }); } catch (e) { log("alert-desk-error", { error: String(e).slice(0, 200) }); alarm("alert-desk", "chamberlain alert desk failed", "The Alert Desk drain threw an error and did not finish, so alerts are not reaching the desk thread this round. Its inbox keeps them."); }
+			}
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
 			checks.push(sweepTick().catch((e) => { log("sweep-error", { error: String(e) }); alarm("sweep", "chamberlain sweep failed", "The daemon's routine sweep threw an error and did not finish, so nothing is checking the threads between wakes."); }));
 		}
@@ -518,6 +754,7 @@ export function createEngine(d: EngineDeps) {
 		interval = setInterval(() => { tick().catch((e) => log("tick-error", { error: String(e) })); }, t.tickMs);
 		// The relay starts beside the watchers: its first pass sends whatever a dead process left pending.
 		relay.start().then(() => log("startup-recovered"));
+		recovery?.restore();
 		started = Promise.all(watchers.map((w) => w.run())).then(() => undefined);
 		return started;
 	}
@@ -525,6 +762,7 @@ export function createEngine(d: EngineDeps) {
 		clearInterval(interval);
 		await relay.stop();
 		for (const w of watchers) w.stop();
+		recovery?.stop();
 		await started;
 	}
 

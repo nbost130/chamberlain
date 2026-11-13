@@ -4,14 +4,16 @@
  * record becomes a normalized state for the core; the same socket serves the on-demand reads (`inspect`).
  */
 import { statSync } from "node:fs";
-import type { AdapterEnv, Inspector, WaitingItem, WaitQuestion, WatchSink } from "../../core/adapter.ts";
-import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
+import type { AdapterEnv, Inspector, RunFailure, WaitingRead, WatchSink } from "../../core/adapter.ts";
 import { failedRead } from "../../core/history.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { historyGet, readWhenConnected } from "./history.ts";
-import { connect, type Rpc } from "./rpc.ts";
+import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
+import type { ThreadSnapshot } from "../../core/adapter.ts";
 import type { T3Server } from "./server.ts";
-import { normalizeWaitKind, toState } from "./state.ts";
+import { toState } from "./state.ts";
+import { failureOf, lookOf } from "./failure.ts";
+import { checkProjection, isObject, readCards, type Projection } from "./projection.ts";
 
 const TOKEN_MAX_AGE_DAYS = 25;
 
@@ -95,8 +97,24 @@ export class T3Link {
 		}
 	}
 
-	private async projection(threadId: string): Promise<{ turnItems?: any[]; subagents?: { status?: string }[] }> {
-		return (await this.rpc!.request("orchestration.getThreadProjection", { threadId })) as { turnItems?: any[]; subagents?: { status?: string }[] };
+	/**
+	 * A fresh read of every thread, over a socket of its own. Rejects when the server can't be reached or says the snapshot is
+	 * partial. It is NEVER `complete`: T3's shell stream gives no positive proof that a snapshot lists every thread, so a thread
+	 * missing from it, or marked archived, is not evidence that the thread is gone, and nothing closes on it.
+	 */
+	async snapshot(): Promise<ThreadSnapshot> {
+		const token = this.token();
+		if (!token) throw Error(`no ${this.srv.tokenFile}`);
+		const { threads } = await fetchShellSnapshot(this.srv.origin, token);
+		// A record with no id is left out, not fatal: the snapshot is never complete, so a missing record is never read as anything,
+		// and a snapshot that answered keeps a hold that names no server unknown (hold-reconcile.ts threadViewAcross).
+		const readable = threads.filter((th) => isObject(th) && (typeof th.id === "string" || typeof th.id === "number") && String(th.id) !== "");
+		return { complete: false, threads: readable.map((th) => { const t = toState(th); return { id: t.id, archived: t.archived, settled: t.settled, pendingRequestId: t.pendingRequestId, status: t.status }; }) };
+	}
+
+	/** One thread's projection over the watcher's socket, checked against the shape the reads expect: anything else throws. */
+	private async projection(threadId: string): Promise<Projection> {
+		return checkProjection(await this.rpc!.request("orchestration.getThreadProjection", { threadId }));
 	}
 
 	readonly inspector: Inspector = {
@@ -111,15 +129,46 @@ export class T3Link {
 			const p = await this.projection(threadId);
 			return (p.subagents ?? []).filter((x) => ["running", "starting", "queued"].includes(String(x.status))).length;
 		},
-		/** What the thread is waiting on, from its projection: kind and request id of each waiting item. */
-		waiting: async (threadId): Promise<WaitingItem[]> => {
-			if (!this.rpc) return [];
-			const p = await this.projection(threadId);
-			return (p.turnItems ?? [])
-				.filter((i) => i.status === "waiting" && (i.type === "user_input_request" || OPERATOR_ONLY_KINDS.has(normalizeWaitKind(String(i.type)))))
-				.map((i) => ({ type: normalizeWaitKind(String(i.type)) as WaitingItem["type"], requestId: String(i.requestId ?? i.id), label: String(i.label ?? i.prompt ?? i.questions?.[0]?.header ?? ""), questions: (i.questions ?? []) as WaitQuestion[] }));
+		/**
+		 * The thread's cards, from its projection (a bounded window of its history): those waiting, and the request IDs of those
+		 * seen resolved. `ok: true` only when the socket was up for the whole read and the projection had the expected shape.
+		 */
+		waiting: async (threadId): Promise<WaitingRead> => {
+			const rpc = this.rpc;
+			if (!rpc) return { ok: false, reason: `${this.srv.name} is not connected` };
+			try {
+				const read = waitingOf(await rpc.request("orchestration.getThreadProjection", { threadId }), threadId);
+				// The socket dropped or was replaced while the read was out: what came back cannot be told from a stale answer.
+				if (this.rpc !== rpc) return { ok: false, reason: `${this.srv.name} disconnected during the read` };
+				return read;
+			} catch (e) {
+				return { ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) };
+			}
 		},
 		/** The thread's latest instruction, past T3's window if it has to be. HTTP can work while the socket is down, and then the state is stale, so no socket is a failed read. */
+		/** The thread's newest failed run and the error T3 recorded for it (src/adapters/t3/failure.ts). */
+		failure: async (threadId): Promise<RunFailure | undefined> => {
+			if (!this.rpc) return undefined;
+			const p = await this.projection(threadId);
+			return failureOf(p.runs ?? [], p.turnItems ?? []);
+		},
+		/** The projection read again, for the moment before a ping: the newest run, whether any run is going, whether any card is open. */
+		look: async (threadId) => {
+			if (!this.rpc) return undefined;
+			const p = await this.projection(threadId);
+			return lookOf(p.runs ?? [], p.turnItems ?? []);
+		},
 		instruction: (threadId) => readWhenConnected(Boolean(this.rpc), threadId, historyGet(this.srv.origin, () => this.token())).catch((e) => failedRead(String(e).slice(0, 200))),
 	};
+}
+
+/**
+ * Pure: a projection read as a `WaitingRead`. A projection in any other shape is `ok: false`; otherwise its card items are read
+ * one by one (`readCards`). The projection is a bounded window of the thread's history, so the read lists what it SAW, never
+ * everything the thread waits on.
+ */
+export function waitingOf(raw: unknown, threadId: string): WaitingRead {
+	let p: Projection;
+	try { p = checkProjection(raw); } catch (e) { return { ok: false, reason: (e as Error).message }; }
+	return readCards(p.turnItems, threadId);
 }

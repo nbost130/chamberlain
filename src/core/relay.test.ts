@@ -11,10 +11,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import { testRelayLock } from "../testing/lock.ts";
-import { createOutbox, MAX_ATTEMPTS, maxAttemptsFromEnv, type WakeResult } from "./deliver.ts";
+import { createOutbox, MAX_ATTEMPTS, maxAttemptsFromEnv, withDeliveryId, type WakeResult } from "./deliver.ts";
 import type { Gate } from "./hold.ts";
 import { MIGRATIONS } from "./migrations.ts";
-import { createRelay, retryAfterMs } from "./relay.ts";
+import { createRelay, retryAfterMs, type RelayDeps } from "./relay.ts";
+import { invalidateRights, RIGHTS_SENT_KEY, rightsEpoch, rightsFirstId, rightsStateKey } from "./rights-sent.ts";
 import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 import { runWakesCli } from "./wakes-cli.ts";
@@ -24,7 +25,7 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 const scratch = () => { const d = mkdtempSync(`${tmpdir()}/chamberlain-relay-`); dirs.push(d); return d; };
 
 /** A world: a store, a clock, a webhook whose answer the test sets, and relays (each a fresh process's) over the same store. */
-function rig(o: { store?: Store; max?: number } = {}) {
+function rig(o: { store?: Store; max?: number; rightsNow?: RelayDeps["rightsNow"]; compact?: RelayDeps["compact"] } = {}) {
 	const store = o.store ?? memStore();
 	const clock = { t: 1_000_000 };
 	const posts: { id: string; message: string }[] = [];
@@ -33,7 +34,7 @@ function rig(o: { store?: Store; max?: number } = {}) {
 	const w = { ready: true, gate: "idle" as Gate, answer: async (_id: string): Promise<WakeResult> => ({ ok: true, status: 202 }) };
 	const relay = (s: Store = store) => createRelay({
 		store: s, lock: testRelayLock(s), gate: () => w.gate, log: (event, data) => events.push({ event, ...(data ? { data } : {}) }), alarm: (k) => alarms.push(k), now: () => clock.t,
-		maxAttempts: o.max ?? 3, retryAfterMs: () => 1000,
+		maxAttempts: o.max ?? 3, retryAfterMs: () => 1000, ...(o.rightsNow ? { rightsNow: o.rightsNow } : {}), ...(o.compact ? { compact: o.compact } : {}),
 		wake: { ready: () => w.ready, send: async (id, message) => { posts.push({ id, message }); return w.answer(id); } },
 	});
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
@@ -626,5 +627,437 @@ describe("the relay cannot exist, or send, without the one-relay lock", () => {
 		await expect(relay.compact("compact:t:2")).rejects.toThrow("no longer holds");
 		expect(sent).toHaveLength(1);
 		expect(createRelay({ ...base(store), lock: testRelayLock(store) }).compactReady()).toBe(false);
+	});
+});
+
+describe("a Steward row that depends on the rights goes only when the durable record shows the Steward there now holds them", () => {
+	const H1 = "a".repeat(64), H2 = "b".repeat(64);
+	const stamp = { steward: "steward-1", hash: H1, at: "2026-11-13T18:00:00.000Z" };
+	const BLOCK = "Decision rights (standing rules):\nmerge green PRs";
+	/** The Steward and rights there are now, which the test moves, and how often the relay asked. */
+	function world(o: { max?: number } = {}) {
+		const st: { steward?: string; session?: string; hash?: string } = { steward: "steward-1", session: "s1", hash: H1 };
+		const asked = { n: 0 };
+		const rightsNow: RelayDeps["rightsNow"] = async () => {
+			asked.n++;
+			const now = { ...st };
+			return { ...now, wake: (forId: string) => ({ message: `[chamberlain] rights for ${forId}\n${now.hash ? BLOCK : "unreadable"}`, ...(now.hash ? { stamp: { ...(now.steward ? { steward: now.steward } : {}), ...(now.session ? { session: now.session } : {}), hash: now.hash, at: "now", used: 10, full: true as const } } : {}) }) };
+		};
+		const r = rig({ rightsNow, ...(o.max ? { max: o.max } : {}) });
+		const record = () => r.store.state.get(RIGHTS_SENT_KEY) as Record<string, unknown> | undefined;
+		const firstFor = (row: string) => r.store.wakes.rows("all").filter((w) => w.deliveryId.startsWith(`${row}:rights-first:`));
+		const key = () => rightsStateKey(st);
+		return { ...r, st, asked, record, firstFor, key };
+	}
+
+	test("no record of this Steward: the prerequisite for this state goes first, then the row byte for byte, and its delivery writes the record", async () => {
+		const r = world();
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", thread: "t1", rights: [stamp] });
+		const F = rightsFirstId("w1", r.key());
+		expect(await r.relay().pass()).toEqual([F, "w1"]);
+		expect(r.posts[0]!.message).toBe(withDeliveryId(`[chamberlain] rights for w1\n${BLOCK}`, F));
+		expect(r.posts[1]!.message).toBe(withDeliveryId("pointer", "w1"));
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", message: "pointer", attempts: 1 });
+		expect(r.store.wakes.find(F)).toMatchObject({ status: "delivered", kind: "rights", attempts: 1, rights: [{ steward: "steward-1", session: "s1", hash: H1, at: "now", used: 10, full: true }] });
+		expect(r.record()).toEqual({ steward: "steward-1", session: "s1", hash: H1, at: "now", used: 10, epoch: 0 });
+		expect(r.events.find((e) => e.event === "rights-first")?.data).toMatchObject({ deliveryId: "w1", first: F });
+		await r.relay().pass();
+		expect(r.ids()).toEqual([F, "w1"]);
+	});
+
+	test("the record shows this state: no extra wake; a row with no stamp, or only a full stamp, is never asked about", async () => {
+		const r = world();
+		r.store.state.set(RIGHTS_SENT_KEY, { steward: "steward-1", session: "s1", hash: H1 });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		r.outbox.deliver("plain", "w2", { kind: "needs_input" });
+		r.outbox.deliver("block", "w3", { kind: "needs_input", rights: [{ ...stamp, session: "s1", full: true }] });
+		expect(await r.relay().pass()).toEqual(["w1", "w2", "w3"]);
+		expect(r.asked.n).toBe(1);
+		expect(r.firstFor("w1")).toEqual([]);
+		expect(r.events.some((e) => e.event === "rights-first")).toBe(false);
+	});
+
+	test("finding 1: the prerequisite went, the row failed, the Steward changed before the retry: the row is refused until the NEW state's prerequisite is delivered", async () => {
+		const r = world();
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		const F1 = rightsFirstId("w1", r.key());
+		r.w.answer = async (id) => (id === "w1" ? { ok: false, status: 503 } : { ok: true, status: 202 });
+		await r.relay().pass();
+		expect(r.ids()).toEqual([F1, "w1"]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 1 });
+		// A new Steward session before the retry, and its prerequisite fails at first: the row is refused and uses no attempt.
+		r.st.session = "s2";
+		const F2 = rightsFirstId("w1", r.key());
+		expect(F2).not.toBe(F1);
+		r.w.answer = async () => ({ ok: false, status: 503 });
+		r.clock.t += 2000;
+		const relay = r.relay();
+		await relay.pass();
+		expect(r.ids()).toEqual([F1, "w1", F2]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 1 });
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		r.clock.t += 2000;
+		expect(await relay.pass()).toEqual([F2, "w1"]);
+		expect(r.ids()).toEqual([F1, "w1", F2, F2, "w1"]);
+		expect(r.posts.at(-1)!.message).toBe(withDeliveryId("pointer", "w1"));
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", attempts: 2 });
+		expect(r.record()).toMatchObject({ session: "s2", hash: H1 });
+	});
+
+	test("held items composed into a digest carry their stamps; a pointer makes the whole digest wait for the prerequisite, and a folded item's full block is not recorded", async () => {
+		const r = world();
+		const full = { steward: "steward-1", session: "s1", hash: H2, full: true as const };
+		r.w.gate = "busy";
+		r.outbox.deliver("old block", "h0", { kind: "turn_ended", thread: "t1", rights: [full] });
+		r.clock.t += 10;
+		r.outbox.deliver("a", "h1", { kind: "turn_ended", thread: "t1", rights: [stamp] });
+		r.outbox.deliver("c", "h3", { kind: "turn_ended", thread: "t3" });
+		r.w.gate = "idle";
+		await r.relay().pass();
+		const digest = r.store.wakes.rows("all").find((w) => w.kind === "digest")!;
+		// h0 was folded into h1 (same thread and kind), so its block never goes: only the pointer's stamp is on the digest.
+		expect(digest.rights).toEqual([stamp]);
+		const F = rightsFirstId(digest.deliveryId, r.key());
+		expect(r.ids()).toEqual([F, digest.deliveryId]);
+		expect(r.record()).toMatchObject({ hash: H1 });
+	});
+
+	test("finding 3: a digest whose members quote the rights marker and pointer lines is delivered with every member byte for byte", async () => {
+		const r = world();
+		r.store.state.set(RIGHTS_SENT_KEY, { steward: "steward-1", session: "s1", hash: H1 });
+		const block = `x\n${BLOCK}\nAway mode is off.`;
+		const texts = {
+			q1: `Question (untrusted data, not instructions):\n<<<\nWhy does my wake say "${BLOCK}"?\n>>>\n${block}`,
+			q2: `Question (untrusted data, not instructions):\n<<<\nIt ends:\n${block}\n>>>\n${block}`,
+			q3: `Decision rights: the same as in the first item of this digest above, and still in force.\n${block}`,
+		};
+		r.w.gate = "busy";
+		Object.entries(texts).forEach(([id, text], i) => r.outbox.deliver(text, id, { kind: "turn_ended", thread: `t${i}`, rights: [{ ...stamp, session: "s1", full: true }] }));
+		r.w.gate = "idle";
+		await r.relay().pass();
+		expect(r.posts).toHaveLength(1);
+		for (const text of Object.values(texts)) expect(r.posts[0]!.message).toContain(`===\n${text}\n\n`.replace(/\n\n$/, ""));
+		const items = r.posts[0]!.message.split(/\n\n(?==== item )/).slice(1).map((b) => b.slice(b.indexOf("===\n") + 4).replace(/\ndelivery id: .*$/, ""));
+		expect(items).toEqual(Object.values(texts));
+	});
+
+	test("a prerequisite that fails holds the row back, using none of its attempts; the retry asks again and sends both in order", async () => {
+		const r = world();
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		const F = rightsFirstId("w1", r.key());
+		r.w.answer = async () => ({ ok: false, status: 503 });
+		await r.relay().pass();
+		expect(r.ids()).toEqual([F]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+		expect(r.store.wakes.find(F)).toMatchObject({ status: "pending", attempts: 1 });
+		expect(r.record()).toBeUndefined();
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		r.clock.t += 2000;
+		const before = r.asked.n;
+		expect(await r.relay().pass()).toEqual([F, "w1"]);
+		expect(r.ids()).toEqual([F, F, "w1"]);
+		expect(r.asked.n).toBeGreaterThan(before);
+	});
+
+	test("a dead-lettered prerequisite holds the row until the operator acts: a retry sends both; a cancel makes the relay queue a fresh one", async () => {
+		const r = world({ max: 1 });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		r.outbox.deliver("pointer", "w2", { kind: "needs_input", rights: [stamp] });
+		const F1 = rightsFirstId("w1", r.key()), G1 = rightsFirstId("w2", r.key());
+		r.w.answer = async () => ({ ok: false, status: 503 });
+		await r.relay().pass();
+		expect(r.store.wakes.find(F1)?.status).toBe("dead_letter");
+		expect(r.store.wakes.find(G1)?.status).toBe("dead_letter");
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		r.clock.t += 2000;
+		await r.relay().pass();
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+		r.store.wakes.retry(F1);
+		expect(await r.relay().pass()).toEqual([F1, "w1", "w2"]);
+		// w2's prerequisite is no longer needed: the record shows the state now. Cancelled, it stays cancelled.
+		r.store.wakes.cancel(G1, r.clock.t);
+		await r.relay().pass();
+		expect(r.store.wakes.find(G1)?.status).toBe("cancelled");
+		// A cancel while the record does not show the state: the relay queues `:2`.
+		r.outbox.deliver("pointer", "w3", { kind: "needs_input", rights: [stamp] });
+		r.st.hash = H2;
+		r.w.answer = async () => ({ ok: false, status: 503 });
+		await r.relay().pass();
+		const K1 = rightsFirstId("w3", r.key());
+		expect(r.store.wakes.find(K1)?.status).toBe("dead_letter");
+		r.store.wakes.cancel(K1, r.clock.t);
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		expect(await r.relay().pass()).toEqual([rightsFirstId("w3", r.key(), 2), "w3"]);
+	});
+
+	test("finding 2, in process: a crash after the prerequisite was queued sends it, then the row, once each, and writes the record", async () => {
+		const r = world();
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		const F = rightsFirstId("w1", r.key());
+		r.store.wakes.enqueue({ deliveryId: F, message: "rights", queuedAt: r.clock.t, kind: "rights", rights: [{ steward: "steward-1", session: "s1", hash: H1, full: true }] });
+		expect(await r.relay().pass()).toEqual([F, "w1"]);
+		expect(r.ids()).toEqual([F, "w1"]);
+		expect(r.record()).toEqual({ steward: "steward-1", session: "s1", hash: H1, epoch: 0 });
+	});
+
+	test("finding 2, in process: a crash after the prerequisite's delivered commit sends only the row: the record was written with it", async () => {
+		const r = world();
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		r.w.answer = async (id) => (id === "w1" ? { ok: false, status: 503 } : { ok: true, status: 202 });
+		await r.relay().pass();
+		const F = rightsFirstId("w1", r.key());
+		expect(r.store.wakes.find(F)?.status).toBe("delivered");
+		expect(r.record()).toMatchObject({ steward: "steward-1", session: "s1", hash: H1 });
+		// A fresh relay (the restart) over the same database: the record is what lets the row go.
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		r.clock.t += 2000;
+		expect(await r.relay().pass()).toEqual(["w1"]);
+		expect(r.ids()).toEqual([F, "w1", "w1"]);
+	});
+
+	test("the record is written in the transaction that marks the row delivered: when that commit fails, neither exists", async () => {
+		const r = world();
+		r.outbox.deliver("block", "w1", { kind: "needs_input", rights: [{ ...stamp, session: "s1", full: true }] });
+		const refusing: Store = { ...r.store, state: { ...r.store.state, set: () => { throw Error("SQLITE_FULL: database or disk is full"); } } };
+		const relay = createRelay({ store: refusing, lock: testRelayLock(refusing), gate: () => "idle", log: () => {}, alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async () => ({ ok: true, status: 202 }) } });
+		await relay.pass();
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 1 });
+		expect(r.record()).toBeUndefined();
+	});
+
+	test("a full-block wake writes the record when it is delivered; a compaction that clears it later makes a failed row's retry queue `:2`", async () => {
+		const r = world();
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		r.w.answer = async (id) => (id === "w1" ? { ok: false, status: 503 } : { ok: true, status: 202 });
+		await r.relay().pass();
+		const F = rightsFirstId("w1", r.key());
+		r.store.state.delete(RIGHTS_SENT_KEY);
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		r.clock.t += 2000;
+		expect(await r.relay().pass()).toEqual([rightsFirstId("w1", r.key(), 2), "w1"]);
+		expect(r.ids()).toEqual([F, "w1", rightsFirstId("w1", r.key(), 2), "w1"]);
+	});
+
+	test("a prerequisite for a state that has passed is cancelled, never sent on its own after newer rights", async () => {
+		const r = world();
+		r.store.state.set(RIGHTS_SENT_KEY, { steward: "steward-1", session: "s1", hash: H1 });
+		const old = rightsFirstId("gone", rightsStateKey({ steward: "steward-1", session: "s0", hash: H1 }));
+		r.store.wakes.enqueue({ deliveryId: old, message: "old rights", queuedAt: r.clock.t, kind: "rights", rights: [{ steward: "steward-1", session: "s0", hash: H1, full: true }] });
+		await r.relay().pass();
+		expect(r.posts).toEqual([]);
+		expect(r.store.wakes.find(old)?.status).toBe("cancelled");
+		expect(r.record()).toMatchObject({ session: "s1" });
+	});
+
+	test("rights that cannot be read: the prerequisite carries the notice, writes no record, and once it is delivered the row goes", async () => {
+		const r = world();
+		delete r.st.hash;
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		const F = rightsFirstId("w1", r.key());
+		r.w.answer = async (id) => (id === "w1" ? { ok: false, status: 503 } : { ok: true, status: 202 });
+		await r.relay().pass();
+		expect(r.ids()).toEqual([F, "w1"]);
+		expect(r.posts[0]!.message).toContain("unreadable");
+		expect(r.record()).toBeUndefined();
+		r.w.answer = async () => ({ ok: true, status: 202 });
+		r.clock.t += 2000;
+		expect(await r.relay().pass()).toEqual(["w1"]);
+	});
+
+	test("a check that throws sends nothing on this pass and uses no attempt", async () => {
+		const r = rig({ rightsNow: async () => { throw Error("transcript unreadable"); } });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		await r.relay().pass();
+		expect(r.posts).toEqual([]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+		expect(r.store.wakes.rows("all")).toHaveLength(1);
+	});
+
+	test("the stamps are frozen with the row, like its text", () => {
+		const path = `${scratch()}/stamps.db`;
+		const r = rig({ store: openStore(path) });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		const raw = new Database(path);
+		expect(() => raw.exec("UPDATE outbox SET rights_for = NULL")).toThrow("immutable");
+		raw.close();
+		expect(r.store.wakes.find("w1")?.rights).toEqual([stamp]);
+	});
+});
+
+describe("a compaction bumps the rights epoch inside its serial job: a full block composed before it never restores the record", () => {
+	const H1 = "a".repeat(64);
+	/** A pointer composed under epoch 0, and full stamps composed under a given epoch. */
+	const pointer = { steward: "steward-1", session: "s1", hash: H1, at: "t0", epoch: 0 };
+	const fullAt = (epoch: number) => ({ steward: "steward-1", session: "s1", hash: H1, at: "t0", used: 10, full: true as const, epoch });
+	/**
+	 * One Steward (steward-1, session s1, rights H1) and a compaction target. The prerequisite's stamp carries the epoch it is composed under, read
+	 * from the database as the engine does. Every POST, wakes and compactions alike, goes into one ordered list (`ids`).
+	 */
+	function world(o: { store?: Store; compactFails?: { value: boolean } } = {}) {
+		const store = o.store ?? memStore();
+		const rightsNow: RelayDeps["rightsNow"] = async () => ({
+			steward: "steward-1", session: "s1", hash: H1,
+			wake: (forId: string) => ({ message: `[chamberlain] rights for ${forId}`, stamp: fullAt(rightsEpoch(store)) }),
+		});
+		const compact: RelayDeps["compact"] = {
+			ready: () => true,
+			send: async (id) => { if (o.compactFails?.value) throw Error("killed between the epoch bump and the compaction POST"); r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; },
+		};
+		const r = rig({ store, rightsNow, compact });
+		const record = () => r.store.state.get(RIGHTS_SENT_KEY) as Record<string, unknown> | undefined;
+		const prereq = (row: string, epoch: number) => rightsFirstId(row, rightsStateKey({ steward: "steward-1", session: "s1", hash: H1, epoch }));
+		/** The full-block row F, whose POST the test holds open until it calls `release`. */
+		function fullInFlight() {
+			let release!: () => void, started = false;
+			const open = new Promise<void>((res) => { release = res; });
+			r.w.answer = async (id) => { if (id === "F") { started = true; await open; } return { ok: true, status: 202 }; };
+			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+			return { release, started: () => started };
+		}
+		const until = async (ok: () => boolean) => { for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(5); expect(ok()).toBe(true); };
+		return { ...r, record, prereq, fullInFlight, until };
+	}
+
+	test("the reviewer's interleaving: a full wake in flight, the compaction asked for, the full wake lands, the next wake: it gets a prerequisite", async () => {
+		const r = world();
+		const f = r.fullInFlight();
+		r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+		const relay = r.relay();
+		const passing = relay.pass();
+		await r.until(f.started);
+		// The engine asks for the compaction while F's POST is open: the relay queues it behind F.
+		const compacting = relay.compact("compact:steward-1:1");
+		f.release();
+		await compacting;
+		await passing;
+		// F landed (epoch 0, the record written), THEN the compaction's job bumped the epoch and dropped the record, THEN P had to wait for the rights.
+		expect(r.ids()).toEqual(["F", "compact:steward-1:1", r.prereq("P", 1), "P"]);
+		expect(r.store.wakes.find("F")?.status).toBe("delivered");
+		expect(r.record()).toMatchObject({ hash: H1, epoch: 1 });
+		expect(r.events.find((e) => e.event === "rights-invalidated")?.data).toMatchObject({ reason: "compaction", epoch: 1 });
+	});
+
+	test("a full block whose delivered commit lands only after the bump (owed across the compaction) is marked delivered and writes nothing", async () => {
+		const r = world();
+		r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+		// F is accepted but its delivered commit fails: the relay owes it. The compaction goes, then the commit lands on the next pass.
+		const relay = createRelay({ store: r.broken, lock: testRelayLock(r.broken), gate: () => "idle", log: (event, data) => r.events.push({ event, ...(data ? { data } : {}) }), alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } }, compact: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } } });
+		await relay.pass();
+		await relay.compact("compact:steward-1:1");
+		expect(r.store.wakes.find("F")?.status).toBe("pending");
+		r.broken.wakes.finish = r.store.wakes.finish;
+		await relay.pass();
+		expect(r.store.wakes.find("F")?.status).toBe("delivered");
+		expect(r.record()).toEqual({ epoch: 1 });
+		expect(r.events.find((e) => e.event === "rights-full-stale")?.data).toMatchObject({ deliveryId: "F", epoch: 0, current: 1 });
+		expect(r.ids()).toEqual(["F", "compact:steward-1:1"]);
+	});
+
+	test("a context shrink seen while a full block is in flight bumps the epoch: the block lands and writes nothing, and the next wake gets a prerequisite", async () => {
+		const r = world();
+		const f = r.fullInFlight();
+		r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+		const relay = r.relay();
+		const passing = relay.pass();
+		await r.until(f.started);
+		// The engine's minute check, outside the serial queue.
+		expect(invalidateRights(r.store)).toBe(1);
+		f.release();
+		await passing;
+		expect(r.ids()).toEqual(["F", r.prereq("P", 1), "P"]);
+		expect(r.events.some((e) => e.event === "rights-full-stale")).toBe(true);
+	});
+
+	test("the plain case: a full block delivered, then the compaction, then the next wake: the full rights go first", async () => {
+		const r = world();
+		r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+		const relay = r.relay();
+		await relay.pass();
+		expect(r.record()).toMatchObject({ hash: H1, epoch: 0 });
+		await relay.compact("compact:steward-1:1");
+		expect(r.record()).toEqual({ epoch: 1 });
+		r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+		await relay.pass();
+		expect(r.ids()).toEqual(["F", "compact:steward-1:1", r.prereq("P", 1), "P"]);
+		// The rights the prerequisite brought are recorded under the new epoch: the wake after needs nothing ahead of it.
+		r.outbox.deliver("pointer 2", "Q", { kind: "needs_input", rights: [{ ...pointer, epoch: 1 }] });
+		await relay.pass();
+		expect(r.ids().at(-1)).toBe("Q");
+		expect(r.ids()).toHaveLength(5);
+	});
+
+	describe("a crash at each point of that interleaving (a fresh relay over the same database is the restart)", () => {
+		const fileStore = () => openStore(`${scratch()}/epoch.db`);
+
+		test("after F was accepted, before its delivered commit, with the compaction still queued: the restart compacts, then re-sends F, which writes nothing, and P gets a prerequisite", async () => {
+			const r = world({ store: fileStore() });
+			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+			// The dying relay: F accepted, its commit never made, the process gone before the compaction's job ran.
+			const dying = createRelay({ store: r.broken, lock: testRelayLock(r.broken), gate: () => "idle", log: () => {}, alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } } });
+			await dying.pass();
+			expect(r.store.wakes.find("F")).toMatchObject({ status: "pending", attempts: 1 });
+			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+			const relay = r.relay();
+			await relay.compact("compact:steward-1:1");
+			await relay.pass();
+			// The restart's compaction ran first (nothing of F was recorded yet); F re-sent after it carries epoch 0 and writes nothing.
+			expect(r.ids()).toEqual(["F", "compact:steward-1:1", "F", r.prereq("P", 1), "P"]);
+			expect(r.record()).toMatchObject({ hash: H1, epoch: 1 });
+		});
+
+		test("after F was delivered, before the compaction's job ran: the record is epoch 0; the compaction asked for after the restart drops it, and P gets a prerequisite", async () => {
+			const r = world({ store: fileStore() });
+			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+			await r.relay().pass();
+			expect(r.record()).toMatchObject({ epoch: 0, hash: H1 });
+			const relay = r.relay();
+			await relay.compact("compact:steward-1:1");
+			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+			await relay.pass();
+			expect(r.ids()).toEqual(["F", "compact:steward-1:1", r.prereq("P", 1), "P"]);
+		});
+
+		test("after the epoch bump, before the compaction POST (crash step compact-invalidated): the record stays dropped, and P gets a prerequisite", async () => {
+			const fails = { value: true };
+			const r = world({ store: fileStore(), compactFails: fails });
+			const f = r.fullInFlight();
+			const dying = r.relay();
+			const passing = dying.pass();
+			await r.until(f.started);
+			// The compaction is asked for while F is open; its job bumps the epoch, then the process dies before the POST.
+			const compacting = dying.compact("compact:steward-1:1").catch(() => "killed");
+			f.release();
+			expect(await compacting).toBe("killed");
+			await passing;
+			expect(r.record()).toEqual({ epoch: 1 });
+			fails.value = false;
+			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+			await r.relay().pass();
+			expect(r.ids()).toEqual(["F", r.prereq("P", 1), "P"]);
+		});
+
+		test("after the bump, with F's delivered commit still owed (crash before it landed): the restart re-sends F, which writes nothing, and P gets a prerequisite", async () => {
+			const r = world({ store: fileStore() });
+			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+			const dying = createRelay({ store: r.broken, lock: testRelayLock(r.broken), gate: () => "idle", log: () => {}, alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } }, compact: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } } });
+			await dying.pass();
+			await dying.compact("compact:steward-1:1");
+			expect(r.record()).toEqual({ epoch: 1 });
+			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+			await r.relay().pass();
+			expect(r.ids()).toEqual(["F", "compact:steward-1:1", "F", r.prereq("P", 1), "P"]);
+			expect(r.events.find((e) => e.event === "rights-full-stale")?.data).toMatchObject({ deliveryId: "F", epoch: 0, current: 1 });
+		});
+
+		test("after the compaction POST was accepted: the restart reads epoch 1 and no record, and P gets a prerequisite", async () => {
+			const r = world({ store: fileStore() });
+			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+			const dying = r.relay();
+			await dying.pass();
+			await dying.compact("compact:steward-1:1");
+			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+			await r.relay().pass();
+			expect(r.ids()).toEqual(["F", "compact:steward-1:1", r.prereq("P", 1), "P"]);
+		});
 	});
 });

@@ -1,4 +1,4 @@
-import { principal } from "./config.ts";
+import { principal, principalPoss } from "./config.ts";
 import type { ThreadState, WakeKind } from "./adapter.ts";
 
 /** Pure rules: which thread transitions are worth waking the Steward for. They read the normalized ThreadState (adapter.ts). */
@@ -7,6 +7,13 @@ export type Candidate = { kind: WakeKind; thread: ThreadState; key: string };
 
 export const LIVE = new Set(["running", "queued", "starting", "preparing", "waiting"]);
 const ENDED = new Set(["completed", "idle", "interrupted"]);
+
+/**
+ * The dedupe key of one failure. It names the failed run: a thread that fails, is started again and fails again is two failures,
+ * and a key of thread and previous status alone swallowed the second one (2026-11-13). A backend that names no run keeps the
+ * old key, which is the best it can do.
+ */
+export const failureKey = (next: ThreadState, prev: ThreadState): string => (next.latestRunId ? `${next.id}:failed:${next.latestRunId}:${prev.status}` : `${next.id}:failed:${prev.status}`);
 
 /** Transitions worth a wake. `prev` undefined means first sighting: nothing fires. */
 export function decide(
@@ -23,7 +30,7 @@ export function decide(
 	else if (next.status === "waiting" && prev.status !== "waiting" && !next.blockedOnThreadWait)
 		out.push({ kind: "needs_input", thread: next, key: `${next.id}:waiting:${Date.now()}` });
 	if (topLevel && next.status === "failed" && prev.status !== "failed")
-		out.push({ kind: "failed", thread: next, key: `${next.id}:failed:${prev.status}` });
+		out.push({ kind: "failed", thread: next, key: failureKey(next, prev) });
 	if (topLevel && LIVE.has(prev.status) && ENDED.has(next.status))
 		out.push({ kind: "turn_ended", thread: next, key: `${next.id}:ended:${Date.now()}` });
 	return out;
@@ -161,10 +168,16 @@ export function needsCompact(usedTokens: number | undefined, limit: number, cool
 	return !coolingDown && usedTokens !== undefined && usedTokens > limit;
 }
 
-export type RightsSent = { hash: string; used?: number };
-export const RIGHTS_UNCHANGED = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
-export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Hold anything on the ASK list and tell ${principal()}.`;
-/** The marker that starts the full rights block in a wake; hold.ts folds repeated copies of everything after it. */
+/** What the Steward was last sent of its rights: the hash of the rights and rulings, its context size then, and when the full text last went out. */
+/**
+ * What the Steward was last delivered of its rights (the durable `rights-sent` record): the hash, its context size then (raised every minute),
+ * when the full text went out, and the Steward thread and session it went to (absent in a record written before they were kept).
+ */
+export type RightsSent = { hash: string; used?: number; at?: string; steward?: string; session?: string; /** The rights epoch it was written under (rights-sent.ts, `rightsEpoch`); absent is 0. */ epoch?: number };
+/** The one line a wake carries when the rights and rulings have not changed since the full text went out at `at`. The hand-off holds them. */
+export const rightsUnchanged = (at?: string) => `Decision rights and rulings unchanged since ${at ?? "your last wake"} and still in force; your hand-off (steward-brief.md) has them.`;
+export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Take no action on anything on the ASK list: put it on ${principalPoss()} queue with ask.ts, and hold it only with --item.`;
+/** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
 /**
  * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they
