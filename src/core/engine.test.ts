@@ -290,6 +290,40 @@ describe("the held ledger is reconciled on the heartbeat", () => {
 		expect(r.events.filter((e) => e.event.endsWith("-error"))).toEqual([]);
 		expect(r.events.some((e) => e.event === "held-reconciled")).toBe(true);
 	});
+
+	// Fix 1. Must fail on 2845f33: the watcher's cache said settled and the hold closed while the server could not be reached.
+	test("fix 1: with the server unreachable, a thread the watcher's cache calls settled closes nothing", async () => {
+		const r = rig({ housekeeping: true });
+		await r.until("connected", () => r.fake.connected);
+		appendHeld(r.store, { thread: "cached-settled", what: "waits", ref: { threadId: "th-settled" } }, new Date("2026-11-13T01:00:00.000Z"));
+		r.fake.emit({ kind: "state", thread: thread("th-settled", "completed", { settled: true }) });
+		await r.until("the cache has it", () => r.engine.watchers[0]!.states.get("th-settled")?.settled === true);
+		r.fake.snapshotError = "connect ECONNREFUSED";
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["cached-settled"]);
+		r.fake.snapshotError = undefined;
+		r.fake.snapshotComplete = false;
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["cached-settled"]);
+	});
+
+	test("fix 3: a thread the server no longer lists is gone, and the hold closes from a fresh snapshot", async () => {
+		const r = rig({ housekeeping: true, capabilities: ["snapshot"] });
+		await r.until("connected", () => r.fake.connected);
+		appendHeld(r.store, { thread: "deleted", what: "waits", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(r.store, { thread: "listed", what: "waits", ref: { threadId: "th-listed" } }, new Date("2026-11-13T01:00:00.000Z"));
+		r.fake.emit({ kind: "state", thread: thread("th-listed", "running") });
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["listed"]);
+	});
+
+	test("fix 1: an adapter that cannot take a snapshot leaves its threads unknown", async () => {
+		const r = rig({ housekeeping: true, capabilities: [] });
+		await r.until("connected", () => r.fake.connected);
+		appendHeld(r.store, { thread: "h", what: "waits", ref: { threadId: "th-gone" } }, new Date("2026-11-13T01:00:00.000Z"));
+		await r.engine.tick();
+		expect(heldOpen(r.store)).toHaveLength(1);
+	});
 });
 
 describe("the engine's own dedupe is the item system's", () => {

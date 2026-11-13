@@ -9,7 +9,8 @@ import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { failedRead } from "../../core/history.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { historyGet, readWhenConnected } from "./history.ts";
-import { connect, type Rpc } from "./rpc.ts";
+import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
+import type { ThreadSnapshot } from "../../core/adapter.ts";
 import type { T3Server } from "./server.ts";
 import { normalizeWaitKind, toState } from "./state.ts";
 
@@ -93,6 +94,14 @@ export class T3Link {
 		} finally {
 			clearInterval(timer);
 		}
+	}
+
+	/** A fresh read of every thread, over a socket of its own. Rejects when the server can't be reached. */
+	async snapshot(): Promise<ThreadSnapshot> {
+		const token = this.token();
+		if (!token) throw Error(`no ${this.srv.tokenFile}`);
+		const { threads } = await fetchShellSnapshot(this.srv.origin, token);
+		return { complete: true, threads: threads.map((th) => { const t = toState(th); return { id: t.id, archived: t.archived, settled: t.settled, pendingRequestId: t.pendingRequestId, status: t.status }; }) };
 	}
 
 	private async projection(threadId: string): Promise<{ turnItems?: any[]; subagents?: { status?: string }[] }> {

@@ -131,6 +131,14 @@ export function itemIdsOf(h: Held): string[] {
 }
 /** A card or approval left its thread: close what was held against it. A hold with no card link is a decision, so it stays. */
 export const closeHeldForCard = (store: Store, threadId: string, requestId: string, how: string): number => closeWhere(store, (h) => h.requestId === requestId || h.threadId === threadId, how);
+/**
+ * Pure: why a hold is not a hold. A hold is a real wait on the operator, and an FYI waits on nothing, so the ledger refuses
+ * it in code and points at the decision log. Looks at the thread and the text.
+ */
+export function fyiReason(thread: string, what: string): string | undefined {
+	const hit = `${thread}\n${what}`.match(/\bFYI\b|\bfor your information\b|\bno action (?:is )?(?:needed|required|necessary)\b|\bneeds? no action\b|\bno action\b|\bnothing (?:is )?(?:needed|required|necessary)\b|\bnothing to do\b/i);
+	return hit ? `"${hit[0]}"` : undefined;
+}
 /** Pure: is this hold waiting on queue item `itemId`? By its `item` link, or by the item ID named as a word in its text. */
 export const heldForItem = (h: Held, itemId: string) => h.item === itemId || new RegExp(`(^|[^A-Za-z0-9-])${itemId}(?![A-Za-z0-9-])`).test(`${h.thread}\n${h.what}`);
 /**
@@ -199,6 +207,8 @@ function main() {
 		const raw = { pr: flags["--pr"], issue: flags["--issue"], branch: flags["--branch"], runId: flags["--run"], threadId: flags["--thread"] };
 		const ref = cleanRef(raw);
 		const given = Object.entries(raw).filter(([, v]) => v !== undefined);
+		const fyi = thread && what ? fyiReason(thread, what) : undefined;
+		if (fyi) { console.error(`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: bun ${new URL("./decided.ts", import.meta.url).pathname} "<thread>" "<what I decided>" "<ruling cited>"`); process.exit(2); }
 		if (!thread || !what || (item !== undefined && !ITEM_ID.test(item)) || Object.keys(ref ?? {}).length !== given.length) { console.error(HOLD_USAGE); process.exit(2); }
 		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(item ? { item } : {}), ...(ref ? { ref } : {}) });
 		console.log("held");

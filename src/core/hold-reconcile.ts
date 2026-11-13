@@ -14,7 +14,7 @@
  *
  * GitHub calls are rate-aware: each distinct ref is looked up once per pass however many holds name it, at most
  * MAX_LOOKUPS per pass (least recently checked first), and a rate-limit error stops the pass and backs off. Thread states
- * come from the engine's own watchers and cost no calls. The engine is given the GitHub reader (core stays free of any one
+ * come from a fresh snapshot of each server taken in the pass (never the watchers' cache) and cost no GitHub calls. The engine is given the GitHub reader (core stays free of any one
  * host); tests pass fakes.
  */
 import { closeHeldWhere, cleanRef, heldOpen, itemIdsOf, REF_SHAPES, type Held, type HoldRef } from "./afk.ts";
@@ -66,29 +66,52 @@ export function reconcileItemHolds(store: Store, now = new Date()): { closed: nu
 export type Seen = { state: "done"; saw: string } | { state: "live" } | { state: "unknown"; why: string };
 /** A GitHub read: the API path, a jq filter, the parsed result. Rejects on any failure. */
 export type GhRead = (path: string, jq: string) => Promise<unknown>;
-/** What the watchers say of a thread: settled with nothing pending, archived, still live, or not known. */
+/** What a snapshot says of a thread: settled with nothing pending, archived or deleted, still live, or not known. */
 export type ThreadView = { state: "settled" | "gone"; saw: string } | { state: "live" } | { state: "unknown" };
-/** What the engine knows of one thread, as its watchers hold it. */
+/** What a snapshot knows of one thread. */
 export type ThreadFacts = { archived: boolean; settled: boolean; pendingRequestId: string | null; status: string };
 /** Pure: a listed thread is gone when archived, settled when settled with no card or approval pending, and otherwise live. */
 export const classifyThread = (t: ThreadFacts): ThreadView =>
 	t.archived ? { state: "gone", saw: "archived" }
 		: t.settled && !t.pendingRequestId && t.status !== "waiting" ? { state: "settled", saw: "settled" }
 			: { state: "live" };
-/** One server as the watchers see it: its thread table. */
-export type ServerThreads = { get: (id: string) => ThreadFacts | undefined };
 /**
- * Pure: a thread's state across servers. A server that lists it decides. A thread no server lists is unknown, never gone:
- * the watchers do not say whether they have read every thread, so absence proves nothing and keeps the hold open.
+ * One server's thread list, fetched in THIS pass over a connection of its own (`Adapter.snapshot`), never the cache the
+ * watcher keeps. `healthy`: the server answered. `complete`: the answer was the whole list. A server that is offline,
+ * unreachable, partial, or whose adapter cannot take a snapshot is not healthy and complete, and says nothing about any thread.
  */
-export function threadViewAcross(servers: ServerThreads[], id: string): ThreadView {
-	for (const s of servers) { const t = s.get(id); if (t) return classifyThread(t); }
-	return { state: "unknown" };
+export type MachineSnapshot = { machine: string; healthy: boolean; complete: boolean; get: (id: string) => ThreadFacts | undefined };
+/**
+ * Pure: a thread's state across servers. A healthy, complete snapshot that lists it decides. A thread no snapshot lists is
+ * gone only when EVERY server gave a healthy, complete snapshot this pass; with any server offline or partial it may live
+ * there, so it is unknown. Nothing else (a cache, a stream's last word) ever settles or removes a thread.
+ */
+export function threadViewAcross(snaps: MachineSnapshot[], id: string): ThreadView {
+	const good = snaps.filter((s) => s.healthy && s.complete);
+	for (const s of good) { const t = s.get(id); if (t) return classifyThread(t); }
+	return snaps.length > 0 && good.length === snaps.length ? { state: "gone", saw: "gone from every server's fresh snapshot" } : { state: "unknown" };
 }
-export type ReconcileDeps = { store: Store; now?: number; /** Undefined: GitHub refs are not checked. */ gh?: GhRead; thread: (threadId: string) => ThreadView };
+/**
+ * Fresh snapshots, one per server, each fetched now. A server whose fetch fails is reported unhealthy and says nothing; one
+ * whose answer is marked partial is not complete. Never throws.
+ */
+export async function takeSnapshots(machines: { name: string; fetch: () => Promise<{ complete: boolean; threads: (ThreadFacts & { id: string })[] }> }[]): Promise<MachineSnapshot[]> {
+	return Promise.all(machines.map(async (m): Promise<MachineSnapshot> => {
+		try {
+			const r = await m.fetch();
+			if (!r.complete || !Array.isArray(r.threads)) return { machine: m.name, healthy: true, complete: false, get: () => undefined };
+			const table = new Map<string, ThreadFacts>(r.threads.map((t) => [t.id, t]));
+			return { machine: m.name, healthy: true, complete: true, get: (id) => table.get(id) };
+		} catch {
+			return { machine: m.name, healthy: false, complete: false, get: () => undefined };
+		}
+	}));
+}
+/** Fetched once per pass, and only when a hold names a thread. A rejection means every thread is unknown. */
+export type ReconcileDeps = { store: Store; now?: number; /** Undefined: GitHub refs are not checked. */ gh?: GhRead; snapshots?: () => Promise<MachineSnapshot[]> };
 export type RefPassResult = { ran: boolean; closed: number; lookups: number; errors: number; backoff?: boolean };
 
-type State = { lastPassAt?: number; backoffUntil?: number; checked?: Record<string, number>; /** Branches seen to exist: one never seen is not one deleted. */ seenLive?: Record<string, number> };
+type State = { lastPassAt?: number; backoffUntil?: number; checked?: Record<string, number>; /** Branches seen to exist: one never seen is not one deleted. */ seenLive?: Record<string, { t: number; repoId: number }> };
 
 type Kind = "pr" | "issue" | "branch" | "thread";
 const RATE = /rate limit|\b429\b|abuse|secondary/i;
@@ -107,7 +130,7 @@ export function refsOf(h: Held): { kind: Kind; key: string; value: string }[] {
 	];
 }
 
-async function lookup(kind: "pr" | "issue" | "branch", value: string, gh: GhRead, seenLive: Record<string, number>, now: number): Promise<Seen> {
+async function lookup(kind: "pr" | "issue" | "branch", value: string, gh: GhRead, seenLive: Record<string, { t: number; repoId: number }>, now: number): Promise<Seen> {
 	const p = parts(value);
 	if (!p) return { state: "unknown", why: "malformed ref" };
 	const base = `repos/${p.owner}/${p.repo}`;
@@ -130,12 +153,20 @@ async function lookup(kind: "pr" | "issue" | "branch", value: string, gh: GhRead
 		if (r.state === "closed" && closed) return { state: "done", saw: `issue ${value} closed ${closed}` };
 		return { state: "unknown", why: "issue state not readable" };
 	}
+	// A branch is known deleted only on the same repository it was seen on. A slug can be transferred, renamed or recreated, so
+	// the repository's numeric id is recorded when the branch is first seen, and an absent branch counts only when that same id
+	// answers under the same name. A redirect (a different name back) or a different id is unknown, never deleted.
+	const repo = (await gh(base, "{id:.id,full_name:.full_name}")) as { id?: unknown; full_name?: unknown } | null;
+	if (typeof repo?.id !== "number" || !Number.isInteger(repo.id) || typeof repo.full_name !== "string") return { state: "unknown", why: "repository identity not readable" };
+	if (repo.full_name.toLowerCase() !== `${p.owner}/${p.repo}`.toLowerCase()) return { state: "unknown", why: `repository now answers as ${repo.full_name}` };
 	// matching-refs answers an empty list, not a 404, for a branch that is not there, so "gone" is never confused with "no access".
 	const r = await gh(`${base}/git/matching-refs/heads/${p.tail}?per_page=100`, `[.[]|select(.ref==${JSON.stringify(`refs/heads/${p.tail}`)})]|length`);
 	if (typeof r !== "number" || !Number.isInteger(r) || r < 0) return { state: "unknown", why: "branch answer not readable" };
-	if (r > 0) { seenLive[value] = now; return { state: "live" }; }
-	if (!seenLive[value]) return { state: "unknown", why: "branch never seen on the remote, so not known to be deleted" };
-	return { state: "done", saw: `branch ${value} no longer on the remote (last seen ${new Date(seenLive[value]!).toISOString().slice(0, 16)}Z)` };
+	if (r > 0) { seenLive[value] = { t: now, repoId: repo.id }; return { state: "live" }; }
+	const seen = seenLive[value];
+	if (!seen || typeof seen.repoId !== "number") return { state: "unknown", why: "branch never seen on the remote, so not known to be deleted" };
+	if (seen.repoId !== repo.id) return { state: "unknown", why: `repository id changed from ${seen.repoId} to ${repo.id}` };
+	return { state: "done", saw: `branch ${value} no longer on the remote (repo id ${repo.id}, last seen ${new Date(seen.t).toISOString().slice(0, 16)}Z)` };
 }
 
 /**
@@ -157,8 +188,12 @@ export async function reconcileRefHolds(d: ReconcileDeps): Promise<RefPassResult
 	let backoff = st.backoffUntil !== undefined && now < st.backoffUntil;
 	let backoffUntil = st.backoffUntil;
 
+	// Threads: one fresh snapshot per server, fetched now. Nothing cached is consulted, and a failed fetch leaves every thread unknown.
+	const wantsThreads = [...refs.values()].some((r) => r.kind === "thread");
+	let snaps: MachineSnapshot[] = [];
+	if (wantsThreads && d.snapshots) { try { snaps = await d.snapshots(); } catch { errors++; } }
 	for (const [key, r] of refs) if (r.kind === "thread") {
-		const v = d.thread(r.value);
+		const v = threadViewAcross(snaps, r.value);
 		results.set(key, v.state === "live" ? { state: "live" } : v.state === "unknown" ? { state: "unknown", why: "thread not known" } : { state: "done", saw: `thread ${r.value} ${v.saw}` });
 	}
 	// A ref is looked up once however many holds name it; the least recently checked go first, so a cap never starves one.

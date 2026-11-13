@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { appendHeld, heldId, heldOpen, HELD, type Held } from "./afk.ts";
 import { askQuestion, claimWake, notNow, pageClaim, QUEUE, type Answer, type Question } from "./questions.ts";
-import { BACKOFF_MS, classifyThread, MAX_LOOKUPS, REF_PASS_MS, reconcileItemHolds, reconcileRefHolds, refsOf, threadViewAcross, type GhRead, type ThreadView } from "./hold-reconcile.ts";
+import { BACKOFF_MS, classifyThread, MAX_LOOKUPS, REF_PASS_MS, reconcileItemHolds, reconcileRefHolds, refsOf, takeSnapshots, threadViewAcross, type GhRead, type MachineSnapshot, type ThreadFacts } from "./hold-reconcile.ts";
 import type { Store } from "./store.ts";
 
 const T0 = new Date("2026-11-13T01:00:00.000Z");
@@ -89,8 +89,11 @@ describe("pass 2: refs", () => {
 		};
 		return { gh, calls };
 	}
-	const noThreads = (): ThreadView => ({ state: "unknown" });
-	const run = (store: Store, gh?: GhRead, thread: (id: string) => ThreadView = noThreads, now = NOW) => reconcileRefHolds({ store, now, ...(gh ? { gh } : {}), thread });
+	type Snaps = (() => Promise<MachineSnapshot[]>) | undefined;
+	const run = (store: Store, gh?: GhRead, snapshots: Snaps = undefined, now = NOW) => reconcileRefHolds({ store, now, ...(gh ? { gh } : {}), ...(snapshots ? { snapshots } : {}) });
+	const facts = (over: Partial<ThreadFacts> = {}): ThreadFacts => ({ archived: false, settled: false, pendingRequestId: null, status: "idle", ...over });
+	/** A server's snapshot taken this pass. */
+	const machine = (name: string, table: Record<string, ThreadFacts>, o: { healthy?: boolean; complete?: boolean } = {}): MachineSnapshot => ({ machine: name, healthy: o.healthy ?? true, complete: o.complete ?? true, get: (id) => table[id] });
 	const PR = "repos/o/r/pulls/42";
 
 	test("a merged PR closes its hold and the closure says what was seen", async () => {
@@ -127,12 +130,13 @@ describe("pass 2: refs", () => {
 		const store = memStore();
 		const id = hold(store, { thread: "b", ref: { branch: "o/r:feat/x" } });
 		const path = "repos/o/r/git/matching-refs/heads/feat/x?per_page=100";
-		await run(store, fakeGh({ [path]: 0 }).gh);
+		const REPO = { "repos/o/r": { id: 77, full_name: "o/r" } };
+		await run(store, fakeGh({ ...REPO, [path]: 0 }).gh);
 		expect(whats(store)).toEqual(["b"]);
-		await run(store, fakeGh({ [path]: 1 }).gh, noThreads, NOW + REF_PASS_MS);
+		await run(store, fakeGh({ ...REPO, [path]: 1 }).gh, undefined, NOW + REF_PASS_MS);
 		expect(whats(store)).toEqual(["b"]);
-		expect((await run(store, fakeGh({ [path]: 0 }).gh, noThreads, NOW + 2 * REF_PASS_MS)).closed).toBe(1);
-		expect(how(store, id)).toMatch(/^branch o\/r:feat\/x no longer on the remote \(last seen 2026-11-13T13:10Z\)/);
+		expect((await run(store, fakeGh({ ...REPO, [path]: 0 }).gh, undefined, NOW + 2 * REF_PASS_MS)).closed).toBe(1);
+		expect(how(store, id)).toMatch(/^branch o\/r:feat\/x no longer on the remote \(repo id 77, last seen 2026-11-13T13:10Z\)/);
 	});
 
 	test("a thread settled or gone closes its hold; a live or unknown thread leaves it, and a card link counts as a thread ref", async () => {
@@ -141,8 +145,11 @@ describe("pass 2: refs", () => {
 		hold(store, { thread: "gone", threadId: "th-gone" });
 		hold(store, { thread: "live", ref: { threadId: "th-live" } });
 		hold(store, { thread: "unknown", ref: { threadId: "th-unknown" } });
-		const views: Record<string, ThreadView> = { "th-settled": { state: "settled", saw: "settled" }, "th-gone": { state: "gone", saw: "archived" }, "th-live": { state: "live" } };
-		const r = await run(store, fakeGh({}).gh, (id) => views[id] ?? { state: "unknown" });
+		const snaps = async () => [
+			machine("main", { "th-settled": facts({ settled: true }), "th-gone": facts({ archived: true }), "th-live": facts() }),
+			machine("second", {}, { healthy: false, complete: false }),
+		];
+		const r = await run(store, fakeGh({}).gh, snaps);
 		expect(r).toMatchObject({ closed: 2, lookups: 0 });
 		expect(whats(store)).toEqual(["live", "unknown"]);
 	});
@@ -160,6 +167,7 @@ describe("pass 2: refs", () => {
 			"repos/o/r/pulls/2": "<html>",
 			"repos/o/r/pulls/3": { state: "locked" },
 			"repos/o/r/pulls/4": { state: "closed", merged_at: null, closed_at: null },
+			"repos/o/r": { id: 1, full_name: "o/r" },
 			"repos/o/r/git/matching-refs/heads/b?per_page=100": "0",
 			"repos/o/r/issues/5": null,
 		}).gh);
@@ -171,7 +179,7 @@ describe("pass 2: refs", () => {
 		const store = memStore();
 		hold(store, { thread: "pr", ref: { pr: "o/r#1" } });
 		hold(store, { thread: "th", ref: { threadId: "th-gone" } });
-		const r = await run(store, undefined, () => ({ state: "gone", saw: "archived" }));
+		const r = await run(store, undefined, async () => [machine("main", { "th-gone": facts({ archived: true }) })]);
 		expect(r).toMatchObject({ closed: 1, lookups: 0 });
 		expect(whats(store)).toEqual(["pr"]);
 	});
@@ -208,8 +216,8 @@ describe("pass 2: refs", () => {
 		hold(store, { thread: "o", ref: { pr: "o/r#2" } });
 		const { gh, calls } = fakeGh({ "repos/o/r/pulls/1": { state: "closed", merged_at: "2026-11-13T12:00:00Z" }, "repos/o/r/pulls/2": { state: "open" } });
 		expect((await run(store, gh)).closed).toBe(1);
-		expect(await run(store, gh, noThreads, NOW + 60_000)).toEqual({ ran: false, closed: 0, lookups: 0, errors: 0 });
-		expect((await run(store, gh, noThreads, NOW + REF_PASS_MS)).closed).toBe(0);
+		expect(await run(store, gh, undefined, NOW + 60_000)).toEqual({ ran: false, closed: 0, lookups: 0, errors: 0 });
+		expect((await run(store, gh, undefined, NOW + REF_PASS_MS)).closed).toBe(0);
 		expect(calls).toEqual(["repos/o/r/pulls/1", "repos/o/r/pulls/2", "repos/o/r/pulls/2"]);
 	});
 
@@ -220,7 +228,7 @@ describe("pass 2: refs", () => {
 		for (let i = 1; i <= n; i++) { hold(store, { thread: `h${i}`, ref: { pr: `o/r#${i}` } }); table[`repos/o/r/pulls/${i}`] = { state: "open" }; }
 		expect((await run(store, fakeGh(table).gh)).lookups).toBe(MAX_LOOKUPS);
 		const second = fakeGh(table);
-		await run(store, second.gh, noThreads, NOW + REF_PASS_MS);
+		await run(store, second.gh, undefined, NOW + REF_PASS_MS);
 		expect(second.calls.slice(0, 5).sort()).toEqual(Array.from({ length: 5 }, (_, i) => `repos/o/r/pulls/${MAX_LOOKUPS + 1 + i}`).sort());
 	});
 
@@ -231,10 +239,10 @@ describe("pass 2: refs", () => {
 		const limited = fakeGh({ "repos/o/r/pulls/1": Error("API rate limit exceeded"), "repos/o/r/pulls/2": { state: "closed", merged_at: "2026-11-13T12:00:00Z" } });
 		expect(await run(store, limited.gh)).toMatchObject({ closed: 0, lookups: 1, errors: 1, backoff: true });
 		const during = fakeGh({ "repos/o/r/pulls/1": { state: "open" }, "repos/o/r/pulls/2": { state: "open" } });
-		await run(store, during.gh, noThreads, NOW + REF_PASS_MS);
+		await run(store, during.gh, undefined, NOW + REF_PASS_MS);
 		expect(during.calls).toEqual([]);
 		const after = fakeGh({ "repos/o/r/pulls/1": { state: "open" }, "repos/o/r/pulls/2": { state: "closed", merged_at: "2026-11-13T12:00:00Z" } });
-		expect((await run(store, after.gh, noThreads, NOW + BACKOFF_MS + REF_PASS_MS)).closed).toBe(1);
+		expect((await run(store, after.gh, undefined, NOW + BACKOFF_MS + REF_PASS_MS)).closed).toBe(1);
 	});
 
 	test("refs are shaped before they reach a request", () => {
@@ -244,13 +252,81 @@ describe("pass 2: refs", () => {
 		expect(heldId(h({ pr: "a/b#1" }))).toBe(heldId(h(undefined)));
 	});
 
-	test("a thread's state: archived is gone, settled with nothing pending is settled, a pending card keeps it live, and an unlisted thread is unknown", () => {
-		const t = { archived: false, settled: true, pendingRequestId: null, status: "idle" };
+	test("a thread's state: archived is gone, settled with nothing pending is settled, a card or approval pending keeps it live", () => {
+		const t = facts({ settled: true });
 		expect(classifyThread(t)).toEqual({ state: "settled", saw: "settled" });
 		expect(classifyThread({ ...t, archived: true })).toEqual({ state: "gone", saw: "archived" });
 		expect(classifyThread({ ...t, pendingRequestId: "r1" })).toEqual({ state: "live" });
 		expect(classifyThread({ ...t, status: "waiting" })).toEqual({ state: "live" });
-		expect(threadViewAcross([{ get: () => undefined }], "t")).toEqual({ state: "unknown" });
-		expect(threadViewAcross([{ get: () => undefined }, { get: () => ({ ...t, settled: false }) }], "t")).toEqual({ state: "live" });
+		expect(classifyThread({ ...t, settled: false })).toEqual({ state: "live" });
+	});
+
+	// Fix 1. Must fail on 2845f33: the watcher's cached table said "settled" for a thread on an offline server, and the hold closed.
+	test("fix 1: a server that is offline, unreachable or partial settles and removes nothing, even if a cache says settled", async () => {
+		const store = memStore();
+		hold(store, { thread: "on-the-second", ref: { threadId: "th-2" } });
+		hold(store, { thread: "on-the-main", ref: { threadId: "th-1" } });
+		const snaps = () => takeSnapshots([
+			{ name: "main", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts({ settled: true }) }] }) },
+			{ name: "second", fetch: async () => { throw Error("connect ECONNREFUSED"); } },
+		]);
+		const r = await run(store, undefined, snaps);
+		expect(r.closed).toBe(1);
+		expect(whats(store)).toEqual(["on-the-second"]);
+	});
+
+	test("fix 1: an unhealthy or incomplete snapshot, an adapter with no snapshot, or no snapshot at all, leaves every thread unknown", async () => {
+		const settled = { "th-1": facts({ settled: true }), "th-2": facts({ archived: true }) };
+		expect(threadViewAcross([machine("m", settled, { healthy: false })], "th-1")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([machine("m", settled, { complete: false })], "th-2")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([machine("m", {}, { healthy: false })], "th-gone")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([], "th-1")).toEqual({ state: "unknown" });
+		const [partial] = await takeSnapshots([{ name: "m", fetch: async () => ({ complete: false, threads: [{ id: "th-1", ...facts({ settled: true }) }] }) }]);
+		expect(partial).toMatchObject({ healthy: true, complete: false });
+		const store = memStore();
+		hold(store, { thread: "h", ref: { threadId: "th-1" } });
+		expect((await run(store, undefined, async () => { throw Error("fetch failed"); })).closed).toBe(0);
+		expect(whats(store)).toEqual(["h"]);
+	});
+
+	// Fix 3. Must fail on 2845f33: a thread absent from the snapshot stayed unknown forever.
+	test("fix 3: a thread absent from every server's fresh, complete snapshot is gone; absent while any server is down is unknown", async () => {
+		const a = machine("a", { "th-1": facts() });
+		const b = machine("b", {});
+		expect(threadViewAcross([a, b], "th-x")).toEqual({ state: "gone", saw: "gone from every server's fresh snapshot" });
+		expect(threadViewAcross([a, machine("b", {}, { healthy: false })], "th-x")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([a, machine("b", {}, { complete: false })], "th-x")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([a, b], "th-1")).toEqual({ state: "live" });
+		expect(threadViewAcross([machine("a", { "th-1": facts({ settled: true }) }), machine("b", {}, { healthy: false })], "th-1")).toEqual({ state: "settled", saw: "settled" });
+		const store = memStore();
+		hold(store, { thread: "deleted", ref: { threadId: "th-deleted" } });
+		expect((await run(store, undefined, async () => [a, b])).closed).toBe(1);
+		expect(heldOpen(store)).toHaveLength(0);
+	});
+
+	// Fix 2. Must fail on 2845f33: the slug alone answered "branch absent" for a recreated repository, and the hold closed.
+	test("fix 2: a branch is deleted only on the same repository id it was seen on", async () => {
+		const path = "repos/o/r/git/matching-refs/heads/feat/x?per_page=100";
+		const at = (id: number, count: number, fullName = "o/r") => fakeGh({ "repos/o/r": { id, full_name: fullName }, [path]: count });
+		const store = memStore();
+		hold(store, { thread: "b", ref: { branch: "o/r:feat/x" } });
+		let t = NOW;
+		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, (t += REF_PASS_MS));
+		await pass(at(77, 1));
+		await pass(at(99, 0));
+		expect(whats(store)).toEqual(["b"]);
+		await pass(at(77, 0, "new-owner/r"));
+		expect(whats(store)).toEqual(["b"]);
+		await pass(fakeGh({ [path]: 0 }));
+		expect(whats(store)).toEqual(["b"]);
+		expect((await pass(at(77, 0))).closed).toBe(1);
+	});
+
+	test("fix 2: a branch seen before the repository id was recorded (old state) is not known deleted", async () => {
+		const store = memStore();
+		hold(store, { thread: "b", ref: { branch: "o/r:feat/x" } });
+		store.state.set("hold-reconcile", { lastPassAt: 0, seenLive: { "o/r:feat/x": 1763000000000 } });
+		await run(store, fakeGh({ "repos/o/r": { id: 77, full_name: "o/r" }, "repos/o/r/git/matching-refs/heads/feat/x?per_page=100": 0 }).gh);
+		expect(whats(store)).toEqual(["b"]);
 	});
 });

@@ -3,7 +3,7 @@ import { memStore } from "../testing/store.ts";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld, brief, briefMarkdown, cleanRef, closeHeld, closeHeldForCard, closeHeldForItem, heldId, heldOpen, mandateLine, noteHeld, readAfk, type Afk, type Held } from "./afk.ts";
+import { appendHeld, brief, briefMarkdown, cleanRef, closeHeld, closeHeldForCard, closeHeldForItem, fyiReason, heldId, heldOpen, mandateLine, noteHeld, readAfk, type Afk, type Held } from "./afk.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath } from "./store.ts";
 
@@ -212,5 +212,32 @@ describe("hold refs, notes and the CLI", () => {
 		expect(() => noteHeld(store, "deadbeef", "x")).toThrow("no open held item deadbeef");
 		closeHeld(store, id, "done");
 		expect(() => noteHeld(store, id, "late")).toThrow("no open held item");
+	});
+
+	// Fix 4. Must fail on 2845f33: `hold "FYI" "FYI only: build passed"` made an open hold.
+	test("fix 4: hold refuses an FYI with a non-zero exit, writes nothing, and points at decided.ts", () => {
+		const dir = scratch();
+		for (const [thread, what] of [["FYI", "build passed"], ["CI", "FYI only: build passed"], ["CI", "For your information, the deploy finished"], ["CI", "no action needed, all green"], ["CI", "Nothing needed from the operator"], ["Billing", "nothing required, just so you know"], ["Notes", "no action"]]) {
+			const r = cli(dir, "hold", thread!, what!);
+			expect(r.status).toBe(2);
+			expect(r.stderr).toContain("refused");
+			expect(r.stderr).toContain("decided.ts");
+		}
+		const store = open(dir);
+		expect(heldOpen(store)).toHaveLength(0);
+		store.close();
+	});
+
+	test("fix 4: ordinary holds still pass, flags and all", () => {
+		const dir = scratch();
+		for (const [thread, what] of [["Billing", "approve the production migration"], ["Deploy", "needs the operator's go before the release"], ["Secrets", "rotate the Stripe key; only they can"], ["App", "decide whether a one-way gate is needed"]]) {
+			expect(cli(dir, "hold", thread!, what!, "left it parked").status).toBe(0);
+		}
+		expect(cli(dir, "hold", "PR", "merge approval", "", "", "--pr", "o/r#5").status).toBe(0);
+		const store = open(dir);
+		expect(heldOpen(store)).toHaveLength(5);
+		store.close();
+		expect(fyiReason("Billing", "approve the production migration")).toBeUndefined();
+		expect(fyiReason("x", "FYI")).toBe('"FYI"');
 	});
 });

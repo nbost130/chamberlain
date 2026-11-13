@@ -8,7 +8,7 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { appendHeld, closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
-import { reconcileItemHolds, reconcileRefHolds, threadViewAcross, type GhRead } from "./hold-reconcile.ts";
+import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal } from "./config.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
@@ -504,6 +504,8 @@ export function createEngine(d: EngineDeps) {
 	 * against GitHub and the watchers' thread tables.
 	 */
 	let reconcilingRefs = false;
+	/** A fresh snapshot of every server, taken now through its adapter. An adapter that cannot take one reads as unreachable: its threads stay unknown. */
+	const freshSnapshots = () => takeSnapshots(d.servers.map((x) => ({ name: x.server.name, fetch: async () => { if (!has(x.adapter, "snapshot")) throw Error("no snapshot capability"); return x.adapter.snapshot(); } })));
 	async function holdReconcileTick() {
 		try {
 			const { closed } = reconcileItemHolds(store);
@@ -512,7 +514,7 @@ export function createEngine(d: EngineDeps) {
 		if (reconcilingRefs) return;
 		reconcilingRefs = true;
 		try {
-			const r = await reconcileRefHolds({ store, ...(d.gh ? { gh: d.gh } : {}), thread: (id) => threadViewAcross(watchers.map((w) => ({ get: (t: string) => w.states.get(t) })), id) });
+			const r = await reconcileRefHolds({ store, ...(d.gh ? { gh: d.gh } : {}), snapshots: freshSnapshots });
 			if (r.ran && (r.closed || r.errors)) log("held-reconciled", { ...r });
 		} catch (e) { log("held-reconcile-error", { pass: "refs", error: String(e).slice(0, 200) }); }
 		finally { reconcilingRefs = false; }

@@ -194,7 +194,12 @@ export type Transcript = {
 
 // ---- the adapter ---------------------------------------------------------------------------------
 
-export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact";
+/** What a snapshot knows of one thread. */
+export type ThreadFactsRow = { id: string; archived: boolean; settled: boolean; pendingRequestId: string | null; status: string };
+/** A whole read of an adapter's server. `complete` is false when the answer may be partial, and then it says nothing about a thread it lacks. */
+export type ThreadSnapshot = { complete: boolean; threads: ThreadFactsRow[] };
+
+export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot";
 
 export interface Adapter {
 	/** The registry name: "t3", "fake". */
@@ -229,6 +234,11 @@ export interface Adapter {
 	send?(threadId: string, text: string, seed: string): Promise<{ ok: boolean; detail: string }>;
 	/** The Steward's size, stall and compaction state. */
 	stewardProbe?(): StewardProbe;
+	/**
+	 * A fresh, whole read of every thread on this adapter's server, taken now over a connection of its own: never the watcher's
+	 * cache. Rejects when the server cannot be reached. The held-ledger reconciler closes a hold on a thread only from this.
+	 */
+	snapshot?(): Promise<ThreadSnapshot>;
 	/** How a compaction request reaches the Steward. Its `send` takes no message. */
 	readonly compact?: WakeTransport;
 
@@ -286,7 +296,7 @@ export type AdapterEntry = { create: AdapterFactory; brief?: (ctx: { repo: strin
 export function has<K extends OptionalCapability>(a: Adapter, cap: K): a is Adapter & Required<Pick<Adapter, CapabilityMethod[K]>> {
 	return a.capabilities.includes(cap);
 }
-type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact" };
+type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot" };
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
 export function conformance(a: Adapter): string[] {
@@ -294,7 +304,7 @@ export function conformance(a: Adapter): string[] {
 	if (!a.id) bad.push("no id");
 	for (const m of ["watch", "isBusy", "post"] as const) if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
 	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function") bad.push("required capability wake needs ready() and send()");
-	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact };
+	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot };
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);
 		if (declared && !impl) bad.push(`declares ${cap} but does not implement it`);
