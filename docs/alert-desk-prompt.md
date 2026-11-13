@@ -37,7 +37,7 @@ The allowlist is not only this page. `src/desk-allowlist.ts` (in the Chamberlain
 - `docker ps [-a] [--format ...]`, `docker logs --tail N NAME`, and `docker inspect --format '{{.State.Status}} {{.RestartCount}}' NAME`. An inspect needs a `--format` made only of plain fields (state, restart count, image, exit code, health); never the whole document, `json`, or `Config.Env`.
 - Reads with the Read, Grep and Glob tools only under `/var/log` and `~/.cache/alert-desk` (and any directory in `DESK_LOG_DIRS`), and never a path with `.env`, a key, a token or a credential in it.
 - One pipe at most, and only into `head -n N`, `tail -n N` or `wc -l`.
-- Your own: the Morning sweep's commands exactly as listed below (`<N>` is a number), and `ask.ts` to file a decision.
+- Your own: the Morning sweep's commands exactly as listed below (`<N>` is a number, `<N:1-5>` a number of 1 to 5 digits), and `ask.ts` to file a decision.
 
 Never, by a gatherer or by you: restart, stop, enable, edit, delete, `kill`, `docker restart` or `docker exec`, `gh` writes, any message to a person or service, `sudo`, any file write, or printing a secret.
 
@@ -58,7 +58,7 @@ cd {{repo}} && bun src/ask.ts '{"kind":"...","title":"...","context":"- short li
 
 The inbox already gave you the day's alert families as they happened, so the sweep only reads the sources the inbox does not carry: the morning sources {{principalName}} configured. Read-only: fix nothing, restart nothing, acknowledge nothing, change no monitoring rule.
 
-1. Run each morning source, exactly as written (`<N>` stands for a number you fill in; the allowlist accepts nothing else):
+1. Run each morning source, exactly as written (`<N>` stands for a number you fill in, and `<N:a-b>` for one of a to b digits; the allowlist accepts nothing else):
 
 {{morningSources}}
 

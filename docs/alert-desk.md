@@ -105,7 +105,8 @@ Migration 8 cannot be undone by the old build: a database from a newer build is 
 ```
 
 `morningCommands` are the sources the Morning sweep reads that the inbox does not carry, each run exactly as written (`<N>` is a number the
-desk fills in), and `morningNotes` says how to read them. Both go into the prompt (`bun src/brief.ts desk`), and `src/desk-allowlist.ts` allows
+desk fills in, 1 to 12 digits; `<N:1-5>` gives the slot its own width, here 1 to 5 digits, and `<N:10>` exactly 10, any width within 1 to
+12; a command with a malformed slot, such as `<N:0-3>` or `<N:5-2>`, is left out with a warning), and `morningNotes` says how to read them. Both go into the prompt (`bun src/brief.ts desk`), and `src/desk-allowlist.ts` allows
 exactly these commands, so they widen what the desk may run: they are read only when `alert-desk.json` is owned by you and no group or other
 user can write it (0600 or 0644). Nothing of the kind is built in; with none configured, the Morning sweep reports only what its wake carries.
 

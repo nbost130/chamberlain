@@ -249,6 +249,12 @@ describe("the morning sources are the operator's, never built in", () => {
 	test("with no morning sources configured, a monitor's command is refused", () => {
 		expect(checkCommand(`bun ${MONITOR} heartbeat --json`, { morning: [] }).ok).toBe(false);
 	});
+	test("a configured width is enforced: <N:1-5> takes 1 to 5 digits and no more", () => {
+		const morning = [`bun ${MONITOR} list --limit <N:1-5> --json`];
+		expect(checkCommand(`bun ${MONITOR} list --limit 12345 --json`, { morning }).ok).toBe(true);
+		expect(checkCommand(`bun ${MONITOR} list --limit 123456 --json`, { morning }).ok).toBe(false);
+		expect(checkCommand(`bun ${MONITOR} list --limit <N:1-5> --json`, { morning }).ok).toBe(false);
+	});
 	test("<N> is digits only, and the rest of the command must match exactly", () => {
 		expect(checkCommand(`bun ${MONITOR} list --limit 12 --json`, { morning: MORNING }).ok).toBe(true);
 		for (const c of [`bun ${MONITOR} list --limit x --json`, `bun ${MONITOR} list --limit 1 --json --out /tmp/x`, `bun ${MONITOR} list --limit 1;id --json`]) expect(checkCommand(c, { morning: MORNING }).ok).toBe(false);

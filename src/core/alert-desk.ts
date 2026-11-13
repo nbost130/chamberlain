@@ -90,17 +90,36 @@ export function readConfig(conf: string): DeskConfig {
 
 /**
  * The Morning sweep's own sources, the operator's (alert-desk.json): `morningCommands`, each run exactly as written (`<N>` stands for a
- * number the desk fills in), and `morningNotes`, how to read them. src/desk-allowlist.ts allows exactly these commands, so they widen what
+ * number the desk fills in; `<N:a-b>` gives it a width, `slotProblem`), and `morningNotes`, how to read them. src/desk-allowlist.ts allows exactly these commands, so they widen what
  * the desk may run: they are read only from an alert-desk.json the operator owns that no group or other user can write (`authorityProblem`).
  */
 export type MorningSources = { commands: string[]; notes?: string };
-/** In a morning command, the place for a number (`--limit <N>`, `time >= <N>`). */
+/** In a morning command, the place for a number (`--limit <N>`, `time >= <N>`): one to twelve digits. */
 export const NUMBER_SLOT = "<N>";
+/** The widest number a slot may take, in digits, whatever width it gives. */
+export const MAX_SLOT_DIGITS = 12;
+/**
+ * A number slot: `<N>` (1 to 12 digits), `<N:a-b>` (a to b digits, `<N:1-5>`) or `<N:a>` (exactly a digits), with 1 <= a <= b <= 12.
+ * Anything else that starts `<N:` is a malformed slot, and the command holding it is left out (`slotProblem`).
+ */
+const SLOT = /<N(?::(\d{1,2})(?:-(\d{1,2}))?)?>/g;
 
-/** Pure: the morning sources from a parsed alert-desk.json. Anything malformed is left out. */
-export function parseMorning(raw: unknown): MorningSources {
+/** Pure: why a morning command's number slots are malformed, or undefined when every slot is well formed. */
+export function slotProblem(command: string): string | undefined {
+	for (const m of command.matchAll(SLOT)) {
+		if (m[1] === undefined) continue;
+		const lo = Number(m[1]), hi = m[2] === undefined ? lo : Number(m[2]);
+		if (lo < 1 || hi < lo || hi > MAX_SLOT_DIGITS) return `${m[0]} is not a width from 1 to ${MAX_SLOT_DIGITS} digits (<N:a-b> with a <= b)`;
+	}
+	if (command.replace(SLOT, "").includes("<N:")) return `a number slot is written <N>, <N:a> or <N:a-b>`;
+	return undefined;
+}
+
+/** Pure: the morning sources from a parsed alert-desk.json. Anything malformed is left out (`warn` says which, and why). */
+export function parseMorning(raw: unknown, warn: (msg: string) => void = () => {}): MorningSources {
 	const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-	const commands = Array.isArray(o.morningCommands) ? o.morningCommands.filter((c): c is string => typeof c === "string" && c.trim().length > 0 && c.length <= 2000 && !c.includes("\n")).map((c) => c.trim()) : [];
+	const listed = Array.isArray(o.morningCommands) ? o.morningCommands.filter((c): c is string => typeof c === "string" && c.trim().length > 0 && c.length <= 2000 && !c.includes("\n")).map((c) => c.trim()) : [];
+	const commands = listed.filter((c) => { const bad = slotProblem(c); if (bad) warn(`alert desk: ignoring the morning command ${JSON.stringify(c.slice(0, 120))}: ${bad}`); return !bad; });
 	const notes = typeof o.morningNotes === "string" && o.morningNotes.trim() ? o.morningNotes.trim() : undefined;
 	return { commands, ...(notes ? { notes } : {}) };
 }
@@ -116,16 +135,28 @@ export function readMorning(conf: string, warn: (msg: string) => void = () => {}
 	try {
 		const bad = authorityProblem(fstatSync(fd), "file");
 		if (bad) { warn(`alert desk: ignoring the morning sources in ${path}: ${bad}`); return { commands: [] }; }
-		return parseMorning(JSON.parse(readFileSync(fd, "utf8")));
+		return parseMorning(JSON.parse(readFileSync(fd, "utf8")), warn);
 	} catch (e) {
 		warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
 		return { commands: [] };
 	} finally { closeSync(fd); }
 }
 
-/** Pure: the pattern a morning command is matched by: the command exactly, with each `<N>` one to twelve digits. */
+/**
+ * Pure: the pattern a morning command is matched by: the command exactly, with each `<N>` one to twelve digits and each `<N:a-b>` (or
+ * `<N:a>`) a to b (exactly a) digits. A command with a malformed slot matches nothing (`slotProblem`): it fails closed.
+ */
 export function morningPattern(command: string): RegExp {
-	return new RegExp(`^${command.split(NUMBER_SLOT).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\d{1,12}")}$`);
+	if (slotProblem(command)) return /(?!)/;
+	const esc = (p: string) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	let out = "", at = 0;
+	for (const m of command.matchAll(SLOT)) {
+		const lo = m[1] === undefined ? 1 : Number(m[1]);
+		const hi = m[1] === undefined ? MAX_SLOT_DIGITS : m[2] === undefined ? lo : Number(m[2]);
+		out += `${esc(command.slice(at, m.index))}\\d{${lo},${hi}}`;
+		at = m.index! + m[0].length;
+	}
+	return new RegExp(`^${out}${esc(command.slice(at))}$`);
 }
 
 /** What the desk's standing prompt is filled with: who it works for, the server it runs on, the Chamberlain checkout, the morning sources. */

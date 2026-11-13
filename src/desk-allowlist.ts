@@ -211,7 +211,7 @@ function checkSimple(tokens: string[]): Verdict {
 
 /**
  * The few commands that are not simple flag shapes, matched whole: the decision queue, and the operator's own morning sources
- * (`morningCommands` in alert-desk.json, each exactly as written with `<N>` for a number; read only from a file the operator owns
+ * (`morningCommands` in alert-desk.json, each exactly as written with `<N>` for a number, `<N:a-b>` for one of a to b digits; read only from a file the operator owns
  * that no one else can write, `readMorning`). Nothing private is built in: with no morning sources, none is allowed.
  */
 const askPath = () => process.env.DESK_ASK_PATH ?? `${HOME}/Projects/chamberlain/src/ask.ts`;

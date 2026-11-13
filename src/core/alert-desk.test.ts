@@ -515,6 +515,29 @@ describe("the standing prompt is a template, filled from config", () => {
 		expect(morningPattern("x --limit <N> 'a.b'").test("x --limit 12 'a.b'")).toBe(true);
 		expect(morningPattern("x --limit <N> 'a.b'").test("x --limit 12 'aXb'")).toBe(false);
 	});
+	test("a slot may give its width: <N:a-b> is a to b digits, <N:a> exactly a; plain <N> is still 1 to 12", () => {
+		const p = morningPattern("x --limit <N:1-5> --since <N:10> --page <N>");
+		expect(p.test("x --limit 12345 --since 1700000000 --page 7")).toBe(true);
+		expect(p.test("x --limit 1 --since 1700000000 --page 123456789012")).toBe(true);
+		expect(p.test("x --limit 123456 --since 1700000000 --page 7")).toBe(false);
+		expect(p.test("x --limit 12 --since 170000000 --page 7")).toBe(false);
+		expect(p.test("x --limit 12 --since 17000000000 --page 7")).toBe(false);
+		expect(p.test("x --limit 12 --since 1700000000 --page 1234567890123")).toBe(false);
+		expect(p.test("x --limit  --since 1700000000 --page 7")).toBe(false);
+		expect(morningPattern("x <N>").test("x 123456789012")).toBe(true);
+		expect(morningPattern("x <N>").test("x 1234567890123")).toBe(false);
+		expect(morningPattern("x <N:3-3> 'a.b'").test("x 123 'aXb'")).toBe(false);
+	});
+	test("a malformed width leaves the command out with a warning, and its pattern matches nothing", () => {
+		for (const bad of ["x <N:0-3>", "x <N:5-2>", "x <N:1-13>", "x <N:a-b>", "x <N:>", "x <N:1-5"]) {
+			const warned: string[] = [];
+			expect(parseMorning({ morningCommands: [bad, "ok <N:1-5>"] }, (m) => warned.push(m)).commands).toEqual(["ok <N:1-5>"]);
+			expect(warned).toHaveLength(1);
+			expect(warned[0]).toContain(bad);
+			expect(morningPattern(bad).test(bad)).toBe(false);
+			expect(morningPattern(bad).test("x 1")).toBe(false);
+		}
+	});
 	test("they are read only from an alert-desk.json the operator owns that no one else can write", () => {
 		const conf = mkdtempSync(`${tmpdir()}/desk-morning-`);
 		writeFileSync(`${conf}/alert-desk.json`, JSON.stringify({ morningCommands: ["a <N>"] }));
