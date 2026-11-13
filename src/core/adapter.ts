@@ -50,6 +50,8 @@ export type ThreadState = {
 	backgroundTasks: number;
 	/** Background work that is the thread's own. A watched PR counts as a task in T3, and it can wait for days. */
 	backgroundWork: number;
+	/** The id of the thread's newest run, when the backend names one. A failure is told apart from the last one by it (src/core/decide.ts). */
+	latestRunId?: string | null;
 };
 
 /** What an adapter hands over: the three fields every backend has, and any of the rest it can fill in. */
@@ -71,6 +73,7 @@ export const normalizeThread = (t: ThreadInput): ThreadState => ({
 	linkedPrDone: t.linkedPrDone ?? false,
 	backgroundTasks: t.backgroundTasks ?? 0,
 	backgroundWork: t.backgroundWork ?? 0,
+	latestRunId: t.latestRunId ?? null,
 });
 
 // ---- watch ---------------------------------------------------------------------------------------
@@ -108,6 +111,15 @@ export type WaitingItem = { type: WaitKind; requestId: string; label: string; qu
  * Reads of one thread, made on demand when a wake is being built. A read that fails rejects; the core logs it and carries
  * on with a neutral value (no excerpt, no question, no subagents). `instruction` never rejects: its state says what happened.
  */
+/**
+ * Why a run failed, as the backend records it. `class`, `code` and `message` are the backend's own words; src/core/recover.ts reads
+ * them in code and never asks a model what kind of failure it was. `interrupted` is true when someone stopped the run: a stop is not an outage.
+ */
+export type RunFailure = { runId: string; /** The run's ordinal in its thread: monotonic, so a retry's message id never repeats across stretches. */ ordinal?: number; class?: string; code?: string; message: string; retryable?: boolean; resetAt?: string; interrupted?: boolean };
+
+/** What a fresh read of a thread shows, taken right before a ping: its newest run and whether anything is going or waiting. */
+export type RunLook = { latestRunId?: string; latestStatus?: string; /** a run is queued, starting, running or waiting */ active: boolean; /** a card, approval, secret or question is open */ waiting: boolean };
+
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
 	lastMessage(threadId: string): Promise<string>;
@@ -117,6 +129,10 @@ export type Inspector = {
 	runningSubagents(threadId: string): Promise<number>;
 	/** The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means). */
 	instruction(threadId: string): Promise<InstructionRead>;
+	/** The newest failed run of the thread and its error. Absent: the adapter cannot say, and stalled-thread recovery stays off for its threads. */
+	failure?(threadId: string): Promise<RunFailure | undefined>;
+	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */
+	look?(threadId: string): Promise<RunLook | undefined>;
 };
 
 // ---- post ----------------------------------------------------------------------------------------
@@ -225,8 +241,8 @@ export interface Adapter {
 	transcriptPath?(): Promise<Transcript>;
 	/** Reads of one thread, for building a wake. */
 	readonly inspect?: Inspector;
-	/** Sends a message into a thread as the Steward, once for one `seed`. Used for an option routed straight to its thread. */
-	send?(threadId: string, text: string, seed: string): Promise<{ ok: boolean; detail: string }>;
+	/** Sends a message into a thread, once for one `seed`: the daemon's one ping. Signed as the Steward unless `identity` says otherwise ("daemon": its own retry, which instructs nobody). Used for an option routed straight to its thread and for stalled-thread recovery. */
+	send?(threadId: string, text: string, seed: string, identity?: "steward" | "daemon" | "operator"): Promise<{ ok: boolean; detail: string }>;
 	/** The Steward's size, stall and compaction state. */
 	stewardProbe?(): StewardProbe;
 	/** How a compaction request reaches the Steward. Its `send` takes no message. */

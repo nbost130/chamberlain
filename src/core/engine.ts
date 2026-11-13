@@ -14,7 +14,12 @@ import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
 import type { RelayLock } from "./singleton.ts";
-import { decide, idleKey, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
+import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type Outcome, type Recovery, type RecoverState, type RecoverTiming } from "./recover.ts";
+
+/** The key in the database's state table where recovery keeps what it must remember across a restart. */
+const RECOVER_KEY = "recover";
+import { createJudge, readJudgeConfig, type Judge } from "./judge.ts";
+import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
 import type { Gate } from "./hold.ts";
 import { failedRead, skipEvent, type InstructionRead } from "./history.ts";
 import { recordAnswerDelivered } from "./questions.ts";
@@ -69,6 +74,10 @@ export type EngineDeps = {
 	sweepPromptFile?: string;
 	/** Run the routine sweep and the Steward-health check. Off for a bare watcher. */
 	housekeeping?: boolean;
+	/** Stalled-thread recovery (src/core/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
+	recover?: boolean | Partial<RecoverTiming>;
+	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
+	judge?: Judge;
 };
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
@@ -143,6 +152,8 @@ export function createEngine(d: EngineDeps) {
 	const outbox = createOutbox({ store, log, dry: DRY, ...(d.relay?.now ? { now: d.relay.now } : {}), queued: () => { void relay.pass(); } });
 	const { deliver } = outbox;
 
+	let recovery: Recovery | undefined;
+
 	/** One watcher per server: its own thread table, debounce timers, connection and resume state. */
 	class Watcher {
 		states = new Map<string, ThreadState>();
@@ -156,6 +167,8 @@ export function createEngine(d: EngineDeps) {
 		/** Every card seen on a thread, and those already open when its current turn began. */
 		cardsSeen = new Map<string, Set<string>>();
 		oldCards = new Map<string, Set<string>>();
+		/** A note recovery asks the next failed wake of a thread to carry, when its retry could not be made. */
+		forced = new Map<string, string>();
 		private readonly inspect: Inspector | undefined;
 		constructor(public srv: ServerEntry, public adapter: Adapter) {
 			this.inspect = has(adapter, "inspect") ? adapter.inspect : undefined;
@@ -200,7 +213,7 @@ export function createEngine(d: EngineDeps) {
 		}
 
 		private lastMessage = (threadId: string) => (this.inspect ? this.inspect.lastMessage(threadId) : Promise.resolve(""));
-		private subagents = (threadId: string) => (this.inspect ? this.inspect.runningSubagents(threadId) : Promise.resolve(0));
+		subagents = (threadId: string) => (this.inspect ? this.inspect.runningSubagents(threadId) : Promise.resolve(0));
 		private waitingItems = (threadId: string): Promise<WaitingItem[]> => (this.inspect ? this.inspect.waiting(threadId) : Promise.resolve([]));
 
 		/** A thread that went idle with open work: an open PR, or commits on its branch that have not merged. */
@@ -243,6 +256,7 @@ export function createEngine(d: EngineDeps) {
 			let idleLine = "";
 			let waitNote = "";
 			let question = "";
+			let failedWhat = "run failed";
 			// With no history to read, nothing says who instructed a thread: every top-level turn end is its own report.
 			const reportOf = (key: string | undefined) => (this.inspect ? key : notified.has(c.key) ? undefined : c.key);
 			if (c.kind === "turn_ended") {
@@ -312,8 +326,14 @@ export function createEngine(d: EngineDeps) {
 				// Carrying the question saves the Steward a thread read on most wakes.
 				question = questionText(fresh.flatMap((i) => i.questions));
 				excerpt = await this.lastMessage(live.id).catch(this.readFailed("last message", live.id, ""));
-			} else if (c.kind === "failed" && live.status !== "failed") return;
-			const what = { needs_input: "is waiting for your answer or approval", failed: "run failed", turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
+			} else if (c.kind === "failed") {
+				if (live.status !== "failed") return;
+				const h = await this.recover(live);
+				if (h.stop) return;
+				if (h.note) waitNote = h.note;
+				if (h.what) failedWhat = h.what;
+			}
+			const what = { needs_input: "is waiting for your answer or approval", failed: failedWhat, turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
 			const afk = readAfk(store);
 			const rights = wakeRights(afk ? mandateLine(afk) : "");
 			const message = [
@@ -347,9 +367,33 @@ export function createEngine(d: EngineDeps) {
 					if (closed) log("held-closed", { server: this.srv.name, threadId: next.id, closed });
 				} catch (e) { log("held-close-error", { server: this.srv.name, threadId: next.id, error: String(e) }); }
 			}
-			if (turnBegan(prev, next)) this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id)));
+			if (turnBegan(prev, next)) { this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id))); recovery?.moved(next.id); }
+			if (prev && LIVE.has(prev.status) && ["completed", "idle"].includes(next.status)) recovery?.healthy(next.id);
 			if (next.pendingRequestId) this.cardsSeen.set(next.id, (this.cardsSeen.get(next.id) ?? new Set()).add(next.pendingRequestId));
 			return prev;
+		}
+
+		/**
+		 * Stalled-thread recovery for one failed thread (src/core/recover.ts). It either settles the failure without a wake (a retry is
+		 * scheduled, the outage breaker holds, it was seen already), or says how the ordinary failed wake should read. An adapter that
+		 * cannot read a failure or send, a dry run, and a recovery turned off all keep the wake exactly as it was.
+		 */
+		private async recover(live: ThreadState): Promise<{ stop?: true; note?: string; what?: string }> {
+			const forced = this.forced.get(live.id);
+			if (forced) { this.forced.delete(live.id); return { note: forced }; }
+			if (!recovery || DRY || !this.adapter.inspect?.failure || !this.adapter.inspect.look || !has(this.adapter, "send")) return {};
+			const h: Handling = await recovery.onFailure(live);
+			const o = outcomeOf(h, { thread: live.title, server: this.srv.name, threadId: live.id }, timing);
+			if (o.ask) await raise(o.ask);
+			return { ...(o.stop ? { stop: true as const } : {}), ...(o.note ? { note: o.note } : {}), ...(o.what ? { what: o.what } : {}) };
+		}
+
+		/** Wakes the Steward about a failure whose retry could not be made, with the note why. */
+		forceFailedWake(threadId: string, note: string) {
+			const th = this.states.get(threadId);
+			if (!th) return;
+			this.forced.set(threadId, note);
+			this.schedule({ kind: "failed", thread: th, key: `${threadId}:failed:recover:${Date.now()}` });
 		}
 
 		private schedule(c: Candidate) {
@@ -380,6 +424,30 @@ export function createEngine(d: EngineDeps) {
 	const defaultServerLine = (srv: ServerEntry) => (srv.environmentId ? `server: ${srv.name} (linked: environmentId ${srv.environmentId})` : `server: ${srv.name} (this server)`);
 
 	const watchers = d.servers.map((x) => new Watcher(x.server, x.adapter));
+	const watcherOf = (threadId: string) => watchers.find((w) => w.states.has(threadId));
+	const timing = { ...DEFAULT_RECOVER_TIMING, ...(typeof d.recover === "object" ? d.recover : {}) };
+	/** Raises a decision-queue item recovery asked for: the one outage alarm, or a verdict that needs the principal. With no queue wired, an outage falls back to the dead-man alarm. */
+	async function raise(a: NonNullable<Outcome["ask"]>) {
+		log(a.why === "breaker" ? "recover-breaker-alarm" : "recover-ask", { kind: a.kind, count: a.count });
+		if (d.ask) await d.ask(a.item).catch((e) => log("recover-ask-failed", { error: String(e).slice(0, 200) }));
+		else if (a.why === "breaker") alarm(`recover-breaker:${a.kind}`, `chamberlain: ${a.count} "${a.kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
+	}
+	const judge = d.judge ?? createJudge({ config: () => { const r = readJudgeConfig(conf); if (r.error) log("judge-config-error", { error: r.error }); return r.config; }, log });
+	recovery = d.recover === undefined || d.recover === false ? undefined : createRecovery({
+		store: { load: () => store.state.get<RecoverState>(RECOVER_KEY), save: (s) => store.state.set(RECOVER_KEY, s) },
+		look: async (id) => watcherOf(id)?.adapter.inspect?.look?.(id),
+		stewardId: () => privateFile("steward-thread"),
+		decisionsId: () => privateFile("decisions-thread"),
+		state: (id) => watcherOf(id)?.states.get(id),
+		children: async (id) => { const w = watcherOf(id); return w ? w.liveChildren(id) + (await w.subagents(id).catch(() => 0)) : 0; },
+		readFailure: async (id) => watcherOf(id)?.adapter.inspect?.failure?.(id),
+		instructionId: async (id) => { const w = watcherOf(id); if (!w) return "unknown"; const r = await w.instructionRead(id); return r.state === "complete" ? lastInstruction(r.items)?.id ?? "none" : "unknown"; },
+		ping: async (id, text, seed) => { const w = watcherOf(id); const a = w?.adapter; return a && has(a, "send") ? a.send(id, text, seed, "daemon") : { ok: false, detail: "no adapter can send to this thread" }; },
+		judge: (trigger, brief) => judge(trigger, brief),
+		wake: (id, _kind, note) => watcherOf(id)?.forceFailedWake(id, note),
+		log,
+		...(typeof d.recover === "object" ? { timing: d.recover } : {}),
+	});
 	const stewardNow = privateFile("steward-thread");
 	if (stewardNow) EXCLUDE.add(stewardNow);
 
@@ -518,6 +586,7 @@ export function createEngine(d: EngineDeps) {
 		interval = setInterval(() => { tick().catch((e) => log("tick-error", { error: String(e) })); }, t.tickMs);
 		// The relay starts beside the watchers: its first pass sends whatever a dead process left pending.
 		relay.start().then(() => log("startup-recovered"));
+		recovery?.restore();
 		started = Promise.all(watchers.map((w) => w.run())).then(() => undefined);
 		return started;
 	}
@@ -525,6 +594,7 @@ export function createEngine(d: EngineDeps) {
 		clearInterval(interval);
 		await relay.stop();
 		for (const w of watchers) w.stop();
+		recovery?.stop();
 		await started;
 	}
 

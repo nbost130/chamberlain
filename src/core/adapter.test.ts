@@ -6,7 +6,7 @@ describe("normalizeThread", () => {
 	test("fills every optional field with its neutral value", () => {
 		expect(normalizeThread({ id: "t", title: "T", status: "running" })).toEqual({
 			id: "t", title: "T", status: "running", parentThreadId: null, pendingRequestId: null, settled: false, archived: false, snoozed: false,
-			blockedOnThreadWait: false, openPrs: [], worktreePath: null, linkedPrDone: false, backgroundTasks: 0, backgroundWork: 0,
+			blockedOnThreadWait: false, openPrs: [], worktreePath: null, linkedPrDone: false, backgroundTasks: 0, backgroundWork: 0, latestRunId: null,
 		});
 	});
 	test("keeps what the backend provides", () => {

@@ -222,6 +222,7 @@ export const SEND_IS_NOT_A_WAKE: Record<string, string> = {
 	"web/waiting.ts": "Adapter.send, a message into a worker thread (the answer path), not a wake to the Steward",
 	"core/questions.ts": "RecoverOpts.send, a callback the page passes: its direct send to the item's thread, falling back to an outbox row",
 	"adapters/t3/index.ts": "the adapter's optional `send` capability (a message into a worker thread), wired from waiting.ts, not the wake transport",
+	"core/engine.ts": "Adapter.send, the daemon's one thread ping, used by stalled-thread recovery (src/core/recover.ts) to retry a failed run; not a wake to the Steward",
 	"core/adapter.ts": "validateAdapter reads `typeof wake.send` to check the contract is met; it never calls it",
 };
 /** The only files that may POST over HTTP, with the reason. */

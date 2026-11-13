@@ -30,6 +30,7 @@ export function toState(t: Raw, now = Date.now()): ThreadState {
 		linkedPrDone: (t.pullRequests ?? []).some((p: any) => ["merged", "closed"].includes(prState(p))),
 		backgroundTasks: Array.isArray(t.pendingBackgroundTasks) ? t.pendingBackgroundTasks.length : 0,
 		backgroundWork: Array.isArray(t.pendingBackgroundTasks) ? t.pendingBackgroundTasks.filter((x: any) => !String(x?.taskId).startsWith("pull-request-watch:")).length : 0,
+		latestRunId: t.latestRunId ? String(t.latestRunId) : null,
 	};
 }
 

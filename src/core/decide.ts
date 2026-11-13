@@ -8,6 +8,13 @@ export type Candidate = { kind: WakeKind; thread: ThreadState; key: string };
 export const LIVE = new Set(["running", "queued", "starting", "preparing", "waiting"]);
 const ENDED = new Set(["completed", "idle", "interrupted"]);
 
+/**
+ * The dedupe key of one failure. It names the failed run: a thread that fails, is started again and fails again is two failures,
+ * and a key of thread and previous status alone swallowed the second one (2026-11-13). A backend that names no run keeps the
+ * old key, which is the best it can do.
+ */
+export const failureKey = (next: ThreadState, prev: ThreadState): string => (next.latestRunId ? `${next.id}:failed:${next.latestRunId}:${prev.status}` : `${next.id}:failed:${prev.status}`);
+
 /** Transitions worth a wake. `prev` undefined means first sighting: nothing fires. */
 export function decide(
 	prev: ThreadState | undefined,
@@ -23,7 +30,7 @@ export function decide(
 	else if (next.status === "waiting" && prev.status !== "waiting" && !next.blockedOnThreadWait)
 		out.push({ kind: "needs_input", thread: next, key: `${next.id}:waiting:${Date.now()}` });
 	if (topLevel && next.status === "failed" && prev.status !== "failed")
-		out.push({ kind: "failed", thread: next, key: `${next.id}:failed:${prev.status}` });
+		out.push({ kind: "failed", thread: next, key: failureKey(next, prev) });
 	if (topLevel && LIVE.has(prev.status) && ENDED.has(next.status))
 		out.push({ kind: "turn_ended", thread: next, key: `${next.id}:ended:${Date.now()}` });
 	return out;

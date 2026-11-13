@@ -13,6 +13,7 @@ import { isPrivateFile } from "../../core/private.ts";
 import { CONF } from "../../core/config.ts";
 import { startup } from "../../core/migrate.ts";
 import { connect, type Rpc } from "./rpc.ts";
+import { messageCommand } from "./ping.ts";
 import { readServers } from "../../core/servers.ts";
 import { t3Server, type T3Server } from "./server.ts";
 
@@ -93,17 +94,7 @@ async function main() {
 		if (!text) throw Error("text required");
 		const p = await projection(rpc);
 		const active = ([...(p.runs ?? [])].reverse().find((r: any) => ["running", "waiting", "starting"].includes(String(r.status))) as any)?.id as string | undefined;
-		await rpc.request("orchestration.dispatchCommand", {
-			type: "message.dispatch",
-			commandId: crypto.randomUUID(),
-			threadId,
-			messageId: crypto.randomUUID(),
-			text,
-			attachments: [],
-			createdBy: "agent",
-			creationSource: "mcp",
-			dispatchMode: active ? { type: "steer_active", targetRunId: active } : { type: "start_immediately" },
-		});
+		await rpc.request("orchestration.dispatchCommand", messageCommand({ threadId: threadId!, text, identity: "steward", activeRunId: active }));
 		console.log(`sent to ${srv!.name}:${threadId}`);
 	} else throw Error(`unknown command ${cmd}`);
 	rpc.ws.close();

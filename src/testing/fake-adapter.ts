@@ -11,7 +11,7 @@
  * `capabilities` chooses which optional capabilities it declares (default: all of them). A capability it does not
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
-import type { Adapter, AnswerOutcome, Inspector, OptionalCapability, PostOptions, PostResult, StewardProbe, ThreadEvent, Transcript, WaitingCard, WaitingItem, WatchSink } from "../core/adapter.ts";
+import type { Adapter, AnswerOutcome, Inspector, OptionalCapability, RunFailure, RunLook, PostOptions, PostResult, StewardProbe, ThreadEvent, Transcript, WaitingCard, WaitingItem, WatchSink } from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
 import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
@@ -20,7 +20,7 @@ import type { Question } from "../core/questions.ts";
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"];
 
 /** What `inspect` reports for one thread; anything unset reads as empty. */
-export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead };
+export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
 
 export type FakeOptions = {
 	id?: string;
@@ -40,7 +40,7 @@ export type FakeAdapter = Adapter & {
 	posted: { item: Question; opts: PostOptions }[];
 	titles: string[];
 	answers: { card: WaitingCard; choice: number; sig: string }[];
-	sends: { threadId: string; text: string; seed: string }[];
+	sends: { threadId: string; text: string; seed: string; identity?: string }[];
 	cards: WaitingCard[];
 	listError: string | undefined;
 	answerOutcome: AnswerOutcome;
@@ -71,7 +71,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		posted: [] as { item: Question; opts: PostOptions }[],
 		titles: [] as string[],
 		answers: [] as { card: WaitingCard; choice: number; sig: string }[],
-		sends: [] as { threadId: string; text: string; seed: string }[],
+		sends: [] as { threadId: string; text: string; seed: string; identity?: string }[],
 		/** The cards `listWaiting` returns. */
 		cards: [] as WaitingCard[],
 		/** Set to make `listWaiting` throw, as an unreachable server does. */
@@ -98,6 +98,9 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		waiting: async (id) => fake.threads.get(id)?.waiting ?? [],
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
 		instruction: async (id) => fake.threads.get(id)?.instruction ?? { items: [], state: "complete", byMachine: false },
+		failure: async (id) => fake.threads.get(id)?.failure,
+		/** The failure's run, still failed with nothing going, unless the test says otherwise. */
+		look: async (id) => { const th = fake.threads.get(id); return th?.look ?? (th?.failure ? { latestRunId: th.failure.runId, latestStatus: "failed", active: false, waiting: false } : undefined); },
 	};
 
 	const adapter: Adapter = {
@@ -128,7 +131,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		...(caps.has("setTitle") ? { setTitle: async (title: string) => { handles.titles.push(title); return "set" as const; } } : {}),
 		...(caps.has("transcriptPath") ? { transcriptPath: async () => fake.transcript } : {}),
 		...(caps.has("inspect") ? { inspect } : {}),
-		...(caps.has("send") ? { send: async (threadId: string, text: string, seed: string) => { handles.sends.push({ threadId, text, seed }); return { ok: true, detail: `sent to fake:${threadId}` }; } } : {}),
+		...(caps.has("send") ? { send: async (threadId: string, text: string, seed: string, identity?: string) => { handles.sends.push({ threadId, text, seed, ...(identity ? { identity } : {}) }); return { ok: true, detail: `sent to fake:${threadId}` }; } } : {}),
 		...(caps.has("stewardProbe") ? { stewardProbe: () => fake.probe } : {}),
 		...(caps.has("compact") ? { compact: { ready: () => wakeReady, send: async (deliveryId: string) => { handles.compactions.push(deliveryId); return { ok: true, status: 202 }; } } satisfies WakeTransport } : {}),
 	};

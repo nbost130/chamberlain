@@ -101,6 +101,17 @@ the reason is given.
 | Crash step (`CHAMBERLAIN_CRASH_AT`) | A named point (`before-commit`, `committed`, `notified`, `enqueued`, `composed`, `attempt-begun`, `attempt-counted`, `accepted`, `delivered`) at which a test makes a process kill itself. | Fault injection | Test hook only. |
 | Dry run (`CHAMBERLAIN_DRY=1`) | The daemon watches and logs what it would send, and sends nothing. | Dry run | [Wikipedia](https://en.wikipedia.org/wiki/Dry_run_(testing)). A dry run is one invocation with the output suppressed. Contrast *shadow* mode, which is per source, persistent and counted. |
 
+## Recovering a failed thread
+
+| Term | Definition | Standard term | Source or reason |
+| --- | --- | --- | --- |
+| Recovery (`src/core/recover.ts`) | The daemon's own handling of a failed run: classify the error in code, retry once after a grace, and hand a second failure to the judge. No model decides whether to retry. Off unless `CHAMBERLAIN_RECOVER=1`. Its state (pings sent, failures per thread over a six-hour horizon, the judge's hold, pending retries, the breaker) is kept in the database's state table, so a restart sends no second first ping. Right before a ping the thread is read again, and the ping is refused if it is active, waiting or no longer failed. | Self-healing / automatic retry | Chamberlain-specific scope: one retry, never a loop. A third failure is held for the Steward, not judged again. A retry queued behind a thread that stays busy has no expiry. |
+| Failure kind (`FailureKind`) | What a run's error is, read from the backend's class, code and message by a table in code. Retried: `stream_closed`, `rate_limit`, `capacity`, `provider_turn_failed`, `oom`. Never retried: `auth`, `cloudflare`, `safety`, `quota`, `workspace`, `interrupted`, `unknown`. | Error classification (transient vs permanent) | Retry only what is transient; anything the table does not know is permanent. |
+| Grace (`graceMs`, 3 minutes) | How long a failed thread is left alone before the retry, so a person's restart or message wins. If anyone writes in the thread, or it is no longer failed, the retry stands down. | Retry delay / backoff | A fixed delay, not exponential: there is one retry. A rate limit waits 15 minutes instead. |
+| Outage breaker | Three failures of one kind within ten minutes stop every retry and raise one alarm on the decision queue. It resets after ten quiet minutes. | Circuit breaker | [Martin Fowler](https://martinfowler.com/bliki/CircuitBreaker.html). Tripped, it fails fast instead of retrying into an outage. |
+| Judge (`src/core/judge.ts`) | The one path to a small model, configured per trigger (`judge.json`): Haiku or Custom. Today only a second failure uses it. It sees two scrubbed error lines and never thread text, and answers `retry_later`, `do_not_retry` or `ask_principal`. | LLM-as-judge | A judge that cannot answer never blocks: the failure goes to the Steward marked unjudged. |
+| Ping (`src/adapters/t3/ping.ts`) | The one way the daemon puts a message into a thread: the page's direct send, goal acceptance, `t3x send`, the Decisions post and the retry all use it. The daemon's retry is always sent in queue mode (`queue_after_active`): a new turn after whatever is pending, never a steer. | Single point of egress | One place for identity, seeds and timeouts. A retry's message id is the thread plus the failed run's ordinal, so a send repeated after a restart is dropped by T3, not doubled. |
+
 ## The decision queue and the people
 
 | Term | Definition | Standard term | Source or reason |
