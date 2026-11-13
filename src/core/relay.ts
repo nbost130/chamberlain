@@ -29,7 +29,7 @@
 import { crashPoint } from "./crash.ts";
 import { maxAttemptsFromEnv, STALE_AFTER_MS, withDeliveryId, type WakeDraft, type WakeResult, type WakeTransport } from "./deliver.ts";
 import { composeWake, HOLD_CEILING_MS, observe, type Gate } from "./hold.ts";
-import { loadRightsSent, needsRights, recordOf, RIGHTS_SENT_KEY, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey, type RightsState } from "./rights-sent.ts";
+import { epochOf, invalidateRights, loadRightsSent, needsRights, recordOf, RIGHTS_SENT_KEY, rightsEpoch, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey, type RightsState } from "./rights-sent.ts";
 import { isRelayLock, lockCovers, type RelayLock } from "./singleton.ts";
 import type { HoldClock, OutboxRow, RightsStamp, Store } from "./store.ts";
 
@@ -115,16 +115,21 @@ export function createRelay(d: RelayDeps) {
 	 * block) writes the rights record from that stamp in the SAME transaction: the record says what the Steward holds exactly when a delivered
 	 * row proves it, and a crash cannot leave one without the other. A redelivery after a crash writes it the same way. An accepted POST of a row
 	 * the operator cancelled meanwhile still reached the Steward, so it writes the record too.
+	 * Only while the stamp's epoch is still the current one: a full block composed before a compaction or a shrink bumped the epoch (a wake in
+	 * flight when the compaction was asked for, or one owed across it) is marked delivered and writes nothing, so it can never restore a record
+	 * the compaction took away (`rights-full-stale`).
 	 */
 	function land(row: OutboxRow): boolean {
 		const full = row.receiver ? undefined : row.rights?.filter((s) => s.full).at(-1);
+		let stale: number | undefined;
 		try {
 			const done = store.tx(() => {
 				const done = store.wakes.finish(row.id, "delivered", clock());
-				if (full) store.state.set(RIGHTS_SENT_KEY, recordOf(full));
+				if (full) { const current = rightsEpoch(store); if (epochOf(full) === current) store.state.set(RIGHTS_SENT_KEY, { ...recordOf(full), epoch: current }); else stale = current; }
 				return done;
 			});
 			if (!done) d.log("delivered-after-cancel", { deliveryId: row.deliveryId });
+			if (stale !== undefined) d.log("rights-full-stale", { deliveryId: row.deliveryId, epoch: epochOf(full), current: stale });
 		} catch (e) {
 			d.log("delivered-record-failed", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
 			return false;
@@ -191,6 +196,8 @@ export function createRelay(d: RelayDeps) {
 		for (let round = 0; round < ROUNDS; round++) {
 			let now: Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
 			try { now = await d.rightsNow!(); } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
+			// The epoch is the database's, read now: from here to the prerequisite's enqueue nothing awaits, so its stamp has this epoch too.
+			try { now = { ...now, epoch: rightsEpoch(store) }; } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
 			const reason = rightsGap(loadRightsSent(store), now);
 			if (!reason) { waitingOn.delete(row.deliveryId); return before; }
 			const key = rightsStateKey(now);
@@ -243,7 +250,7 @@ export function createRelay(d: RelayDeps) {
 	async function current(row: OutboxRow): Promise<boolean> {
 		if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
 		let now: Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
-		try { now = await d.rightsNow!(); } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return false; }
+		try { now = { ...(await d.rightsNow!()), epoch: rightsEpoch(store) }; } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return false; }
 		if (rightsFirstKey(row.deliveryId) === rightsStateKey(now)) return true;
 		if (store.wakes.cancel(row.deliveryId, clock()) === "pending") d.log("rights-first-obsolete", { deliveryId: row.deliveryId });
 		return false;
@@ -376,12 +383,20 @@ export function createRelay(d: RelayDeps) {
 	 * One compaction request to the Steward's compaction task: a single attempt, no row (the task's prompt is /compact, so it takes no message),
 	 * and it throws when it cannot be sent. It lives here so that the relay is the only code that calls a transport, and it waits its turn in
 	 * the same serial queue as the wakes (a compaction is not a row, so it is not retried, but it is never beside another POST).
+	 *
+	 * The rights record is invalidated HERE, inside the serial job, before the POST: the epoch is bumped and the record dropped in one write
+	 * (`invalidateRights`). Every wake job queued before this one has settled by now, so a full block in flight when the compaction was asked for
+	 * has already landed (and is dropped by the bump), or lands later from `owed` under the old epoch (and writes nothing). Every full stamp
+	 * composed after the bump carries the new epoch and is POSTed in a later job, after the compaction. If the bump fails, nothing is sent.
 	 */
 	function compact(deliveryId: string): Promise<WakeResult> {
 		// Queued behind any wake in flight, and checked when it is its turn: the lock may have been released while it waited.
 		return serially(async () => {
 			if (!d.lock.held()) throw new Error("the relay no longer holds the one-relay lock: nothing is sent");
 			if (!d.compact) throw new Error("this adapter has no compaction target");
+			const epoch = invalidateRights(store);
+			d.log("rights-invalidated", { reason: "compaction", deliveryId, epoch });
+			crashPoint("compact-invalidated");
 			return d.compact.send(deliveryId, "");
 		});
 	}

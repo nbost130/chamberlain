@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { rightsUnchanged } from "./decide.ts";
-import { fullStamp, loadRightsSent, needsRights, openRightsSent, parseRightsSent, recordOf, RIGHTS_SENT_KEY, rightsFor, rightsFirstId, rightsFirstKey, rightsFirstMessage, rightsGap, rightsHash, rightsHighWater, rightsStamp, rightsStateKey, saveRightsSent, LEGACY_STAMP } from "./rights-sent.ts";
+import { fullStamp, invalidateRights, loadRightsSent, needsRights, openRightsSent, parseRightsSent, recordOf, RIGHTS_SENT_KEY, rightsFor, rightsFirstId, rightsFirstKey, rightsFirstMessage, rightsGap, rightsHash, rightsEpoch, rightsHighWater, rightsStamp, rightsStateKey, saveRightsSent, LEGACY_STAMP } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 
 const STEWARD = "steward-thread-1";
@@ -98,7 +98,8 @@ describe("a reset survives a restart", () => {
 		const s = memStore();
 		daemonWake(s, 80_000);
 		openRightsSent(s).set(undefined);
-		expect(s.state.get(RIGHTS_SENT_KEY)).toBeUndefined();
+		// The row is never deleted: the reset bumps the epoch and drops the record in one write.
+		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ epoch: 1 });
 		expect(daemonWake(s, 90_000)).toBe(FULL);
 	});
 	test("a shrink seen by the minute check clears the record", () => {
@@ -181,6 +182,13 @@ describe("the durable record decides whether a row that depends on the rights ma
 		expect(rightsGap(record, now)).toContain("Steward thread changed");
 		expect(rightsGap(held, { steward: STEWARD, session: "session-1" })).toContain("cannot be read");
 	});
+	test("it shows the state only under the same epoch: a compaction or shrink since is a gap, and a new epoch is a new prerequisite id", () => {
+		expect(rightsGap({ ...held, epoch: 2 }, { ...now, epoch: 2 })).toBeUndefined();
+		expect(rightsGap({ ...held, epoch: 1 }, { ...now, epoch: 2 })).toContain("compaction or context shrink");
+		expect(rightsGap(held, { ...now, epoch: 1 })).toContain("epoch 0 to 1");
+		expect(rightsStateKey({ ...now, epoch: 0 })).toBe(rightsStateKey(now));
+		expect(rightsStateKey({ ...now, epoch: 1 })).not.toBe(rightsStateKey(now));
+	});
 	test("the prerequisite's id is the row's and the state's: a new state is a new id, the same state the same id", () => {
 		const k = rightsStateKey(now);
 		expect(k).toMatch(/^[0-9a-f]{16}$/);
@@ -199,5 +207,40 @@ describe("the durable record decides whether a row that depends on the rights ma
 		expect(text).toContain("(w1)");
 		expect(text.endsWith(`\n${FULL}`)).toBe(true);
 		expect(rightsFirstMessage("w1", "rules cost $& and $1")).toContain("rules cost $& and $1");
+	});
+});
+
+describe("the rights epoch", () => {
+	const hash = rightsHash(STEWARD, RULES);
+	test("starts at 0, rises by one on each invalidation, which drops the record in the same write and never deletes the row", () => {
+		const s = memStore();
+		expect(rightsEpoch(s)).toBe(0);
+		saveRightsSent({ hash, steward: STEWARD, epoch: 0 }, s);
+		expect(invalidateRights(s)).toBe(1);
+		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ epoch: 1 });
+		expect(loadRightsSent(s)).toBeUndefined();
+		expect(invalidateRights(s)).toBe(2);
+		expect(rightsEpoch(s)).toBe(2);
+	});
+	test("a record for an older epoch is never stored over a newer one", () => {
+		const s = memStore();
+		invalidateRights(s);
+		saveRightsSent({ hash, steward: STEWARD, epoch: 0 }, s);
+		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ epoch: 1 });
+		saveRightsSent({ hash, steward: STEWARD, epoch: 1 }, s);
+		expect(loadRightsSent(s)).toEqual({ hash, steward: STEWARD, epoch: 1 });
+	});
+	test("an epoch that is not a whole number of 0 or more makes the record untrusted, and reads as 0", () => {
+		for (const epoch of [-1, 1.5, "1", null]) expect(parseRightsSent({ hash, epoch })).toBeUndefined();
+		const s = memStore();
+		s.state.set(RIGHTS_SENT_KEY, { epoch: "7" });
+		expect(rightsEpoch(s)).toBe(0);
+	});
+	test("a full stamp carries the epoch it was composed under, and the record it proves keeps it", () => {
+		const { record } = rightsFor(undefined, STEWARD, RULES, "", 10, AT, 3);
+		const full = fullStamp(record, STEWARD, "s1");
+		expect(full.epoch).toBe(3);
+		expect(recordOf(full).epoch).toBe(3);
+		expect(rightsStamp(record, STEWARD, "s1").epoch).toBe(3);
 	});
 });

@@ -812,6 +812,49 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		rightsThenRow(r, row);
 	});
 
+	test("the reviewer's probe: a full wake in flight, the compaction asked for, the full wake lands: the next wake carries the full rights, never a bare pointer", async () => {
+		const r = rig({ steward: "steward-1", compactAt: 5000 });
+		r.fake.probe = { readable: true, contextTokens: 1000 };
+		let release!: () => void, started = false;
+		const open = new Promise<void>((res) => { release = res; });
+		const send = r.fake.wake.send;
+		r.fake.wake.send = async (id, message) => { if (!started) { started = true; await open; } return send(id, message); };
+		waitingOn(r, "t1", "req-1");
+		await r.until("the full wake in flight", () => started);
+		// Past the size limit while the full wake's POST is open: the compaction is asked for, and waits behind it in the relay's queue.
+		r.fake.probe = { readable: true, contextTokens: 6000 };
+		const ticking = r.engine.tick();
+		await r.until("the compaction asked for", () => r.events.some((e) => e.event === "fire" && e.kind === "compact"));
+		release();
+		await ticking;
+		await r.until("the full wake", () => r.fake.wakes.length === 1);
+		expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
+		expect(r.fake.compactions).toHaveLength(1);
+		// The full wake landed before the compaction's job, which then bumped the epoch: no record survives it.
+		expect(r.store.state.get("rights-sent")).toEqual({ epoch: 1 });
+		r.fake.probe = { readable: true, contextTokens: 1500 };
+		waitingOn(r, "t2", "req-2");
+		await r.until("the next wake", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.message).toContain("Decision rights (standing rules):");
+		expect(r.fake.wakes[1]!.message).not.toContain("Decision rights and rulings unchanged since");
+	});
+
+	test("the plain case: a full wake delivered, then a compaction: the next wake carries the full rights", async () => {
+		const r = rig({ steward: "steward-1", compactAt: 5000 });
+		r.fake.probe = { readable: true, contextTokens: 1000 };
+		waitingOn(r, "t1", "req-1");
+		await r.until("the full wake", () => r.fake.wakes.length === 1);
+		expect(r.store.state.get("rights-sent")).toMatchObject({ steward: "steward-1", epoch: 0 });
+		r.fake.probe = { readable: true, contextTokens: 6000 };
+		await r.engine.tick();
+		expect(r.fake.compactions).toHaveLength(1);
+		r.fake.probe = { readable: true, contextTokens: 6500 };
+		waitingOn(r, "t2", "req-2");
+		await r.until("the next wake", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.message).toContain("Decision rights (standing rules):");
+		expect(r.store.state.get("rights-sent")).toMatchObject({ steward: "steward-1", epoch: 1 });
+	});
+
 	test("the same Steward and record: the pointer is sent as queued, with no extra wake", async () => {
 		const { r, row } = await pointerQueued();
 		r.fake.setWakeReady(true);

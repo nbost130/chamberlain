@@ -28,7 +28,7 @@ import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
 import { privateFile as readPrivateFile } from "./private.ts";
 import { settleReport } from "./report.ts";
-import { fullStamp, openRightsSent, rightsFirstMessage, rightsFor, rightsHash, rightsHighWater, rightsStamp } from "./rights-sent.ts";
+import { epochOf, fullStamp, openRightsSent, rightsFirstMessage, rightsFor, rightsHash, rightsHighWater, rightsStamp } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
 import type { OutboxRow, Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
@@ -482,9 +482,10 @@ export function createEngine(d: EngineDeps) {
 			return { text: [rightsUnreadable(), mandate].filter(Boolean).join("\n") };
 		}
 		const id = privateFile("steward-thread");
-		const sent = rightsSent.get();
-		const held = !o.full && sent && sent.steward === id && sent.session === o.session ? sent : undefined;
-		return rightsFor(held, id, rules, mandate, id ? probe()?.contextTokens : undefined);
+		// The epoch this wake is composed under, read with the record: its full stamp writes the record only while that epoch is current.
+		const sent = rightsSent.get(), epoch = rightsSent.epoch();
+		const held = !o.full && sent && sent.steward === id && sent.session === o.session && epochOf(sent) === epoch ? sent : undefined;
+		return rightsFor(held, id, rules, mandate, id ? probe()?.contextTokens : undefined, new Date().toISOString(), epoch);
 	}
 	/** The decision rights and the in-force rulings, as one text, or undefined when either cannot be read. */
 	function rightsRules(): string | undefined {
@@ -535,8 +536,11 @@ export function createEngine(d: EngineDeps) {
 		const p = probe();
 		if (!p) return;
 		const used = p.contextTokens;
-		// Keep the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen.
-		rightsSent.set(rightsHighWater(rightsSent.get(), used));
+		// Keep the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen. A shrink invalidates the
+		// record by bumping the epoch, so a full block composed before it cannot restore the record when it lands.
+		const sent = rightsSent.get(), high = rightsHighWater(sent, used);
+		if (high) rightsSent.set(high);
+		else if (sent) { rightsSent.set(undefined); log("rights-invalidated", { reason: "context shrink", used }); }
 		// A 202 only means queued. This is the check that the Steward is actually working through them.
 		// One failed read is the backend busy. A run of them means both checks here can no longer see, and that must not be silent.
 		queueReadFailures = p.readable ? 0 : queueReadFailures + 1;
@@ -549,7 +553,8 @@ export function createEngine(d: EngineDeps) {
 		if (blocked) return;
 		lastCompactAt = Date.now();
 		if (!relay.compactReady()) { alarm("steward-compact", "chamberlain cannot compact the Steward", `The Steward's context is ${used} tokens and no compaction target is configured.`); return; }
-		rightsSent.set(undefined);
+		// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
+		// here, before the job runs, let a full block already in flight land after and restore it.
 		log("fire", { server: "steward", kind: "compact", threadId: id, used });
 		if (DRY) return;
 		// The compaction target is a task whose prompt is /compact, so it takes no message. Only the log line is shared with wakes. The request goes out through the relay, the only code that calls a transport.

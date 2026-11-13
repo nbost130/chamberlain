@@ -19,8 +19,10 @@
  *   attempt-counted  the attempt is committed and the POST has not been made.
  *   accepted         the transport accepted the POST and the row is not yet delivered: the documented window.
  *   delivered        the row is committed delivered and the answer it carries has not yet been marked delivered.
+ *   compact-invalidated  inside the relay's compaction job: the rights epoch is bumped and the record dropped (committed), and the
+ *                    compaction request has not been sent.
  */
-export const CRASH_STEPS = ["before-commit", "committed", "notified", "enqueued", "composed", "rights-first-queued", "attempt-begun", "attempt-counted", "accepted", "delivered"] as const;
+export const CRASH_STEPS = ["before-commit", "committed", "notified", "enqueued", "composed", "rights-first-queued", "attempt-begun", "attempt-counted", "accepted", "delivered", "compact-invalidated"] as const;
 export type CrashStep = (typeof CRASH_STEPS)[number];
 
 export function crashPoint(step: CrashStep) {

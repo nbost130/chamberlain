@@ -177,11 +177,18 @@ sequenceDiagram
    one-line "rights unchanged") or a `legacy-unstamped` stamp makes the row **depend** on the Steward already holding the rights. The
    durable **rights record** (state `rights-sent`) says which Steward thread and session hold which rights hash, and only a delivered full
    block writes it: when a row with a `full` stamp is delivered, the relay writes the record from that stamp **in the same transaction**
-   that marks the row delivered (a redelivery after a crash writes it the same way; nothing is kept in memory). Before **every** attempt of a
+   that marks the row delivered (a redelivery after a crash writes it the same way; nothing is kept in memory). The record lives under a
+   **rights epoch**, an integer in the same state row: a compaction bumps it and drops the record in one write **inside the relay's serial
+   job for the compaction, before its POST** (every wake job queued ahead of it has settled by then), and a context shrink seen by the
+   minute check bumps it the same way. Every full stamp records the epoch it was composed under, and a delivered full stamp writes the
+   record only while that epoch is still the current one: a full block that was in flight when the compaction was asked for, or whose
+   delivered commit was owed across it, is marked delivered and writes nothing (`rights-full-stale`), so it can never restore the record
+   the compaction took away. The row is never deleted, so the epoch only rises. Before **every** attempt of a
    dependent Steward row (a retry, a restart, and a digest as one row included), the relay asks the engine for the current state
-   (`rightsNow`: the Steward thread, its session, the rights hash) and goes only if the record shows exactly that state. Otherwise it queues
+   (`rightsNow`: the Steward thread, its session, the rights hash; the relay adds the current epoch) and goes only if the record shows exactly
+   that state. Otherwise it queues
    the **prerequisite** for that state in one transaction, a standalone full-rights wake stamped `full` with the state, under
-   `<id>:rights-first:<key>` (`key`: a short hash of thread, session and rights hash), sends it, asks again, and sends the row **exactly as it
+   `<id>:rights-first:<key>` (`key`: a short hash of thread, session, rights hash and epoch), sends it, asks again, and sends the row **exactly as it
    was queued**: no row's text is ever rewritten or searched. The outbox refuses a known id, so a state gets one prerequisite per row; a new
    state (the Steward replaced after the prerequisite went and the row failed) gets a new one. One that ended without the record showing it
    (cancelled, or a compaction cleared the record after it was delivered) gives way to `<key>:2`, `:3`. While the prerequisite is failing or

@@ -175,6 +175,8 @@ export type RightsStamp = {
 	steward?: string; session?: string; hash: string; at?: string;
 	/** The wake carries the full block, composed for this state; `used` is the Steward's context size then (the record's high-water mark). */
 	full?: true; used?: number;
+	/** The rights epoch the wake was composed under (rights-sent.ts): a delivered full stamp writes the record only while it is still current. Absent is 0. */
+	epoch?: number;
 	/**
 	 * "unstamped": a Steward wake queued before the stamps existed (migration 10 marks every undelivered Steward row and held wake that has no
 	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it depends
