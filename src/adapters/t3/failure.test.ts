@@ -7,10 +7,10 @@ const err = (runId: string, failure: Record<string, unknown>) => ({ type: "error
 describe("failureOf: T3's projection to a RunFailure", () => {
 	test("the newest failed run, with its error's class, code, message, retryable flag and reset time", () => {
 		const f = failureOf([run("r1", 1, "failed"), run("r2", 2, "failed"), run("r3", 3, "completed")], [err("r1", { message: "old" }), err("r2", { class: "usage_limit", code: "api_error_429", retryable: true, message: "rate limit", resetAt: "2026-11-13T13:00:00Z" })]);
-		expect(f).toEqual({ runId: "r2", class: "usage_limit", code: "api_error_429", message: "rate limit", retryable: true, resetAt: "2026-11-13T13:00:00Z" });
+		expect(f).toEqual({ runId: "r2", ordinal: 2, class: "usage_limit", code: "api_error_429", message: "rate limit", retryable: true, resetAt: "2026-11-13T13:00:00Z" });
 	});
 	test("no failed run: nothing", () => expect(failureOf([run("r1", 1, "completed")], [])).toBeUndefined());
-	test("a failed run with no error item still names the run, with an empty message", () => expect(failureOf([run("r1", 1, "failed")], [])).toEqual({ runId: "r1", message: "" }));
+	test("a failed run with no error item still names the run, with an empty message", () => expect(failureOf([run("r1", 1, "failed")], [])).toEqual({ runId: "r1", ordinal: 1, message: "" }));
 	test("an interrupt request on the failed run marks it interrupted", () => {
 		expect(failureOf([run("r1", 1, "failed")], [{ type: "run_interrupt_request", runId: "r1" }, err("r1", { message: "Provider turn failed." })])?.interrupted).toBe(true);
 		expect(failureOf([run("r2", 2, "failed")], [{ type: "run_interrupt_request", runId: "r1" }])?.interrupted).toBeUndefined();
@@ -30,4 +30,11 @@ describe("lookOf: the projection read right before a ping", () => {
 		expect(lookOf([run("r1", 1, "failed")], [{ status: "completed" }]).waiting).toBe(false);
 	});
 	test("no runs: no newest run", () => expect(lookOf([], [])).toEqual({ active: false, waiting: false }));
+});
+
+describe("fix round 2: the failure carries the run's ordinal", () => {
+	test("failureOf reports the failed run's ordinal, and none when T3 names none", () => {
+		expect(failureOf([run("r1", 981, "failed")], [])?.ordinal).toBe(981);
+		expect(failureOf([{ id: "r1", status: "failed" }], [])?.ordinal).toBeUndefined();
+	});
 });

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
 import { normalizeThread } from "./adapter.ts";
+import { retrySeed } from "./recover.ts";
 import { breakerItem, classifyFailure, createRecovery, DEFAULT_RECOVER_TIMING, judgeBrief, memoryRecoverStore, MIN, neverRetryThread, outcomeOf, RETRY_KINDS, RETRY_TEXT, verdictItem, type FailureKind, type Handling, type RecoverDeps, type RecoverStore } from "./recover.ts";
 import type { JudgeAnswer } from "./judge.ts";
 
@@ -82,7 +83,7 @@ describe("neverRetryThread: every excluded case", () => {
 
 /** A recovery on a manual clock: timers run when the test advances time, and every effect is recorded. */
 type World = { now: () => number; states: Map<string, ThreadState>; failures: Map<string, RunFailure | undefined>; instruction: Map<string, string> };
-function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () => JudgeAnswer; ping?: () => { ok: boolean; detail: string }; ctxOver?: Partial<RecoverDeps>; store?: RecoverStore; look?: (id: string) => Promise<RunLook | undefined>; /** a rig for the same world after a restart: same clock, threads and store */ share?: World } = {}) {
+function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () => JudgeAnswer; ping?: () => { ok: boolean; detail: string }; /** runs when a ping is sent, before it is answered: a crash is simulated here */ onPing?: () => void; ctxOver?: Partial<RecoverDeps>; store?: RecoverStore; look?: (id: string) => Promise<RunLook | undefined>; /** a rig for the same world after a restart: same clock, threads and store */ share?: World } = {}) {
 	let now = o.share?.now() ?? NOW;
 	const timers: { at: number; fn: () => void; live: boolean }[] = [];
 	const states = o.share?.states ?? new Map<string, ThreadState>();
@@ -103,7 +104,7 @@ function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () 
 		children: async () => 0,
 		readFailure: async (id) => failures.get(id),
 		instructionId: async (id) => instruction.get(id) ?? "m1",
-		ping: async (threadId, text, seed) => { pings.push({ threadId, text, seed }); return o.ping?.() ?? { ok: true, detail: "sent" }; },
+		ping: async (threadId, text, seed) => { pings.push({ threadId, text, seed }); o.onPing?.(); return o.ping?.() ?? { ok: true, detail: "sent" }; },
 		judge: async (trigger, brief) => { judged.push({ trigger, user: brief.user }); return o.judge?.() ?? { ok: true, backend: "haiku", verdict: "do_not_retry", reason: "it keeps happening" }; },
 		wake: (threadId, kind, note) => wakes.push({ threadId, kind, note }),
 		log: (event, data) => logs.push({ event, data }),
@@ -139,7 +140,7 @@ describe("retry once, after a 3-minute grace", () => {
 		await x.advance(3 * MIN - 1);
 		expect(x.pings).toEqual([]);
 		await x.advance(2);
-		expect(x.pings).toEqual([{ threadId: "t1", text: RETRY_TEXT, seed: "recover:run-1" }]);
+		expect(x.pings).toEqual([{ threadId: "t1", text: RETRY_TEXT, seed: "recover:t1:run-1" }]);
 		expect(x.wakes).toEqual([]);
 	});
 
@@ -579,7 +580,7 @@ describe("fix round 1: recovery state survives a restart", () => {
 		expect(b.r.pendingCount()).toBe(1);
 		await b.advance(DEFAULT_RECOVER_TIMING.restoreDelayMs + 1000);
 		expect(b.pings).toHaveLength(1);
-		expect(b.pings[0]!.seed).toBe("recover:run-1");
+		expect(b.pings[0]!.seed).toBe("recover:t1:run-1");
 	});
 	test("a retry that fell due while down still waits for the watchers (restoreDelayMs), and never fires before it", async () => {
 		const store = memoryRecoverStore();
@@ -662,5 +663,85 @@ describe("fix round 1: the judge's brief scrubs and caps class and code too", ()
 		expect(b.user).not.toMatch(/someone|a@b\.co|k{20}/);
 		const first = b.user.split("\n").find((l) => l.startsWith("First failure"))!;
 		expect(first.length).toBeLessThan(320);
+	});
+});
+
+describe("fix round 2: write-ahead, and a retry message id that is the same after a restart", () => {
+	/** A store that stops persisting at the moment of a crash, as a dead process would. */
+	const crashable = () => { const inner = memoryRecoverStore(); const dead = { v: false }; const store: RecoverStore = { load: () => inner.load(), save: (s) => { if (!dead.v) inner.save(s); } }; return { inner, dead, store }; };
+	const failStream = (runId: string) => ({ runId, message: "The provider event stream closed unexpectedly." });
+
+	test("crash after the send was accepted, before anything more was recorded: after the restart the retry fails, and there is exactly one ping and one judge call", async () => {
+		const c = crashable();
+		const a = rig({ store: c.store, onPing: () => { c.dead.v = true; a.r.stop(); } });
+		await a.fail("t1", failStream("run-1"));
+		await a.advance(4 * MIN);
+		expect(a.pings).toHaveLength(1);
+		// T3 accepted the message: a run began on the thread, and the process died before it could write anything else.
+		a.states.set("t1", t({ status: "running", latestRunId: "run-2" }));
+		const b = rig({ store: c.inner, share: a });
+		b.r.restore();
+		await b.advance(DEFAULT_RECOVER_TIMING.restoreDelayMs + 1000);
+		expect(b.pings).toEqual([]);
+		// The retry fails.
+		const h = await b.fail("t1", failStream("run-2"));
+		expect(h).toMatchObject({ action: "verdict" });
+		expect(a.pings.length + b.pings.length).toBe(1);
+		expect(b.judged).toHaveLength(1);
+	});
+
+	test("the same crash, but the message never reached T3: the restart re-sends the very same message id, and the failure after it goes to the judge", async () => {
+		const c = crashable();
+		const a = rig({ store: c.store, onPing: () => { c.dead.v = true; a.r.stop(); } });
+		await a.fail("t1", { ...failStream("run-1"), ordinal: 981 });
+		await a.advance(4 * MIN);
+		expect(a.pings).toHaveLength(1);
+		const b = rig({ store: c.inner, share: a });
+		b.r.restore();
+		await b.advance(DEFAULT_RECOVER_TIMING.restoreDelayMs + 1000);
+		expect(b.pings).toHaveLength(1);
+		expect(b.pings[0]!.seed).toBe(a.pings[0]!.seed);
+		expect(a.pings[0]!.seed).toBe("recover:t1:981");
+		expect(await b.fail("t1", failStream("run-2"))).toMatchObject({ action: "verdict" });
+		expect(b.judged).toHaveLength(1);
+	});
+
+	test("the attempt is on disk before the message is sent: a state read at the moment of the send already counts it", async () => {
+		const inner = memoryRecoverStore();
+		let seen: unknown;
+		const a = rig({ store: inner, onPing: () => { seen = JSON.parse(JSON.stringify(inner.load())); } });
+		await a.fail("t1", failStream("run-1"));
+		await a.advance(4 * MIN);
+		const rec = (seen as { threads: Record<string, { pings: number; retried?: { runId: string }; pending?: unknown }> }).threads.t1!;
+		expect(rec.pings).toBe(1);
+		expect(rec.retried?.runId).toBe("run-1");
+		expect(rec.pending).toBeDefined();
+	});
+
+	test("a retry the server refused outright ('not sent: ...') is withdrawn, so the next failure is a first failure again", async () => {
+		let refuse = true;
+		const x = rig({ ping: () => (refuse ? { ok: false, detail: "not sent: the thread is waiting on a card, approval or question" } : { ok: true, detail: "sent" }) });
+		await x.fail("t1", failStream("run-1"));
+		await x.advance(4 * MIN);
+		expect(x.wakes).toHaveLength(1);
+		refuse = false;
+		x.states.set("t1", t({ latestRunId: "run-1" }));
+		expect((await x.fail("t1", failStream("run-2"))).action).toBe("retry-scheduled");
+	});
+
+	test("a send that failed in an unknown way stays counted, so a repeat is never a second first ping", async () => {
+		const x = rig({ ping: () => ({ ok: false, detail: "send timed out after 10000 ms" }) });
+		await x.fail("t1", failStream("run-1"));
+		await x.advance(4 * MIN);
+		expect(x.wakes).toHaveLength(1);
+		expect(await x.fail("t1", failStream("run-2"))).toMatchObject({ action: "verdict" });
+	});
+
+	test("the seed is the thread and the failed run's ordinal, never random: it repeats for one failure and differs between stretches", () => {
+		expect(retrySeed("t1", { runId: "run:x:ordinal:981", ordinal: 981 })).toBe("recover:t1:981");
+		expect(retrySeed("t1", { runId: "run:x:ordinal:981", ordinal: 981 })).toBe(retrySeed("t1", { runId: "run:x:ordinal:981", ordinal: 981 }));
+		expect(retrySeed("t1", { runId: "a", ordinal: 981 })).not.toBe(retrySeed("t1", { runId: "b", ordinal: 1200 }));
+		expect(retrySeed("t2", { runId: "a", ordinal: 981 })).not.toBe(retrySeed("t1", { runId: "a", ordinal: 981 }));
+		expect(retrySeed("t1", { runId: "run-7" })).toBe("recover:t1:run-7");
 	});
 });

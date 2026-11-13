@@ -462,7 +462,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const x = make();
 		x.failRun("t1", "run-1", STREAM);
 		await x.until("the retry", () => x.fake.sends.length === 1);
-		expect(x.fake.sends[0]).toMatchObject({ threadId: "t1", seed: "recover:run-1", identity: "daemon" });
+		expect(x.fake.sends[0]).toMatchObject({ threadId: "t1", seed: "recover:t1:run-1", identity: "daemon" });
 		expect(x.fake.sends[0]!.text).toMatch(/automatic retry/);
 		await x.quiet();
 		expect(x.fake.wakes).toEqual([]);

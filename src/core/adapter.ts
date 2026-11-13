@@ -115,7 +115,7 @@ export type WaitingItem = { type: WaitKind; requestId: string; label: string; qu
  * Why a run failed, as the backend records it. `class`, `code` and `message` are the backend's own words; src/core/recover.ts reads
  * them in code and never asks a model what kind of failure it was. `interrupted` is true when someone stopped the run: a stop is not an outage.
  */
-export type RunFailure = { runId: string; class?: string; code?: string; message: string; retryable?: boolean; resetAt?: string; interrupted?: boolean };
+export type RunFailure = { runId: string; /** The run's ordinal in its thread: monotonic, so a retry's message id never repeats across stretches. */ ordinal?: number; class?: string; code?: string; message: string; retryable?: boolean; resetAt?: string; interrupted?: boolean };
 
 /** What a fresh read of a thread shows, taken right before a ping: its newest run and whether anything is going or waiting. */
 export type RunLook = { latestRunId?: string; latestStatus?: string; /** a run is queued, starting, running or waiting */ active: boolean; /** a card, approval, secret or question is open */ waiting: boolean };

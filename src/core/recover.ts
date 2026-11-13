@@ -145,7 +145,7 @@ export type RecoverDeps = {
 	look: (threadId: string) => Promise<RunLook | undefined>;
 	/** Where recovery's state is kept across restarts. Default: in memory only. */
 	store?: RecoverStore;
-	/** The one ping, as the daemon. */
+	/** The one ping, as the daemon, in queue mode. A detail that starts "not sent: " means nothing was sent (src/adapters/t3/ping.ts NOT_SENT); any other failure may have been. */
 	ping: (threadId: string, text: string, seed: string) => Promise<{ ok: boolean; detail: string }>;
 	judge: (trigger: Trigger, brief: { system: string; user: string; verdicts: readonly string[] }) => Promise<JudgeAnswer>;
 	/** Delivers the ordinary failed wake for a thread with a note: the fallback when a retry could not be made. */
@@ -175,6 +175,12 @@ export type RecoverState = {
 export type RecoverStore = { load(): RecoverState | undefined; save(state: RecoverState): void };
 const freshState = (): RecoverState => ({ v: 1, handled: [], threads: {}, breaker: { failures: [], lastFailureAt: 0 } });
 export const memoryRecoverStore = (): RecoverStore => { let kept: RecoverState | undefined; return { load: () => kept, save: (s) => { kept = JSON.parse(JSON.stringify(s)) as RecoverState; } }; };
+
+/**
+ * The message id seed of a retry: the thread and the failed run's ordinal (T3's own, monotonic per thread), never a random value. A send
+ * repeated after a restart carries the same id and T3 drops it; a later stretch of the same thread has a later ordinal, so it never collides.
+ */
+export const retrySeed = (threadId: string, f: Pick<RunFailure, "runId" | "ordinal">) => `recover:${threadId}:${f.ordinal ?? f.runId}`;
 
 /** What the daemon sends to retry. It says what happened and asks for nothing new. */
 export const RETRY_TEXT = "[automatic retry] Your last run failed with a transient error and nobody has written here since. Continue from where it stopped.";
@@ -235,13 +241,24 @@ export function createRecovery(d: RecoverDeps) {
 		const stop = neverRetryThread(live, { stewardId: d.stewardId(), decisionsId: d.decisionsId(), children });
 		if (stop) return standDown(stop);
 		if (tripped()) return standDown("outage breaker is tripped");
-		clearPending(threadId);
-		const r = await d.ping(threadId, RETRY_TEXT, `recover:${p.runId}`);
-		if (!r.ok) { save(); d.log("recover-ping-failed", { threadId, runId: p.runId, detail: r.detail }); d.wake(threadId, p.kind, `the automatic retry could not be sent (${r.detail}), so nothing has been retried`); return; }
-		// Sent, then recorded: a crash between the two re-sends the same message id, which T3 drops, so no second first ping is made.
+		// Write-ahead: the attempt is recorded durably BEFORE the send, and the retry stays pending until the send is answered. A crash after
+		// T3 accepted the message therefore finds the attempt recorded (the next failure is the second one and goes to the judge), and a crash
+		// before it re-sends the same message id (retrySeed), which T3 drops if the first one did land.
+		timers.delete(threadId);
 		const tr = rec(threadId);
-		tr.pings++;
-		tr.retried = { runId: p.runId, at: now(), failure: p.failure, kind: p.kind };
+		const first = tr.retried?.runId !== p.runId;
+		if (first) { tr.pings++; tr.retried = { runId: p.runId, at: now(), failure: p.failure, kind: p.kind }; }
+		save();
+		const r = await d.ping(threadId, RETRY_TEXT, retrySeed(threadId, p.failure));
+		clearPending(threadId);
+		if (!r.ok) {
+			// A refusal that sent nothing withdraws the attempt; any other failure may have been sent, so it stays counted.
+			if (r.detail.startsWith("not sent:") && first) { tr.pings--; delete tr.retried; }
+			save();
+			d.log("recover-ping-failed", { threadId, runId: p.runId, detail: r.detail });
+			d.wake(threadId, p.kind, `the automatic retry could not be sent (${r.detail}), so nothing has been retried`);
+			return;
+		}
 		save();
 		d.log("recover-retried", { threadId, runId: p.runId, kind: p.kind });
 	}

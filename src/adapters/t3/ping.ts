@@ -12,7 +12,10 @@
  * Who a message is signed as is a property of the send, named once here:
  *   steward   agent / mcp     the Steward's own relay. The thread's report-back wakes the Steward.
  *   daemon    agent / server  the daemon's own act (a retry). A machine delivery: it instructs nobody, so it never becomes
- *                             a thread's "latest instruction" and never reads as someone writing in the thread.
+ *                             a thread's "latest instruction" and never reads as someone writing in the thread. It is always sent in
+ *                             queue mode (`queue_after_active`): a new turn after whatever is pending, never a steer of a running or
+ *                             waiting turn. T3 starts the turn at once when nothing is active and queues it behind the active run
+ *                             otherwise, so a card that opens between the last read and the send costs nothing: the retry runs after it.
  *   operator  user / server   the principal's own accepted proposal (a /goal).
  */
 import { createHash } from "node:crypto";
@@ -29,6 +32,8 @@ export const IDENTITIES: Record<Identity, { createdBy: "agent" | "user"; creatio
 	operator: { createdBy: "user", creationSource: "server" },
 };
 export type PingResult = { ok: boolean; detail: string };
+/** A refusal that sent nothing starts its detail with this, so a caller can tell "not sent" from "may have been sent". */
+export const NOT_SENT = "not sent: ";
 
 /** Pure: a UUID-shaped ID fixed by its seed, so a retried send carries the same command and message IDs. */
 export const stableId = (seed: string) => {
@@ -81,7 +86,8 @@ export function messageCommand(o: MessageOptions): Record<string, unknown> {
 		attachments: [],
 		createdBy: who.createdBy,
 		creationSource: who.creationSource,
-		dispatchMode: o.activeRunId && !o.start ? { type: "steer_active", targetRunId: o.activeRunId } : { type: "start_immediately" },
+		// The daemon's own message never steers: queue mode is the only mode it can be built with, whatever else is passed.
+		dispatchMode: o.identity === "daemon" ? { type: "queue_after_active" } : o.activeRunId && !o.start ? { type: "steer_active", targetRunId: o.activeRunId } : { type: "start_immediately" },
 	};
 }
 
@@ -128,13 +134,13 @@ export function createRpcPing(d: RpcPingDeps): (threadId: string, text: string, 
 	const s = d.server;
 	return async (threadId, text, seed, identity = "steward") => {
 		const token = readToken(d.conf, s.operateTokenFile);
-		if (!token) return { ok: false, detail: `${s.name} has no operate token here, so the page can't send to its threads` };
+		if (!token) return { ok: false, detail: `${NOT_SENT}${s.name} has no operate token here, so the page can't send to its threads` };
 		try {
 			const rpc = await openWithin(conn, s.origin, token, ms);
 			try {
 				const proj = await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] };
 				const refused = identity === "daemon" ? daemonPingRefusal(proj) : undefined;
-				if (refused) return { ok: false, detail: `not sent: ${refused}` };
+				if (refused) return { ok: false, detail: `${NOT_SENT}${refused}` };
 				await within(rpc.request("orchestration.dispatchCommand", messageCommand({ threadId, text, seed, identity, activeRunId: activeRunOf(proj.runs) })), ms, "send");
 				return { ok: true, detail: `sent to ${s.name}:${threadId}` };
 			} finally {

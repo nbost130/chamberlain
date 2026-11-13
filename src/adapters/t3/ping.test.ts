@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { activeRunOf, createRpcPing, daemonPingRefusal, IDENTITIES, messageCommand, stableId } from "./ping.ts";
+import { activeRunOf, createRpcPing, daemonPingRefusal, IDENTITIES, messageCommand, NOT_SENT, stableId } from "./ping.ts";
 
 describe("messageCommand: the one message.dispatch", () => {
 	test("each identity is signed the way its sender always was", () => {
@@ -42,7 +42,7 @@ describe("createRpcPing", () => {
 		const sent: Record<string, unknown>[] = [];
 		const ping = createRpcPing({ server, conf: root, connect: fakeConn([{ id: "r1", status: "failed" }], sent) as never });
 		expect(await ping("t1", "retry", "recover:r1", "daemon")).toEqual({ ok: true, detail: "sent to mac:t1" });
-		expect(sent[0]).toMatchObject({ type: "message.dispatch", threadId: "t1", text: "retry", createdBy: "agent", creationSource: "server", dispatchMode: { type: "start_immediately" } });
+		expect(sent[0]).toMatchObject({ type: "message.dispatch", threadId: "t1", text: "retry", createdBy: "agent", creationSource: "server", dispatchMode: { type: "queue_after_active" } });
 	});
 	test("a server without an operate token is refused", async () => {
 		const r = await createRpcPing({ server: { ...server, operateTokenFile: undefined }, conf: root, connect: fakeConn([], []) as never })("t", "x", "s");
@@ -97,5 +97,46 @@ describe("fix round 1: the daemon's ping never steers a run and never writes int
 		const r = await createRpcPing({ server, conf: root, connect: conn({ runs: [{ id: "r2", ordinal: 2, status: "running" }] }, sent) as never })("t1", "go on", "s", "steward");
 		expect(r.ok).toBe(true);
 		expect(sent[0]).toMatchObject({ dispatchMode: { type: "steer_active", targetRunId: "r2" } });
+	});
+});
+
+describe("fix round 2: the daemon's ping is always queued, never a steer", () => {
+	const root2 = mkdtempSync(`${tmpdir()}/ping-r2-`);
+	writeFileSync(`${root2}/op-token`, "OPSECRET", { mode: 0o600 });
+	const server = { name: "mac", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
+	const root = root2;
+	test("messageCommand with the daemon identity can only be built in queue mode, whatever else is passed", () => {
+		for (const o of [{}, { activeRunId: "r1" }, { activeRunId: "r1", start: true }, { start: true }]) {
+			const c = messageCommand({ threadId: "t", text: "x", identity: "daemon", ...o });
+			expect(c.dispatchMode).toEqual({ type: "queue_after_active" });
+		}
+		expect(messageCommand({ threadId: "t", text: "x", identity: "steward", activeRunId: "r1" }).dispatchMode).toEqual({ type: "steer_active", targetRunId: "r1" });
+	});
+	test("an approval that opens between the final read and the send still does no harm: the message is delivered in queue mode, never a steer", async () => {
+		const sent: Record<string, unknown>[] = [];
+		let reads = 0;
+		// The read finds an idle, failed thread. By the time the send arrives, a run is active and waiting on an approval.
+		const conn = async () => ({ ws: { close() {} }, request: async (m: string, p: unknown) => {
+			if (m === "orchestration.getThreadProjection") { reads++; return { runs: [{ id: "r1", ordinal: 1, status: "failed" }], turnItems: [] }; }
+			sent.push(p as Record<string, unknown>); return {};
+		} });
+		const r = await createRpcPing({ server, conf: root, connect: conn as never })("t1", "retry", "recover:t1:1", "daemon");
+		expect(r.ok).toBe(true);
+		expect(reads).toBe(1);
+		expect(sent).toHaveLength(1);
+		const mode = sent[0]!.dispatchMode as { type: string; targetRunId?: string };
+		expect(mode).toEqual({ type: "queue_after_active" });
+		expect(mode.type).not.toBe("steer_active");
+		expect(mode.targetRunId).toBeUndefined();
+	});
+	test("a refusal that sent nothing says so, so the caller can withdraw its record", async () => {
+		const sent: unknown[] = [];
+		const conn = async () => ({ ws: { close() {} }, request: async (m: string, p: unknown) => { if (m === "orchestration.getThreadProjection") return { runs: [{ id: "r2", ordinal: 2, status: "running" }] }; sent.push(p); return {}; } });
+		const r = await createRpcPing({ server, conf: root, connect: conn as never })("t1", "retry", "s", "daemon");
+		expect(r.ok).toBe(false);
+		expect(r.detail.startsWith(NOT_SENT)).toBe(true);
+		expect(sent).toEqual([]);
+		const noToken = await createRpcPing({ server: { ...server, operateTokenFile: undefined }, conf: root, connect: conn as never })("t1", "x", "s", "daemon");
+		expect(noToken.detail.startsWith(NOT_SENT)).toBe(true);
 	});
 });

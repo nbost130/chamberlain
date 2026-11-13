@@ -29,6 +29,7 @@ export function failureOf(runs: Run[], items: Item[]): RunFailure | undefined {
 	const interrupted = items.some((i) => i.type === "run_interrupt_request" && i.runId === failed.id);
 	return {
 		runId: failed.id,
+		...(typeof failed.ordinal === "number" ? { ordinal: failed.ordinal } : {}),
 		...(err?.failure?.class ? { class: err.failure.class } : {}),
 		...(err?.failure?.code ? { code: err.failure.code } : {}),
 		message: String(err?.failure?.message ?? ""),
