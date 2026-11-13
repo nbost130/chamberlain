@@ -75,8 +75,9 @@ async function load() {
 // ---- queue ----
 const visible = () => {
 	const f = S.filter === "all" ? S.items : S.items.filter((i) => i.kind === S.filter);
-	// Grouped in kind order; the server ranks within each kind.
-	return KINDS.flatMap((k) => f.filter((i) => i.kind === k.kind));
+	// Urgent first, grouped in kind order, then the non-urgent ones (urgent: false) in kind order; the server ranks within each kind.
+	const byKind = (list) => KINDS.flatMap((k) => list.filter((i) => i.kind === k.kind));
+	return [...byKind(f.filter((i) => i.urgent !== false)), ...byKind(f.filter((i) => i.urgent === false))];
 };
 const current = () => visible()[S.sel];
 const defaultPick = (i) => (S.pick[i.id] ?? i.recommended ?? 0);
@@ -110,22 +111,25 @@ function listHtml() {
 	const v = visible();
 	if (!v.length) return `<section class="list" aria-label="Queue"><div class="empty">Nothing waiting on you.<br>New questions from the Steward land here.</div></section>`;
 	let n = 0;
-	return `<section class="list" aria-label="Queue">${KINDS.map((k) => {
-		const rows = v.filter((i) => i.kind === k.kind);
+	const rowHtml = (i) => {
+		const idx = n++;
+		const tag = i.tag || DEFAULT_TAG[i.kind];
+		const img = (i.evidence || []).find((e) => e.type === "image");
+		const tagClass = tag.toLowerCase() === "deploy" ? "t-deploy" : tag.toLowerCase() === "secret" || i.secret ? "t-secret" : `c-${i.kind}`;
+		return `<a class="row" href="/item/${esc(i.id)}" data-sel="${idx}" aria-current="${idx === S.sel}">
+			<span class="num">${idx + 1}</span>
+			${img ? `<img class="thumb" alt="" src="${esc(evUrl(i, img))}">` : ""}
+			<span class="body"><span class="title">${esc(i.title)}</span>
+			<span class="meta"><span class="${tagClass}">${esc(tag)}</span><span>${esc(i.thread)}</span>${evidenceCount(i) ? `<span>${esc(evidenceCount(i))}</span>` : ""}${i.blocks ? `<span>${esc(i.blocks)}</span>` : i.kind === "idea" ? "<span>no deadline</span>" : ""}<span>${ago(i.createdAt)}</span>${i.urgent === false ? '<span class="later">not urgent</span>' : ""}${i.notNowAt ? '<span class="later">not now</span>' : ""}</span></span>
+			<span class="chev">${ICON.chev}</span></a>`;
+	};
+	// The urgent groups first, then the same kinds again under NOT URGENT: a question that can wait never sits among the urgent ones.
+	const groups = (urgent) => KINDS.map((k) => {
+		const rows = v.filter((i) => i.kind === k.kind && (i.urgent !== false) === urgent);
 		if (!rows.length) return "";
-		return `<div class="group c-${k.kind}"><span class="dot"></span>${k.label}</div>` + rows.map((i) => {
-			const idx = n++;
-			const tag = i.tag || DEFAULT_TAG[i.kind];
-			const img = (i.evidence || []).find((e) => e.type === "image");
-			const tagClass = tag.toLowerCase() === "deploy" ? "t-deploy" : tag.toLowerCase() === "secret" || i.secret ? "t-secret" : `c-${i.kind}`;
-			return `<a class="row" href="/item/${esc(i.id)}" data-sel="${idx}" aria-current="${idx === S.sel}">
-				<span class="num">${idx + 1}</span>
-				${img ? `<img class="thumb" alt="" src="${esc(evUrl(i, img))}">` : ""}
-				<span class="body"><span class="title">${esc(i.title)}</span>
-				<span class="meta"><span class="${tagClass}">${esc(tag)}</span><span>${esc(i.thread)}</span>${evidenceCount(i) ? `<span>${esc(evidenceCount(i))}</span>` : ""}${i.blocks ? `<span>${esc(i.blocks)}</span>` : i.kind === "idea" ? "<span>no deadline</span>" : ""}<span>${ago(i.createdAt)}</span>${i.notNowAt ? '<span class="later">not now</span>' : ""}</span></span>
-				<span class="chev">${ICON.chev}</span></a>`;
-		}).join("");
-	}).join("")}</section>`;
+		return `<div class="group c-${k.kind}"><span class="dot"></span>${urgent ? "" : "NOT URGENT · "}${k.label}</div>` + rows.map(rowHtml).join("");
+	}).join("");
+	return `<section class="list" aria-label="Queue">${groups(true)}${groups(false)}</section>`;
 }
 
 function evidenceHtml(i) {

@@ -62,8 +62,9 @@ const engine = createEngine({
 	// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).
 	gh: ghRead,
 	// The Steward-health hand-off question goes through ask.ts like any other, asked only when the adapter cannot start the hand-off itself.
+	// A live alarm recurs by nature, so it is never "already settled": the daemon says so, and the question records it.
 	ask: async (raw) => {
-		const child = Bun.spawn([process.execPath, new URL("./ask.ts", import.meta.url).pathname, JSON.stringify(raw)], { stdout: "ignore", stderr: "ignore" });
+		const child = Bun.spawn([process.execPath, new URL("./ask.ts", import.meta.url).pathname, JSON.stringify({ notSettled: "raised by the daemon: a live system alarm", ...raw })], { stdout: "ignore", stderr: "ignore" });
 		if (await child.exited !== 0) throw Error("steward-health ask failed; queue checked again on retry");
 	},
 });

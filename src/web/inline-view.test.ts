@@ -211,3 +211,11 @@ test("a single-question view reads only the queue and recent answers, never /api
 	expect(calls.length).toBeGreaterThan(0);
 	expect(calls.every((c) => c.method === "GET" && INLINE_PATHS.has(c.path))).toBe(true);
 });
+test("(a) a non-urgent question's card says NOT URGENT; an urgent one does not", async () => {
+	const base = { kind: "product", context: "", options: [{ label: "A" }, { label: "B" }], status: "open", thread: "t", server: "s", createdAt: new Date().toISOString() };
+	const dq = run(() => ({ items: [{ ...base, id: "Q-urg001", title: "Urgent one" }, { ...base, id: "Q-nu0001", title: "Can wait", urgent: false }] }));
+	await settle();
+	const kinds = dq.all((e) => e.className.split(" ").includes("dq-kind")).map((e) => e.textContent);
+	expect(kinds.filter((k) => k.endsWith(" · NOT URGENT"))).toHaveLength(1);
+	expect(kinds.some((k) => !k.includes("NOT URGENT"))).toBe(true);
+});
