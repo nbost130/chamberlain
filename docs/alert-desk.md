@@ -39,6 +39,44 @@ than `maxAgeHours` (6) when read are not woken about. A cursor (inode and offset
 absorbed because the items already hold what woke the desk. A big, fully read inbox is renamed away and its retired file read once more a minute
 later, for a writer that still held it.
 
+## Delivery guarantee
+
+At-least-once, with stable ids. A wake's id comes from the event (`desk:<hash of family, signature and time>`), a replay after a crash makes the same id, and
+an id already bound to an outbox row (any status) or tombstoned is never enqueued again. One window cannot be closed: a crash after the webhook accepts a
+POST and before the row is committed `delivered` sends that wake once more after the restart (`src/core/relay.ts` describes it), under the same id. So the
+desk skips an id it has already handled: its prompt says to search the thread for the id first and answer `repeat of <id>` (docs/alert-desk-prompt.md).
+
+## The command allowlist is enforced
+
+`src/desk-allowlist.ts` is a Claude Code PreToolUse hook for the desk's project: a fixed set of command shapes (journalctl, systemctl status, example-tool
+reads, gh run view, git, docker ps/logs/inspect with a plain `--format`, and the Morning sweep's own commands), every other command and any
+shell syntax refused, file reads only under `/var/log`, `~/.cache/alert-desk` and `DESK_LOG_DIRS` (never a credential path, after `..` and symlinks are
+resolved), and the write tools refused. `bun src/desk-allowlist.ts check '<command>'` tests one by hand. Install it in the desk project's
+`.claude/settings.json`:
+
+```json
+{ "hooks": { "PreToolUse": [ { "matcher": "Bash|Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
+```
+
+## Nothing changes until the desk is switched on
+
+The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing without it). The alert writers (the monitor's webhook and heartbeat, monitor)
+append only when the desk is on: `ALERT_DESK_ENABLED=1` in their environment, or the flag file `~/.config/alert-desk/enabled` (`touch` it; remove it to
+switch them off; no restart is needed).
+
+## Go-live (the operator's approvals, in this order)
+
+Migration 8 cannot be undone by the old build: a database from a newer build is refused (`checkVersion`), so going back needs the backup below.
+
+1. **Back up the database first**, with the daemon running or stopped (this is an online-safe backup):
+   `sqlite3 "${CHAMBERLAIN_STATE:-$HOME/.local/state/chamberlain}/chamberlain.db" ".backup '${CHAMBERLAIN_STATE:-$HOME/.local/state/chamberlain}/chamberlain.db.pre-alert-desk'"`
+   (without the sqlite3 tool: `bun -e 'import {Database} from "bun:sqlite"; new Database(process.argv[1]).run("VACUUM INTO ?", [process.argv[2]])' <db> <backup>`).
+   **To go back:** stop the daemon, `cp <backup> <db>`, `rm -f <db>-wal <db>-shm`, check out the old build, start it. Anything the new build did after the backup is lost.
+2. Deploy and restart Chamberlain on this branch (migration 8 runs at startup).
+3. Create the desk thread with `docs/alert-desk-prompt.md` as its first message, install the allowlist hook in its project, bind a webhook scheduled task to it,
+   and save its URL as `desk-wake-url` (0600) and its thread id as `desk-thread` in the config directory.
+4. `touch ~/.config/alert-desk/enabled` to switch the writers on.
+
 ## Config
 
 `$CHAMBERLAIN_CONF/alert-desk.json` (all optional) and the environment:
@@ -53,6 +91,6 @@ morning wake, which runs the Morning sweep in the desk's prompt (the operator's 
 
 ## Schema
 
-Migration 8 adds a nullable `receiver` column to `outbox` and `held_wakes` (NULL is the Steward, as every row so far) and freezes it with the row.
+(The rollback needs the backup in the go-live steps above.) Migration 8 adds a nullable `receiver` column to `outbox` and `held_wakes` (NULL is the Steward, as every row so far) and freezes it with the row.
 `store.wakes.held(lane)` and `rows(status, lane)` read one receiver's wakes (`null`: the Steward's, a name: that receiver's, nothing: all of them);
 `compose` takes one receiver's held wakes only. The Steward's relay passes `null`, the desk's passes `"desk"`.

@@ -24,7 +24,8 @@
  * notified once. It folds in the 07:00 "Morning alert triage" (docs/alert-desk-prompt.md, "Morning sweep").
  */
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, renameSync, unlinkSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import type { Outbox, WakeDraft } from "./deliver.ts";
 import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import type { Item, Store } from "./store.ts";
@@ -152,7 +153,15 @@ export function morningMessage(day: string, handled: { family: string; wakes: nu
 // ---- the inbox file ---------------------------------------------------------------------------------
 
 const MAX_READ = 4 * 1024 * 1024;
-export type Cursor = { offset: number; inode: number; /** Inbox files already renamed away, read once more after `after` in case a writer still held the old file. */ retired: { path: string; offset: number; after: number }[] };
+export type Retired = { path: string; offset: number; after: number };
+export type Cursor = {
+	offset: number;
+	inode: number;
+	/** Inbox files already renamed away, read once more after `after` in case a writer still held the old file. A file leaves this list only in a saved cursor, and is deleted after that. */
+	retired: Retired[];
+	/** Saved BEFORE the inbox is renamed, so a crash at any step of a rotation can be finished: `from` is how far the cursor had read. */
+	rotating?: { path: string; from: number; inode: number };
+};
 export const CURSOR_KEY = "alert-desk-inbox";
 const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
 
@@ -173,16 +182,68 @@ function readLines(path: string, from: number): { lines: string[]; end: number; 
 	} finally { closeSync(fd); }
 }
 
-export type Read = { events: DeskEvent[]; bad: number; stale: number };
-/** Reads what is new in the inbox (and any retired file due a last read), advancing `cur`. Events are oldest first. */
+export type Read = { events: DeskEvent[]; bad: number; stale: number; /** Retired files read in full by this call. They leave the cursor, and are deleted, only after the cursor without them is saved. */ retiredRead: Retired[] };
+/** The points of a pass a test can stop at, to prove a crash there loses nothing. */
+export type CrashPoint = "rotation-intent" | "renamed" | "rotation-saved" | "retired-read" | "retired-saved";
+
+/**
+ * Finishes a rotation a crash interrupted. The intent was saved before the rename, so: if the retired file exists the rename happened and the
+ * cursor restarts at the new inbox; if it does not, nothing was renamed and the intent is dropped. Either way nothing unread is lost, because a
+ * rotation only starts when everything up to `from` is already committed.
+ */
+export function recoverRotation(cur: Cursor, now: number): boolean {
+	const r = cur.rotating;
+	if (!r) return false;
+	if (existsSync(r.path)) { cur.retired.push({ path: r.path, offset: r.from, after: now + 60_000 }); cur.offset = 0; cur.inode = 0; }
+	cur.rotating = undefined;
+	return true;
+}
+
+/**
+ * Renames a big inbox away, but only once everything in it is committed (the saved cursor is at its end). The intent is saved BEFORE the
+ * rename, and the retired file is in a saved cursor BEFORE anything reads or deletes it, so no crash between the steps loses a line.
+ */
+export function rotateIfDue(cur: Cursor, inbox: string, now: number, cfg: DeskConfig, save: () => void, crash: (p: CrashPoint) => void = () => {}): boolean {
+	let stat;
+	try { stat = statSync(inbox); } catch { return false; }
+	if (cur.inode === 0 || stat.ino !== cur.inode || cur.offset < stat.size || stat.size <= cfg.rotateBytes) return false;
+	const path = `${inbox}.${now}`;
+	cur.rotating = { path, from: cur.offset, inode: cur.inode };
+	save();
+	crash("rotation-intent");
+	try { renameSync(inbox, path); } catch { cur.rotating = undefined; save(); return false; }
+	crash("renamed");
+	recoverRotation(cur, now);
+	save();
+	crash("rotation-saved");
+	return true;
+}
+
+/** Deletes a retired file a crash left behind after its cursor was saved (named `<inbox>.<ms>`, in no list, and old enough that no pass can still own it). */
+export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
+	const dir = dirname(inbox), base = `${basename(inbox)}.`;
+	let names: string[];
+	try { names = readdirSync(dir); } catch { return; }
+	for (const n of names) {
+		if (!n.startsWith(base) || !/^\d+$/.test(n.slice(base.length))) continue;
+		const path = `${dir}/${n}`;
+		if (now - Number(n.slice(base.length)) < 10 * 60_000 || cur.retired.some((x) => x.path === path) || cur.rotating?.path === path) continue;
+		try { unlinkSync(path); } catch { /* gone */ }
+	}
+}
+
+/**
+ * Reads what is new in the inbox, and every retired file due its last read, advancing `cur` in memory. Nothing is renamed or deleted here:
+ * the caller saves the cursor first. Events are oldest first.
+ */
 export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConfig): Read {
 	const lines: string[] = [];
-	for (const r of [...cur.retired]) {
+	const retiredRead: Retired[] = [];
+	for (const r of cur.retired) {
 		if (now < r.after) continue;
 		const got = readLines(r.path, r.offset);
 		if (got) lines.push(...got.lines);
-		try { unlinkSync(r.path); } catch { /* already gone */ }
-		cur.retired = cur.retired.filter((x) => x !== r);
+		retiredRead.push(r);
 	}
 	const main = readLines(inbox, cur.inode === 0 ? 0 : cur.offset);
 	if (main) {
@@ -190,10 +251,6 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 		const fresh = cur.inode !== 0 && cur.inode !== main.inode ? readLines(inbox, 0) ?? main : main;
 		lines.push(...fresh.lines);
 		cur.offset = fresh.end; cur.inode = fresh.inode;
-		if (fresh.end >= fresh.size && fresh.size > cfg.rotateBytes) {
-			const path = `${inbox}.${now}`;
-			try { renameSync(inbox, path); cur.retired.push({ path, offset: fresh.end, after: now + 60_000 }); cur.offset = 0; cur.inode = 0; } catch { /* kept; tried next pass */ }
-		}
 	}
 	let bad = 0, stale = 0;
 	const events: DeskEvent[] = [];
@@ -204,7 +261,7 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 		events.push(e);
 	}
 	events.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-	return { events, bad, stale };
+	return { events, bad, stale, retiredRead };
 }
 
 // ---- the decision, in the item system ---------------------------------------------------------------
@@ -224,6 +281,8 @@ export type DrainDeps = {
 	/** False while the desk has nowhere to send (no desk URL): nothing is read, so nothing is lost. */
 	canDeliver: boolean;
 	log: (event: string, data?: Record<string, unknown>) => void;
+	/** Tests: called at each step a crash could land on. A throw there is the crash. */
+	crash?: (point: CrashPoint) => void;
 };
 
 /** One pass: read what is new, decide each event through the item system, queue the wakes, then (and only then) keep the cursor. */
@@ -232,7 +291,12 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 	const cfg = readConfig(d.conf);
 	if (!cfg.enabled) return { read: 0, woke: 0, skipped: "off" };
 	if (!d.canDeliver) return { read: 0, woke: 0, skipped: "no-desk" };
+	const crash = d.crash ?? (() => {});
 	const cur = structuredClone(store.state.get<Cursor>(CURSOR_KEY) ?? freshCursor());
+	const save = () => store.state.set(CURSOR_KEY, cur);
+	if (recoverRotation(cur, now)) save();
+	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
+	sweepStrays(cur, d.inbox, now);
 	const r = readInbox(cur, d.inbox, now, cfg);
 	const woke: string[] = [];
 	const deferred = new Set<string>();
@@ -244,7 +308,13 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 		return members.filter((m) => m.deliveryId.startsWith("desk:") && now - m.queuedAt < DAY_MS).length >= cfg.dailyCap;
 	}
 	const parkPending = (e: DeskEvent, sig: string, at: number, reason: Reason) => store.items.observe({ source: ALERT_DESK, kind: "pending", dedupKey: pendingKey(e.family), mode: "silenced", payload: { event: e, sig, reason } satisfies PendingPayload, now: at });
-	const dropPending = (family: string, at: number) => { if (store.items.get(ALERT_DESK, pendingKey(family))?.status === "triggered") store.items.resolve(ALERT_DESK, pendingKey(family), at); };
+	const dropPending = (family: string, at: number, opts: { keepRepeat?: boolean } = {}) => {
+		const p = store.items.get(ALERT_DESK, pendingKey(family));
+		if (p?.status !== "triggered") return;
+		// A change that was undone is cancelled; a 24 h repeat the cap held back is not a change and stays until it is delivered.
+		if (opts.keepRepeat && (p.payload as PendingPayload).reason === "repeat") return;
+		store.items.resolve(ALERT_DESK, pendingKey(family), at);
+	};
 	const absorb = (family: string, at: number) => { const a = store.items.get(ALERT_DESK, family); if (a) store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at }); };
 
 	/** Queues the wake for an event the gates let through, with every item change, in one transaction. `consumed`: the 24 h repeat already notified. */
@@ -288,7 +358,7 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 		store.tx(() => {
 			const o = store.items.observe({ source: ALERT_DESK, kind: "alert", dedupKey: e.family, repeat: repeatEvery(cfg.repeatMs), now: at });
 			if (o.notify) { if (!release(e, sig, "repeat", at, true)) { /* parked */ } }
-			else { absorb(e.family, at); dropPending(e.family, at); }
+			else { absorb(e.family, at); dropPending(e.family, at, { keepRepeat: true }); }
 		});
 	}
 
@@ -326,8 +396,12 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 	store.tx(() => {
 		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" })) if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
 		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" })) if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
-		store.state.set(CURSOR_KEY, cur);
 	});
+	if (r.retiredRead.length) crash("retired-read");
+	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
+	save();
+	if (r.retiredRead.length) crash("retired-saved");
+	for (const x of r.retiredRead) { try { unlinkSync(x.path); } catch { /* already gone */ } }
 	if (r.events.length || r.bad || r.stale || woke.length) d.log("alert-desk", { events: r.events.length, bad: r.bad, stale: r.stale, woke, deferred: deferred.size });
 	return { read: r.events.length, woke: woke.length };
 }

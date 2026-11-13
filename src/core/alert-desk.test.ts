@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
 	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, parseConfig, parseLine, readInbox, severityOf, signature,
-	type Cursor, type DeskConfig, type DeskEvent,
+	type Cursor, type CrashPoint, type DeskConfig, type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
 
@@ -26,9 +26,9 @@ function rig(config: Partial<Record<string, unknown>> = { morningHour: 23 }) {
 	const writeConfig = (c: Record<string, unknown>) => writeFileSync(`${dir}/alert-desk.json`, JSON.stringify(c));
 	writeConfig(config);
 	const logged: { event: string; [k: string]: unknown }[] = [];
-	const pass = (now: number, over: { canDeliver?: boolean } = {}) => {
+	const pass = (now: number, over: { canDeliver?: boolean; crash?: (p: CrashPoint) => void } = {}) => {
 		clock.t = now;
-		return drainAlertDesk({ store, outbox, inbox, conf: dir, now, canDeliver: over.canDeliver ?? true, log: (event, data) => logged.push({ event, ...data }) });
+		return drainAlertDesk({ store, outbox, inbox, conf: dir, now, canDeliver: over.canDeliver ?? true, crash: over.crash, log: (event, data) => logged.push({ event, ...data }) });
 	};
 	/** Every desk wake queued so far, oldest first, as its first line. */
 	const wakes = () => [...store.wakes.rows("all", DESK_RECEIVER).flatMap((r) => r.members), ...store.wakes.held(DESK_RECEIVER)].map((m) => m.deliveryId);
@@ -174,6 +174,42 @@ describe("the daily cap", () => {
 	});
 });
 
+describe("a 24 hour repeat the cap held back is never dropped", () => {
+	/** The alert wakes only: the once-a-day cap note is a wake too. */
+	const alertReasons = (r: ReturnType<typeof rig>) => r.reasons().filter((x) => x === "new" || x === "changed" || x === "repeat");
+	const capped = { morningHour: 23, dailyCap: 1 };
+	/** A wakes; a day later B takes the one slot; A's repeat comes a minute after and the cap holds it back. */
+	function setup() {
+		const r = rig(capped);
+		feed(r, [{ family: "A", title: "A" }, { at: min(24 * 60), family: "B", title: "B" }, { at: min(24 * 60 + 1), family: "A", title: "A" }]);
+		expect(alertReasons(r)).toEqual(["new", "new"]);
+		const pending = r.store.items.get(ALERT_DESK, "A#pending");
+		expect(pending?.status).toBe("triggered");
+		expect((pending?.payload as { reason?: string }).reason).toBe("repeat");
+		return r;
+	}
+	test("a later pass with the cap still full leaves it pending", () => {
+		const r = setup();
+		r.pass(min(24 * 60 + 2));
+		expect(alertReasons(r)).toEqual(["new", "new"]);
+		expect(r.store.items.get(ALERT_DESK, "A#pending")?.status).toBe("triggered");
+	});
+	test("it goes, as a repeat, once the cap frees", () => {
+		const r = setup();
+		r.pass(min(24 * 60 + 2));
+		r.pass(min(48 * 60 + 5));
+		expect(alertReasons(r).filter((x) => x === "repeat")).toHaveLength(1);
+		expect(r.messages().at(-1)).toContain("alert family A");
+		expect(r.store.items.get(ALERT_DESK, "A#pending")?.status).toBe("resolved");
+	});
+	test("an unchanged event for the family in between does not cancel it", () => {
+		const r = setup();
+		feed(r, [{ at: min(24 * 60 + 3), family: "A", title: "A" }]);
+		r.pass(min(48 * 60 + 5));
+		expect(alertReasons(r).filter((x) => x === "repeat")).toHaveLength(1);
+	});
+});
+
 describe("the morning wake", () => {
 	test("local day and hour follow the time zone", () => {
 		expect(localDay(Date.parse("2026-11-13T11:59:00Z"), "Etc/GMT+5")).toEqual({ day: "2026-11-13", hour: 6 });
@@ -232,20 +268,6 @@ describe("the inbox file", () => {
 		writeFileSync(r.inbox, line({ at: min(3), family: "h" }));
 		expect(readInbox(cur, r.inbox, min(4), cfg).events.map((e) => e.family)).toEqual(["h"]);
 	});
-	test("a big, fully read inbox is rotated, and the retired file gets one more read before it is removed", () => {
-		const r = rig();
-		const cur = fresh();
-		const small = { ...cfg, rotateBytes: 1024 };
-		writeFileSync(r.inbox, line({ at: min(0), body: "x".repeat(2000) }));
-		expect(readInbox(cur, r.inbox, min(1), small).events).toHaveLength(1);
-		expect(existsSync(r.inbox)).toBe(false);
-		const retired = cur.retired[0]!.path;
-		appendFileSync(retired, line({ at: min(1), family: "late" }));
-		writeFileSync(r.inbox, line({ at: min(1), family: "new" }));
-		expect(readInbox(cur, r.inbox, min(1), small).events.map((e) => e.family)).toEqual(["new"]);
-		expect(readInbox(cur, r.inbox, min(3), small).events.map((e) => e.family)).toEqual(["late"]);
-		expect(existsSync(retired)).toBe(false);
-	});
 });
 
 describe("a drain pass", () => {
@@ -277,5 +299,52 @@ describe("a drain pass", () => {
 		appendFileSync(r.inbox, line({ at: T0 + 4 * DAY_MS }));
 		r.pass(T0 + 4 * DAY_MS);
 		expect(r.reasons().at(-1)).toBe("new");
+	});
+
+	describe("a crash at any step of a rotation or of reading a retired file loses no event", () => {
+		const points: CrashPoint[] = ["rotation-intent", "renamed", "rotation-saved", "retired-read", "retired-saved"];
+		const familyOf = (m: string) => /alert family (\S+)/.exec(m)?.[1];
+		for (const point of points) {
+			test(point, () => {
+				const r = rig({ morningHour: 23, rotateBytes: 1024 });
+				const big = "x".repeat(2000);
+				appendFileSync(r.inbox, line({ at: T0 - 2000, family: "fa", title: "a", body: big }) + line({ at: T0 - 1000, family: "fb", title: "b", body: big }));
+				r.pass(T0);
+				expect(r.messages().map(familyOf).sort()).toEqual(["fa", "fb"]);
+				const rotatedAt = T0 + 60_000;
+				let crashed = false;
+				const crash = (p: CrashPoint) => {
+					if (crashed || p !== point) return;
+					crashed = true;
+					if (p === "rotation-intent") appendFileSync(r.inbox, line({ at: rotatedAt, family: "fl", title: "l" }));
+					if (p === "renamed" || p === "rotation-saved") appendFileSync(`${r.dir}/inbox.jsonl.${rotatedAt}`, line({ at: rotatedAt, family: "fl", title: "l" }));
+					throw Error(`crash at ${p}`);
+				};
+				const pass = (now: number) => { try { r.pass(now, { crash }); } catch (e) { if (!String(e).includes("crash at")) throw e; } };
+				pass(rotatedAt);
+				if (!["rotation-intent", "renamed", "rotation-saved"].includes(point)) appendFileSync(`${r.dir}/inbox.jsonl.${rotatedAt}`, line({ at: rotatedAt, family: "fl", title: "l" }));
+				appendFileSync(r.inbox, line({ at: rotatedAt + 1000, family: "fn", title: "n" }));
+				for (const now of [T0 + 130_000, T0 + 200_000, T0 + 300_000, T0 + 400_000]) pass(now);
+				expect(crashed).toBe(true);
+				// Every event woke the desk exactly once: replays are absorbed by the items.
+				expect(r.messages().map(familyOf).sort()).toEqual(["fa", "fb", "fl", "fn"]);
+				expect(r.store.state.get<Cursor>(CURSOR_KEY)?.retired).toEqual([]);
+				expect(r.store.state.get<Cursor>(CURSOR_KEY)?.rotating).toBeUndefined();
+				r.pass(T0 + 20 * 60_000);
+				expect(existsSync(`${r.dir}/inbox.jsonl.${rotatedAt}`)).toBe(false);
+			});
+		}
+		test("a rotation with no crash does the same", () => {
+			const r = rig({ morningHour: 23, rotateBytes: 1024 });
+			appendFileSync(r.inbox, line({ at: T0 - 1000, family: "fa", title: "a", body: "x".repeat(2000) }));
+			r.pass(T0);
+			r.pass(T0 + 60_000);
+			expect(existsSync(r.inbox)).toBe(false);
+			expect(r.store.state.get<Cursor>(CURSOR_KEY)?.retired).toHaveLength(1);
+			appendFileSync(r.inbox, line({ at: T0 + 70_000, family: "fn", title: "n" }));
+			r.pass(T0 + 130_000);
+			expect(r.messages().map((m) => /alert family (\S+)/.exec(m)?.[1])).toEqual(["fa", "fn"]);
+			expect(r.store.state.get<Cursor>(CURSOR_KEY)?.retired).toEqual([]);
+		});
 	});
 });
