@@ -278,7 +278,9 @@ export function createRecovery(d: RecoverDeps) {
 			if (r.detail.startsWith("not sent:")) { tr.pings = p.attempt!.pings; if (p.attempt!.retried) tr.retried = p.attempt!.retried; else delete tr.retried; }
 			save();
 			d.log("recover-ping-failed", { threadId, runId: p.runId, detail: r.detail });
-			d.wake(threadId, p.kind, `the automatic retry could not be sent (${r.detail}), so nothing has been retried`);
+			d.wake(threadId, p.kind, r.detail.startsWith("not sent:")
+				? `the automatic retry could not be sent (${r.detail}), so nothing has been retried`
+				: `the automatic retry may have been delivered (${r.detail}); it is counted as sent, so check the thread before retrying again`);
 			return;
 		}
 		save();
