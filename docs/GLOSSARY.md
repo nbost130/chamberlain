@@ -57,6 +57,22 @@ the reason is given.
 | `evaluation_error` (kind and dedup key; `EVALUATION_ERROR`) | A source could not be evaluated: the check exited non-zero, printed nonsense or timed out. Its findings keep their state, one item notifies every run until it runs again, and the sweep becomes a full one. Was "blind" (`blind`, `BLIND`). | Error state | Grafana: "The Error state is triggered when the alert rule fails to evaluate its query" ([docs](https://grafana.com/docs/grafana/latest/alerting/fundamentals/alert-rule-evaluation/nodata-and-error-states/)). **Not** *No Data*: that is "the alert rule query runs successfully but returns no data points". For a Chamberlain check an empty list is a *clear* result, so No Data would mislead. Nagios's *UNKNOWN* is the same idea ([guidelines](https://nagios-plugins.org/doc/guidelines.html)). |
 | Notification log (source `notification-log`, kind `sent`) | One item per wake that already went out, by dedup key, so none goes again. Was source `wake`, kind `fired`. | Notification log (`nflog`) | Alertmanager's `nflog` is an append-only log of notifications sent, used by its dedup stage ([nflog](https://pkg.go.dev/github.com/prometheus/alertmanager/nflog)). |
 
+## The Alert Desk
+
+The desk is a standing thread that reads every alert and says what it is (docs/alert-desk.md). Names follow Alertmanager and PagerDuty where they exist.
+
+| Term | Definition | Standard term | Source or reason |
+| --- | --- | --- | --- |
+| Alert Desk (receiver `desk`) | The standing thread alerts are routed to, with its own wake URL, relay and busy gate. | Receiver | Alertmanager: a *receiver* is "a named configuration of notification integrations" ([configuration](https://prometheus.io/docs/alerting/latest/configuration/)). `receiver` is the outbox and held-wake column: absent is the Steward, `desk` is the desk. |
+| Inbox (`inbox.jsonl`) | The file alert sources append one JSON line to, drained by the daemon: `{v, source, family, title, body, ts, severity}`. | Spool / queue | Kept: it is a plain append-only file that any process can write with one `write`, which is what a spool is. |
+| Family (`family`) | The stable identity of one alert condition: two failing units are two families. Items of source `alert-desk` are keyed by it. | Group key / `dedup_key` | Alertmanager's *group key* and PagerDuty's `dedup_key` identify an alert the same way ([PagerDuty](https://docs.pagerduty.com/developer/send-alert-event)). The sources choose it; the drain does not compute it. |
+| Window (item kind `window`, `windowMs`) | At most one wake per family per 15 minutes, however many events arrive. | `group_interval` | Alertmanager: "How long to wait before sending a notification about new alerts that are added to a group" ([configuration](https://prometheus.io/docs/alerting/latest/configuration/)). |
+| Repeat (`repeatMs`) | An unchanged family wakes again after 24 hours; a changed one wakes at once. | `repeat_interval` | The same page. A change is a new occurrence of the item (`resolve`, then `observe`), as a returning alert is in PagerDuty. |
+| Signature | What "changed" means for a family: its severity, its title and the first 300 characters of its body, with timestamps and numbers blanked. | Fingerprint | Alertmanager's *fingerprint* identifies a label set; this one identifies the content, so a counter ticking is not news. |
+| Pending (item kind `pending`, mode `silenced`) | A wake the window or the cap held back, kept to go on a later pass. | Silence-and-hold | An item in mode `silenced` is tracked and never notifies (see `mode` above); nothing is dropped. |
+| Daily cap (`dailyCap`) | At most this many alert wakes in a rolling 24 hours (0: no cap). Counted from the desk's own outbox rows. The desk is told once a day (item kind `cap-note`). | Rate limit | Chamberlain-specific: Alertmanager has none; PagerDuty rate-limits its Events API for the same reason. |
+| Morning wake (item kind `morning`) | The first pass of each local day from `morningHour` sends one wake that runs the desk's Morning sweep. | - | Chamberlain-specific: it replaces the operator's 07:00 triage task. |
+
 ## Sources and the sweep
 
 | Term | Definition | Standard term | Source or reason |

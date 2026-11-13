@@ -16,6 +16,7 @@
  *   - no `inspect`         a turn end wakes once per turn, with no excerpt, question or report gating
  *   - no `stewardProbe`    no stall alarm, no context-size tracking, no compaction
  *   - no `compact`         the daemon only alarms that the Steward is over its size
+ *   - no `alertDesk`       alerts are not routed to a desk thread: the inbox is never drained
  *   - no `transcriptPath`  Steward health reports "unavailable"
  */
 import type { Gate } from "./hold.ts";
@@ -215,7 +216,19 @@ export type ThreadFactsRow = { id: string; archived: boolean; settled: boolean; 
 /** A whole read of an adapter's server. `complete` is false when the answer may be partial, and then it says nothing about a thread it lacks. */
 export type ThreadSnapshot = { complete: boolean; threads: ThreadFactsRow[] };
 
-export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot";
+export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot" | "alertDesk";
+
+/**
+ * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
+ * (src/core/alert-desk.ts) into wakes for the `desk` receiver, and a second relay sends them here, so the desk holds and digests on its own
+ * thread's state, never the Steward's.
+ */
+export type AlertDeskLane = {
+	/** How a wake reaches the desk thread. Its `ready()` is false until the operator has made the desk (no URL), and then nothing is drained. */
+	wake: WakeTransport;
+	/** Does the desk thread have a turn running or queued? Like `Adapter.isBusy`, for the desk's thread. */
+	isBusy(): Gate;
+};
 
 export interface Adapter {
 	/** The registry name: "t3", "fake". */
@@ -257,6 +270,8 @@ export interface Adapter {
 	snapshot?(): Promise<ThreadSnapshot>;
 	/** How a compaction request reaches the Steward. Its `send` takes no message. */
 	readonly compact?: WakeTransport;
+	/** The Alert Desk thread: its wake transport and busy gate. */
+	readonly alertDesk?: AlertDeskLane;
 
 	// -- wording --
 
@@ -312,7 +327,7 @@ export type AdapterEntry = { create: AdapterFactory; brief?: (ctx: { repo: strin
 export function has<K extends OptionalCapability>(a: Adapter, cap: K): a is Adapter & Required<Pick<Adapter, CapabilityMethod[K]>> {
 	return a.capabilities.includes(cap);
 }
-type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot" };
+type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot"; alertDesk: "alertDesk" };
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
 export function conformance(a: Adapter): string[] {
@@ -320,7 +335,7 @@ export function conformance(a: Adapter): string[] {
 	if (!a.id) bad.push("no id");
 	for (const m of ["watch", "isBusy", "post"] as const) if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
 	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function") bad.push("required capability wake needs ready() and send()");
-	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot };
+	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot, alertDesk: a.alertDesk };
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);
 		if (declared && !impl) bad.push(`declares ${cap} but does not implement it`);

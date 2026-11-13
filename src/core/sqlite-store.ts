@@ -317,9 +317,9 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 	};
 
 	// ---- wakes --------------------------------------------------------------------------------------
-	const toHeld = (r: Row): HeldItem => ({ deliveryId: r.delivery_id as string, message: (r.message as string | undefined) ?? "", queuedAt: r.queued_at as number, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}) });
+	const toHeld = (r: Row): HeldItem => ({ deliveryId: r.delivery_id as string, message: (r.message as string | undefined) ?? "", queuedAt: r.queued_at as number, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}), ...(r.receiver ? { receiver: r.receiver as string } : {}) });
 	const toRow = (r: Row): OutboxRow => ({
-		id: r.id as number, deliveryId: r.delivery_id as string, message: r.message as string, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}),
+		id: r.id as number, deliveryId: r.delivery_id as string, message: r.message as string, ...(r.kind ? { kind: r.kind as string } : {}), ...(r.thread ? { thread: r.thread as string } : {}), ...(r.receiver ? { receiver: r.receiver as string } : {}),
 		createdAt: r.created_at as number, folded: r.folded as number, status: r.status as OutboxStatus, attempts: r.attempts as number,
 		...(r.last_attempt_at !== null ? { lastAttemptAt: r.last_attempt_at as number } : {}), ...(r.finished_at !== null ? { finishedAt: r.finished_at as number } : {}),
 		members: all("SELECT * FROM outbox_members WHERE outbox_id = ? ORDER BY queued_at, rowid", r.id).map(toHeld),
@@ -329,16 +329,16 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 	const find = (id: string) => { const r = one("SELECT o.* FROM outbox o WHERE o.delivery_id = ? OR o.id = (SELECT outbox_id FROM outbox_members WHERE delivery_id = ?)", id, id); return r ? toRow(r) : undefined; };
 	/** Inserts a row and binds its members, inside the caller's transaction. */
 	function insertRow(w: WakeRow & { folded?: number }, members: HeldItem[]): number {
-		const id = run("INSERT INTO outbox (delivery_id, message, kind, thread, created_at, folded) VALUES (?, ?, ?, ?, ?, ?)", w.deliveryId, w.message, w.kind ?? null, w.thread ?? null, w.queuedAt, w.folded ?? 0).lastInsertRowid as number;
+		const id = run("INSERT INTO outbox (delivery_id, message, kind, thread, receiver, created_at, folded) VALUES (?, ?, ?, ?, ?, ?, ?)", w.deliveryId, w.message, w.kind ?? null, w.thread ?? null, w.receiver ?? null, w.queuedAt, w.folded ?? 0).lastInsertRowid as number;
 		for (const m of members) run("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, ?, ?)", m.deliveryId, id, m.queuedAt, m.kind ?? null, m.thread ?? null);
 		return id;
 	}
 	const wakes: Store["wakes"] = {
 		enqueue: (w) => tx(() => { if (known(w.deliveryId)) return false; insertRow(w, [w]); return true; }),
-		hold: (w) => tx(() => { if (known(w.deliveryId)) return false; run("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, thread) VALUES (?, ?, ?, ?, ?)", w.deliveryId, w.message, w.queuedAt, w.kind ?? null, w.thread ?? null); return true; }),
-		held: () => all("SELECT * FROM held_wakes ORDER BY seq").map(toHeld),
-		compose: (now, compose) => tx(() => {
-			const held = wakes.held();
+		hold: (w) => tx(() => { if (known(w.deliveryId)) return false; run("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, thread, receiver) VALUES (?, ?, ?, ?, ?, ?)", w.deliveryId, w.message, w.queuedAt, w.kind ?? null, w.thread ?? null, w.receiver ?? null); return true; }),
+		held: (lane) => (lane === undefined ? all("SELECT * FROM held_wakes ORDER BY seq") : all("SELECT * FROM held_wakes WHERE receiver IS ? ORDER BY seq", lane)).map(toHeld),
+		compose: (now, compose, lane) => tx(() => {
+			const held = wakes.held(lane);
 			if (!held.length) return undefined;
 			const c = compose(held);
 			const members = held.filter((h) => c.members.includes(h.deliveryId));
@@ -346,7 +346,9 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 			for (const m of members) run("DELETE FROM held_wakes WHERE delivery_id = ?", m.deliveryId);
 			return toRow(one("SELECT * FROM outbox WHERE id = ?", id)!);
 		}),
-		rows: (status = "pending") => (status === "all" ? all("SELECT * FROM outbox ORDER BY id") : all("SELECT * FROM outbox WHERE status = ? ORDER BY id", status)).map(toRow),
+		rows: (status = "pending", lane) => (lane === undefined
+			? (status === "all" ? all("SELECT * FROM outbox ORDER BY id") : all("SELECT * FROM outbox WHERE status = ? ORDER BY id", status))
+			: (status === "all" ? all("SELECT * FROM outbox WHERE receiver IS ? ORDER BY id", lane) : all("SELECT * FROM outbox WHERE status = ? AND receiver IS ? ORDER BY id", status, lane))).map(toRow),
 		find,
 		isDelivered: (id) => (find(id)?.status ?? (one("SELECT outcome FROM wake_tombstones WHERE delivery_id = ?", id)?.outcome as string | undefined)) === "delivered",
 		known,

@@ -16,10 +16,11 @@ export type { HeldItem, HoldClock, WakeMeta };
 /** What the Steward's thread is doing. Unknown (an unreadable source) holds like busy: the ceiling still lets a wake out. */
 export type Gate = "idle" | "busy" | "unknown";
 /**
- * The only wakes that may wait for the Steward to go idle: a thread finishing a turn, the routine sweep. Everything
+ * The only wakes that may wait for their thread to go idle: a thread finishing a turn, the routine sweep, and the Alert Desk's alerts (which
+ * go to the desk's own relay and gate, never held behind the Steward). Everything
  * else (a question or approval, a failure, a decision-queue answer, any kind not named here) goes out at once.
  */
-export const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep"]);
+export const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk"]);
 export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta && HOLDABLE_KINDS.has(meta.kind));
 
 /** A Steward busy this long gets the digest anyway, and never more than one such digest per window. */

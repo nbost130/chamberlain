@@ -17,7 +17,7 @@ import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
 import type { Question } from "../core/questions.ts";
 
-export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot"];
+export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk"];
 
 /** What `inspect` reports for one thread; anything unset reads as empty. */
 export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
@@ -37,6 +37,8 @@ export type FakeAdapter = Adapter & {
 	wakes: { deliveryId: string; message: string }[];
 	attempts: number;
 	compactions: string[];
+	deskWakes: { deliveryId: string; message: string }[];
+	deskAttempts: number;
 	posted: { item: Question; opts: PostOptions }[];
 	titles: string[];
 	answers: { card: WaitingCard; choice: number; sig: string }[];
@@ -57,6 +59,8 @@ export type FakeAdapter = Adapter & {
 	emit(e: ThreadEvent): void;
 	unlist(id: string): void;
 	setBusy(g: Gate): void;
+	setDeskBusy(g: Gate): void;
+	setDeskReady(ready: boolean): void;
 	setWakeReady(ready: boolean): void;
 	setWakeStatus(f: () => number): void;
 };
@@ -68,6 +72,8 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 	let busy: Gate = "idle";
 	let wakeReady = opts.wakeReady ?? true;
 	let status = opts.wakeStatus ?? (() => 202);
+	let deskBusy: Gate = "idle";
+	let deskReady = true;
 	const handles = {
 		/** Every wake accepted, in order. */
 		wakes: [] as { deliveryId: string; message: string }[],
@@ -75,6 +81,9 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		attempts: 0,
 		/** Every compaction request. */
 		compactions: [] as string[],
+		/** Every wake the Alert Desk's transport accepted, in order. */
+		deskWakes: [] as { deliveryId: string; message: string }[],
+		deskAttempts: 0,
 		posted: [] as { item: Question; opts: PostOptions }[],
 		titles: [] as string[],
 		answers: [] as { card: WaitingCard; choice: number; sig: string }[],
@@ -144,6 +153,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		...(caps.has("send") ? { send: async (threadId: string, text: string, seed: string, identity?: string) => { handles.sends.push({ threadId, text, seed, ...(identity ? { identity } : {}) }); return { ok: true, detail: `sent to fake:${threadId}` }; } } : {}),
 		...(caps.has("stewardProbe") ? { stewardProbe: () => fake.probe } : {}),
 		...(caps.has("snapshot") ? { snapshot: async () => { if (fake.snapshotError) throw Error(fake.snapshotError); return { complete: fake.snapshotComplete, threads: [...fake.listed.values()].map((t) => { const n = normalizeThread(t); return { id: n.id, archived: n.archived, settled: n.settled, pendingRequestId: n.pendingRequestId, status: n.status }; }) }; } } : {}),
+		...(caps.has("alertDesk") ? { alertDesk: { wake: { ready: () => deskReady, send: async (deliveryId: string, message: string) => { handles.deskAttempts++; handles.deskWakes.push({ deliveryId, message }); return { ok: true, status: 202 }; } }, isBusy: () => deskBusy } } : {}),
 		...(caps.has("compact") ? { compact: { ready: () => wakeReady, send: async (deliveryId: string) => { handles.compactions.push(deliveryId); return { ok: true, status: 202 }; } } satisfies WakeTransport } : {}),
 	};
 	Object.assign(adapter, optional);
@@ -153,6 +163,8 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		emit(e: ThreadEvent) { fake.listed.set(e.thread.id, e.thread); if (sink) sink.event(e); else early.push(e); },
 		unlist(id: string) { fake.listed.delete(id); },
 		setBusy(g: Gate) { busy = g; },
+		setDeskBusy(g: Gate) { deskBusy = g; },
+		setDeskReady(ready: boolean) { deskReady = ready; },
 		setWakeReady(ready: boolean) { wakeReady = ready; },
 		setWakeStatus(f: () => number) { status = f; },
 	});

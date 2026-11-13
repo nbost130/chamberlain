@@ -164,7 +164,9 @@ export interface AwayStore {
 // ---- wakes: the transactional outbox, held items ----------------------------------------------------
 
 /** What a wake is about, so a repeat can be told from a new event. A wake about no thread (a sweep) has a kind alone. */
-export type WakeMeta = { kind: string; thread?: string };
+export type WakeMeta = { kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string };
+/** Which receiver's wakes a read is about: `null` is the Steward's, a name is that receiver's, and `undefined` is every receiver's. */
+export type Lane = string | null | undefined;
 /** A wake as a producer hands it in: its one delivery id, its text, when it was made and what it is about. */
 export type WakeRow = { deliveryId: string; message: string; queuedAt: number } & Partial<WakeMeta>;
 /** A holdable wake waiting for the Steward to go idle. Not yet bound to any outbox row. */
@@ -179,7 +181,7 @@ export type HoldClock = { busySince?: number; seenAt?: number; lastPostAt?: numb
 export type OutboxStatus = "pending" | "delivered" | "dead_letter" | "cancelled";
 /** One outbox row. Everything but status, attempts and the two times is frozen when the row is created (a database trigger refuses a change). */
 export type OutboxRow = {
-	id: number; deliveryId: string; message: string; kind?: string; thread?: string; createdAt: number;
+	id: number; deliveryId: string; message: string; kind?: string; thread?: string; receiver?: string; createdAt: number;
 	/** For a digest: how many held wakes were folded into a later one about the same thread and kind. */
 	folded: number;
 	status: OutboxStatus; attempts: number; lastAttemptAt?: number; finishedAt?: number;
@@ -198,16 +200,16 @@ export interface WakeStore {
 	enqueue(w: WakeRow): boolean;
 	/** A producer's holdable wake: held until the relay composes it into a row. False (nothing written) when the id is already known. */
 	hold(w: HeldItem): boolean;
-	/** Every held item, oldest first. */
-	held(): HeldItem[];
+	/** Every held item, oldest first. `lane` picks one receiver's (`null`: the Steward's); without it, all of them. */
+	held(lane?: Lane): HeldItem[];
 	/**
 	 * The relay's composition, ONE transaction: `compose` picks the row from the items held now; the row is inserted with its members bound
 	 * (a member already bound to another row is refused by the primary key, and the whole composition with it) and they leave the held store.
 	 * Undefined when nothing is held.
 	 */
-	compose(now: number, compose: (held: HeldItem[]) => Composed): OutboxRow | undefined;
-	/** Rows by status (default pending), oldest first. */
-	rows(status?: OutboxStatus | "all"): OutboxRow[];
+	compose(now: number, compose: (held: HeldItem[]) => Composed, lane?: Lane): OutboxRow | undefined;
+	/** Rows by status (default pending), oldest first. `lane` picks one receiver's rows; without it, all of them. */
+	rows(status?: OutboxStatus | "all", lane?: Lane): OutboxRow[];
 	/** The row an id belongs to: as its own delivery id or as a member. */
 	find(deliveryId: string): OutboxRow | undefined;
 	/** Is this id bound to a delivered row? */
