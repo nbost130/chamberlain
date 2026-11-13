@@ -541,7 +541,10 @@ row already there, and two triggers. `retired_how` and its CHECK are left as the
 rebuild would drop any index or trigger added to `rulings` and, with foreign keys on, delete the rows of a table that references it `ON DELETE
 CASCADE`. A housekeeping retirement is stored as `retired_how = 'retired'` with the reason in `retired_reason`, which the triggers hold to
 `superseded`, `duplicate`, `expired` or `repeat`; the store reads the pair back as one `retiredHow`. A build that does not
-know migration 11 refuses the database, like any newer one (`DatabaseTooNewError`). `legacy-import.ts` brings the same fields in from an old
+know migration 11 refuses the database, like any newer one (`DatabaseTooNewError`). **Development databases:** migrations 10 and 11 were edited in
+place before release, so a database that ran an earlier draft of either records the version and is never upgraded again; it must be rebuilt
+(delete `chamberlain.db` and its `-wal` and `-shm` files, then start again or run `legacy-import.ts`). A draft build that knew an earlier 11 also
+opens a database this 11 made without refusing it. Only databases from unreleased builds are affected. `legacy-import.ts` brings the same fields in from an old
 `rulings.jsonl`, leaves out and notes any that are malformed, and never carries the earlier system's own bookkeeping.
 
 ## Why these seams

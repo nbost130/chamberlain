@@ -378,8 +378,10 @@ BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 -- CHECK are left exactly as they are: SQLite cannot change a CHECK in place, and rebuilding the table would drop any index or trigger added to it and, with
 -- foreign keys on, delete the rows of any table that references it ON DELETE CASCADE. So this migration only adds: columns (NULL for every row already
 -- there) and two triggers that hold retired_reason to its four values, which a plain CREATE TRIGGER can add.
--- Unreleased, and edited in place while its branch was open: a development database that ran an earlier draft of 11 (the table rebuild) is not
--- upgraded again and must be rebuilt (delete chamberlain.db and its -wal and -shm files, then start again or run legacy-import.ts).
+-- Unreleased, and edited in place while its branch was open. DEVELOPMENT DATABASES ONLY: a database that ran an earlier draft of 10 or 11 (11's draft
+-- rebuilt the table) records version 11 and is never upgraded again, so it must be rebuilt (delete chamberlain.db and its -wal and -shm files, then start
+-- again or run legacy-import.ts). The reverse is not caught either: a draft build that knew an earlier 11 opens a database this 11 made, because the
+-- version number is the same, so do not point a draft build at it. A database migrated only by released builds has neither problem.
 ALTER TABLE rulings ADD COLUMN retired_reason TEXT;
 ALTER TABLE rulings ADD COLUMN retired_why TEXT;
 ALTER TABLE rulings ADD COLUMN superseded_by TEXT;
