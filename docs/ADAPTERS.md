@@ -94,6 +94,11 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   reject (the core logs it and goes on); `instruction` never rejects, it returns a state (`complete`, `truncated`, `failed`)
   that says whether "nothing to report" can be believed. Without `inspect` the core has no way to know who instructed a
   thread, so a turn end is reported once per turn instead of only for work the Steward sent.
+- **Card holds read `waiting`.** While the operator is away, every `approval_request`, `secret_request` or `link_request` that
+  `waiting` reports is held behind a pointer question (src/core/card-hold.ts). Map your backend's own kinds onto `WaitKind`
+  there, give each card a stable `requestId` (the same one `ThreadState.pendingRequestId` carries, so the hold closes when it
+  changes), and keep `label` to a short name of what is asked: the core copies `type`, `requestId` and `label` and nothing else,
+  so a value or a prompt belongs in `questions`, which the hold never reads.
 - **`listWaiting` and `answer`** are the page's card mirror. `listWaiting({ skipThreads, linkBase })` returns
   `WaitingCard`s and throws when the server cannot be read. Each card carries a `sig`, a fingerprint of everything it asks;
   `answer(card, choice, sig)` must re-read the card live and refuse (`kind: "stale"`) unless it is unchanged, and must

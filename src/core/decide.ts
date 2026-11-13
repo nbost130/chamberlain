@@ -1,4 +1,4 @@
-import { principal } from "./config.ts";
+import { principal, principalPoss } from "./config.ts";
 import type { ThreadState, WakeKind } from "./adapter.ts";
 
 /** Pure rules: which thread transitions are worth waking the Steward for. They read the normalized ThreadState (adapter.ts). */
@@ -176,7 +176,7 @@ export function needsCompact(usedTokens: number | undefined, limit: number, cool
 export type RightsSent = { hash: string; used?: number; at?: string; steward?: string; session?: string; /** The rights epoch it was written under (rights-sent.ts, `rightsEpoch`); absent is 0. */ epoch?: number };
 /** The one line a wake carries when the rights and rulings have not changed since the full text went out at `at`. The hand-off holds them. */
 export const rightsUnchanged = (at?: string) => `Decision rights and rulings unchanged since ${at ?? "your last wake"} and still in force; your hand-off (steward-brief.md) has them.`;
-export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Hold anything on the ASK list and tell ${principal()}.`;
+export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Take no action on anything on the ASK list: put it on ${principalPoss()} queue with ask.ts, and hold it only with --item.`;
 /** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
 /**

@@ -157,7 +157,7 @@
 
 	function card(it) {
 		const c = el("div", "dq-card");
-		c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), el("div", "dq-title", it.title));
+		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
 		if (it.context) c.append(context(it.context));
 		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
 		if (imgs.length) {

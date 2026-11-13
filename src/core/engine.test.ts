@@ -4,7 +4,7 @@
  * store, on a scratch directory, and reads the wake the fake received.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
@@ -13,7 +13,7 @@ import { memStore } from "../testing/store.ts";
 import { MIGRATIONS } from "./migrations.ts";
 import { openStore } from "./sqlite-store.ts";
 import { appendHeld, heldOpen } from "./afk.ts";
-import { askQuestion, claimWake, pageClaim } from "./questions.ts";
+import { askQuestion, claimWake, getQuestion, pageClaim, questionStates } from "./questions.ts";
 import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
 import type { Judge } from "./judge.ts";
 import { withDeliveryId } from "./deliver.ts";
@@ -127,6 +127,53 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 		await r.quiet();
 		expect(r.fake.wakes).toEqual([]);
 		expect(heldOpen(r.store).map((h) => h.what).join("\n")).toContain("command or permission approval: deploy");
+	});
+
+	test("(d) while away, a card is held behind a pointer question that is posted once and closes when the card leaves", async () => {
+		const r = rig();
+		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		r.fake.threads.set("t1", { waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }] });
+		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1", title: "Release" }) });
+		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
+		const qs = [...questionStates(r.store).values()];
+		expect(qs.map((q) => [q.cardRequest, q.server, q.status])).toEqual([["a1", "fake", "open"]]);
+		expect(heldOpen(r.store).map((h) => h.item)).toEqual([qs[0]!.id]);
+		await r.until("the post", () => r.fake.posted.length === 1);
+		expect(r.fake.posted[0]!.item.id).toBe(qs[0]!.id);
+		// Seen again: nothing new is filed, held or posted.
+		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1", title: "Release" }) });
+		await r.quiet();
+		expect(questionStates(r.store).size).toBe(1);
+		expect(heldOpen(r.store)).toHaveLength(1);
+		expect(r.fake.posted).toHaveLength(1);
+		// Answered on the card: the card leaves the thread, and the question and the hold close with it.
+		r.fake.emit({ kind: "state", thread: thread("t1", "running", { title: "Release" }) });
+		await r.until("the question closed", () => r.events.some((e) => e.event === "card-question-closed"));
+		expect(getQuestion(r.store, qs[0]!.id)!.status).toBe("answered-on-card");
+		expect(heldOpen(r.store)).toEqual([]);
+		expect(r.fake.wakes).toEqual([]);
+	});
+
+	test("(d) a secret card held while away copies nothing of the card's content anywhere, and its question is never posted", async () => {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-secret-`);
+		dirs.push(root);
+		const store = openStore(`${root}/chamberlain.db`);
+		const r = rig({ store });
+		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		const SENTINEL = "plain-SENTINEL-not-a-key";
+		r.fake.threads.set("t1", { lastMessage: "need the key", waiting: [{ type: "secret_request", requestId: "s1", label: "STRIPE_KEY", questions: [{ question: `value: ${SENTINEL}`, options: [{ label: SENTINEL, description: SENTINEL }] }] }] });
+		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "s1" }) });
+		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
+		await r.quiet();
+		const qs = [...questionStates(store).values()];
+		expect(qs.map((q) => [q.secret, q.cardRequest])).toEqual([[true, "s1"]]);
+		expect(r.fake.posted).toEqual([]);
+		expect(r.fake.wakes).toEqual([]);
+		expect(JSON.stringify(r.events)).not.toContain("SENTINEL");
+		await r.engine.stop();
+		engines.splice(engines.indexOf(r.engine), 1);
+		store.close();
+		for (const f of readdirSync(root)) expect(readFileSync(`${root}/${f}`).includes(Buffer.from("SENTINEL"))).toBe(false);
 	});
 
 	test("the Steward's own thread, an archived thread and an excluded thread never wake anyone", async () => {

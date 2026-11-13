@@ -457,6 +457,42 @@ would-be notifications in the `sweep` log event.
 (`relays`) and its evidence rows. A question is answered when its claim exists, and `resolved` when that wake is delivered (or the
 direct send is delivered); set aside with "not now" it is `acknowledged`, still answerable and ranked last.
 
+### Queue first, hold second, settled never twice
+
+Anything that waits on the operator is a **question** first and a **hold** second, and neither is made for something already
+settled. All of it is the one item system: a hold is an item of source `held` whose payload names its question (`item`), a
+question is an item of source `queue`, and "settled" is a read of states that already exist. No ledger was added and no
+schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live in the JSON payload, which older builds ignore).
+
+- **Queue first.** `afk.ts hold` requires `--item <Q-id>` naming a question that is on the queue and still open; it refuses no
+  item, an unknown one, or one already answered. ask.ts takes `"urgent": false` for a question that can wait: it is recorded,
+  ranked below every urgent one (`ranked`, then grouped under NOT URGENT on the page), and nothing is posted where the operator
+  reads, so it sends no notification.
+- **Holds close by their item field only** (`heldForItem`, `itemIdOf`, pass 1 of `hold-reconcile.ts`). An item ID written in a
+  hold's text links it to nothing.
+- **Settled never twice** (`src/core/settled.ts`). Before ask.ts records a question and before `afk.ts hold` writes a hold, the
+  subject is checked against three sources read from the Store: answered questions, rulings in force now (a proposal is not
+  settled, and neither is a ruling that has expired, been superseded or been retired: its topic is open again), and the `decisions` log. Open questions never count. The rules, in order, and each match names the one it used:
+  1. *Strong refs* name one thing, so one shared is a match: a commit SHA (7+ hex with a digit and a letter), a run ID given as a
+     field, a question ID in the title or `--item` (an ID in the context is a pointer to earlier work and does not count).
+  2. *Weak refs* name a subject that gets many questions (a PR or issue number, a branch, a thread title of 12+ characters), so
+     they match only beside the **same topic**: three shared distinctive words, at least half of the shorter title's.
+  3. *Title overlap* (`settledMatch.titleOverlap`, on by default): a two-word title must appear as one phrase (at most one word
+     between) with a word that is not a generic workflow word; a longer title needs three shared words, three quarters of the
+     shorter side, two distinctive, and against a long text every shared word inside a window of `2n + 2` words.
+  Words are lower-cased, stop words dropped and a plural `s` removed from words over four letters; `ignoreWords` and the
+  principal's name never count toward a topic. The rule favours precision: a paraphrase ("Should we call it Atlas?" after "Rename
+  the project to Atlas") is a documented miss that costs one question, while a false match costs a `notSettled` override with a
+  reason, stored on the record. A malformed record is skipped and counted in the output, never silently. The daemon's own alarms
+  are filed with `notSettled: "raised by the daemon: a live system alarm"`, since a live alarm recurs by nature.
+- **Card holds** (`src/core/card-hold.ts`). While the operator is away, the engine holds an approval, secret or link card behind
+  a **pointer question** that it files in the same transaction as the notification record and the hold: one per card (`cardRequest`
+  is the request ID, matched with the server), answered on the card, closed as `answered-on-card` when the card leaves its thread.
+  Which cards exist and their kind come from the adapter's `Inspector.waiting`, normalized to `WaitKind`; the core reads only the
+  kind, the request ID and the label (`cardWaitOf`), never the card's questions, options or a value. A secret card's pointer is
+  itself `secret`, so it is never posted and the page shows it only as a link to its thread; any other pointer is posted once,
+  best effort, through the adapter's `post`.
+
 ### What the guarantee covers, and where it stops
 
 **Covered: a fact that must survive a restart, or be seen by both processes.** Each is a database row, and the database is what

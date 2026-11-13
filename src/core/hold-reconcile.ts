@@ -4,9 +4,8 @@
  * matched again.
  *
  *   1. Items (every tick, database only). A hold tied to a decision-queue item closes when that question is answered, on
- *      any path: the page, a batch, an answer wake, a direct relay, or the card in the backend. The match is afk.ts's own
- *      (the hold's `item` link, or the item ID standing as a word in its text). Nothing is remembered between runs, so
- *      a restart changes nothing.
+ *      any path: the page, a batch, an answer wake, a direct relay, or the card in the backend. The match is the hold's
+ *      structured `item` field alone, never its text. Nothing is remembered between runs, so a restart changes nothing.
  *   2. Refs (every ten minutes). A hold's structured `ref` names what it waits on: a PR or issue, a remote branch, a
  *      thread. The hold closes when the live state shows that thing is done, and the closure says what was seen. Only the
  *      structured fields are read, never the prose. Anything uncertain leaves the hold open: an API error, a malformed
@@ -17,7 +16,7 @@
  * come from a fresh snapshot of each server taken in the pass (never the watchers' cache) and cost no GitHub calls. The engine is given the GitHub reader (core stays free of any one
  * host); tests pass fakes.
  */
-import { closeHeldWhere, cleanRef, heldOpen, itemIdsOf, REF_SHAPES, type Held, type HoldRef } from "./afk.ts";
+import { closeHeldWhere, cleanRef, heldOpen, itemIdOf, REF_SHAPES, type Held, type HoldRef } from "./afk.ts";
 import { QUEUE, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
@@ -32,9 +31,8 @@ const STATE_KEY = "hold-reconcile";
 /* ---------- pass 1: queue items ---------- */
 
 /**
- * Close the holds of every answered question. A hold that only names an item in its text closes only when the answer
- * came after the hold was written: a newer hold that merely mentions an old, answered item is about something else.
- * When the answer's time cannot be read, a text-only match is not acted on.
+ * Close the holds of every answered question, by the hold's structured `item` field only. A hold with no `item` is never
+ * closed by an answer, whatever its text names: it closes through its other refs, or by hand.
  */
 export function reconcileItemHolds(store: Store, now = new Date()): { closed: number } {
 	if (!heldOpen(store).length) return { closed: 0 };
@@ -51,11 +49,9 @@ export function reconcileItemHolds(store: Store, now = new Date()): { closed: nu
 		return { t, how: `Answered${q.answer ? ` "${q.answer.label}"` : ""} on the queue${t ? ` at ${t.slice(0, 16)}Z` : ""}` };
 	};
 	const closed = closeHeldWhere(store, (h) => {
-		for (const id of itemIdsOf(h)) {
-			const a = answered(id);
-			if (a && (h.item === id || (a.t !== undefined && a.t >= h.t))) return `${a.how} (item ${id}); ${BY}.`;
-		}
-		return undefined;
+		const id = itemIdOf(h);
+		const a = id ? answered(id) : undefined;
+		return a ? `${a.how} (item ${id}); ${BY}.` : undefined;
 	}, now);
 	return { closed };
 }

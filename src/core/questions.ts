@@ -4,6 +4,7 @@
  * rows. ask.ts, the page and the daemon all write through the Store, so none rewrites another's lines. What a question
  * looks like now is composed from those rows (`questionStates`).
  */
+import { randomBytes } from "node:crypto";
 import type { Store } from "./store.ts";
 import { principal, Principal } from "./config.ts";
 import type { Ruling } from "./rulings.ts";
@@ -35,6 +36,18 @@ export type Question = {
 	tag?: string;
 	/** A secret is answered in its own thread, never on the page. */
 	secret?: boolean;
+	/**
+	 * `false` marks a question that can wait: it is recorded and listed below every urgent one, and nothing is posted where
+	 * the operator reads, so no notification goes out. Absent means urgent, so every question asked before this field is unchanged.
+	 */
+	urgent?: false;
+	/** Why this was asked although a settled record matched it (ask.ts `notSettled`). Kept for the audit. */
+	notSettled?: string;
+	/**
+	 * The backend request ID of the card this question points to (the daemon's hold for an approval, secret or link card,
+	 * src/core/card-hold.ts). The question is answered on that card, and closes when the card leaves its thread.
+	 */
+	cardRequest?: string;
 	createdAt: string;
 };
 
@@ -49,6 +62,8 @@ export type QuestionState = Question & {
 };
 
 export const QUEUE = "queue";
+/** A new question's ID: `Q-` and a short time-ordered, random tail. */
+export const newItemId = () => `Q-${Date.now().toString(36).slice(-5)}${randomBytes(2).toString("hex")}`;
 export const evidenceRoot = (state: string) => `${state}/evidence`;
 /** Question IDs are minted by ask.ts and are the only names the evidence route accepts as a directory. */
 export const ITEM_ID = /^Q-[a-z0-9]{4,16}$/;
@@ -105,10 +120,14 @@ const KIND_RANK: Record<Kind, number> = { "only-you": 0, product: 1, ruling: 2, 
 /** How many threads an item holds up, read from its blocks text ("blocks 3 threads", "holds 2 PRs"). */
 export const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
 
-/** Pure: the open queue, ranked. Only-you first, then what blocks the most, then the oldest. "Not now" sinks to the end. */
+/**
+ * Pure: the open queue, ranked. Non-urgent questions sit below every urgent one; within each of the two, "not now" sinks
+ * to the end, then only-you first, then what blocks the most, then the oldest.
+ */
 export function ranked(items: Iterable<QuestionState>): QuestionState[] {
 	return [...items].filter((i) => i.status === "open").sort((a, b) =>
-		Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt))
+		Number(a.urgent === false) - Number(b.urgent === false)
+		|| Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt))
 		|| KIND_RANK[a.kind] - KIND_RANK[b.kind]
 		|| blockWeight(b.blocks) - blockWeight(a.blocks)
 		|| a.createdAt.localeCompare(b.createdAt));

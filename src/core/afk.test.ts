@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { askQuestion, type Question } from "./questions.ts";
 import { tmpdir } from "node:os";
 import { appendHeld, brief, briefMarkdown, cleanRef, closeHeld, closeHeldForCard, closeHeldForItem, fyiReason, heldId, heldOpen, mandateLine, noteHeld, readAfk, type Afk, type Held } from "./afk.ts";
 import { openStore } from "./sqlite-store.ts";
@@ -110,13 +111,13 @@ describe("closeHeldForCard", () => {
 });
 
 describe("closeHeldForItem", () => {
-	test("closes what was held against the question by its link or by its id named in the text, and nothing else", () => {
+	test("(c) closes what was held against the question by its item field, and nothing named only in a text", () => {
 		const store = memStore();
 		appendHeld(store, { thread: "A", what: "waits on the answer", item: "Q-abc12" }, new Date("2026-11-06T01:00:00Z"));
 		appendHeld(store, { thread: "B", what: "see Q-abc12 for context" }, new Date("2026-11-06T02:00:00Z"));
 		appendHeld(store, { thread: "C", what: "unrelated Q-zzz99" }, new Date("2026-11-06T03:00:00Z"));
-		expect(closeHeldForItem(store, "Q-abc12", "answered straight to its thread")).toBe(2);
-		expect(heldOpen(store).map((h) => h.thread)).toEqual(["C"]);
+		expect(closeHeldForItem(store, "Q-abc12", "answered straight to its thread")).toBe(1);
+		expect(heldOpen(store).map((h) => h.thread)).toEqual(["B", "C"]);
 		expect(closeHeldForItem(store, "not-an-id", "x")).toBe(0);
 	});
 });
@@ -146,9 +147,18 @@ describe("hold refs, notes and the CLI", () => {
 	}
 	const open = (dir: string) => openStore(dbPath(`${dir}/state`));
 	const scratch = () => mkdtempSync(`${tmpdir()}/chamberlain-afk-`);
+	/** Files a question on the scratch queue, as ask.ts would, so a hold can name it with --item. */
+	const queued = (dir: string, id = "Q-abcd1", extra: Partial<Question> = {}) => {
+		mkdirSync(`${dir}/state`, { recursive: true });
+		const s = open(dir);
+		askQuestion(s, { id, kind: "only-you", title: `question ${id}`, context: "", options: [{ label: "A" }, { label: "B" }], thread: "T", server: "main", createdAt: new Date().toISOString(), ...extra });
+		s.close();
+		return id;
+	};
 
 	test("hold takes --pr, --issue, --branch, --run and --thread and stores them as a structured ref", () => {
 		const dir = scratch();
+		queued(dir);
 		const r = cli(dir, "hold", "Billing", "approve the migration", "left it parked", "--pr", "example-org/app#962", "--issue", "o/r#5", "--branch", "o/r:feat/x", "--run", "01JRUN1234", "--thread", "th-abc1", "--item", "Q-abcd1");
 		expect(r.status).toBe(0);
 		const store = open(dir);
@@ -158,7 +168,7 @@ describe("hold refs, notes and the CLI", () => {
 
 	test("a hold with no flags has no ref, and the old positional card threadId still works", () => {
 		const dir = scratch();
-		expect(cli(dir, "hold", "A", "waits", "", "th-card1").status).toBe(0);
+		expect(cli(dir, "hold", "A", "waits", "", "th-card1", "--item", queued(dir)).status).toBe(0);
 		const store = open(dir);
 		const h = heldOpen(store)[0]!;
 		expect(h.ref).toBeUndefined();
@@ -186,7 +196,7 @@ describe("hold refs, notes and the CLI", () => {
 
 	test("note appends to the original hold, shows in held and the brief, and makes no second entry", () => {
 		const dir = scratch();
-		cli(dir, "hold", "Billing", "approve the migration");
+		expect(cli(dir, "hold", "Billing", "approve the migration", "--item", queued(dir)).status).toBe(0);
 		const store = open(dir);
 		const h = heldOpen(store)[0]!;
 		store.close();
@@ -230,11 +240,12 @@ describe("hold refs, notes and the CLI", () => {
 
 	test("fix 3: a real wait that merely says 'no action' or 'nothing' somewhere passes", () => {
 		const dir = scratch();
+		const q = queued(dir);
 		for (const [thread, what] of [["Billing", "waits on the operator; no action from builders until then"], ["Deploy", "approve the release. Nothing needed from the build until they say go"], ["Secrets", "rotate the Stripe key; it is not an FYI, only they can"], ["App", "decide whether a one-way gate is needed"]]) {
 			expect(fyiReason(thread!, what!)).toBeUndefined();
-			expect(cli(dir, "hold", thread!, what!, "left it parked").status).toBe(0);
+			expect(cli(dir, "hold", thread!, what!, "left it parked", "--item", q).status).toBe(0);
 		}
-		expect(cli(dir, "hold", "PR", "merge approval", "", "", "--pr", "o/r#5").status).toBe(0);
+		expect(cli(dir, "hold", "PR", "merge approval", "", "", "--pr", "o/r#5", "--item", q).status).toBe(0);
 		const store = open(dir);
 		expect(heldOpen(store)).toHaveLength(5);
 		store.close();
@@ -243,8 +254,9 @@ describe("hold refs, notes and the CLI", () => {
 
 	test("fix 1: --server names the thread's server, only beside a thread, and is stored on the hold", () => {
 		const dir = scratch();
-		expect(cli(dir, "hold", "A", "waits", "", "", "--thread", "th-abc1", "--server", "main").status).toBe(0);
-		expect(cli(dir, "hold", "B", "waits", "", "th-card1", "--server", "second").status).toBe(0);
+		const q = queued(dir);
+		expect(cli(dir, "hold", "A", "waits", "", "", "--thread", "th-abc1", "--server", "main", "--item", q).status).toBe(0);
+		expect(cli(dir, "hold", "B", "waits", "", "th-card1", "--server", "second", "--item", q).status).toBe(0);
 		expect(cli(dir, "hold", "C", "waits", "", "", "--server", "main").status).toBe(2);
 		expect(cli(dir, "hold", "D", "waits", "", "", "--thread", "th-abc1", "--server", "ma in").status).toBe(2);
 		const store = open(dir);

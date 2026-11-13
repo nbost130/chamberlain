@@ -37,15 +37,15 @@ describe("pass 1: every way a question gets answered closes its holds", () => {
 		expect(whats(store)).toEqual(["w"]);
 	});
 
-	test("a hold names its question by the item link or by the ID as a word in its text; a longer ID is not a match", () => {
+	test("(c) a hold names its question by its item field only: an ID in its text closes nothing", () => {
 		const store = memStore();
 		askQuestion(store, question("Q-abcd1"));
 		hold(store, { thread: "linked", item: "Q-abcd1" });
 		hold(store, { thread: "texted", what: "palette pick, queue item Q-abcd1" });
 		hold(store, { thread: "longer", what: "queue item Q-abcd12" });
 		claimWake(store, pageClaim(question("Q-abcd1"), answerOf("Q-abcd1", "page", "2099-01-01T00:00:00.000Z")));
-		expect(reconcileItemHolds(store)).toEqual({ closed: 2 });
-		expect(whats(store)).toEqual(["longer"]);
+		expect(reconcileItemHolds(store)).toEqual({ closed: 1 });
+		expect(whats(store)).toEqual(["longer", "texted"]);
 	});
 
 	test("a hold that only mentions an old answered question in its text, written after the answer, is about something else", () => {

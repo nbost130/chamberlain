@@ -7,7 +7,13 @@
  *
  * JSON: {kind: "only-you"|"product"|"ruling"|"idea", title, context, options: [{label, detail, route?: "thread"|"steward",
  *        relay?}], recommended?: index, proposedRuling?, proposedExpires?, evidence?: [{type: "image"|"video"|"link", path|url, caption}],
- *        thread, server, threadId?, blocks?, tag?, secret?}
+ *        thread, server, threadId?, blocks?, tag?, secret?, urgent?, notSettled?}
+ * `urgent: false` marks a question that can wait: it is recorded and listed on the queue page below the urgent ones, but
+ * nothing is posted where the operator reads, so no notification goes out. Leave it off and the question is urgent.
+ * Before it records anything, ask.ts looks the question up in what the principal already settled (answered questions,
+ * rulings in force or retired, the Steward's decision log; src/core/settled.ts). A match is refused with exit 2 and one line
+ * per match saying what it matched on: act on that answer instead. If it is truly a different question, add
+ * `"notSettled": "<why>"`; the reason is stored on the question.
  * `proposedExpires` (an ISO date, or a date-time with a zone) makes the proposed ruling time-bound: if the principal saves it, it
  * drops out of every wake after that moment and the rulings page marks it expired. Give it whenever the ruling is about one run,
  * one launch or one week; leave it off only for a rule meant to stand.
@@ -19,7 +25,6 @@
  * Lines of `context` that start with "- " render as bullets on the queue page and the Decisions view; write a few short ones.
  * Prints the item ID. A secret item posts no card: its value is entered in its own thread, never on a card or the page.
  */
-import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { CONF, STATE } from "./core/config.ts";
@@ -27,9 +32,10 @@ import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
 import { expiresProblem, isExpired } from "./core/rulings.ts";
-import { askQuestion, evidenceRoot, KINDS, type Evidence, type Question, type Option } from "./core/questions.ts";
+import { askQuestion, evidenceRoot, KINDS, newItemId, type Evidence, type Question, type Option } from "./core/questions.ts";
+import { findSettled, refusalLines } from "./core/settled.ts";
+export { newItemId };
 
-export const newItemId = () => `Q-${Date.now().toString(36).slice(-5)}${randomBytes(3).toString("hex").slice(0, 4)}`;
 const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const VIDEO = new Set([".mp4", ".webm", ".mov"]);
 
@@ -83,6 +89,8 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 	}
 	if (options.some((x) => x.route === "thread") && !str("threadId", false)) throw Error("ask: an option routed to the thread needs the item's threadId");
 	if (secret && options.some((x) => x.route === "thread")) throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
+	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
+	const notSettled = str("notSettled", false);
 	const item: Question = {
 		id, kind, title: str("title")!, context: str("context", false) ?? "", options,
 		...(recommended !== undefined ? { recommended } : {}),
@@ -94,6 +102,8 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 		...(str("blocks", false) ? { blocks: str("blocks", false) } : {}),
 		...(str("tag", false) ? { tag: str("tag", false) } : {}),
 		...(secret ? { secret: true } : {}),
+		...(o.urgent === false ? { urgent: false as const } : {}),
+		...(notSettled ? { notSettled } : {}),
 		createdAt,
 	};
 	return item;
@@ -152,9 +162,18 @@ async function main() {
 	const arg = process.argv[2];
 	if (!arg) { console.error("usage: ask.ts '<json>' | ask.ts - < item.json"); process.exit(2); }
 	const raw = JSON.parse(arg === "-" ? await Bun.stdin.text() : arg);
-	const item = stageEvidence(parseAsk(raw, newItemId()));
-	askQuestion(defaultStore(), item, Date.parse(item.createdAt));
+	const parsed = parseAsk(raw, newItemId());
+	const store = defaultStore();
+	if (!parsed.notSettled) {
+		const { matches, skipped } = findSettled(store, { title: parsed.title, context: parsed.context, thread: parsed.thread });
+		for (const k of skipped) console.error(`ask.ts: the settled check could not read ${k}`);
+		if (matches.length) { console.error(refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join("\n")); process.exit(2); }
+	}
+	const item = stageEvidence(parsed);
+	askQuestion(store, item, Date.parse(item.createdAt));
 	if (item.secret) { console.log(`${item.id} (secret: on the page as a link to its thread; no card)`); return; }
+	// A non-urgent question is on the page and nowhere else: the post is the only notification a new question sends.
+	if (item.urgent === false) { console.log(`${item.id} (on the queue page, not urgent: no notification sent)`); return; }
 	const base = queueBase();
 	const inline = base !== undefined && (await queueUp(base));
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });

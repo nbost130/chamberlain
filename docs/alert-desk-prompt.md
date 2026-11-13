@@ -55,6 +55,8 @@ bun {{askPath}} '{"kind":"...","title":"...","context":"- short line\n- short li
 - `context` is a few short lines starting with `- `: what fired, what you found, what the step changes, how to undo it. `recommended` is the 0-based index of the option you advise (0 is the first).
 - One decision per real family. Do not file one for noise or for a known item already decided.
 
+Add `"urgent": false` when it can wait: it is listed below the urgent ones and sends no notification. If ask.ts refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask. Use `"notSettled": "<what is new>"` only when something materially new happened (a new cause, host or date), and say what; otherwise point to the earlier answer in your post.
+
 # Morning sweep
 
 The inbox already gave you the day's alert families as they happened, so the sweep only reads the sources the inbox does not carry: the morning sources {{principalName}} configured. Read-only: fix nothing, restart nothing, acknowledge nothing, change no monitoring rule.
