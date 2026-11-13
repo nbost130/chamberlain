@@ -34,6 +34,7 @@ describe("the approved shapes are accepted", () => {
 		"docker logs --tail 100 mc-paper",
 		"docker inspect --format '{{.State.Status}} {{.RestartCount}}' mc-paper",
 		"docker inspect -f '{{.Config.Image}}' mc-paper",
+		"docker inspect --format='{{.State.Status}}' mc-paper",
 		"journalctl -u a.service -n 50 | head -n 20",
 		"docker logs --tail 500 mc-paper | tail -n 40",
 		"journalctl -u a.service | wc -l",
@@ -103,6 +104,51 @@ describe("each widened argument is refused", () => {
 	});
 });
 
+describe("the whole argument list is parsed: a flag given twice is refused, in any spelling", () => {
+	const SAFE = "'{{.Name}}'", ENV = "'{{.Config.Env}}'", JSON_ALL = "'{{json .}}'";
+	test("a repeated --format cannot smuggle a second, unsafe one", () => {
+		for (const c of [
+			`docker inspect --format ${SAFE} --format ${ENV} mc-paper`,
+			`docker inspect --format ${ENV} --format ${SAFE} mc-paper`,
+			`docker inspect --format ${SAFE} --format ${JSON_ALL} mc-paper`,
+			`docker inspect mc-paper --format ${SAFE} --format ${ENV}`,
+		]) refused(c);
+	});
+	test("mixed -f, --format and --format= forms are refused whichever order", () => {
+		for (const c of [
+			`docker inspect -f ${SAFE} --format ${ENV} mc-paper`,
+			`docker inspect -f ${SAFE} --format=${ENV} mc-paper`,
+			`docker inspect --format=${SAFE} -f ${ENV} mc-paper`,
+			`docker inspect --format ${SAFE} -f ${ENV} mc-paper`,
+			`docker inspect --format=${SAFE} --format=${ENV} mc-paper`,
+			`docker inspect -f ${ENV} -f ${SAFE} mc-paper`,
+		]) refused(c);
+		// Two flags that are each fine are still two flags.
+		expect(refused(`docker inspect -f ${SAFE} -f ${SAFE} mc-paper`)).toContain("more than once");
+		expect(refused(`docker inspect --format ${SAFE} --format=${SAFE} mc-paper`)).toContain("more than once");
+	});
+	test("{{json .}} and the other whole-document forms are refused as the one format", () => {
+		for (const f of [JSON_ALL, "'{{json .Config}}'", "'{{.}}'", "'{{.Config}}'", "'{{.Config.Env}}'", "'{{printf \"%v\" .Config.Env}}'"]) refused(`docker inspect --format ${f} mc-paper`);
+		refused(`docker inspect --format=${JSON_ALL} mc-paper`);
+		refused(`docker inspect -f ${JSON_ALL} mc-paper`);
+	});
+	test("a flag may be given once on every command: journalctl, systemctl, docker, git, gh", () => {
+		for (const c of [
+			"journalctl -u a.service -u b.service", "journalctl -u a.service --unit b.service", "journalctl -n 5 --lines 6", "journalctl --since '1 hour ago' --since '1 day ago'", "journalctl --user --user", "journalctl -p err --priority warning", "journalctl -o cat --output short",
+			"systemctl status a.service --user --user", "systemctl status a.service -n 5 -n 6",
+			"docker ps -a --all", "docker ps -a -a", "docker ps --format '{{.Names}}' --format '{{.Labels}}'", "docker logs --tail 1 --tail 2 c", "docker logs -t --timestamps c",
+			"git diff -n 1 --max-count 2", "git log --stat --stat", "git diff --since 1.day --since 2.day",
+			"gh run view 1 --repo a/b --repo c/d", "gh run view 1 --log-failed --log-failed", "gh run list --limit 1 --limit 2", "example-tool journal x --limit 1 --limit 2",
+		]) expect(refused(c)).toContain("more than once");
+	});
+	test("every value of every flag is checked, not only the first", () => {
+		refused("journalctl -u a.service --since '$(id)'");
+		refused("journalctl -n 5 -u 'a b'");
+		refused("docker logs --tail x c");
+		refused("docker inspect --format '{{.Name}}' --format=");
+	});
+});
+
 describe("file reads", () => {
 	const dir = mkdtempSync(`${tmpdir()}/desk-reads-`);
 	test("only under the named log directories", () => {
@@ -154,9 +200,16 @@ describe("the hook's decision per tool", () => {
 	test("the desk fixes nothing: every write tool is refused", () => {
 		for (const t of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) expect(checkTool(t, { file_path: "/var/log/x" }).ok).toBe(false);
 	});
-	test("tools that read and run nothing pass", () => {
-		for (const t of ["Agent", "ToolSearch", "mcp__t3-code__t3_thread_read"]) expect(checkTool(t, {}).ok).toBe(true);
+	test("deny by default: any tool that is not named is refused, MCP tools and unknown names included", () => {
+		for (const t of ["ToolSearch", "WebFetch", "WebSearch", "Skill", "TaskStop", "SendMessage", "CronCreate", "ExitPlanMode", "Workflow", "TodoWrite", "mcp__t3-code__t3_thread_send", "mcp__t3-code__t3_thread_read", "mcp__example__example_service_status", "mcp__playwright__playwright_navigate", "SomeToolThatDoesNotExistYet", "bash", "BASH", ""]) expect(checkTool(t, {}).ok).toBe(false);
 		expect(checkTool(undefined, {}).ok).toBe(false);
+		expect(checkTool(42, {}).ok).toBe(false);
+		expect(checkTool("mcp__t3-code__t3_thread_send", { message: "x" })).toMatchObject({ ok: false });
+	});
+	test("the Agent tool starts a example-gatherer gatherer and nothing else", () => {
+		expect(checkTool("Agent", { subagent_type: "example-gatherer", prompt: "read /var/log/syslog" }).ok).toBe(true);
+		expect(checkTool("Task", { subagent_type: "example-gatherer" }).ok).toBe(true);
+		for (const input of [{}, { subagent_type: "general-purpose" }, { subagent_type: "other-agent" }, { subagent_type: "example-gatherer2" }, { prompt: "x" }]) expect(checkTool("Agent", input).ok).toBe(false);
 	});
 	test("run as the hook: exit 2 with a reason for a refusal, 0 for an allow", async () => {
 		const run = async (payload: unknown) => {

@@ -61,70 +61,94 @@ function tokenize(cmd: string): { parts: string[][] } | { error: string } {
 
 // ---- flag specs --------------------------------------------------------------------------------------
 
-type Flag = "bool" | RegExp;
-type Spec = { flags: Record<string, Flag>; /** Positional arguments: each must match, at most `max`. */ positional?: RegExp; max?: number; min?: number };
+type Flag = "bool" | RegExp | ((value: string) => boolean);
+type Spec = {
+	/** Every flag the command may take, under every spelling it may be written with. Anything else is refused. */
+	flags: Record<string, Flag>;
+	/** Other spellings of one flag (`--format` is `-f`): a flag may be given ONCE, under any of its spellings. */
+	same?: Record<string, string>;
+	/** Positional arguments: each must match, at most `max`. */
+	positional?: RegExp; max?: number; min?: number;
+};
+type Parsed = { pos: string[]; /** Each flag given, by its first spelling, with its value (`true` for a flag with none). */ flag: Record<string, string | true> };
 const DIGITS = /^\d{1,6}$/;
 const TIME = /^[\w:. +-]{1,40}$/;
 const UNIT = /^[A-Za-z0-9@_.:-]{1,100}$/;
 const WORD = /^[A-Za-z0-9_.@:-]{1,64}$/;
 const REPO = /^[\w.-]{1,60}\/[\w.-]{1,100}$/;
 
-/** Checks `args` against a spec: every flag listed, its value valid, every positional valid. Returns the positionals, or the first fault. */
-function against(args: string[], spec: Spec, what: string): { pos: string[] } | Verdict {
+/**
+ * Parses the WHOLE argument list against a spec, never one flag at a time: a flag that is not in the spec is refused, a flag given twice (in any
+ * spelling, `-f` then `--format=`) is refused, and the value of every flag given is checked. Returns what was given, or the first fault.
+ */
+function parse(args: string[], spec: Spec, what: string): Parsed | Verdict {
 	const pos: string[] = [];
+	const flag: Record<string, string | true> = {};
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i]!;
-		if (a.startsWith("-")) {
-			const eq = a.startsWith("--") ? a.indexOf("=") : -1;
-			const name = eq > 0 ? a.slice(0, eq) : a;
-			const rule = spec.flags[name];
-			if (rule === undefined) return no(`${what}: the flag ${name} is not on the allowlist`);
-			if (rule === "bool") { if (eq > 0) return no(`${what}: ${name} takes no value`); continue; }
-			const value = eq > 0 ? a.slice(eq + 1) : args[++i];
-			if (value === undefined || !rule.test(value)) return no(`${what}: the value of ${name} is not allowed`);
+		if (!a.startsWith("-")) {
+			if (!spec.positional || !spec.positional.test(a)) return no(`${what}: the argument ${JSON.stringify(a.slice(0, 40))} is not allowed`);
+			pos.push(a);
 			continue;
 		}
-		if (!spec.positional || !spec.positional.test(a)) return no(`${what}: the argument ${JSON.stringify(a.slice(0, 40))} is not allowed`);
-		pos.push(a);
+		const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+		const name = eq > 0 ? a.slice(0, eq) : a;
+		const rule = spec.flags[name];
+		if (rule === undefined) return no(`${what}: the flag ${name} is not on the allowlist`);
+		const key = spec.same?.[name] ?? name;
+		if (key in flag) return no(`${what}: the flag ${key} is given more than once`);
+		if (rule === "bool") {
+			if (eq > 0) return no(`${what}: ${name} takes no value`);
+			flag[key] = true;
+			continue;
+		}
+		const value = eq > 0 ? a.slice(eq + 1) : args[++i];
+		if (value === undefined || !(typeof rule === "function" ? rule(value) : rule.test(value))) return no(`${what}: the value of ${name} is not allowed`);
+		flag[key] = value;
 	}
 	if (spec.max !== undefined && pos.length > spec.max) return no(`${what}: too many arguments`);
 	if (spec.min !== undefined && pos.length < spec.min) return no(`${what}: missing an argument`);
-	return { pos };
+	return { pos, flag };
 }
-const isVerdict = (x: { pos: string[] } | Verdict): x is Verdict => "ok" in x;
+const isVerdict = (x: Parsed | Verdict): x is Verdict => "ok" in x;
 
 /** `docker inspect --format` and `docker ps --format`: literal text and `{{.Field}}` for these fields only. No `json`, no `range`, no object that holds the environment. */
 const INSPECT_FIELDS = ["Name", "RestartCount", "State.Status", "State.Running", "State.Restarting", "State.OOMKilled", "State.ExitCode", "State.StartedAt", "State.FinishedAt", "State.Health.Status", "Config.Image", "HostConfig.RestartPolicy.Name", "Created"];
 const PS_FIELDS = ["Names", "Status", "State", "Image", "RunningFor", "ID", "CreatedAt", "Ports"];
 const formatOk = (fmt: string, fields: string[]) => new RegExp(`^(?:[^{}$\`\\\\]|\\{\\{\\.(?:${fields.map((f) => f.replace(/\./g, "\\.")).join("|")})\\}\\})*$`).test(fmt) && fmt.length <= 300;
+const inspectFormat = (v: string) => formatOk(v, INSPECT_FIELDS);
+const psFormat = (v: string) => formatOk(v, PS_FIELDS);
 
 // ---- the command shapes ------------------------------------------------------------------------------
 
+const PRIORITY = /^[a-z0-9.]{1,20}$/;
+const OUTPUT = /^(short|short-iso|short-precise|cat)$/;
 const journalctl: Spec = {
-	flags: { "--user": "bool", "--no-pager": "bool", "-r": "bool", "--reverse": "bool", "-u": UNIT, "--unit": UNIT, "-n": DIGITS, "--lines": DIGITS, "--since": TIME, "--until": TIME, "-p": /^[a-z0-9.]{1,20}$/, "--priority": /^[a-z0-9.]{1,20}$/, "-o": /^(short|short-iso|short-precise|cat)$/, "--output": /^(short|short-iso|short-precise|cat)$/ },
+	flags: { "--user": "bool", "--no-pager": "bool", "-r": "bool", "--reverse": "bool", "-u": UNIT, "--unit": UNIT, "-n": DIGITS, "--lines": DIGITS, "--since": TIME, "--until": TIME, "-p": PRIORITY, "--priority": PRIORITY, "-o": OUTPUT, "--output": OUTPUT },
+	same: { "--reverse": "-r", "--unit": "-u", "--lines": "-n", "--priority": "-p", "--output": "-o" },
 };
 const gitDiffLike: Spec = {
 	flags: { "--stat": "bool", "--shortstat": "bool", "--name-only": "bool", "--name-status": "bool", "--oneline": "bool", "--no-color": "bool", "-n": DIGITS, "--max-count": DIGITS, "--since": TIME, "--until": TIME },
+	same: { "--max-count": "-n" },
 	positional: /^[A-Za-z0-9._/@~^{}-]{1,100}$/, max: 4,
 };
+const CONTAINER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
 
 function checkSimple(tokens: string[]): Verdict {
 	const [name, ...args] = tokens;
 	if (!name || name.includes("/") || name.includes("=")) return no("the command must be a bare name from the allowlist");
 	switch (name) {
 		case "journalctl": {
-			const r = against(args, journalctl, "journalctl");
+			const r = parse(args, journalctl, "journalctl");
 			return isVerdict(r) ? r : ok;
 		}
 		case "systemctl": {
-			const rest = [...args];
-			const flags: Spec = { flags: { "--user": "bool", "--no-pager": "bool", "-l": "bool", "--full": "bool", "-n": DIGITS, "--failed": "bool" }, positional: UNIT };
-			const sub = rest.find((a) => !a.startsWith("-") && !DIGITS.test(a));
-			if (!sub || !["status", "is-active", "is-failed", "list-units"].includes(sub)) return no(`systemctl: only status, is-active, is-failed and list-units are allowed (not ${JSON.stringify(sub ?? "")}); cat and show print unit files and environments`);
-			const r = against(rest.filter((a) => a !== sub), flags, "systemctl");
+			const r = parse(args, { flags: { "--user": "bool", "--no-pager": "bool", "-l": "bool", "--full": "bool", "-n": DIGITS, "--failed": "bool" }, positional: UNIT }, "systemctl");
 			if (isVerdict(r)) return r;
-			if (sub === "list-units" && r.pos.length) return no("systemctl list-units takes no unit");
-			if (sub !== "list-units" && r.pos.length === 0) return no(`systemctl ${sub} needs a unit`);
+			const [sub, ...units] = r.pos;
+			if (!sub || !["status", "is-active", "is-failed", "list-units"].includes(sub)) return no(`systemctl: only status, is-active, is-failed and list-units are allowed (not ${JSON.stringify(sub ?? "")}); cat and show print unit files and environments`);
+			if (sub === "list-units" && units.length) return no("systemctl list-units takes no unit");
+			if (sub !== "list-units" && units.length === 0) return no(`systemctl ${sub} needs a unit`);
 			return ok;
 		}
 		case "example-tool": {
@@ -137,15 +161,15 @@ function checkSimple(tokens: string[]): Verdict {
 			};
 			const spec = shapes[sub];
 			if (!spec) return no(`example-tool: ${JSON.stringify(sub.slice(0, 30))} is not a read command on the allowlist`);
-			const r = against(rest, spec, `example-tool ${sub}`);
+			const r = parse(rest, spec, `example-tool ${sub}`);
 			return isVerdict(r) ? r : ok;
 		}
 		case "gh": {
 			const [a, b, ...rest] = args;
-			const repo = { "--repo": REPO } as Record<string, Flag>;
-			if (a === "run" && b === "view") { const r = against(rest, { flags: { ...repo, "--log-failed": "bool" }, positional: DIGITS, max: 1, min: 1 }, "gh run view"); return isVerdict(r) ? r : ok; }
-			if (a === "run" && b === "list") { const r = against(rest, { flags: { ...repo, "--limit": DIGITS }, max: 0 }, "gh run list"); return isVerdict(r) ? r : ok; }
-			if (a === "pr" && b === "checks") { const r = against(rest, { flags: repo, positional: DIGITS, max: 1, min: 1 }, "gh pr checks"); return isVerdict(r) ? r : ok; }
+			const repo: Record<string, Flag> = { "--repo": REPO };
+			if (a === "run" && b === "view") { const r = parse(rest, { flags: { ...repo, "--log-failed": "bool" }, positional: DIGITS, max: 1, min: 1 }, "gh run view"); return isVerdict(r) ? r : ok; }
+			if (a === "run" && b === "list") { const r = parse(rest, { flags: { ...repo, "--limit": DIGITS }, max: 0 }, "gh run list"); return isVerdict(r) ? r : ok; }
+			if (a === "pr" && b === "checks") { const r = parse(rest, { flags: repo, positional: DIGITS, max: 1, min: 1 }, "gh pr checks"); return isVerdict(r) ? r : ok; }
 			return no("gh: only `run view`, `run list` and `pr checks` are allowed");
 		}
 		case "git": {
@@ -155,20 +179,24 @@ function checkSimple(tokens: string[]): Verdict {
 			const dd = rest.indexOf("--");
 			const before = dd < 0 ? rest : rest.slice(0, dd), paths = dd < 0 ? [] : rest.slice(dd + 1);
 			if (paths.some((p) => !/^[A-Za-z0-9._/-]{1,200}$/.test(p) || p.startsWith("/") || p.split("/").includes(".."))) return no("git: a path after -- must be relative, inside the repo");
-			const r = against(before, sub === "status" ? { flags: {}, max: 0 } : gitDiffLike, `git ${sub}`);
+			const r = parse(before, sub === "status" ? { flags: {}, max: 0 } : gitDiffLike, `git ${sub}`);
 			return isVerdict(r) ? r : ok;
 		}
 		case "docker": {
 			const [sub, ...rest] = args;
-			if (sub === "ps") { const r = against(rest, { flags: { "-a": "bool", "--all": "bool", "--no-trunc": "bool", "--format": /^.+$/ }, max: 0 }, "docker ps"); if (isVerdict(r)) return r; const f = rest.findIndex((a) => a === "--format" || a.startsWith("--format=")); if (f >= 0) { const v = rest[f]!.includes("=") ? rest[f]!.slice(rest[f]!.indexOf("=") + 1) : rest[f + 1]!; if (!formatOk(v, PS_FIELDS)) return no("docker ps: the --format may use only plain fields"); } return ok; }
-			if (sub === "logs") { const r = against(rest, { flags: { "--tail": DIGITS, "--since": TIME, "--until": TIME, "-t": "bool", "--timestamps": "bool" }, positional: /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/, max: 1, min: 1 }, "docker logs"); return isVerdict(r) ? r : ok; }
+			if (sub === "ps") {
+				const r = parse(rest, { flags: { "-a": "bool", "--all": "bool", "--no-trunc": "bool", "--format": psFormat }, same: { "--all": "-a" }, max: 0 }, "docker ps");
+				return isVerdict(r) ? r : ok;
+			}
+			if (sub === "logs") {
+				const r = parse(rest, { flags: { "--tail": DIGITS, "--since": TIME, "--until": TIME, "-t": "bool", "--timestamps": "bool" }, same: { "--timestamps": "-t" }, positional: CONTAINER, max: 1, min: 1 }, "docker logs");
+				return isVerdict(r) ? r : ok;
+			}
 			if (sub === "inspect") {
-				const r = against(rest, { flags: { "--format": /^.+$/, "-f": /^.+$/ }, positional: /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/, min: 1, max: 6 }, "docker inspect");
+				// One --format, in one spelling, and it is checked as it is parsed: `--format A --format B` and `-f A --format=B` are both refused.
+				const r = parse(rest, { flags: { "--format": inspectFormat, "-f": inspectFormat }, same: { "--format": "-f" }, positional: CONTAINER, min: 1, max: 6 }, "docker inspect");
 				if (isVerdict(r)) return r;
-				const i = rest.findIndex((a) => a === "--format" || a === "-f" || a.startsWith("--format="));
-				if (i < 0) return no("docker inspect: a --format is required, because the full document holds the container's environment");
-				const v = rest[i]!.startsWith("--format=") ? rest[i]!.slice(9) : rest[i + 1]!;
-				return formatOk(v, INSPECT_FIELDS) ? ok : no("docker inspect: the --format may use only the listed plain fields (never Config.Env, Config, json or the whole object)");
+				return "-f" in r.flag ? ok : no("docker inspect: a --format is required, because the full document holds the container's environment");
 			}
 			return no("docker: only ps, logs and inspect are allowed");
 		}
@@ -226,21 +254,29 @@ export function checkPath(p: unknown): Verdict {
 	return bad ? no(`${p} has a component (${bad}) that names a credential`) : ok;
 }
 
-const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-/** The hook's decision for one tool call. Tools the desk uses that read nothing and run nothing (Agent, ToolSearch, the T3 tools) pass. */
+/**
+ * The hook's decision for one tool call, and it DENIES BY DEFAULT: Bash (in the fixed shapes), Read, Grep and Glob (under the log directories),
+ * and the Agent tool only to start a `example-gatherer` gatherer, which is how the desk fans out. Every other tool is refused, MCP tools and the write
+ * tools included, and so is a call with no tool name. The settings matcher must therefore cover every tool (see docs/alert-desk.md).
+ */
+export const GATHERER = "example-gatherer";
 export function checkTool(tool: unknown, input: Record<string, unknown> | undefined): Verdict {
 	const i = input ?? {};
-	if (typeof tool !== "string") return no("no tool name");
-	if (WRITE_TOOLS.has(tool)) return no(`${tool}: the desk fixes nothing, so it writes nothing`);
-	if (tool === "Bash") return checkCommand(i.command);
-	if (tool === "Read") return checkPath(i.file_path);
-	if (tool === "Grep") return checkPath(i.path);
-	if (tool === "Glob") {
-		// A glob pattern that is itself absolute, or climbs, would leave the directory the path check approved.
-		if (typeof i.pattern === "string" && (i.pattern.startsWith("/") || i.pattern.split("/").includes(".."))) return no("a glob pattern must stay inside the directory it is given");
-		return checkPath(i.path);
+	if (typeof tool !== "string" || !tool) return no("no tool name");
+	switch (tool) {
+		case "Bash": return checkCommand(i.command);
+		case "Read": return checkPath(i.file_path);
+		case "Grep": return checkPath(i.path);
+		case "Glob":
+			// A glob pattern that is itself absolute, or climbs, would leave the directory the path check approved.
+			if (typeof i.pattern === "string" && (i.pattern.startsWith("/") || i.pattern.split("/").includes(".."))) return no("a glob pattern must stay inside the directory it is given");
+			return checkPath(i.path);
+		case "Agent":
+		case "Task":
+			return i.subagent_type === GATHERER ? ok : no(`${tool}: the desk may start only a ${GATHERER} gatherer`);
+		default:
+			return no(`${tool} is not an allowed tool: the desk reads, starts ${GATHERER} gatherers and files decisions, and does nothing else`);
 	}
-	return ok;
 }
 
 if (import.meta.main) {

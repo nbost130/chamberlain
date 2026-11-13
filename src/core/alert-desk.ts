@@ -153,6 +153,34 @@ export function morningMessage(day: string, handled: { family: string; wakes: nu
 // ---- the inbox file ---------------------------------------------------------------------------------
 
 const MAX_READ = 4 * 1024 * 1024;
+/** What an oversized chunk (4 MiB with no newline in it) becomes: a line that is never an event, so it is counted as bad and skipped. */
+const OVERSIZED = "\u0000oversized";
+/**
+ * Reads whole lines of `path` from `from`, at most MAX_READ bytes. `end` is the offset after the last byte consumed, so a caller that saves
+ * `end` has recorded exactly what it read. A torn tail is left for the next pass, unless `final` (a retired file no writer holds any more) and
+ * the chunk reached the end of the file: then the tail is the file's last line. A chunk with no newline in all of MAX_READ bytes is skipped.
+ */
+function readLines(path: string, from: number, final = false): { lines: string[]; end: number; size: number; inode: number } | undefined {
+	let fd: number;
+	try { fd = openSync(path, "r"); } catch { return undefined; }
+	try {
+		const st = fstatSync(fd);
+		const start = st.size < from ? 0 : from;
+		const len = Math.min(MAX_READ, st.size - start);
+		const buf = Buffer.alloc(len);
+		let got = 0;
+		while (got < len) { const n = readSync(fd, buf, got, len - got, start + got); if (n <= 0) break; got += n; }
+		const chunk = buf.subarray(0, got);
+		const cut = chunk.lastIndexOf(10);
+		const atEof = start + got >= st.size;
+		let end = start + (cut < 0 ? 0 : cut + 1);
+		const lines = cut < 0 ? [] : chunk.subarray(0, cut + 1).toString("utf8").split("\n").filter(Boolean);
+		if (cut < 0 && got >= MAX_READ) { lines.push(OVERSIZED); end = start + got; }
+		else if (final && atEof && end < start + got) { lines.push(chunk.subarray(end - start).toString("utf8")); end = start + got; }
+		return { lines, end, size: st.size, inode: st.ino };
+	} finally { closeSync(fd); }
+}
+
 export type Retired = { path: string; offset: number; after: number };
 export type Cursor = {
 	offset: number;
@@ -165,26 +193,9 @@ export type Cursor = {
 export const CURSOR_KEY = "alert-desk-inbox";
 const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
 
-/** Reads whole lines of `path` from `from`. `end` is the offset after the last complete line; a torn tail is left for the next pass. */
-function readLines(path: string, from: number): { lines: string[]; end: number; size: number; inode: number } | undefined {
-	let fd: number;
-	try { fd = openSync(path, "r"); } catch { return undefined; }
-	try {
-		const st = fstatSync(fd);
-		const start = st.size < from ? 0 : from;
-		const len = Math.min(MAX_READ, st.size - start);
-		const buf = Buffer.alloc(len);
-		let got = 0;
-		while (got < len) { const n = readSync(fd, buf, got, len - got, start + got); if (n <= 0) break; got += n; }
-		const cut = buf.subarray(0, got).lastIndexOf(10);
-		const text = cut < 0 ? "" : buf.subarray(0, cut + 1).toString("utf8");
-		return { lines: text.split("\n").filter(Boolean), end: start + (cut < 0 ? 0 : cut + 1), size: st.size, inode: st.ino };
-	} finally { closeSync(fd); }
-}
-
 export type Read = { events: DeskEvent[]; bad: number; stale: number; /** Retired files read in full by this call. They leave the cursor, and are deleted, only after the cursor without them is saved. */ retiredRead: Retired[] };
 /** The points of a pass a test can stop at, to prove a crash there loses nothing. */
-export type CrashPoint = "rotation-intent" | "renamed" | "rotation-saved" | "retired-read" | "retired-saved";
+export type CrashPoint = "rotation-intent" | "renamed" | "rotation-saved" | "delivered" | "retired-read" | "retired-saved";
 
 /**
  * Finishes a rotation a crash interrupted. The intent was saved before the rename, so: if the retired file exists the rename happened and the
@@ -233,17 +244,21 @@ export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
 }
 
 /**
- * Reads what is new in the inbox, and every retired file due its last read, advancing `cur` in memory. Nothing is renamed or deleted here:
- * the caller saves the cursor first. Events are oldest first.
+ * Reads what is new in the inbox, and the next chunk of every retired file that is due, advancing `cur` and the retired offsets in memory.
+ * Nothing is renamed or deleted here: the caller saves the cursor first. Events are oldest first.
  */
 export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConfig): Read {
 	const lines: string[] = [];
 	const retiredRead: Retired[] = [];
 	for (const r of cur.retired) {
 		if (now < r.after) continue;
-		const got = readLines(r.path, r.offset);
-		if (got) lines.push(...got.lines);
-		retiredRead.push(r);
+		const got = readLines(r.path, r.offset, true);
+		if (!got) { retiredRead.push(r); continue; }
+		lines.push(...got.lines);
+		// Progress is recorded only up to the bytes actually read. The file is finished, and may be deleted once the cursor is saved, only when
+		// that is its end: a bigger file than one chunk is read over the next passes.
+		r.offset = got.end;
+		if (got.end >= got.size) retiredRead.push(r);
 	}
 	const main = readLines(inbox, cur.inode === 0 ? 0 : cur.offset);
 	if (main) {
@@ -397,6 +412,7 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" })) if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
 		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" })) if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
 	});
+	crash("delivered");
 	if (r.retiredRead.length) crash("retired-read");
 	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
 	save();

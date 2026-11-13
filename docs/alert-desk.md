@@ -48,14 +48,18 @@ desk skips an id it has already handled: its prompt says to search the thread fo
 
 ## The command allowlist is enforced
 
-`src/desk-allowlist.ts` is a Claude Code PreToolUse hook for the desk's project: a fixed set of command shapes (journalctl, systemctl status, example-tool
-reads, gh run view, git, docker ps/logs/inspect with a plain `--format`, and the Morning sweep's own commands), every other command and any
-shell syntax refused, file reads only under `/var/log`, `~/.cache/alert-desk` and `DESK_LOG_DIRS` (never a credential path, after `..` and symlinks are
-resolved), and the write tools refused. `bun src/desk-allowlist.ts check '<command>'` tests one by hand. Install it in the desk project's
-`.claude/settings.json`:
+`src/desk-allowlist.ts` is a Claude Code PreToolUse hook that DENIES BY DEFAULT. It allows only: Bash in a fixed set of command shapes (journalctl,
+systemctl status, example-tool reads, gh run view, git, docker ps/logs/inspect with a plain `--format`, and the Morning sweep's own commands);
+Read, Grep and Glob under `/var/log`, `~/.cache/alert-desk` and `DESK_LOG_DIRS` (never a credential path, after `..` and symlinks are resolved); and the
+Agent tool only to start a `example-gatherer` gatherer, which is how the desk fans out. Every other tool is refused: the write tools, every MCP tool, and any
+name it does not know. A command's whole argument list is parsed: a flag that is not on that command's list is refused, a flag given twice in any
+spelling (`--format` then `-f`) is refused, and every value is checked. `bun src/desk-allowlist.ts check '<command>'` tests one by hand.
+
+The matcher must cover every tool, or the default deny never sees the tool it is meant to refuse. Install it in the desk project's `.claude/settings.json`
+(`"*"` matches all tools, MCP tools included):
 
 ```json
-{ "hooks": { "PreToolUse": [ { "matcher": "Bash|Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
+{ "hooks": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
 ```
 
 ## Nothing changes until the desk is switched on

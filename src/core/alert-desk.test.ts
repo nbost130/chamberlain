@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
@@ -345,6 +345,73 @@ describe("a drain pass", () => {
 			r.pass(T0 + 130_000);
 			expect(r.messages().map((m) => /alert family (\S+)/.exec(m)?.[1])).toEqual(["fa", "fn"]);
 			expect(r.store.state.get<Cursor>(CURSOR_KEY)?.retired).toEqual([]);
+		});
+	});
+
+	describe("a retired file or inbox bigger than one chunk (4 MiB) is read to its end", () => {
+		const bigLine = (i: number) => line({ at: T0 - 100_000 + i, family: `f${i}`, title: `t${i}`, body: "y".repeat(1200) });
+		const noCap = { morningHour: 23, dailyCap: 0, maxAgeHours: 48 };
+		const familiesOf = (r: ReturnType<typeof rig>) => new Set(r.messages().map((m) => /alert family (\S+)/.exec(m)?.[1]).filter(Boolean));
+		const retire = (r: ReturnType<typeof rig>, body: string) => {
+			const path = `${r.dir}/inbox.jsonl.${T0 - 600_000}`;
+			writeFileSync(path, body);
+			r.store.state.set(CURSOR_KEY, { offset: 0, inode: 0, retired: [{ path, offset: 0, after: 0 }] } satisfies Cursor);
+			return path;
+		};
+
+		test("a retired file with a 5.9 MB tail wakes every family, and is deleted only after its last byte is read and saved", () => {
+			const r = rig(noCap);
+			const N = 4200;
+			const retired = retire(r, Array.from({ length: N }, (_, i) => bigLine(i)).join(""));
+			expect(statSync(retired).size).toBeGreaterThan(5 * 1024 * 1024);
+			r.pass(T0);
+			const afterOne = r.store.state.get<Cursor>(CURSOR_KEY)!;
+			// One chunk is 4 MiB: part of the file was read, progress is recorded exactly up to it, and the file is neither finished nor deleted.
+			expect(existsSync(retired)).toBe(true);
+			expect(afterOne.retired).toHaveLength(1);
+			expect(afterOne.retired[0]!.offset).toBeGreaterThan(3 * 1024 * 1024);
+			expect(afterOne.retired[0]!.offset).toBeLessThanOrEqual(4 * 1024 * 1024);
+			expect(afterOne.retired[0]!.offset).toBeLessThan(statSync(retired).size);
+			const first = familiesOf(r).size;
+			expect(first).toBeGreaterThan(2000);
+			expect(first).toBeLessThan(N);
+			r.pass(T0 + 60_000);
+			expect(familiesOf(r).size).toBe(N);
+			expect(existsSync(retired)).toBe(false);
+			expect(r.store.state.get<Cursor>(CURSOR_KEY)?.retired).toEqual([]);
+			expect(new Set(r.wakes()).size).toBe(N);
+		});
+		test("a crash after the first chunk was delivered but before it was saved reads it again, and wakes nobody twice", () => {
+			const r = rig(noCap);
+			const N = 3600;
+			const retired = retire(r, Array.from({ length: N }, (_, i) => bigLine(i)).join(""));
+			expect(() => r.pass(T0, { crash: (p) => { if (p === "delivered") throw Error("crash"); } })).toThrow("crash");
+			r.pass(T0 + 1000);
+			r.pass(T0 + 61_000);
+			expect(new Set(r.wakes()).size).toBe(N);
+			expect(r.wakes()).toHaveLength(N);
+			expect(existsSync(retired)).toBe(false);
+		});
+		test("a retired file that ends in a torn line is finished and deleted", () => {
+			const r = rig(noCap);
+			const retired = retire(r, `${line({ at: T0 - 1000, family: "fa", title: "a" })}{"v":1,"family":"torn`);
+			r.pass(T0);
+			expect(familiesOf(r)).toEqual(new Set(["fa"]));
+			expect(existsSync(retired)).toBe(false);
+		});
+		test("a final line without its newline that is a whole event is read, not dropped", () => {
+			const r = rig(noCap);
+			const retired = retire(r, line({ at: T0 - 1000, family: "fa", title: "a" }) + line({ at: T0 - 500, family: "fb", title: "b" }).trimEnd());
+			r.pass(T0);
+			expect(familiesOf(r)).toEqual(new Set(["fa", "fb"]));
+			expect(existsSync(retired)).toBe(false);
+		});
+		test("the live inbox with a first line bigger than a chunk skips that line and goes on to the next", () => {
+			const r = rig(noCap);
+			writeFileSync(r.inbox, `${"x".repeat(4.5 * 1024 * 1024)}\n${line({ at: T0 - 1000, family: "fa", title: "a" })}`);
+			r.pass(T0);
+			r.pass(T0 + 1000);
+			expect(familiesOf(r)).toEqual(new Set(["fa"]));
 		});
 	});
 });
