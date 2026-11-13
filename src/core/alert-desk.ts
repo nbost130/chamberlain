@@ -54,8 +54,14 @@ export type DeskConfig = {
 	maxAgeMs: number;
 	/** The inbox is renamed away once it is fully read and larger than this. */
 	rotateBytes: number;
+	/**
+	 * Where the desk starts reading when no cursor is stored (its first run, or its first run after an import that does not carry the old
+	 * system's desk state over): "end" (the default) skips what the inbox already holds, so old events never wake anyone; "beginning" reads
+	 * the whole inbox (events older than `maxAgeMs` are still not woken about). The choice is logged once (`alert-desk-start`).
+	 */
+	startAt: "end" | "beginning";
 };
-export const DEFAULTS: DeskConfig = { enabled: true, windowMs: 15 * 60_000, repeatMs: DAY_MS, dailyCap: 30, morningHour: 7, timezone: "Etc/GMT+5", maxAgeMs: 6 * 3600_000, rotateBytes: 5 * 1024 * 1024 };
+export const DEFAULTS: DeskConfig = { enabled: true, windowMs: 15 * 60_000, repeatMs: DAY_MS, dailyCap: 30, morningHour: 7, timezone: "Etc/GMT+5", maxAgeMs: 6 * 3600_000, rotateBytes: 5 * 1024 * 1024, startAt: "end" };
 
 export const configPath = (conf: string) => `${conf}/alert-desk.json`;
 export const inboxPath = (env: Record<string, string | undefined>, home: string) => env.ALERT_DESK_INBOX || `${home}/.cache/alert-desk/inbox.jsonl`;
@@ -73,6 +79,7 @@ export function parseConfig(raw: unknown): DeskConfig {
 		timezone: typeof o.timezone === "string" && o.timezone ? o.timezone : DEFAULTS.timezone,
 		maxAgeMs: num("maxAgeHours", DEFAULTS.maxAgeMs / 3600_000, 0) * 3600_000,
 		rotateBytes: num("rotateBytes", DEFAULTS.rotateBytes, 1024),
+		startAt: o.startAt === "beginning" ? "beginning" : DEFAULTS.startAt,
 	};
 }
 export function readConfig(conf: string): DeskConfig {
@@ -275,6 +282,14 @@ export type Cursor = {
 };
 export const CURSOR_KEY = "alert-desk-inbox";
 const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
+/**
+ * The cursor of a desk with none stored. "end": the inbox's current end, so nothing already in it wakes the desk (a line still being written
+ * at that moment is skipped whole, as the reader skips any line it starts inside). No inbox yet, or "beginning": its start.
+ */
+export function firstCursor(inbox: string, startAt: DeskConfig["startAt"]): Cursor {
+	if (startAt === "beginning") return freshCursor();
+	try { const st = statSync(inbox); return { offset: st.size, inode: st.ino, retired: [] }; } catch { return freshCursor(); }
+}
 
 export type Read = { events: DeskEvent[]; bad: number; stale: number; /** Retired files read in full by this call. They leave the cursor, and are deleted, only after the cursor without them is saved. */ retiredRead: Retired[] };
 /** The points of a pass a test can stop at, to prove a crash there loses nothing. */
@@ -390,8 +405,14 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 	if (!cfg.enabled) return { read: 0, woke: 0, skipped: "off" };
 	if (!d.canDeliver) return { read: 0, woke: 0, skipped: "no-desk" };
 	const crash = d.crash ?? (() => {});
-	const cur = structuredClone(store.state.get<Cursor>(CURSOR_KEY) ?? freshCursor());
+	const stored = store.state.get<Cursor>(CURSOR_KEY);
+	const cur = structuredClone(stored ?? firstCursor(d.inbox, cfg.startAt));
 	const save = () => store.state.set(CURSOR_KEY, cur);
+	if (!stored) {
+		// The first start is decided once: the cursor is kept before anything is read, so a crash later in this pass never decides it again.
+		save();
+		d.log("alert-desk-start", { startAt: cfg.startAt, inbox: d.inbox, offset: cur.offset, ...(cfg.startAt === "end" && cur.offset ? { skippedBytes: cur.offset } : {}) });
+	}
 	if (recoverRotation(cur, now)) save();
 	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
 	sweepStrays(cur, d.inbox, now);

@@ -3,7 +3,7 @@ import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, renam
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
-	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, morningPattern, parseConfig, parseLine, parseMorning, readInbox, readMorning, renderDeskPrompt, severityOf, signature,
+	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, morningPattern, parseConfig, parseLine, parseMorning, readConfig, readInbox, readMorning, renderDeskPrompt, severityOf, signature,
 	type Cursor, type CrashPoint, type DeskConfig, type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
@@ -24,7 +24,8 @@ function rig(config: Partial<Record<string, unknown>> = { morningHour: 23 }) {
 	const clock = { t: T0 };
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
 	const inbox = `${dir}/inbox.jsonl`;
-	const writeConfig = (c: Record<string, unknown>) => writeFileSync(`${dir}/alert-desk.json`, JSON.stringify(c));
+	// These tests write the inbox before the first pass and expect it read, so they start at the beginning; the first-start tests say "end".
+	const writeConfig = (c: Record<string, unknown>) => writeFileSync(`${dir}/alert-desk.json`, JSON.stringify({ startAt: "beginning", ...c }));
 	writeConfig(config);
 	const logged: { event: string; [k: string]: unknown }[] = [];
 	const pass = (now: number, over: { canDeliver?: boolean; crash?: (p: CrashPoint) => void } = {}) => {
@@ -278,6 +279,53 @@ describe("a drain pass", () => {
 		expect(r.pass(T0, { canDeliver: false })).toMatchObject({ skipped: "no-desk" });
 		expect(r.store.state.get(CURSOR_KEY)).toBeUndefined();
 		expect(r.pass(T0).read).toBe(1);
+	});
+	describe("the first start: where the desk begins when no cursor is stored (startAt)", () => {
+		test("startAt defaults to \"end\"; only \"beginning\" changes it", () => {
+			expect(DEFAULTS.startAt).toBe("end");
+			expect(parseConfig({}).startAt).toBe("end");
+			expect(parseConfig({ startAt: "beginning" }).startAt).toBe("beginning");
+			expect(parseConfig({ startAt: "middle" }).startAt).toBe("end");
+		});
+		test("\"end\" (the default) skips an existing inbox: no wake for earlier events, the choice logged once, later events wake", () => {
+			const r = rig();
+			r.writeConfig({ morningHour: 23, startAt: undefined });
+			expect(readConfig(r.dir).startAt).toBe("end");
+			writeFileSync(r.inbox, line({ at: T0 - 60_000 }) + line({ at: T0 - 30_000, family: "other", title: "other failed" }));
+			const size = statSync(r.inbox).size;
+			expect(r.pass(T0)).toMatchObject({ read: 0, woke: 0 });
+			expect(r.wakes()).toEqual([]);
+			expect(r.store.state.get<Cursor>(CURSOR_KEY)).toMatchObject({ offset: size, inode: statSync(r.inbox).ino });
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "end", inbox: r.inbox, offset: size, skippedBytes: size }]);
+			appendFileSync(r.inbox, line({ at: min(1), family: "third", title: "third failed" }));
+			expect(r.pass(min(1)).read).toBe(1);
+			expect(r.wakes()).toHaveLength(1);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toHaveLength(1);
+		});
+		test("\"end\" with no inbox yet starts at its start, so the first lines written to it are read", () => {
+			const r = rig();
+			r.writeConfig({ morningHour: 23, startAt: "end" });
+			expect(r.pass(T0).read).toBe(0);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "end", inbox: r.inbox, offset: 0 }]);
+			writeFileSync(r.inbox, line({ at: min(1) }));
+			expect(r.pass(min(1)).read).toBe(1);
+		});
+		test("\"beginning\" reads the whole existing inbox, and logs that choice", () => {
+			const r = rig();
+			r.writeConfig({ morningHour: 23, startAt: "beginning" });
+			writeFileSync(r.inbox, line({ at: T0 - 60_000 }));
+			expect(r.pass(T0).read).toBe(1);
+			expect(r.wakes()).toHaveLength(1);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "beginning", inbox: r.inbox, offset: 0 }]);
+		});
+		test("a stored cursor is never moved by startAt", () => {
+			const r = rig();
+			writeFileSync(r.inbox, line({ at: T0 - 60_000 }));
+			r.store.state.set(CURSOR_KEY, { offset: 0, inode: statSync(r.inbox).ino, retired: [] } satisfies Cursor);
+			r.writeConfig({ morningHour: 23, startAt: "end" });
+			expect(r.pass(T0).read).toBe(1);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([]);
+		});
 	});
 	test("alert-desk.json can turn the desk off", () => {
 		const r = rig({ enabled: false });

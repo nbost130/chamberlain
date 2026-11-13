@@ -41,6 +41,18 @@ than `maxAgeHours` (6) when read are not woken about. A cursor (inode and offset
 absorbed because the items already hold what woke the desk. A big, fully read inbox is renamed away and its retired file read once more a minute
 later, for a writer that still held it.
 
+**The first start.** With no cursor stored (the desk's first run, or its first run after `bun src/cli/import.ts`, which does not carry an
+older system's desk state over), `startAt` in `alert-desk.json` decides where reading begins. `"end"`, the default, sets the cursor to the
+inbox's current end, so nothing already in the inbox wakes the desk (a line being written at that moment is skipped whole); with no inbox yet,
+the cursor starts at its beginning, so the first lines written to it are read. `"beginning"` reads the whole existing inbox (events older than
+`maxAgeHours` still wake nobody). The cursor is saved before anything is read and the choice is logged once, as `alert-desk-start` with
+`startAt`, the inbox, the offset and, for `"end"`, the bytes skipped. A stored cursor is never moved by `startAt`.
+
+**Removing the desk.** With no `desk-wake-url` the desk's lane stays and its waiting wakes raise `desk:wake-not-ready`. If the receiver
+itself is gone (the home server in `servers.json` is now one whose adapter has no `alertDesk`), desk wakes still waiting are kept, never
+dropped or sent to the Steward: the relay raises `desk:wake-unconfigured` naming the receiver and the count, and `bun src/wakes.ts list`
+shows each row with `for desk`, so `bun src/wakes.ts cancel <id>` can give it up.
+
 ## Delivery guarantee
 
 At-least-once, with stable ids. A wake's id comes from the event (`desk:<hash of family, signature and time>`), a replay after a crash makes the same id, and
@@ -88,7 +100,7 @@ Migration 8 cannot be undone by the old build: a database from a newer build is 
 `$CHAMBERLAIN_CONF/alert-desk.json` (all optional) and the environment:
 
 ```json
-{ "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Etc/GMT+5", "maxAgeHours": 6, "enabled": true,
+{ "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Etc/GMT+5", "maxAgeHours": 6, "enabled": true, "startAt": "end",
   "morningCommands": ["bun /opt/monitor/report.ts list --limit <N> --json"], "morningNotes": "Skip the monitor's own heartbeat events." }
 ```
 

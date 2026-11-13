@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { WakeTransport } from "./deliver.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
@@ -195,23 +195,24 @@ describe("the engine drains the inbox into the desk", () => {
 		for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 		if (saved === undefined) delete process.env.ALERT_DESK_INBOX; else process.env.ALERT_DESK_INBOX = saved;
 	});
-	function rig(caps?: Parameters<typeof createFakeAdapter>[0]) {
+	function rig(caps?: Parameters<typeof createFakeAdapter>[0], desk: Record<string, unknown> = { startAt: "beginning" }) {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-desk-`);
 		dirs.push(root);
 		const conf = `${root}/conf`;
 		mkdirSync(conf, { recursive: true, mode: 0o700 });
 		writeFileSync(`${conf}/decision-rights.md`, "ask", { mode: 0o600 });
-		writeFileSync(`${conf}/alert-desk.json`, JSON.stringify({ morningHour: 23 }));
+		writeFileSync(`${conf}/alert-desk.json`, JSON.stringify({ morningHour: 23, ...desk }));
 		process.env.ALERT_DESK_INBOX = `${root}/inbox.jsonl`;
 		const store = memStore();
+		const logged: { event: string; [k: string]: unknown }[] = [];
 		const fake = createFakeAdapter(caps);
 		const engine = createEngine({
 			conf, lock: testRelayLock(store), store, housekeeping: true, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
-			log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 },
+			log: (event, data) => logged.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 },
 		});
 		engines.push(engine);
 		void engine.start();
-		return { root, fake, engine, store };
+		return { root, fake, engine, store, logged };
 	}
 	const alert = (family: string) => `${JSON.stringify({ v: 1, source: "monitor", family, title: `${family} down`, body: "b", ts: new Date().toISOString(), severity: "critical" })}\n`;
 
@@ -225,6 +226,22 @@ describe("the engine drains the inbox into the desk", () => {
 		expect(r.fake.deskWakes[0]!.message).toContain("CRITICAL alert family monitor:disk");
 		expect(r.fake.deskWakes[0]!.message).toContain("delivery id: desk:");
 		expect(r.fake.wakes).toEqual([]);
+	});
+	test("a first start with the default startAt \"end\" skips what the inbox already holds, logs it, and wakes on what comes after", async () => {
+		const r = rig(undefined, {});
+		appendFileSync(`${r.root}/inbox.jsonl`, alert("monitor:old-1") + alert("monitor:old-2"));
+		const size = statSync(`${r.root}/inbox.jsonl`).size;
+		await r.engine.tick();
+		await Bun.sleep(50);
+		expect(r.fake.deskWakes).toEqual([]);
+		expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "end", inbox: `${r.root}/inbox.jsonl`, offset: size, skippedBytes: size }]);
+		appendFileSync(`${r.root}/inbox.jsonl`, alert("monitor:new"));
+		await r.engine.tick();
+		const end = Date.now() + 3000;
+		while (r.fake.deskWakes.length === 0 && Date.now() < end) await Bun.sleep(10);
+		expect(r.fake.deskWakes).toHaveLength(1);
+		expect(r.fake.deskWakes[0]!.message).toContain("monitor:new");
+		expect(r.logged.filter((l) => l.event === "alert-desk-start")).toHaveLength(1);
 	});
 	test("a backend without the alertDesk capability never reads the inbox", async () => {
 		const r = rig({ capabilities: ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"] });
