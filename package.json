@@ -1,10 +1,16 @@
 {
   "name": "chamberlain",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Watches your T3 Code threads and wakes the Steward, an agent thread, only when something needs it. Zero model calls.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["t3-code", "agents", "orchestration", "daemon", "decision-queue"],
+  "keywords": [
+    "t3-code",
+    "agents",
+    "orchestration",
+    "daemon",
+    "decision-queue"
+  ],
   "engines": {
     "bun": ">=1.4.0"
   },
