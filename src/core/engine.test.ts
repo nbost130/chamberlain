@@ -307,14 +307,15 @@ describe("the held ledger is reconciled on the heartbeat", () => {
 		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["cached-settled"]);
 	});
 
-	test("fix 3: a thread the server no longer lists is gone, and the hold closes from a fresh snapshot", async () => {
+	test("fix 1: a thread its named server no longer lists is gone, and the hold closes from a fresh snapshot; one naming no server stays", async () => {
 		const r = rig({ housekeeping: true, capabilities: ["snapshot"] });
 		await r.until("connected", () => r.fake.connected);
-		appendHeld(r.store, { thread: "deleted", what: "waits", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
-		appendHeld(r.store, { thread: "listed", what: "waits", ref: { threadId: "th-listed" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(r.store, { thread: "deleted", what: "waits", server: "fake", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(r.store, { thread: "listed", what: "waits", server: "fake", ref: { threadId: "th-listed" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(r.store, { thread: "unnamed", what: "waits", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
 		r.fake.emit({ kind: "state", thread: thread("th-listed", "running") });
 		await r.engine.tick();
-		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["listed"]);
+		expect(heldOpen(r.store).map((h) => h.thread).sort()).toEqual(["listed", "unnamed"]);
 	});
 
 	test("fix 1: an adapter that cannot take a snapshot leaves its threads unknown", async () => {

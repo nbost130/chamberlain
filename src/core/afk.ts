@@ -8,7 +8,8 @@
  *   bun src/core/afk.ts enter "<their words>" [--return <ISO>] [--cap "<spend note>"] [--since <ISO>]
  *   bun src/core/afk.ts status
  *   bun src/core/afk.ts hold "<thread>" "<what waits for the operator>" ["<safe default taken>"] ["<threadId of an open card>"]
- *        [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId>]
+ *        [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>]
+ *        [--thread <threadId> --server <name>]     (--server says which server the thread lives on; without it a missing thread is never "gone")
  *   bun src/core/afk.ts held                     (everything not closed, from any absence, with its notes)
  *   bun src/core/afk.ts note <id> "<what changed>"   (appended to the hold; never write a second hold about the same wait)
  *   bun src/core/afk.ts close <id> "<how it closed>"
@@ -132,12 +133,17 @@ export function itemIdsOf(h: Held): string[] {
 /** A card or approval left its thread: close what was held against it. A hold with no card link is a decision, so it stays. */
 export const closeHeldForCard = (store: Store, threadId: string, requestId: string, how: string): number => closeWhere(store, (h) => h.requestId === requestId || h.threadId === threadId, how);
 /**
- * Pure: why a hold is not a hold. A hold is a real wait on the operator, and an FYI waits on nothing, so the ledger refuses
- * it in code and points at the decision log. Looks at the thread and the text.
+ * Pure: why a hold is not a hold. A hold is a real wait on the operator, and an FYI waits on nothing, so the ledger refuses it
+ * in code and points at the decision log. Only an opening counts: the thread, or the text, STARTS with "FYI", "for your
+ * information", "no action needed" or "nothing needed" (after any spaces and punctuation). A hold that says "waits on the
+ * operator; no action from builders until then" is a real wait and passes.
  */
 export function fyiReason(thread: string, what: string): string | undefined {
-	const hit = `${thread}\n${what}`.match(/\bFYI\b|\bfor your information\b|\bno action (?:is )?(?:needed|required|necessary)\b|\bneeds? no action\b|\bno action\b|\bnothing (?:is )?(?:needed|required|necessary)\b|\bnothing to do\b/i);
-	return hit ? `"${hit[0]}"` : undefined;
+	for (const part of [thread, what]) {
+		const hit = part.match(/^[\s\p{P}]*(FYI\b|for your information\b|no action (?:is )?(?:needed|required|necessary)\b|nothing (?:is )?(?:needed|required|necessary)\b)/iu);
+		if (hit) return `"${hit[1]}"`;
+	}
+	return undefined;
 }
 /** Pure: is this hold waiting on queue item `itemId`? By its `item` link, or by the item ID named as a word in its text. */
 export const heldForItem = (h: Held, itemId: string) => h.item === itemId || new RegExp(`(^|[^A-Za-z0-9-])${itemId}(?![A-Za-z0-9-])`).test(`${h.thread}\n${h.what}`);
@@ -193,24 +199,25 @@ function main() {
 		const beat = store.state.get("heartbeat");
 		console.log("heartbeat:", beat ? JSON.stringify(beat) : "none");
 	} else if (cmd === "hold") {
-		const HOLD_USAGE = 'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId>]';
+		const HOLD_USAGE = 'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId> --server <name>]';
 		const flags: Record<string, string> = {};
 		const pos: string[] = [];
 		for (let k = 0; k < rest.length; k++) {
 			const a = rest[k]!;
 			if (!a.startsWith("--")) { pos.push(a); continue; }
-			if (!["--item", "--pr", "--issue", "--branch", "--run", "--thread"].includes(a) || rest[k + 1] === undefined) { console.error(HOLD_USAGE); process.exit(2); }
+			if (!["--item", "--pr", "--issue", "--branch", "--run", "--thread", "--server"].includes(a) || rest[k + 1] === undefined) { console.error(HOLD_USAGE); process.exit(2); }
 			flags[a] = rest[++k]!;
 		}
 		const [thread, what, taken, threadId] = pos;
 		const item = flags["--item"];
 		const raw = { pr: flags["--pr"], issue: flags["--issue"], branch: flags["--branch"], runId: flags["--run"], threadId: flags["--thread"] };
+		const server = flags["--server"];
 		const ref = cleanRef(raw);
 		const given = Object.entries(raw).filter(([, v]) => v !== undefined);
 		const fyi = thread && what ? fyiReason(thread, what) : undefined;
 		if (fyi) { console.error(`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: bun ${new URL("./decided.ts", import.meta.url).pathname} "<thread>" "<what I decided>" "<ruling cited>"`); process.exit(2); }
-		if (!thread || !what || (item !== undefined && !ITEM_ID.test(item)) || Object.keys(ref ?? {}).length !== given.length) { console.error(HOLD_USAGE); process.exit(2); }
-		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(item ? { item } : {}), ...(ref ? { ref } : {}) });
+		if (!thread || !what || (item !== undefined && !ITEM_ID.test(item)) || Object.keys(ref ?? {}).length !== given.length || (server !== undefined && (!/^[A-Za-z0-9_.-]{1,40}$/.test(server) || (!raw.threadId && !threadId)))) { console.error(HOLD_USAGE); process.exit(2); }
+		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(server ? { server } : {}), ...(item ? { item } : {}), ...(ref ? { ref } : {}) });
 		console.log("held");
 	} else if (cmd === "held") {
 		for (const h of heldOpen(store)) {

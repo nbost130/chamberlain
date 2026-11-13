@@ -214,10 +214,10 @@ describe("hold refs, notes and the CLI", () => {
 		expect(() => noteHeld(store, id, "late")).toThrow("no open held item");
 	});
 
-	// Fix 4. Must fail on 2845f33: `hold "FYI" "FYI only: build passed"` made an open hold.
-	test("fix 4: hold refuses an FYI with a non-zero exit, writes nothing, and points at decided.ts", () => {
+	// Fix 3 (round 2). Must fail on 4f1718e: "no action from builders" in a real hold's text was refused.
+	test("fix 3: hold refuses an FYI that opens the thread or the text, with a non-zero exit, and points at decided.ts", () => {
 		const dir = scratch();
-		for (const [thread, what] of [["FYI", "build passed"], ["CI", "FYI only: build passed"], ["CI", "For your information, the deploy finished"], ["CI", "no action needed, all green"], ["CI", "Nothing needed from the operator"], ["Billing", "nothing required, just so you know"], ["Notes", "no action"]]) {
+		for (const [thread, what] of [["FYI", "build passed"], ["CI", "FYI only: build passed"], ["CI", "  ...For your information, the deploy finished"], ["CI", "no action needed, all green"], ["CI", "Nothing needed from the operator"], ["[FYI] Billing", "migration ran"], ["Notes", "nothing required"], ["Notes", "(FYI) done"]]) {
 			const r = cli(dir, "hold", thread!, what!);
 			expect(r.status).toBe(2);
 			expect(r.stderr).toContain("refused");
@@ -228,16 +228,27 @@ describe("hold refs, notes and the CLI", () => {
 		store.close();
 	});
 
-	test("fix 4: ordinary holds still pass, flags and all", () => {
+	test("fix 3: a real wait that merely says 'no action' or 'nothing' somewhere passes", () => {
 		const dir = scratch();
-		for (const [thread, what] of [["Billing", "approve the production migration"], ["Deploy", "needs the operator's go before the release"], ["Secrets", "rotate the Stripe key; only they can"], ["App", "decide whether a one-way gate is needed"]]) {
+		for (const [thread, what] of [["Billing", "waits on the operator; no action from builders until then"], ["Deploy", "approve the release. Nothing needed from the build until they say go"], ["Secrets", "rotate the Stripe key; it is not an FYI, only they can"], ["App", "decide whether a one-way gate is needed"]]) {
+			expect(fyiReason(thread!, what!)).toBeUndefined();
 			expect(cli(dir, "hold", thread!, what!, "left it parked").status).toBe(0);
 		}
 		expect(cli(dir, "hold", "PR", "merge approval", "", "", "--pr", "o/r#5").status).toBe(0);
 		const store = open(dir);
 		expect(heldOpen(store)).toHaveLength(5);
 		store.close();
-		expect(fyiReason("Billing", "approve the production migration")).toBeUndefined();
 		expect(fyiReason("x", "FYI")).toBe('"FYI"');
+	});
+
+	test("fix 1: --server names the thread's server, only beside a thread, and is stored on the hold", () => {
+		const dir = scratch();
+		expect(cli(dir, "hold", "A", "waits", "", "", "--thread", "th-abc1", "--server", "main").status).toBe(0);
+		expect(cli(dir, "hold", "B", "waits", "", "th-card1", "--server", "second").status).toBe(0);
+		expect(cli(dir, "hold", "C", "waits", "", "", "--server", "main").status).toBe(2);
+		expect(cli(dir, "hold", "D", "waits", "", "", "--thread", "th-abc1", "--server", "ma in").status).toBe(2);
+		const store = open(dir);
+		expect(heldOpen(store).map((h) => [h.thread, h.server])).toEqual([["A", "main"], ["B", "second"]]);
+		store.close();
 	});
 });

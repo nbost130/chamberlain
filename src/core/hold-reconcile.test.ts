@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { appendHeld, heldId, heldOpen, HELD, type Held } from "./afk.ts";
 import { askQuestion, claimWake, notNow, pageClaim, QUEUE, type Answer, type Question } from "./questions.ts";
-import { BACKOFF_MS, classifyThread, MAX_LOOKUPS, REF_PASS_MS, reconcileItemHolds, reconcileRefHolds, refsOf, takeSnapshots, threadViewAcross, type GhRead, type MachineSnapshot, type ThreadFacts } from "./hold-reconcile.ts";
+import { BACKOFF_MS, classifyThread, MAX_REQUESTS, REF_PASS_MS, reconcileItemHolds, reconcileRefHolds, refsOf, takeSnapshots, threadViewAcross, type GhRead, type MachineSnapshot, type ThreadFacts } from "./hold-reconcile.ts";
 import type { Store } from "./store.ts";
 
 const T0 = new Date("2026-11-13T01:00:00.000Z");
@@ -216,20 +216,40 @@ describe("pass 2: refs", () => {
 		hold(store, { thread: "o", ref: { pr: "o/r#2" } });
 		const { gh, calls } = fakeGh({ "repos/o/r/pulls/1": { state: "closed", merged_at: "2026-11-13T12:00:00Z" }, "repos/o/r/pulls/2": { state: "open" } });
 		expect((await run(store, gh)).closed).toBe(1);
-		expect(await run(store, gh, undefined, NOW + 60_000)).toEqual({ ran: false, closed: 0, lookups: 0, errors: 0 });
+		expect(await run(store, gh, undefined, NOW + 60_000)).toEqual({ ran: false, closed: 0, lookups: 0, requests: 0, errors: 0 });
 		expect((await run(store, gh, undefined, NOW + REF_PASS_MS)).closed).toBe(0);
 		expect(calls).toEqual(["repos/o/r/pulls/1", "repos/o/r/pulls/2", "repos/o/r/pulls/2"]);
 	});
 
-	test("a pass spends at most MAX_LOOKUPS calls and the next pass starts with the refs it skipped", async () => {
+	test("a pass spends at most MAX_REQUESTS requests and the next pass starts with the refs it skipped", async () => {
 		const store = memStore();
-		const n = MAX_LOOKUPS + 5;
+		const n = MAX_REQUESTS + 5;
 		const table: Record<string, unknown> = {};
 		for (let i = 1; i <= n; i++) { hold(store, { thread: `h${i}`, ref: { pr: `o/r#${i}` } }); table[`repos/o/r/pulls/${i}`] = { state: "open" }; }
-		expect((await run(store, fakeGh(table).gh)).lookups).toBe(MAX_LOOKUPS);
+		expect(await run(store, fakeGh(table).gh)).toMatchObject({ lookups: MAX_REQUESTS, requests: MAX_REQUESTS });
 		const second = fakeGh(table);
 		await run(store, second.gh, undefined, NOW + REF_PASS_MS);
-		expect(second.calls.slice(0, 5).sort()).toEqual(Array.from({ length: 5 }, (_, i) => `repos/o/r/pulls/${MAX_LOOKUPS + 1 + i}`).sort());
+		expect(second.calls.slice(0, 5).sort()).toEqual(Array.from({ length: 5 }, (_, i) => `repos/o/r/pulls/${MAX_REQUESTS + 1 + i}`).sort());
+	});
+
+	// Fix 4. Must fail on 4f1718e: 31 branch refs reported 30 lookups and made 60 requests.
+	test("fix 4: every API request counts against the budget, the repository-identity call too", async () => {
+		const store = memStore();
+		const table: Record<string, unknown> = {};
+		for (let i = 1; i <= 31; i++) {
+			hold(store, { thread: `b${i}`, ref: { branch: `o/r${i}:feat/x` } });
+			table[`repos/o/r${i}`] = { id: i, full_name: `o/r${i}` };
+			table[`repos/o/r${i}/git/matching-refs/heads/feat/x?per_page=100`] = 1;
+		}
+		const g = fakeGh(table);
+		const r = await run(store, g.gh);
+		expect(g.calls.length).toBeLessThanOrEqual(MAX_REQUESTS);
+		expect(r.requests).toBe(g.calls.length);
+		expect(r.lookups).toBe(MAX_REQUESTS / 2);
+		const g2 = fakeGh(table);
+		await run(store, g2.gh, undefined, NOW + REF_PASS_MS);
+		expect(g2.calls.length).toBeLessThanOrEqual(MAX_REQUESTS);
+		expect(g2.calls[0]).toBe("repos/o/r16");
 	});
 
 	test("a rate-limit answer stops the pass and no GitHub call is made until the back-off ends", async () => {
@@ -247,7 +267,7 @@ describe("pass 2: refs", () => {
 
 	test("refs are shaped before they reach a request", () => {
 		const h = (ref: unknown): Held => ({ t: "t", thread: "x", what: "y", ref: ref as never });
-		expect(refsOf(h({ pr: "a/b#1", issue: "a/b#2", branch: "a/b:c/d", threadId: "th-1" })).map((r) => r.key)).toEqual(["pr:a/b#1", "issue:a/b#2", "branch:a/b:c/d", "thread:th-1"]);
+		expect(refsOf(h({ pr: "a/b#1", issue: "a/b#2", branch: "a/b:c/d", threadId: "th-1" })).map((r) => r.key)).toEqual(["pr:a/b#1", "issue:a/b#2", "branch:a/b:c/d", "thread::th-1"]);
 		expect(refsOf(h({ pr: "a/b#1?x=1", issue: "../../x#1", branch: "a/b:$(id)", threadId: "a b" }))).toEqual([]);
 		expect(heldId(h({ pr: "a/b#1" }))).toBe(heldId(h(undefined)));
 	});
@@ -289,19 +309,28 @@ describe("pass 2: refs", () => {
 		expect(whats(store)).toEqual(["h"]);
 	});
 
-	// Fix 3. Must fail on 2845f33: a thread absent from the snapshot stayed unknown forever.
-	test("fix 3: a thread absent from every server's fresh, complete snapshot is gone; absent while any server is down is unknown", async () => {
-		const a = machine("a", { "th-1": facts() });
-		const b = machine("b", {});
-		expect(threadViewAcross([a, b], "th-x")).toEqual({ state: "gone", saw: "gone from every server's fresh snapshot" });
-		expect(threadViewAcross([a, machine("b", {}, { healthy: false })], "th-x")).toEqual({ state: "unknown" });
-		expect(threadViewAcross([a, machine("b", {}, { complete: false })], "th-x")).toEqual({ state: "unknown" });
-		expect(threadViewAcross([a, b], "th-1")).toEqual({ state: "live" });
-		expect(threadViewAcross([machine("a", { "th-1": facts({ settled: true }) }), machine("b", {}, { healthy: false })], "th-1")).toEqual({ state: "settled", saw: "settled" });
+	// Fix 1 (round 2). Must fail on 4f1718e: a thread on an offline server read as gone because another server's snapshot lacked it.
+	test("fix 1: a thread is gone only when its OWN server is named and that server's fresh, complete snapshot lacks it", () => {
+		const a = machine("main", { "th-1": facts() });
+		const second = machine("second", {}, { healthy: false, complete: false });
+		expect(threadViewAcross([a, second], "th-on-second")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([a, second], "th-on-second", "second")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([a], "th-on-second", "second")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([a, machine("third", {})], "th-x")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([a, second], "th-x", "main")).toEqual({ state: "gone", saw: "gone from main's fresh snapshot" });
+		expect(threadViewAcross([machine("main", {}, { complete: false })], "th-x", "main")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([machine("a", { "th-1": facts({ settled: true }) }), second], "th-1")).toEqual({ state: "settled", saw: "settled" });
+		expect(threadViewAcross([machine("a", { "th-1": facts() }), machine("b", { "th-1": facts({ archived: true }) })], "th-1")).toEqual({ state: "unknown" });
+	});
+
+	test("fix 1: the ledger closes a missing thread only for a hold that names its server", async () => {
 		const store = memStore();
-		hold(store, { thread: "deleted", ref: { threadId: "th-deleted" } });
-		expect((await run(store, undefined, async () => [a, b])).closed).toBe(1);
-		expect(heldOpen(store)).toHaveLength(0);
+		hold(store, { thread: "named", server: "main", ref: { threadId: "th-del" } });
+		hold(store, { thread: "unnamed", ref: { threadId: "th-del" } });
+		hold(store, { thread: "on-second", server: "second", ref: { threadId: "th-2" } });
+		const snaps = async () => [machine("main", {}), machine("second", {}, { healthy: false, complete: false })];
+		expect((await run(store, undefined, snaps)).closed).toBe(1);
+		expect(whats(store)).toEqual(["on-second", "unnamed"]);
 	});
 
 	// Fix 2. Must fail on 2845f33: the slug alone answered "branch absent" for a recreated repository, and the hold closed.
@@ -314,12 +343,27 @@ describe("pass 2: refs", () => {
 		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, (t += REF_PASS_MS));
 		await pass(at(77, 1));
 		await pass(at(99, 0));
-		expect(whats(store)).toEqual(["b"]);
 		await pass(at(77, 0, "new-owner/r"));
-		expect(whats(store)).toEqual(["b"]);
 		await pass(fakeGh({ [path]: 0 }));
 		expect(whats(store)).toEqual(["b"]);
-		expect((await pass(at(77, 0))).closed).toBe(1);
+		expect((await pass(at(77, 0))).closed).toBe(0);
+	});
+
+	// Fix 2 (round 2). Must fail on 4f1718e: the recorded id was overwritten by the second sighting, so the replay closed the hold.
+	test("fix 2: the replay (77,1) then (99,1) then (99,0) does not close, and the recorded id is never rewritten", async () => {
+		const path = "repos/o/r/git/matching-refs/heads/feat/x?per_page=100";
+		const at = (id: number, count: number) => fakeGh({ "repos/o/r": { id, full_name: "o/r" }, [path]: count });
+		const store = memStore();
+		hold(store, { thread: "b", ref: { branch: "o/r:feat/x" } });
+		let t = NOW;
+		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, (t += REF_PASS_MS));
+		await pass(at(77, 1));
+		await pass(at(99, 1));
+		expect((await pass(at(99, 0))).closed).toBe(0);
+		expect(whats(store)).toEqual(["b"]);
+		expect(store.state.get<{ seenLive: Record<string, unknown> }>("hold-reconcile")!.seenLive["o/r:feat/x"]).toMatchObject({ repoId: 77, conflict: true });
+		expect((await pass(at(77, 0))).closed).toBe(0);
+		expect(whats(store)).toEqual(["b"]);
 	});
 
 	test("fix 2: a branch seen before the repository id was recorded (old state) is not known deleted", async () => {
