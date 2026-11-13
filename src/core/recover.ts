@@ -17,6 +17,9 @@
  *   5. Outage breaker: three failures of one kind within ten minutes (any threads) stop every retry and raise ONE alarm to the
  *      principal through the decision queue. It stays tripped until ten minutes pass with no failure.
  *
+ * Known limit (documented, not fixed): the retry is queued behind whatever is pending (queue mode), and a queued retry has no expiry, so on a
+ * thread that stays busy it runs whenever the thread next frees up, however late.
+ *
  * The retry never changes the model. A capacity failure is retried on the same model; whether to try another is the principal's call.
  *
  * Recovery state (per-thread failures, pings sent, judged hold, pending retries, the breaker) is persisted through a RecoverStore, so
@@ -163,7 +166,11 @@ type ThreadRecord = {
 	retried?: { runId: string; at: number; failure: RunFailure; kind: FailureKind };
 	/** The judge has seen it: no more automatic retries until a turn completes. */
 	judged?: boolean;
-	pending?: { runId: string; kind: FailureKind; failure: RunFailure; instruction: string; due: number };
+	pending?: {
+		runId: string; kind: FailureKind; failure: RunFailure; instruction: string; due: number;
+		/** Set by the write-ahead: the thread's counters exactly as they were before the attempt, so a refusal that sent nothing restores them, even after a restart. */
+		attempt?: { pings: number; retried: { runId: string; at: number; failure: RunFailure; kind: FailureKind } | null };
+	};
 };
 /** Everything recovery must remember across a restart. Plain JSON. */
 export type RecoverState = {
@@ -195,6 +202,8 @@ export function createRecovery(d: RecoverDeps) {
 	const timers = new Map<string, () => void>();
 
 	const save = () => { try { store.save(st); } catch (e) { d.log("recover-state-unsaved", { error: String(e).slice(0, 160) }); } };
+	/** The save the write-ahead depends on: it reports its failure instead of swallowing it, because a send with no durable record must not happen. */
+	const saveStrict = (): string | undefined => { try { store.save(st); return undefined; } catch (e) { d.log("recover-state-unsaved", { error: String(e).slice(0, 160) }); return String(e instanceof Error ? e.message : e).slice(0, 160); } };
 	const rec = (id: string): ThreadRecord => (st.threads[id] ??= { failures: [], pings: 0 });
 	const ctx = async (id: string): Promise<ThreadContext> => ({ stewardId: d.stewardId(), decisionsId: d.decisionsId(), children: await d.children(id).catch(() => 0) });
 	const clearPending = (id: string) => { timers.get(id)?.(); timers.delete(id); const r = st.threads[id]; if (r?.pending) delete r.pending; };
@@ -241,19 +250,32 @@ export function createRecovery(d: RecoverDeps) {
 		const stop = neverRetryThread(live, { stewardId: d.stewardId(), decisionsId: d.decisionsId(), children });
 		if (stop) return standDown(stop);
 		if (tripped()) return standDown("outage breaker is tripped");
-		// Write-ahead: the attempt is recorded durably BEFORE the send, and the retry stays pending until the send is answered. A crash after
-		// T3 accepted the message therefore finds the attempt recorded (the next failure is the second one and goes to the judge), and a crash
-		// before it re-sends the same message id (retrySeed), which T3 drops if the first one did land.
+		// Write-ahead, failing closed: the attempt is recorded durably BEFORE the send, and the retry stays pending until the send is answered.
+		// If the record cannot be saved, nothing is sent. A crash after T3 accepted the message finds the attempt recorded (the next failure is
+		// the second one and goes to the judge); a crash before it re-sends the same message id (retrySeed), which T3 drops if the first one did
+		// land. The counters as they were before the attempt are saved with it, so a refusal that sent nothing can restore them exactly.
 		timers.delete(threadId);
 		const tr = rec(threadId);
-		const first = tr.retried?.runId !== p.runId;
-		if (first) { tr.pings++; tr.retried = { runId: p.runId, at: now(), failure: p.failure, kind: p.kind }; }
-		save();
-		const r = await d.ping(threadId, RETRY_TEXT, retrySeed(threadId, p.failure));
+		const firstAttempt = p.attempt === undefined;
+		if (firstAttempt) {
+			p.attempt = { pings: tr.pings, retried: tr.retried ?? null };
+			tr.pings++;
+			tr.retried = { runId: p.runId, at: now(), failure: p.failure, kind: p.kind };
+		}
+		const unsaved = saveStrict();
+		if (unsaved !== undefined) {
+			if (firstAttempt) { tr.pings = p.attempt!.pings; if (p.attempt!.retried) tr.retried = p.attempt!.retried; else delete tr.retried; delete p.attempt; }
+			clearPending(threadId);
+			d.wake(threadId, p.kind, `the automatic retry was not sent because its record could not be saved (${unsaved}), so nothing has been retried`);
+			return;
+		}
+		let r: { ok: boolean; detail: string };
+		try { r = await d.ping(threadId, RETRY_TEXT, retrySeed(threadId, p.failure)); } catch (e) { r = { ok: false, detail: `the send threw: ${String(e instanceof Error ? e.message : e).slice(0, 160)}` }; }
 		clearPending(threadId);
 		if (!r.ok) {
-			// A refusal that sent nothing withdraws the attempt; any other failure may have been sent, so it stays counted.
-			if (r.detail.startsWith("not sent:") && first) { tr.pings--; delete tr.retried; }
+			// Only a refusal that says nothing was sent withdraws the attempt, and it restores the counters exactly as they were. Any other failure
+			// may have been sent, so the attempt stays counted: a confirmed acceptance is the only thing treated as sent, and a doubt is never treated as unsent.
+			if (r.detail.startsWith("not sent:")) { tr.pings = p.attempt!.pings; if (p.attempt!.retried) tr.retried = p.attempt!.retried; else delete tr.retried; }
 			save();
 			d.log("recover-ping-failed", { threadId, runId: p.runId, detail: r.detail });
 			d.wake(threadId, p.kind, `the automatic retry could not be sent (${r.detail}), so nothing has been retried`);

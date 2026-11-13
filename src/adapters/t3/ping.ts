@@ -32,8 +32,18 @@ export const IDENTITIES: Record<Identity, { createdBy: "agent" | "user"; creatio
 	operator: { createdBy: "user", creationSource: "server" },
 };
 export type PingResult = { ok: boolean; detail: string };
-/** A refusal that sent nothing starts its detail with this, so a caller can tell "not sent" from "may have been sent". */
+/** A failure that sent nothing starts its detail with this, so a caller can tell "not sent" from "may have been sent". */
 export const NOT_SENT = "not sent: ";
+
+/**
+ * Pure: the detail of a send that threw, classified. Until the dispatch call is made, nothing can have been sent, so every error is
+ * "not sent". After it, only T3 refusing the command outright (an "rpc failure" reply) means nothing landed; a timeout, a dropped
+ * socket or anything else may have been accepted, so it is reported without the prefix. Only a resolved dispatch is a confirmed send.
+ */
+export function sendFailure(error: unknown, dispatched: boolean, secrets: (string | undefined)[]): string {
+	const text = redact(String(error), secrets).slice(0, 200);
+	return dispatched && !String(error).includes("rpc failure") ? text : `${NOT_SENT}${text}`;
+}
 
 /** Pure: a UUID-shaped ID fixed by its seed, so a retried send carries the same command and message IDs. */
 export const stableId = (seed: string) => {
@@ -135,19 +145,21 @@ export function createRpcPing(d: RpcPingDeps): (threadId: string, text: string, 
 	return async (threadId, text, seed, identity = "steward") => {
 		const token = readToken(d.conf, s.operateTokenFile);
 		if (!token) return { ok: false, detail: `${NOT_SENT}${s.name} has no operate token here, so the page can't send to its threads` };
+		let dispatched = false;
 		try {
 			const rpc = await openWithin(conn, s.origin, token, ms);
 			try {
 				const proj = await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] };
 				const refused = identity === "daemon" ? daemonPingRefusal(proj) : undefined;
 				if (refused) return { ok: false, detail: `${NOT_SENT}${refused}` };
+				dispatched = true;
 				await within(rpc.request("orchestration.dispatchCommand", messageCommand({ threadId, text, seed, identity, activeRunId: activeRunOf(proj.runs) })), ms, "send");
 				return { ok: true, detail: `sent to ${s.name}:${threadId}` };
 			} finally {
 				rpc.ws.close();
 			}
 		} catch (e) {
-			return { ok: false, detail: redact(String(e), [token]).slice(0, 200) };
+			return { ok: false, detail: sendFailure(e, dispatched, [token]) };
 		}
 	};
 }

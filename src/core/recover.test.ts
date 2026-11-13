@@ -615,12 +615,14 @@ describe("fix round 1: recovery state survives a restart", () => {
 		expect(b.r.tripped()).toBe(true);
 		expect(await b.fail("d", { runId: "run-4", ...STREAM })).toMatchObject({ action: "breaker", alarm: false });
 	});
-	test("a completed turn clears the record, and a store that throws on save never breaks recovery", async () => {
+	test("a store that cannot save never breaks recovery: nothing is sent without a durable record, and the Steward is told why", async () => {
 		const store: RecoverStore = { load: () => undefined, save: () => { throw Error("disk full"); } };
 		const x = rig({ store });
 		expect((await x.fail("t1", { runId: "run-1", ...STREAM })).action).toBe("retry-scheduled");
 		await x.advance(4 * MIN);
-		expect(x.pings).toHaveLength(1);
+		expect(x.pings).toEqual([]);
+		expect(x.wakes).toHaveLength(1);
+		expect(x.wakes[0]!.note).toMatch(/could not be saved \(disk full\)/);
 		expect(x.logs.some((l) => l.event === "recover-state-unsaved")).toBe(true);
 		x.r.healthy("t1");
 		expect((await x.fail("t1", { runId: "run-2", ...STREAM })).action).toBe("retry-scheduled");
@@ -743,5 +745,137 @@ describe("fix round 2: write-ahead, and a retry message id that is the same afte
 		expect(retrySeed("t1", { runId: "a", ordinal: 981 })).not.toBe(retrySeed("t1", { runId: "b", ordinal: 1200 }));
 		expect(retrySeed("t2", { runId: "a", ordinal: 981 })).not.toBe(retrySeed("t1", { runId: "a", ordinal: 981 }));
 		expect(retrySeed("t1", { runId: "run-7" })).toBe("recover:t1:run-7");
+	});
+});
+
+describe("fix round 3: fault injection over every crash and failure point of the recovery sequence", () => {
+	/**
+	 * One stall (run-1 fails, a retry is due), then a fault at one point of the sequence, then, where the row says so, a restart, then the
+	 * next failure (run-2). Every row is checked against the same invariants:
+	 *   - at most one retry message reaches T3 for the stall (`sent`), and never a duplicate;
+	 *   - the counters match what happened: an attempt that may have been sent stays counted, one that was withdrawn leaves no trace, and
+	 *     no half-made attempt (`pending.attempt`) is left behind;
+	 *   - the next failure goes to the judge exactly when a retry may have gone out, and is a fresh first failure (retried once) otherwise.
+	 */
+	type Crash = "before-save" | "after-save" | "send-accepted" | "after-send" | "after-record";
+	type Fault = "save-fails" | "refused" | "throws" | "unknown-error";
+	type Row = {
+		name: string;
+		/** a process death at this point (nothing after it happens in that process) */
+		crash?: Crash;
+		/** a failure at this point; it is injected in the process named by `on` */
+		fault?: Fault;
+		on?: "A" | "B";
+		restart: boolean;
+		/** retry messages that reached T3 */
+		sent: number;
+		/** the counters after the faulted attempt: pings counted, and whether a retry is recorded as made */
+		counters: { pings: number; retried: boolean };
+		/** what the next failure does */
+		next: "verdict" | "retry-scheduled";
+		/** a wake to the Steward about the retry, matching this */
+		wake?: RegExp;
+	};
+	const MATRIX: Row[] = [
+		{ name: "no fault", restart: false, sent: 1, counters: { pings: 1, retried: true }, next: "verdict" },
+		{ name: "crash before the save", crash: "before-save", restart: true, sent: 1, counters: { pings: 1, retried: true }, next: "verdict" },
+		{ name: "the save fails", fault: "save-fails", on: "A", restart: false, sent: 0, counters: { pings: 0, retried: false }, next: "retry-scheduled", wake: /could not be saved \(disk full\)/ },
+		{ name: "the save fails, then a restart", fault: "save-fails", on: "A", restart: true, sent: 1, counters: { pings: 1, retried: true }, next: "verdict", wake: /could not be saved \(disk full\)/ },
+		{ name: "crash after the save, before the send", crash: "after-save", restart: true, sent: 1, counters: { pings: 1, retried: true }, next: "verdict" },
+		{ name: "crash with the send accepted", crash: "send-accepted", restart: true, sent: 1, counters: { pings: 1, retried: true }, next: "verdict" },
+		{ name: "the send is refused (not sent)", fault: "refused", on: "A", restart: false, sent: 0, counters: { pings: 0, retried: false }, next: "retry-scheduled", wake: /not sent: / },
+		{ name: "crash after the save, restart, then the send is refused (not sent)", crash: "after-save", fault: "refused", on: "B", restart: true, sent: 0, counters: { pings: 0, retried: false }, next: "retry-scheduled", wake: /not sent: / },
+		{ name: "the send throws", fault: "throws", on: "A", restart: false, sent: 0, counters: { pings: 1, retried: true }, next: "verdict", wake: /the send threw: socket hang up/ },
+		{ name: "the send fails in a way that may have landed", fault: "unknown-error", on: "A", restart: false, sent: 0, counters: { pings: 1, retried: true }, next: "verdict", wake: /send timed out/ },
+		{ name: "crash after the send, before it is recorded", crash: "after-send", restart: true, sent: 1, counters: { pings: 1, retried: true }, next: "verdict" },
+		{ name: "crash after the record", crash: "after-record", restart: true, sent: 1, counters: { pings: 1, retried: true }, next: "verdict" },
+	];
+
+	for (const row of MATRIX) test(row.name, async () => {
+		const inner = memoryRecoverStore();
+		const delivered: { seed: string; by: string }[] = [];
+		const stream = (runId: string) => ({ runId, ordinal: runId === "run-1" ? 1 : 2, message: "The provider event stream closed unexpectedly." });
+		/** One process: its store drops every write after its death, and its effects after death never happen (a dead process does not wake anyone). */
+		const process_ = (side: "A" | "B") => {
+			const dead = { v: false };
+			let wroteAhead = false;
+			const faulty = (row.on ?? "A") === side;
+			const store: RecoverStore = {
+				load: () => inner.load(),
+				save: (s) => {
+					if (dead.v) return;
+					const writeAhead = Object.values(s.threads).some((th) => th.pending?.attempt);
+					if (writeAhead && !wroteAhead) {
+						wroteAhead = true;
+						if (side === "A" && row.crash === "before-save") { dead.v = true; return; }
+						if (faulty && row.fault === "save-fails") throw Error("disk full");
+					}
+					inner.save(s);
+				},
+			};
+			let faulted = false;
+			/** A fault happens once, at the point under test; the retry that follows it is not faulted again. */
+			const hit = (f: Fault) => { if (faulty && row.fault === f && !faulted) { faulted = true; return true; } return false; };
+			const ping: NonNullable<RecoverDeps["ping"]> = async (_id, _text, seed) => {
+				if (dead.v) return new Promise<never>(() => {});
+				if (side === "A" && row.crash === "after-save") { dead.v = true; return new Promise<never>(() => {}); }
+				if (hit("refused")) return { ok: false, detail: "not sent: the thread is waiting on a card, approval or question" };
+				if (hit("throws")) throw Error("socket hang up");
+				if (hit("unknown-error")) return { ok: false, detail: "send timed out after 10000 ms" };
+				// T3 accepts it: a run begins on the thread.
+				delivered.push({ seed, by: side });
+				w.states.set("t1", t({ status: "running", latestRunId: "run-2" }));
+				if (side === "A" && row.crash === "send-accepted") { dead.v = true; return new Promise<never>(() => {}); }
+				if (side === "A" && row.crash === "after-send") dead.v = true;
+				return { ok: true, detail: "sent" };
+			};
+			return { store, ping, dead };
+		};
+		const pa = process_("A");
+		const a = rig({ store: pa.store, ctxOver: { ping: pa.ping, wake: (threadId, kind, note) => { if (!pa.dead.v) a.wakes.push({ threadId, kind, note }); } } });
+		const w = a;
+		await a.fail("t1", stream("run-1"));
+		await a.advance(4 * MIN);
+		if (row.crash === "after-record") pa.dead.v = true;
+		let side = a;
+		if (row.restart) {
+			a.r.stop();
+			const pb = process_("B");
+			side = rig({ store: pb.store, share: a, ctxOver: { ping: pb.ping } });
+			side.r.restore();
+			await side.advance(DEFAULT_RECOVER_TIMING.restoreDelayMs + 1000);
+		}
+		// What the faulted attempt left behind.
+		const th = inner.load()?.threads.t1;
+		expect(delivered.length).toBe(row.sent);
+		expect(new Set(delivered.map((m) => m.seed)).size).toBe(row.sent);
+		if (row.sent) expect(delivered[0]!.seed).toBe("recover:t1:1");
+		expect(th?.pings ?? 0).toBe(row.counters.pings);
+		expect(th?.retried !== undefined).toBe(row.counters.retried);
+		expect(th?.pending?.attempt).toBeUndefined();
+		const wakes = [...a.wakes, ...(side === a ? [] : side.wakes)];
+		if (row.wake) expect(wakes.some((x) => row.wake!.test(x.note))).toBe(true);
+		else expect(wakes).toEqual([]);
+		// The next failure.
+		const h = await side.fail("t1", stream("run-2"));
+		expect(h.action).toBe(row.next);
+		const judges = side === a ? a.judged.length : side.judged.length;
+		expect(judges).toBe(row.next === "verdict" ? 1 : 0);
+		if (row.next === "retry-scheduled") {
+			// A withdrawn or never-made attempt leaves the stall its one retry: it goes out now, and it is the only one.
+			w.states.set("t1", t({ latestRunId: "run-2" }));
+			await side.advance(4 * MIN);
+			expect(delivered.length).toBe(1);
+		} else {
+			expect(delivered.length).toBeLessThanOrEqual(1);
+		}
+	});
+
+	test("the matrix covers every crash point and every failure of the send, and each only once", () => {
+		const crashes = new Set(MATRIX.map((r) => r.crash).filter(Boolean));
+		for (const c of ["before-save", "after-save", "send-accepted", "after-send", "after-record"] as const) expect(crashes.has(c)).toBe(true);
+		const faults = new Set(MATRIX.map((r) => r.fault).filter(Boolean));
+		for (const f of ["save-fails", "refused", "throws", "unknown-error"] as const) expect(faults.has(f)).toBe(true);
+		expect(new Set(MATRIX.map((r) => r.name)).size).toBe(MATRIX.length);
 	});
 });
