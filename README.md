@@ -210,6 +210,12 @@ directory ([`examples/brief.d/`](examples/brief.d/)), and `bun src/brief.ts stew
 
 - Only regular files whose names end in `.md` are used. A symlink, a directory or any other entry is ignored, with a
   warning on stderr. No `brief.d/` is fine.
+- Fragments become the Steward's instructions, so they are checked like authority config. `brief.d/` must be a real
+  directory (not a symlink), owned by you (the daemon's effective user), and not group- or world-writable; otherwise no
+  fragment is read, with one warning. Each fragment must be owned by you and not group- or world-writable: `0600` and
+  `0644` are fine, `0664` is not. A refused fragment is skipped with a warning naming it and why; the others are still
+  used, and the hand-off always comes out. With a umask of `002`, set the modes yourself:
+  `chmod 755 brief.d && chmod 644 brief.d/*.md`.
 - Fragments are sorted by filename in byte order (so `10-repo.md` before `20-landing.md`, and `B.md` before `a.md`), and
   each is appended verbatim, its own headings kept as written, after the generic brief and before any
   `## Open work at hand-over` section. Blank lines at a fragment's start and end are dropped, so fragments sit exactly one

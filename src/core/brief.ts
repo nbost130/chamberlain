@@ -8,13 +8,16 @@
  * the away record, and your operating rules (src/core/rules.ts). `principalName` in settings.json names you in the text.
  *
  * Brief fragments: every regular file whose name ends in `.md` in `<config>/brief.d/` is appended verbatim after the generic
- * hand-off, in byte order of filename, one blank line apart (loadBriefFragments, withFragments).
+ * hand-off, in byte order of filename, one blank line apart (loadBriefFragments, withFragments). Fragments become the Steward's
+ * instructions, so they are checked like authority config (`authorityProblem`, private.ts): brief.d and each fragment must be owned by
+ * the effective uid and writable by no group or other user, and neither may be a symlink.
  */
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { mandateLine, readAfk, type Afk } from "./afk.ts";
 import type { BriefNotes } from "./adapter.ts";
 import { CONF, REPO, STATE, Principal, principal, principalPoss } from "./config.ts";
 import { startup } from "./migrate.ts";
+import { authorityProblem } from "./private.ts";
 import { loadOperatingRules } from "./rules.ts";
 import { rulingsText } from "./rulings.ts";
 import { readServers } from "./servers.ts";
@@ -47,14 +50,22 @@ export const OPEN_WORK_HEADING = "## Open work at hand-over";
 const fragmentText = (t: string) => t.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "");
 
 /**
- * The brief fragments in `<conf>/brief.d/`, as their texts, sorted by filename in byte order. Only regular files whose names
- * end in `.md` are used; a symlink, a directory or any other entry is ignored with a warning, and so is a fragment that cannot
- * be read (the hand-off must still come out). No `brief.d/` is no fragments.
+ * The brief fragments in `<conf>/brief.d/`, as their texts, sorted by filename in byte order. Fragments are the Steward's instructions,
+ * so they are treated as authority config (`authorityProblem`, private.ts):
+ *   - `brief.d` itself must be a real directory (not a symlink), owned by the effective uid, and not group- or world-writable;
+ *     otherwise no fragment is read, with one warning naming it and why;
+ *   - each fragment must be a regular file whose name ends in `.md`, owned by the effective uid, and not group- or world-writable
+ *     (0600 and 0644 are fine). A symlink, a directory, any other entry, a fragment that fails the check or that cannot be read is
+ *     skipped with a warning naming it and why. The rest are still used, and the hand-off always comes out.
+ * No `brief.d/` is no fragments. `o.euid` is a seam for tests.
  */
-export function loadBriefFragments(conf: string, warn: (msg: string) => void = (m) => console.error(m)): string[] {
+export function loadBriefFragments(conf: string, warn: (msg: string) => void = (m) => console.error(m), o: { euid?: number } = {}): string[] {
 	const dir = `${conf}/brief.d`;
-	if (!existsSync(dir)) return [];
-	if (!statSync(dir).isDirectory()) { warn(`brief.ts: ignoring ${dir}: it is not a directory`); return []; }
+	const euid = "euid" in o ? o.euid : process.geteuid?.();
+	let dst;
+	try { dst = lstatSync(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; warn(`brief.ts: ignoring ${dir}: ${(e as Error).message}`); return []; }
+	const bad = authorityProblem(dst, "directory", euid);
+	if (bad) { warn(`brief.ts: ignoring every brief fragment: ${dir} is refused: ${bad}`); return []; }
 	const names = readdirSync(dir).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 	const out: string[] = [];
 	for (const name of names) {
@@ -64,11 +75,24 @@ export function loadBriefFragments(conf: string, warn: (msg: string) => void = (
 		if (!st.isFile()) { warn(`brief.ts: ignoring ${path}: not a regular file`); continue; }
 		if (!name.endsWith(".md")) { warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`); continue; }
 		let text: string;
-		try { text = readFileSync(path, "utf8"); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
+		try { text = readAuthority(path, euid); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
 		const body = fragmentText(text);
 		if (body.trim()) out.push(body);
 	}
 	return out;
+}
+
+/**
+ * The text of an authority file, checked on the very descriptor it is read from (opened without following a symlink and without blocking
+ * on a FIFO), so a file swapped in after the directory listing is checked too. Throws, with the reason, when it may not be trusted.
+ */
+function readAuthority(path: string, euid: number | undefined): string {
+	const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	try {
+		const bad = authorityProblem(fstatSync(fd), "file", euid);
+		if (bad) throw Error(bad);
+		return readFileSync(fd, "utf8");
+	} finally { closeSync(fd); }
 }
 
 /** Pure: `brief` with the fragments appended, one blank line apart, before its `## Open work at hand-over` section when it has one. */
