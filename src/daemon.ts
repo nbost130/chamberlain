@@ -53,6 +53,8 @@ const engine = createEngine({
 	store,
 	servers,
 	dry: process.env.CHAMBERLAIN_DRY === "1",
+	// Stalled-thread recovery is OFF until CHAMBERLAIN_RECOVER=1 (src/core/recover.ts): merging it changes nothing until it is turned on.
+	recover: process.env.CHAMBERLAIN_RECOVER === "1",
 	exclude: (process.env.CHAMBERLAIN_EXCLUDE ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 	log,
 	sweepPromptFile: new URL("../docs/steward-sweep-prompt.md", import.meta.url).pathname,

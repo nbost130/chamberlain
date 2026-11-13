@@ -4,7 +4,7 @@
  * store, on a scratch directory, and reads the wake the fake received.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
@@ -455,7 +455,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 			fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: runId, ...over }) });
 			fake.emit({ kind: "state", thread: thread(id, "failed", { latestRunId: runId, ...over }) });
 		};
-		return { fake, events, asked, judgeCalls, until, failRun, quiet: (ms = 120) => Bun.sleep(ms) };
+		return { fake, events, asked, judgeCalls, until, failRun, store, quiet: (ms = 120) => Bun.sleep(ms) };
 	}
 
 	test("a stream failure is retried by the daemon after the grace, as the daemon, and the Steward is not woken", async () => {
@@ -477,6 +477,24 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		await x.quiet(100);
 		expect(x.fake.sends).toEqual([]);
 		expect(x.fake.wakes).toEqual([]);
+	});
+
+	test("what recovery must remember is written to the database's state table: the ping sent, so a restart sends no second first ping", async () => {
+		const x = make();
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("the retry", () => x.fake.sends.length === 1);
+		await x.until("the state written", () => (x.store.state.get<{ threads: Record<string, { pings: number }> }>("recover")?.threads.t1?.pings ?? 0) === 1);
+		expect(x.store.state.get<{ handled: string[] }>("recover")!.handled).toContain("run-1");
+	});
+
+	test("a card that opens on the thread after the failure stops the retry at ping time", async () => {
+		const x = make();
+		x.failRun("t1", "run-1", STREAM);
+		await x.until("scheduled", () => x.events.some((e) => e.event === "recover-scheduled"));
+		x.fake.threads.set("t1", { ...x.fake.threads.get("t1")!, look: { latestRunId: "run-1", latestStatus: "failed", active: false, waiting: true } });
+		await x.until("the stand-down", () => x.events.some((e) => e.event === "recover-stand-down"));
+		await x.quiet(100);
+		expect(x.fake.sends).toEqual([]);
 	});
 
 	test("a second failure after the retry goes to the judge, and its verdict reaches the Steward as the failed wake", async () => {
@@ -563,5 +581,24 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		expect(r.fake.wakes[0]!.message).toContain('run failed.');
 		expect(r.fake.wakes[0]!.message).not.toContain("not retried automatically");
 		expect(r.fake.sends).toEqual([]);
+	});
+});
+
+describe("fix round 1: recovery is OFF unless asked for, and the production launcher asks only with CHAMBERLAIN_RECOVER=1", () => {
+	test("an engine built without `recover` keeps the plain failed wake and retries nothing", async () => {
+		const r = rig();
+		r.fake.threads.set("t1", { failure: { runId: "run-1", class: "unknown", message: "The provider event stream closed unexpectedly." } });
+		r.fake.emit({ kind: "state", thread: thread("t1", "running", { latestRunId: "run-1" }) });
+		r.fake.emit({ kind: "state", thread: thread("t1", "failed", { latestRunId: "run-1" }) });
+		await r.until("the wake", () => r.fake.wakes.length === 1);
+		expect(r.fake.wakes[0]!.message).toContain("run failed.");
+		expect(r.fake.wakes[0]!.message).not.toContain("not retried automatically");
+		await r.quiet(150);
+		expect(r.fake.sends).toEqual([]);
+		expect(r.store.state.get("recover")).toBeUndefined();
+	});
+	test("the daemon launcher turns it on only for CHAMBERLAIN_RECOVER=1", () => {
+		const src = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
+		expect(src).toContain('recover: process.env.CHAMBERLAIN_RECOVER === "1"');
 	});
 });

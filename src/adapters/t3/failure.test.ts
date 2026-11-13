@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { failureOf } from "./failure.ts";
+import { failureOf, lookOf } from "./failure.ts";
 
 const run = (id: string, ordinal: number, status: string) => ({ id, ordinal, status });
 const err = (runId: string, failure: Record<string, unknown>) => ({ type: "error", runId, failure });
@@ -16,4 +16,18 @@ describe("failureOf: T3's projection to a RunFailure", () => {
 		expect(failureOf([run("r2", 2, "failed")], [{ type: "run_interrupt_request", runId: "r1" }])?.interrupted).toBeUndefined();
 	});
 	test("another run's error is not this run's", () => expect(failureOf([run("r2", 2, "failed")], [err("r1", { message: "other" })])?.message).toBe(""));
+});
+
+describe("lookOf: the projection read right before a ping", () => {
+	test("the newest run and its status", () => {
+		expect(lookOf([run("r1", 1, "failed"), run("r2", 2, "completed")], [])).toEqual({ latestRunId: "r2", latestStatus: "completed", active: false, waiting: false });
+	});
+	test("a run going, in any live status, is active", () => {
+		for (const status of ["queued", "preparing", "starting", "running", "waiting"]) expect(lookOf([run("r1", 1, "failed"), run("r2", 2, status)], []).active).toBe(true);
+	});
+	test("any item still waiting is a card, approval or question open", () => {
+		expect(lookOf([run("r1", 1, "failed")], [{ status: "completed" }, { status: "waiting" }]).waiting).toBe(true);
+		expect(lookOf([run("r1", 1, "failed")], [{ status: "completed" }]).waiting).toBe(false);
+	});
+	test("no runs: no newest run", () => expect(lookOf([], [])).toEqual({ active: false, waiting: false }));
 });

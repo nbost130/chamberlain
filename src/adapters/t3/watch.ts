@@ -12,7 +12,7 @@ import { historyGet, readWhenConnected } from "./history.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
 import { normalizeWaitKind, toState } from "./state.ts";
-import { failureOf } from "./failure.ts";
+import { failureOf, lookOf } from "./failure.ts";
 
 const TOKEN_MAX_AGE_DAYS = 25;
 
@@ -126,6 +126,12 @@ export class T3Link {
 			if (!this.rpc) return undefined;
 			const p = await this.projection(threadId);
 			return failureOf(p.runs ?? [], p.turnItems ?? []);
+		},
+		/** The projection read again, for the moment before a ping: the newest run, whether any run is going, whether any card is open. */
+		look: async (threadId) => {
+			if (!this.rpc) return undefined;
+			const p = await this.projection(threadId);
+			return lookOf(p.runs ?? [], p.turnItems ?? []);
 		},
 		instruction: (threadId) => readWhenConnected(Boolean(this.rpc), threadId, historyGet(this.srv.origin, () => this.token())).catch((e) => failedRead(String(e).slice(0, 200))),
 	};

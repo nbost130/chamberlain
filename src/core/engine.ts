@@ -14,7 +14,10 @@ import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
 import type { RelayLock } from "./singleton.ts";
-import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type Outcome, type Recovery, type RecoverTiming } from "./recover.ts";
+import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type Outcome, type Recovery, type RecoverState, type RecoverTiming } from "./recover.ts";
+
+/** The key in the database's state table where recovery keeps what it must remember across a restart. */
+const RECOVER_KEY = "recover";
 import { createJudge, readJudgeConfig, type Judge } from "./judge.ts";
 import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
 import type { Gate } from "./hold.ts";
@@ -71,8 +74,8 @@ export type EngineDeps = {
 	sweepPromptFile?: string;
 	/** Run the routine sweep and the Steward-health check. Off for a bare watcher. */
 	housekeeping?: boolean;
-	/** Stalled-thread recovery (src/core/recover.ts): on by default for an adapter that can read a failure and send. False turns it off; an object overrides its timing (tests). */
-	recover?: false | Partial<RecoverTiming>;
+	/** Stalled-thread recovery (src/core/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
+	recover?: boolean | Partial<RecoverTiming>;
 	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
 	judge?: Judge;
 };
@@ -378,7 +381,7 @@ export function createEngine(d: EngineDeps) {
 		private async recover(live: ThreadState): Promise<{ stop?: true; note?: string; what?: string }> {
 			const forced = this.forced.get(live.id);
 			if (forced) { this.forced.delete(live.id); return { note: forced }; }
-			if (!recovery || DRY || !this.adapter.inspect?.failure || !has(this.adapter, "send")) return {};
+			if (!recovery || DRY || !this.adapter.inspect?.failure || !this.adapter.inspect.look || !has(this.adapter, "send")) return {};
 			const h: Handling = await recovery.onFailure(live);
 			const o = outcomeOf(h, { thread: live.title, server: this.srv.name, threadId: live.id }, timing);
 			if (o.ask) await raise(o.ask);
@@ -430,7 +433,9 @@ export function createEngine(d: EngineDeps) {
 		else if (a.why === "breaker") alarm(`recover-breaker:${a.kind}`, `chamberlain: ${a.count} "${a.kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
 	}
 	const judge = d.judge ?? createJudge({ config: () => { const r = readJudgeConfig(conf); if (r.error) log("judge-config-error", { error: r.error }); return r.config; }, log });
-	recovery = d.recover === false ? undefined : createRecovery({
+	recovery = d.recover === undefined || d.recover === false ? undefined : createRecovery({
+		store: { load: () => store.state.get<RecoverState>(RECOVER_KEY), save: (s) => store.state.set(RECOVER_KEY, s) },
+		look: async (id) => watcherOf(id)?.adapter.inspect?.look?.(id),
 		stewardId: () => privateFile("steward-thread"),
 		decisionsId: () => privateFile("decisions-thread"),
 		state: (id) => watcherOf(id)?.states.get(id),
@@ -581,6 +586,7 @@ export function createEngine(d: EngineDeps) {
 		interval = setInterval(() => { tick().catch((e) => log("tick-error", { error: String(e) })); }, t.tickMs);
 		// The relay starts beside the watchers: its first pass sends whatever a dead process left pending.
 		relay.start().then(() => log("startup-recovered"));
+		recovery?.restore();
 		started = Promise.all(watchers.map((w) => w.run())).then(() => undefined);
 		return started;
 	}

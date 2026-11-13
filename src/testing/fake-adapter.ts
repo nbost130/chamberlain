@@ -11,7 +11,7 @@
  * `capabilities` chooses which optional capabilities it declares (default: all of them). A capability it does not
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
-import type { Adapter, AnswerOutcome, Inspector, OptionalCapability, RunFailure, PostOptions, PostResult, StewardProbe, ThreadEvent, Transcript, WaitingCard, WaitingItem, WatchSink } from "../core/adapter.ts";
+import type { Adapter, AnswerOutcome, Inspector, OptionalCapability, RunFailure, RunLook, PostOptions, PostResult, StewardProbe, ThreadEvent, Transcript, WaitingCard, WaitingItem, WatchSink } from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
 import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
@@ -20,7 +20,7 @@ import type { Question } from "../core/questions.ts";
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"];
 
 /** What `inspect` reports for one thread; anything unset reads as empty. */
-export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure };
+export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
 
 export type FakeOptions = {
 	id?: string;
@@ -99,6 +99,8 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
 		instruction: async (id) => fake.threads.get(id)?.instruction ?? { items: [], state: "complete", byMachine: false },
 		failure: async (id) => fake.threads.get(id)?.failure,
+		/** The failure's run, still failed with nothing going, unless the test says otherwise. */
+		look: async (id) => { const th = fake.threads.get(id); return th?.look ?? (th?.failure ? { latestRunId: th.failure.runId, latestStatus: "failed", active: false, waiting: false } : undefined); },
 	};
 
 	const adapter: Adapter = {

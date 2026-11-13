@@ -117,6 +117,9 @@ export type WaitingItem = { type: WaitKind; requestId: string; label: string; qu
  */
 export type RunFailure = { runId: string; class?: string; code?: string; message: string; retryable?: boolean; resetAt?: string; interrupted?: boolean };
 
+/** What a fresh read of a thread shows, taken right before a ping: its newest run and whether anything is going or waiting. */
+export type RunLook = { latestRunId?: string; latestStatus?: string; /** a run is queued, starting, running or waiting */ active: boolean; /** a card, approval, secret or question is open */ waiting: boolean };
+
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
 	lastMessage(threadId: string): Promise<string>;
@@ -128,6 +131,8 @@ export type Inspector = {
 	instruction(threadId: string): Promise<InstructionRead>;
 	/** The newest failed run of the thread and its error. Absent: the adapter cannot say, and stalled-thread recovery stays off for its threads. */
 	failure?(threadId: string): Promise<RunFailure | undefined>;
+	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */
+	look?(threadId: string): Promise<RunLook | undefined>;
 };
 
 // ---- post ----------------------------------------------------------------------------------------

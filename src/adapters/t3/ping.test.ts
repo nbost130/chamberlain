@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { activeRunOf, createRpcPing, IDENTITIES, messageCommand, stableId } from "./ping.ts";
+import { activeRunOf, createRpcPing, daemonPingRefusal, IDENTITIES, messageCommand, stableId } from "./ping.ts";
 
 describe("messageCommand: the one message.dispatch", () => {
 	test("each identity is signed the way its sender always was", () => {
@@ -66,5 +66,36 @@ describe("there is one send path", () => {
 	});
 	test("only ping.ts spawns the T3 CLI to send a message", () => {
 		expect(files.filter(([, c]) => /["'`]thread["'`]\s*,\s*["'`]send["'`]/.test(c)).map(([f]) => f)).toEqual(["adapters/t3/ping.ts"]);
+	});
+});
+
+describe("fix round 1: the daemon's ping never steers a run and never writes into a waiting thread", () => {
+	const failed = [{ id: "r1", ordinal: 1, status: "failed" }];
+	test("daemonPingRefusal: only a thread whose newest run failed, with nothing going and nothing waiting, may be pinged", () => {
+		expect(daemonPingRefusal({ runs: failed, turnItems: [] })).toBeUndefined();
+		expect(daemonPingRefusal({ runs: [...failed, { id: "r2", ordinal: 2, status: "running" }] })).toMatch(/active/);
+		expect(daemonPingRefusal({ runs: [...failed, { id: "r2", ordinal: 2, status: "waiting" }] })).toMatch(/active/);
+		expect(daemonPingRefusal({ runs: failed, turnItems: [{ status: "waiting" }] })).toMatch(/card, approval or question/);
+		expect(daemonPingRefusal({ runs: [...failed, { id: "r2", ordinal: 2, status: "completed" }] })).toMatch(/completed, not failed/);
+		expect(daemonPingRefusal({ runs: [] })).toMatch(/missing, not failed/);
+	});
+	const root = mkdtempSync(`${tmpdir()}/chamberlain-ping2-`);
+	writeFileSync(`${root}/op-token`, "OPSECRET", { mode: 0o600 });
+	const server = { name: "mac", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
+	const conn = (proj: Record<string, unknown>, sent: unknown[]) => async () => ({ ws: { close() {} }, request: async (m: string, p: unknown) => { if (m === "orchestration.getThreadProjection") return proj; sent.push(p); return {}; } });
+	test("a daemon ping into a thread that is waiting or running is refused at the transport, and nothing is dispatched", async () => {
+		for (const proj of [{ runs: failed, turnItems: [{ status: "waiting" }] }, { runs: [{ id: "r2", ordinal: 2, status: "running" }], turnItems: [] }]) {
+			const sent: unknown[] = [];
+			const r = await createRpcPing({ server, conf: root, connect: conn(proj, sent) as never })("t1", "retry", "recover:r1", "daemon");
+			expect(r.ok).toBe(false);
+			expect(r.detail).toMatch(/^not sent: /);
+			expect(sent).toEqual([]);
+		}
+	});
+	test("the Steward's own ping is unchanged: it still steers a run that is going", async () => {
+		const sent: Record<string, unknown>[] = [];
+		const r = await createRpcPing({ server, conf: root, connect: conn({ runs: [{ id: "r2", ordinal: 2, status: "running" }] }, sent) as never })("t1", "go on", "s", "steward");
+		expect(r.ok).toBe(true);
+		expect(sent[0]).toMatchObject({ dispatchMode: { type: "steer_active", targetRunId: "r2" } });
 	});
 });

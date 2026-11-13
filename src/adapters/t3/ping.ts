@@ -89,6 +89,19 @@ export function messageCommand(o: MessageOptions): Record<string, unknown> {
 export const activeRunOf = (runs: { id?: string; status?: string }[] | undefined): string | undefined =>
 	[...(runs ?? [])].reverse().find((r) => ["running", "waiting", "starting"].includes(String(r.status)))?.id;
 
+/**
+ * Pure: why a daemon ping must not go into this thread, from a projection read right now, or undefined when it may. The daemon only
+ * ever starts a run on a thread whose newest run failed and which has nothing going and nothing waiting: it never steers a run and
+ * never writes into a thread that waits on a card, approval or question.
+ */
+export function daemonPingRefusal(proj: { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] }): string | undefined {
+	if (activeRunOf(proj.runs)) return "a run is active on the thread, and the daemon never steers one";
+	if ((proj.turnItems ?? []).some((i) => i.status === "waiting")) return "the thread is waiting on a card, approval or question";
+	const newest = [...(proj.runs ?? [])].reduce<{ status?: string; ordinal?: number } | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
+	if (newest?.status !== "failed") return `the thread's newest run is ${newest?.status ?? "missing"}, not failed`;
+	return undefined;
+}
+
 export type RpcPingDeps = {
 	server: Pick<T3Server, "name" | "origin" | "operateTokenFile" | "tokenFile">;
 	conf: string;
@@ -119,7 +132,9 @@ export function createRpcPing(d: RpcPingDeps): (threadId: string, text: string, 
 		try {
 			const rpc = await openWithin(conn, s.origin, token, ms);
 			try {
-				const proj = await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as { runs?: { id?: string; status?: string }[] };
+				const proj = await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] };
+				const refused = identity === "daemon" ? daemonPingRefusal(proj) : undefined;
+				if (refused) return { ok: false, detail: `not sent: ${refused}` };
 				await within(rpc.request("orchestration.dispatchCommand", messageCommand({ threadId, text, seed, identity, activeRunId: activeRunOf(proj.runs) })), ms, "send");
 				return { ok: true, detail: `sent to ${s.name}:${threadId}` };
 			} finally {

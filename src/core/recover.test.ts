@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { RunFailure, ThreadState } from "./adapter.ts";
+import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
 import { normalizeThread } from "./adapter.ts";
-import { breakerItem, classifyFailure, createRecovery, DEFAULT_RECOVER_TIMING, judgeBrief, MIN, neverRetryThread, outcomeOf, RETRY_KINDS, RETRY_TEXT, verdictItem, type FailureKind, type Handling, type RecoverDeps } from "./recover.ts";
+import { breakerItem, classifyFailure, createRecovery, DEFAULT_RECOVER_TIMING, judgeBrief, memoryRecoverStore, MIN, neverRetryThread, outcomeOf, RETRY_KINDS, RETRY_TEXT, verdictItem, type FailureKind, type Handling, type RecoverDeps, type RecoverStore } from "./recover.ts";
 import type { JudgeAnswer } from "./judge.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00Z");
@@ -81,12 +81,13 @@ describe("neverRetryThread: every excluded case", () => {
 });
 
 /** A recovery on a manual clock: timers run when the test advances time, and every effect is recorded. */
-function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () => JudgeAnswer; ping?: () => { ok: boolean; detail: string }; ctxOver?: Partial<RecoverDeps> } = {}) {
-	let now = NOW;
+type World = { now: () => number; states: Map<string, ThreadState>; failures: Map<string, RunFailure | undefined>; instruction: Map<string, string> };
+function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () => JudgeAnswer; ping?: () => { ok: boolean; detail: string }; ctxOver?: Partial<RecoverDeps>; store?: RecoverStore; look?: (id: string) => Promise<RunLook | undefined>; /** a rig for the same world after a restart: same clock, threads and store */ share?: World } = {}) {
+	let now = o.share?.now() ?? NOW;
 	const timers: { at: number; fn: () => void; live: boolean }[] = [];
-	const states = new Map<string, ThreadState>();
-	const failures = new Map<string, RunFailure | undefined>(Object.entries(o.failures ?? {}));
-	const instruction = new Map<string, string>();
+	const states = o.share?.states ?? new Map<string, ThreadState>();
+	const failures = o.share?.failures ?? new Map<string, RunFailure | undefined>(Object.entries(o.failures ?? {}));
+	const instruction = o.share?.instruction ?? new Map<string, string>();
 	const pings: { threadId: string; text: string; seed: string }[] = [];
 	const wakes: { threadId: string; kind: FailureKind; note: string }[] = [];
 	const logs: { event: string; data?: Record<string, unknown> }[] = [];
@@ -96,6 +97,9 @@ function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () 
 		setTimer: (ms, fn) => { const x = { at: now + ms, fn, live: true }; timers.push(x); return () => { x.live = false; }; },
 		stewardId: () => "steward", decisionsId: () => "decisions",
 		state: (id) => states.get(id),
+		/** By default a fresh read agrees with what the daemon holds. */
+		look: o.look ?? (async (id) => { const th = states.get(id); return th ? { latestRunId: th.latestRunId ?? undefined, latestStatus: th.status, active: ["running", "starting", "queued", "preparing"].includes(th.status), waiting: th.status === "waiting" || th.pendingRequestId !== null } : undefined; }),
+		...(o.store ? { store: o.store } : {}),
 		children: async () => 0,
 		readFailure: async (id) => failures.get(id),
 		instructionId: async (id) => instruction.get(id) ?? "m1",
@@ -184,7 +188,7 @@ describe("stand down when anyone writes in the thread meanwhile", () => {
 		x.states.set("t1", t({ status: "running", latestRunId: "run-2" }));
 		await x.advance(4 * MIN);
 		expect(x.pings).toEqual([]);
-		expect(x.logs.find((l) => l.event === "recover-stand-down")?.data?.why).toMatch(/not failed/);
+		expect(x.logs.find((l) => l.event === "recover-stand-down")?.data?.why).toMatch(/active|not failed/);
 	});
 
 	test("a newer run on a still-failed thread cancels it", async () => {
@@ -334,12 +338,13 @@ describe("a second failure within the window goes to the judge", () => {
 		expect((await x.fail("t1", { runId: "run-4", ...STREAM })).action).toBe("retry-scheduled");
 	});
 
-	test("a failure after the window is a fresh first failure, retried once more", async () => {
+	test("a failure long after the retry (past ten minutes) still goes to the judge: it is not a fresh first failure", async () => {
 		const x = rig();
 		await retried(x);
 		await x.advance(11 * MIN);
-		expect((await x.fail("t1", { runId: "run-2", ...STREAM })).action).toBe("retry-scheduled");
-		expect(x.judged).toEqual([]);
+		expect(await x.fail("t1", { runId: "run-2", ...STREAM })).toMatchObject({ action: "verdict", verdict: "do_not_retry" });
+		expect(x.judged).toHaveLength(1);
+		expect(x.pings).toHaveLength(1);
 	});
 });
 
@@ -447,7 +452,7 @@ describe("the queue items", () => {
 		expect(b.verdicts).toEqual(["retry_later", "do_not_retry", "ask_principal"]);
 	});
 	test("defaults: grace 3 minutes, rate-limit wait 15, window and breaker 10 minutes, breaker at 3", () => {
-		expect(DEFAULT_RECOVER_TIMING).toMatchObject({ graceMs: 3 * MIN, rateLimitWaitMs: 15 * MIN, secondFailureWindowMs: 10 * MIN, breakerWindowMs: 10 * MIN, breakerCount: 3 });
+		expect(DEFAULT_RECOVER_TIMING).toMatchObject({ graceMs: 3 * MIN, rateLimitWaitMs: 15 * MIN, threadHorizonMs: 6 * 60 * MIN, breakerWindowMs: 10 * MIN, breakerCount: 3 });
 	});
 });
 
@@ -489,5 +494,173 @@ describe("outcomeOf: how a Handling reads for the wake and the queue", () => {
 	test("an unjudged verdict says the judge could not answer", () => {
 		const o = outcomeOf({ action: "verdict", kind: "oom", backend: "haiku", verdict: "unjudged", reason: "haiku judge exited 1", ask: false }, where);
 		expect(o.note).toContain("the judge could not answer (haiku judge exited 1)");
+	});
+});
+
+
+describe("fix round 1: a thread is read again right before the ping", () => {
+	test("a card opened during the reads stops the retry (the state is read after the last await, not before)", async () => {
+		const x = rig({ look: async (id) => { /* the read is slow, and a card opens while it runs */ x.states.set(id, t({ id, latestRunId: "run-1", pendingRequestId: "req-late" })); return { latestRunId: "run-1", latestStatus: "failed", active: false, waiting: false }; } });
+		await x.fail("t1", { runId: "run-1", ...STREAM });
+		await x.advance(4 * MIN);
+		expect(x.pings).toEqual([]);
+		expect(x.logs.find((l) => l.event === "recover-stand-down")?.data?.why).toMatch(/open card/);
+	});
+	test("the fresh read shows a card, approval or question open: no ping", async () => {
+		const x = rig({ look: async () => ({ latestRunId: "run-1", latestStatus: "failed", active: false, waiting: true }) });
+		await x.fail("t1", { runId: "run-1", ...STREAM });
+		await x.advance(4 * MIN);
+		expect(x.pings).toEqual([]);
+		expect(x.logs.find((l) => l.event === "recover-stand-down")?.data?.why).toMatch(/waiting on a card/);
+	});
+	test("the fresh read shows a run going: no ping", async () => {
+		const x = rig({ look: async () => ({ latestRunId: "run-1", latestStatus: "failed", active: true, waiting: false }) });
+		await x.fail("t1", { runId: "run-1", ...STREAM });
+		await x.advance(4 * MIN);
+		expect(x.pings).toEqual([]);
+	});
+	test("the fresh read shows the newest run completed, or a different run: no ping", async () => {
+		for (const look of [{ latestRunId: "run-1", latestStatus: "completed", active: false, waiting: false }, { latestRunId: "run-2", latestStatus: "failed", active: false, waiting: false }]) {
+			const x = rig({ look: async () => look });
+			await x.fail("t1", { runId: "run-1", ...STREAM });
+			await x.advance(4 * MIN);
+			expect(x.pings).toEqual([]);
+		}
+	});
+	test("a fresh read that cannot be made sends nothing, and the Steward hears of the failure", async () => {
+		const x = rig({ look: async () => undefined });
+		await x.fail("t1", { runId: "run-1", ...STREAM });
+		await x.advance(4 * MIN);
+		expect(x.pings).toEqual([]);
+		expect(x.wakes).toHaveLength(1);
+		expect(x.wakes[0]!.note).toMatch(/could not be read/);
+	});
+	test("an archived, settled or snoozed thread at ping time is left alone, whatever the cached state said at the failure", async () => {
+		for (const over of [{ archived: true }, { settled: true }, { snoozed: true }]) {
+			const x = rig();
+			await x.fail("t1", { runId: "run-1", ...STREAM });
+			x.states.set("t1", t({ latestRunId: "run-1", ...over }));
+			await x.advance(4 * MIN);
+			expect(x.pings).toEqual([]);
+		}
+	});
+});
+
+describe("fix round 1: recovery state survives a restart", () => {
+	test("a retry already sent is not sent again as a first ping: the next failure goes to the judge", async () => {
+		const store = memoryRecoverStore();
+		const a = rig({ store });
+		await a.fail("t1", { runId: "run-1", ...STREAM });
+		await a.advance(4 * MIN);
+		expect(a.pings).toHaveLength(1);
+		a.r.stop();
+		const b = rig({ store, share: a });
+		expect(await b.fail("t1", { runId: "run-2", ...STREAM })).toMatchObject({ action: "verdict" });
+		expect(b.pings).toEqual([]);
+		expect(b.judged).toHaveLength(1);
+	});
+	test("the same run seen again after a restart is a duplicate, not a second first failure", async () => {
+		const store = memoryRecoverStore();
+		const a = rig({ store });
+		await a.fail("t1", { runId: "run-1", ...STREAM });
+		a.r.stop();
+		const b = rig({ store, share: a });
+		expect(await b.fail("t1", { runId: "run-1", ...STREAM })).toEqual({ action: "duplicate" });
+	});
+	test("a retry still pending when the daemon died is re-armed on restore, and goes once", async () => {
+		const store = memoryRecoverStore();
+		const a = rig({ store });
+		await a.fail("t1", { runId: "run-1", ...STREAM });
+		a.r.stop();
+		await a.advance(10 * MIN);
+		expect(a.pings).toEqual([]);
+		const b = rig({ store, share: a });
+		b.r.restore();
+		expect(b.r.pendingCount()).toBe(1);
+		await b.advance(DEFAULT_RECOVER_TIMING.restoreDelayMs + 1000);
+		expect(b.pings).toHaveLength(1);
+		expect(b.pings[0]!.seed).toBe("recover:run-1");
+	});
+	test("a retry that fell due while down still waits for the watchers (restoreDelayMs), and never fires before it", async () => {
+		const store = memoryRecoverStore();
+		const a = rig({ store });
+		await a.fail("t1", { runId: "run-1", ...STREAM });
+		a.r.stop();
+		await a.advance(10 * MIN);
+		const b = rig({ store, share: a });
+		b.r.restore();
+		await b.advance(DEFAULT_RECOVER_TIMING.restoreDelayMs - 1000);
+		expect(b.pings).toEqual([]);
+	});
+	test("the judge's hold survives a restart: a third failure is not retried", async () => {
+		const store = memoryRecoverStore();
+		const a = rig({ store });
+		await a.fail("t1", { runId: "run-1", ...STREAM });
+		await a.advance(4 * MIN);
+		await a.fail("t1", { runId: "run-2", ...STREAM });
+		a.r.stop();
+		const b = rig({ store, share: a });
+		await b.advance(11 * MIN);
+		expect(await b.fail("t1", { runId: "run-3", ...STREAM })).toMatchObject({ action: "wake", note: expect.stringMatching(/already seen/) });
+		expect(b.pings).toEqual([]);
+	});
+	test("a tripped breaker survives a restart: no retry goes out and no second alarm is raised", async () => {
+		const store = memoryRecoverStore();
+		const a = rig({ store });
+		for (const [i, id] of ["a", "b", "c"].entries()) await a.fail(id, { runId: `run-${i + 1}`, ...STREAM });
+		expect(a.r.tripped()).toBe(true);
+		a.r.stop();
+		const b = rig({ store, share: a });
+		expect(b.r.tripped()).toBe(true);
+		expect(await b.fail("d", { runId: "run-4", ...STREAM })).toMatchObject({ action: "breaker", alarm: false });
+	});
+	test("a completed turn clears the record, and a store that throws on save never breaks recovery", async () => {
+		const store: RecoverStore = { load: () => undefined, save: () => { throw Error("disk full"); } };
+		const x = rig({ store });
+		expect((await x.fail("t1", { runId: "run-1", ...STREAM })).action).toBe("retry-scheduled");
+		await x.advance(4 * MIN);
+		expect(x.pings).toHaveLength(1);
+		expect(x.logs.some((l) => l.event === "recover-state-unsaved")).toBe(true);
+		x.r.healthy("t1");
+		expect((await x.fail("t1", { runId: "run-2", ...STREAM })).action).toBe("retry-scheduled");
+	});
+});
+
+describe("fix round 1: failures are counted per thread over a longer horizon", () => {
+	test("four failures spread over hours send one ping: the second reaches the judge, the rest are held for the Steward", async () => {
+		const x = rig();
+		expect((await x.fail("t1", { runId: "run-1", ...STREAM })).action).toBe("retry-scheduled");
+		await x.advance(4 * MIN);
+		await x.advance(30 * MIN);
+		const second = await x.fail("t1", { runId: "run-2", ...STREAM });
+		expect(second).toMatchObject({ action: "verdict" });
+		await x.advance(45 * MIN);
+		const third = await x.fail("t1", { runId: "run-3", ...STREAM });
+		expect(third).toMatchObject({ action: "wake", note: expect.stringMatching(/2 failures so far|3 failures so far/) });
+		await x.advance(60 * MIN);
+		expect((await x.fail("t1", { runId: "run-4", ...STREAM })).action).toBe("wake");
+		await x.advance(60 * MIN);
+		expect(x.pings).toHaveLength(1);
+		expect(x.judged).toHaveLength(1);
+	});
+	test("failures past the horizon are a new stretch: a thread that failed once a day for a week is retried each time", async () => {
+		const x = rig();
+		for (let day = 1; day <= 3; day++) {
+			expect((await x.fail("t1", { runId: `run-${day}`, ...STREAM })).action).toBe("retry-scheduled");
+			await x.advance(4 * MIN);
+			x.r.healthy("t1");
+			await x.advance(24 * 60 * MIN);
+		}
+		expect(x.pings).toHaveLength(3);
+	});
+});
+
+describe("fix round 1: the judge's brief scrubs and caps class and code too", () => {
+	test("a class or code carrying a path, an email or a long token reaches the judge scrubbed and clipped", () => {
+		const evil = "provider /home/someone/secret a@b.co " + "k".repeat(80);
+		const b = judgeBrief("capacity", { runId: "1", class: evil, code: evil, message: "m" }, { runId: "2", class: "ok", code: "ok", message: "m" }, 4 * MIN);
+		expect(b.user).not.toMatch(/someone|a@b\.co|k{20}/);
+		const first = b.user.split("\n").find((l) => l.startsWith("First failure"))!;
+		expect(first.length).toBeLessThan(320);
 	});
 });
