@@ -342,6 +342,31 @@ CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread
 BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 `,
 	},
+	{
+		version: 10,
+		name: "unstamped rights pointers from before migration 9",
+		sql: `
+-- A wake queued before migration 9 may carry the "rights unchanged" pointer with no stamp, and the relay checks only stamped rows, so after an
+-- upgrade and a Steward replacement that pointer would reach a Steward that never had the rights. Every UNDELIVERED one (a pending or
+-- dead-lettered row, or a held wake) that has no stamp and carries either line the daemon ever wrote is stamped "legacy-unstamped": which
+-- Steward it was composed for is unknown, so the relay always supersedes it with the full block. The two lines, verbatim from history: the
+-- fixed one of v0.1.0 (RIGHTS_UNCHANGED), and the dated one that replaced it (rightsUnchanged, "since <time or your last wake>").
+-- A wake with neither line is left as it is. Its text is never changed; only the stamp column is set, here, with the freeze trigger lifted for
+-- this one statement and restored in the same transaction. A database already at 9 has stamped every pointer since, so it has no such row
+-- unless one was queued before 9 there too: the same rule finds it.
+DROP TRIGGER outbox_frozen;
+UPDATE outbox SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
+	WHERE rights_for IS NULL AND status IN ('pending', 'dead_letter')
+	AND (instr(message, 'Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (\`bun src/brief.ts steward\`).') > 0
+		OR message GLOB '*Decision rights and rulings unchanged since * and still in force; your hand-off (steward-brief.md) has them.*');
+UPDATE held_wakes SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
+	WHERE rights_for IS NULL
+	AND (instr(message, 'Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (\`bun src/brief.ts steward\`).') > 0
+		OR message GLOB '*Decision rights and rulings unchanged since * and still in force; your hand-off (steward-brief.md) has them.*');
+CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver, rights_for ON outbox
+BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

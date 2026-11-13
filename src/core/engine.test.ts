@@ -6,9 +6,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
+import { MIGRATIONS } from "./migrations.ts";
+import { openStore } from "./sqlite-store.ts";
 import { appendHeld, heldOpen } from "./afk.ts";
 import { askQuestion, claimWake, pageClaim } from "./questions.ts";
 import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
@@ -27,11 +30,11 @@ afterEach(async () => {
 
 type Logged = { event: string; [k: string]: unknown };
 /** A scratch config and state directory, a fake backend, and an engine on them, fast enough to test (milliseconds, not minutes). */
-function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean; gh?: EngineDeps["gh"]; ask?: EngineDeps["ask"] } = {}) {
+function rig(o: { store?: Store; wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean; gh?: EngineDeps["gh"]; ask?: EngineDeps["ask"] } = {}) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
 	dirs.push(root);
 	const conf = `${root}/conf`;
-	const store = memStore();
+	const store = o.store ?? memStore();
 	mkdirSync(conf, { recursive: true, mode: 0o700 });
 	const priv = (name: string, body: string) => writeFileSync(`${conf}/${name}`, body, { mode: 0o600 });
 	priv("decision-rights.md", "The Steward may merge green PRs. Everything else, ask.");
@@ -810,6 +813,75 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		expect(r.fake.wakes[1]!.deliveryId).toBe(row.deliveryId);
 		expect(r.fake.wakes[1]!.message).toContain("Decision rights and rulings unchanged since");
 		expect(r.events.some((e) => e.event === "wake-superseded")).toBe(false);
+	});
+});
+
+/** The two "rights unchanged" pointer lines the daemon wrote before migration 9 stamped them, verbatim from git history. */
+const POINTER_V010 = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
+const pointerAt = (at: string) => `Decision rights and rulings unchanged since ${at} and still in force; your hand-off (steward-brief.md) has them.`;
+
+describe("a rights pointer queued before the stamps existed is never sent as it is", () => {
+	/** A database file at schema `version` (the real migrations, nothing newer), with these rows pending, then opened by this build. */
+	function oldDb(version: number, rows: { id: string; message: string }[]): Store {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-legacy-`);
+		dirs.push(root);
+		const path = `${root}/v${version}.db`;
+		const raw = new Database(path);
+		raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= version)) { raw.exec(m.sql); raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		rows.forEach((r, i) => {
+			raw.query("INSERT INTO outbox (id, delivery_id, message, kind, thread, created_at) VALUES (?, ?, ?, 'needs_input', ?, ?)").run(i + 1, r.id, r.message, `t${i + 1}`, Date.now());
+			raw.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, 'needs_input', ?)").run(r.id, i + 1, Date.now(), `t${i + 1}`);
+		});
+		raw.close();
+		return openStore(path);
+	}
+	const wakeText = (pointer: string) => `Chamberlain: a thread is waiting on you.\nthreadId: t1\n${pointer}\nAway mode is off.`;
+
+	for (const [version, label, pointer] of [[7, "v0.1.0 pointer", POINTER_V010], [8, "v0.1.0 pointer", POINTER_V010], [8, "dated pointer", pointerAt("2026-11-13T18:00:00.000Z")]] as const) {
+		test(`schema ${version}, ${label}: upgrade, replace the Steward, deliver: the full block goes and the pointer is tombstoned`, async () => {
+			const store = oldDb(version, [{ id: "old-pointer", message: wakeText(pointer) }]);
+			const fake = createFakeAdapter();
+			fake.setWakeReady(false);
+			const r = rig({ store, adapter: fake, steward: "steward-1" });
+			await r.until("startup", () => r.events.some((e) => e.event === "startup-recovered"));
+			r.priv("steward-thread", "steward-2");
+			r.fake.setWakeReady(true);
+			await r.engine.tick();
+			await r.until("the replacement", () => r.fake.wakes.length === 1);
+			const sent = r.fake.wakes[0]!;
+			expect(sent.deliveryId).toBe("old-pointer:full-rights");
+			expect(sent.message).toContain("Decision rights (standing rules):");
+			expect(sent.message).toContain("The Steward may merge green PRs.");
+			expect(sent.message).not.toContain(pointer);
+			expect(sent.message).toContain("threadId: t1");
+			expect(r.fake.wakes.map((w) => w.deliveryId)).not.toContain("old-pointer");
+			expect(r.store.wakes.find("old-pointer")?.status).toBe("cancelled");
+			expect(r.store.wakes.known("old-pointer")).toBe(true);
+			expect(r.store.wakes.isDelivered("old-pointer")).toBe(false);
+			const logged = r.events.find((e) => e.event === "wake-superseded");
+			expect(logged).toMatchObject({ deliveryId: "old-pointer", by: "old-pointer:full-rights" });
+			expect(String(logged!.reason)).toContain("before");
+		});
+	}
+
+	test("a legacy row with no pointer is delivered unchanged beside a legacy pointer that is superseded", async () => {
+		const plain = "Chamberlain: thread t2 finished its turn.\nthreadId: t2\nDecision rights (standing rules):\nThe Steward may merge green PRs.";
+		const store = oldDb(8, [{ id: "plain", message: plain }, { id: "old-pointer", message: wakeText(POINTER_V010) }]);
+		expect(store.wakes.find("plain")?.rights).toBeUndefined();
+		const fake = createFakeAdapter();
+		fake.setWakeReady(false);
+		const r = rig({ store, adapter: fake, steward: "steward-1" });
+		await r.until("startup", () => r.events.some((e) => e.event === "startup-recovered"));
+		r.priv("steward-thread", "steward-2");
+		r.fake.setWakeReady(true);
+		await r.engine.tick();
+		await r.until("both wakes", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes.map((w) => w.deliveryId)).toEqual(["plain", "old-pointer:full-rights"]);
+		expect(r.fake.wakes[0]!.message).toContain(plain);
+		expect(r.store.wakes.find("plain")?.status).toBe("delivered");
+		expect(r.store.wakes.find("old-pointer")?.status).toBe("cancelled");
+		expect(r.events.filter((e) => e.event === "wake-superseded").map((e) => e.deliveryId)).toEqual(["old-pointer"]);
 	});
 });
 

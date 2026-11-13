@@ -83,6 +83,7 @@ export const rightsStamp = (record: RightsSent, stewardId: string | undefined, s
  */
 export function staleRights(stamps: readonly RightsStamp[], now: { steward: string | undefined; session: string | undefined; record: RightsSent | undefined; rules: string | undefined }): string | undefined {
 	for (const st of stamps) {
+		if (st.legacy) return "the rights pointer was queued before pointers were stamped (an upgrade from before migration 9): the Steward it was composed for is unknown";
 		if (st.steward !== now.steward) return `the Steward thread changed (${st.steward ?? "none"} to ${now.steward ?? "none"}) since the rights pointer was queued`;
 		if (st.session !== now.session) return `the Steward session changed (${st.session ?? "unknown"} to ${now.session ?? "unknown"}) since the rights pointer was queued`;
 		if (now.record?.hash !== st.hash) return "the rights record no longer matches the pointer (a compaction, or a full block that was never delivered): the Steward may not hold them";
@@ -91,14 +92,23 @@ export function staleRights(stamps: readonly RightsStamp[], now: { steward: stri
 	return undefined;
 }
 
+/** The pointer line of v0.1.0, before it named a time. Only a wake queued before migration 9 carries it (`RightsStamp.legacy`). */
+export const LEGACY_RIGHTS_UNCHANGED = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const literally = (text: string) => new RegExp(escaped(text), "g");
+const [datedHead, datedTail] = rightsUnchanged("\u0000").split("\u0000") as [string, string];
+/** Both pointer lines a pre-migration-9 wake may carry: the v0.1.0 one, and the dated one whatever time it names (one line, so no newline). */
+const LEGACY_POINTERS = [literally(LEGACY_RIGHTS_UNCHANGED), new RegExp(`${escaped(datedHead)}.*?${escaped(datedTail)}`, "g")];
+
 /**
  * Pure: a superseded wake's text with its rights pointers replaced: the first by `full` (the full block, or the unreadable notice), any later
- * one (a digest) by a line pointing at it. A message in which no pointer line is found gets `full` at its end.
+ * one (a digest) by a line pointing at it. A legacy stamp (`RightsStamp.legacy`) names no time, so for it either old pointer line is found
+ * whatever it says. A message in which no pointer line is found gets `full` at its end.
  */
 export function withFullRights(message: string, stamps: readonly RightsStamp[], full: string): string {
+	const lines = [...new Set(stamps.filter((st) => !st.legacy).map((st) => rightsUnchanged(st.at)))].map(literally);
+	const patterns = stamps.some((st) => st.legacy) ? [...lines, ...LEGACY_POINTERS] : lines;
 	let out = message, first = true;
-	for (const line of new Set(stamps.map((st) => rightsUnchanged(st.at)))) {
-		while (out.includes(line)) { const put = first ? full : RIGHTS_SEE_ABOVE; out = out.replace(line, () => put); first = false; }
-	}
+	for (const p of patterns) out = out.replace(p, () => { const put = first ? full : RIGHTS_SEE_ABOVE; first = false; return put; });
 	return first ? `${out}\n${full}` : out;
 }

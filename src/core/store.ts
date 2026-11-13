@@ -168,7 +168,14 @@ export interface AwayStore {
  * What a wake carrying the "rights unchanged" pointer was composed for: the Steward's thread and session, the rights hash (rights-sent.ts)
  * and when the full text last went out (the pointer names it). The relay checks it just before each POST (`RelayDeps.supersede`).
  */
-export type RightsStamp = { steward?: string; session?: string; hash: string; at?: string };
+export type RightsStamp = {
+	steward?: string; session?: string; hash: string; at?: string;
+	/**
+	 * "unstamped": a wake queued before the stamps existed (migration 10 marks every undelivered row and held wake whose text has one of the
+	 * old pointer lines and no stamp). Which Steward it was composed for is unknown, so it never holds: the relay always supersedes it.
+	 */
+	legacy?: "unstamped";
+};
 export type WakeMeta = {
 	kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string;
 	/** One stamp per rights pointer the wake carries (a digest can carry several); absent when it carries none. */

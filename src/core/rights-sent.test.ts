@@ -180,4 +180,18 @@ describe("a queued pointer checked against the Steward it is about to reach", ()
 		expect(withFullRights(one, [stamp], "rules cost $& and $1")).toContain("rules cost $& and $1");
 		expect(withFullRights("no pointer here", [stamp], FULL)).toBe(`no pointer here\n${FULL}`);
 	});
+	test("a pointer queued before the stamps existed (legacy-unstamped) is always stale, and either old pointer line is replaced", () => {
+		const legacy = { hash: "", legacy: "unstamped" as const };
+		expect(staleRights([legacy], now)).toContain("before");
+		expect(staleRights([stamp, legacy], now)).toContain("before");
+		const V010 = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
+		expect(withFullRights(`head\n${V010}\n- AFK`, [legacy], FULL)).toBe(`head\n${FULL}\n- AFK`);
+		expect(withFullRights(`head\n${rightsUnchanged("2026-11-01T00:00:00.000Z")}\n- AFK`, [legacy], FULL)).toBe(`head\n${FULL}\n- AFK`);
+		expect(withFullRights(`head\n${rightsUnchanged()}`, [legacy], FULL)).toBe(`head\n${FULL}`);
+		// A digest of an old pointer and a stamped one: the block once, the other pointed at it.
+		const out = withFullRights(`a\n${V010}\n\nb\n${rightsUnchanged(AT)}`, [legacy, stamp], FULL);
+		expect(out.split(FULL)).toHaveLength(2);
+		expect(out).not.toContain(V010);
+		expect(out).not.toContain(rightsUnchanged(AT));
+	});
 });

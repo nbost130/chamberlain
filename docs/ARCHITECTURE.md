@@ -178,7 +178,10 @@ sequenceDiagram
    and rulings. If not (a new Steward, a compaction, changed rulings), the row is **superseded** in one transaction: it is cancelled, so its
    ids keep their tombstones and it is never POSTed, and a fresh wake with the same text and the full block, composed for the current
    Steward, is queued under `<id>:full-rights` and sent at once. The `wake-superseded` log line names both ids and the reason. Rows stay
-   immutable: a stale pointer is replaced, never rewritten.
+   immutable: a stale pointer is replaced, never rewritten. A pointer queued **before** the stamps existed has none, so migration 10
+   stamps every undelivered one (a pending or dead-lettered row, or a held wake, whose text carries either pointer line the daemon ever
+   wrote and that has no stamp) as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`). Which Steward it was composed for is unknown,
+   so the check never holds and it is always superseded the same way. A wake with no pointer line is left as it is.
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
    ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the
