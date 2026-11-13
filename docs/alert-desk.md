@@ -5,7 +5,8 @@ daemon drains it (`src/core/alert-desk.ts`), dedupes per alert family through th
 one relay sends them, as a second receiver (`receivers: { desk }`), through the adapter's `alertDesk` capability and the relay's one serial POST
 queue, with the desk thread's own busy gate, so
 the hold-and-digest path folds a burst of families into one wake and a busy desk never holds the Steward's wakes. The desk's standing prompt is
-`docs/alert-desk-prompt.md`.
+`docs/alert-desk-prompt.md`, a template: `bun src/brief.ts desk` prints it filled in from your config (`principalName`, the Steward's
+own server in `servers.json`, this checkout, and the morning sources below).
 
 ```
 alert sources ──> ~/.cache/alert-desk/inbox.jsonl ──> drainAlertDesk (items decide) ──> outbox (receiver desk) ──> the relay (desk lane) ──> desk thread
@@ -65,7 +66,7 @@ The matcher must cover every tool, or the default deny never sees the tool it is
 
 ## Nothing changes until the desk is switched on
 
-The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing without it). The alert writers (the monitor's webhook and heartbeat, monitor)
+The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing without it). The alert writers (your monitors' webhooks and heartbeats)
 append only when the desk is on: `ALERT_DESK_ENABLED=1` in their environment, or the flag file `~/.config/alert-desk/enabled` (`touch` it; remove it to
 switch them off; no restart is needed).
 
@@ -78,7 +79,7 @@ Migration 8 cannot be undone by the old build: a database from a newer build is 
    (without the sqlite3 tool: `bun -e 'import {Database} from "bun:sqlite"; new Database(process.argv[1]).run("VACUUM INTO ?", [process.argv[2]])' <db> <backup>`).
    **To go back:** stop the daemon, `cp <backup> <db>`, `rm -f <db>-wal <db>-shm`, check out the old build, start it. Anything the new build did after the backup is lost.
 2. Deploy and restart Chamberlain on this branch (migration 8 runs at startup).
-3. Create the desk thread with `docs/alert-desk-prompt.md` as its first message, install the allowlist hook in its project, bind a webhook scheduled task to it,
+3. Create the desk thread with the output of `bun src/brief.ts desk` as its first message, install the allowlist hook in its project, bind a webhook scheduled task to it,
    and save its URL as `desk-wake-url` (0600) and its thread id as `desk-thread` in the config directory.
 4. `touch ~/.config/alert-desk/enabled` to switch the writers on.
 
@@ -87,12 +88,18 @@ Migration 8 cannot be undone by the old build: a database from a newer build is 
 `$CHAMBERLAIN_CONF/alert-desk.json` (all optional) and the environment:
 
 ```json
-{ "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Etc/GMT+5", "maxAgeHours": 6, "enabled": true }
+{ "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Etc/GMT+5", "maxAgeHours": 6, "enabled": true,
+  "morningCommands": ["bun /opt/monitor/report.ts list --limit <N> --json"], "morningNotes": "Skip the monitor's own heartbeat events." }
 ```
+
+`morningCommands` are the sources the Morning sweep reads that the inbox does not carry, each run exactly as written (`<N>` is a number the
+desk fills in), and `morningNotes` says how to read them. Both go into the prompt (`bun src/brief.ts desk`), and `src/desk-allowlist.ts` allows
+exactly these commands, so they widen what the desk may run: they are read only when `alert-desk.json` is owned by you and no group or other
+user can write it (0600 or 0644). Nothing of the kind is built in; with none configured, the Morning sweep reports only what its wake carries.
 
 `ALERT_DESK_INBOX` overrides the inbox path. The T3 adapter needs a private `desk-wake-url` (a webhook bound to the desk thread) and, for its busy
 gate, `desk-thread`; without the URL the desk is off and the inbox is not read. The first pass of each local day from `morningHour` sends the
-morning wake, which runs the Morning sweep in the desk's prompt (the operator's 07:00 triage, folded in).
+morning wake, which runs the Morning sweep in the desk's prompt over the `morningCommands`.
 
 ## Schema
 

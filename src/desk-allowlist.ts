@@ -16,6 +16,8 @@
  */
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { morningPattern, readMorning } from "./core/alert-desk.ts";
+import { CONF } from "./core/config.ts";
 
 export type Verdict = { ok: true } | { ok: false; reason: string };
 const ok: Verdict = { ok: true };
@@ -207,24 +209,24 @@ function checkSimple(tokens: string[]): Verdict {
 	}
 }
 
-/** The few commands that are not simple flag shapes, matched whole. */
-const MONITOR = `${HOME}/bin/example-monitor`;
+/**
+ * The few commands that are not simple flag shapes, matched whole: the decision queue, and the operator's own morning sources
+ * (`morningCommands` in alert-desk.json, each exactly as written with `<N>` for a number; read only from a file the operator owns
+ * that no one else can write, `readMorning`). Nothing private is built in: with no morning sources, none is allowed.
+ */
 const askPath = () => process.env.DESK_ASK_PATH ?? `${HOME}/Projects/chamberlain/src/ask.ts`;
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const EXACT: { name: string; re: () => RegExp }[] = [
-	{ name: "monitor heartbeat", re: () => new RegExp(`^bun ${escRe(MONITOR)} heartbeat --json$`) },
-	{ name: "monitor list", re: () => new RegExp(`^bun ${escRe(MONITOR)} list --limit \\d{1,5} --json$`) },
-	{ name: "monitoring notifications", re: () => /^docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= \d{9,11}\\nOutputFormat: csv\\n' \| lq"$/ },
-	{ name: "the decision queue", re: () => new RegExp(`^bun ${escRe(askPath())} '[^']{1,8000}'$`) },
-];
+let configured: string[] | undefined;
+/** The morning commands in the config directory, read once per process (the hook is one process per call). */
+const morningCommands = () => (configured ??= readMorning(CONF, (m) => console.error(m)).commands);
 
-/** Is this one shell command allowed? */
-export function checkCommand(cmd: unknown): Verdict {
+/** Is this one shell command allowed? `o.morning` is a seam for tests: the morning commands, instead of alert-desk.json's. */
+export function checkCommand(cmd: unknown, o: { morning?: readonly string[] } = {}): Verdict {
 	if (typeof cmd !== "string" || !cmd.trim()) return no("no command");
 	const c = cmd.trim();
 	if (c.length > 9000) return no("the command is too long");
-	const hit = EXACT.find((e) => e.re().test(c));
-	if (hit) return ok;
+	if (new RegExp(`^bun ${escRe(askPath())} '[^']{1,8000}'$`).test(c)) return ok;
+	if ((o.morning ?? morningCommands()).some((m) => morningPattern(m).test(c))) return ok;
 	const t = tokenize(c);
 	if ("error" in t) return no(t.error);
 	const [first, ...pipes] = t.parts;
