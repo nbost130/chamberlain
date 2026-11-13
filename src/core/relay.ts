@@ -40,8 +40,14 @@ export type RelayDeps = {
 	 * It sends nothing once the lock is released.
 	 */
 	lock: RelayLock;
-	/** The way a wake reaches the Steward (`Adapter.wake`). */
+	/** The way a wake reaches its thread (`Adapter.wake` for the Steward, `Adapter.alertDesk.wake` for the desk). */
 	wake: WakeTransport;
+	/**
+	 * Whose wakes this relay sends: absent is the Steward's, "desk" is the Alert Desk's. Each receiver has its own relay, its own gate and its
+	 * own transport (a different webhook), and reads only its own rows and held wakes, so a busy desk never holds the Steward's wakes. Both
+	 * need the one lock and run in the daemon.
+	 */
+	receiver?: string;
 	/** The way a compaction reaches the Steward's compaction task (`Adapter.compact`), if the adapter has one. Sent only through `relay.compact`. */
 	compact?: WakeTransport;
 	/** The Steward's thread, read fresh: held wakes are composed when it is idle (or at the ceiling). */
@@ -64,6 +70,11 @@ export function createRelay(d: RelayDeps) {
 	// The handle must be the lock on THIS store's database file: a lock held on some other database authorizes nothing here.
 	if (!lockCovers(d.lock, store.path)) throw new Error(`createRelay was given a lock that is not on this store's database: the lock handle is for ${d.lock.path}, the store is ${store.path}. Take the lock on the very database file the store opened.`);
 	const clock = () => d.now?.() ?? Date.now();
+	/** The rows and held wakes this relay owns: the Steward's (`null`) or one named receiver's. */
+	const lane = d.receiver ?? null;
+	/** Alarm keys and titles of a named receiver say whose relay raised them, so the desk's alarm never silences the Steward's. */
+	const akey = (k: string) => (d.receiver ? `${d.receiver}:${k}` : k);
+	const desk = d.receiver !== undefined;
 	const max = d.maxAttempts !== undefined && Number.isInteger(d.maxAttempts) && d.maxAttempts >= 1 ? d.maxAttempts : maxAttemptsFromEnv();
 	const pause = d.retryAfterMs ?? retryAfterMs;
 	const ceiling = d.ceilingMs ?? HOLD_CEILING_MS;
@@ -99,14 +110,14 @@ export function createRelay(d: RelayDeps) {
 
 	/** Held wakes become ONE row when the Steward may take a wake. */
 	function compose(now: number) {
-		if (!store.wakes.held().length) return;
+		if (!store.wakes.held(lane).length) return;
 		const look = observe(gate, d.gate(), now, ceiling);
 		if (!look.post) return;
 		const row = store.wakes.compose(now, (held) => {
 			const c = composeWake(held, now);
 			const only = held.length === 1 ? held[0]! : undefined;
-			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }) };
-		});
+			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(d.receiver ? { receiver: d.receiver } : {}) };
+		}, lane);
 		if (!row) return;
 		crashPoint("composed");
 		if (look.forced) gate.lastForcedAt = now;
@@ -145,7 +156,7 @@ export function createRelay(d: RelayDeps) {
 			return land(row);
 		}
 		d.log("deliver-error", { deliveryId: row.deliveryId, attempt: n, ...(r.status !== undefined ? { http: r.status } : {}), ...(r.error ? { error: r.error.slice(0, 200) } : {}) });
-		if (++failures >= 2) d.alarm("wake-delivery", "chamberlain cannot reach its wake thread", `${failures} wake attempts in a row failed. The Steward thread may be deleted, the webhook revoked, or the server down or asleep. Each wake is tried ${max} times, then kept as a dead letter.`);
+		if (++failures >= 2) d.alarm(akey("wake-delivery"), desk ? "chamberlain cannot reach the Alert Desk thread" : "chamberlain cannot reach its wake thread", `${failures} wake attempts in a row failed. The ${desk ? "Alert Desk" : "Steward"} thread may be deleted, the webhook revoked, or the server down or asleep. Each wake is tried ${max} times, then kept as a dead letter.`);
 		if (n >= max) deadLetter(row, n);
 		else notBefore.set(row.id, clock() + pause(n));
 		return false;
@@ -157,16 +168,16 @@ export function createRelay(d: RelayDeps) {
 		for (const row of [...owed.values()]) land(row);
 		const now = clock();
 		if (!d.wake.ready()) {
-			if (now - notReadyAt >= 60_000 && (store.wakes.held().length || store.wakes.rows().length)) {
+			if (now - notReadyAt >= 60_000 && (store.wakes.held(lane).length || store.wakes.rows("pending", lane).length)) {
 				notReadyAt = now;
 				d.log("deliver-not-ready");
-				d.alarm("wake-not-ready", "chamberlain has nowhere to send wakes", "Wakes are waiting but no wake URL is configured (or readable), so nothing can reach the Steward. They are kept, no attempt is used, and they go as soon as there is one.");
+				d.alarm(akey("wake-not-ready"), "chamberlain has nowhere to send wakes", `Wakes are waiting but no ${desk ? "desk wake URL" : "wake URL"} is configured (or readable), so nothing can reach ${desk ? "the Alert Desk" : "the Steward"}. They are kept, no attempt is used, and they go as soon as there is one.`);
 			}
 			return [];
 		}
 		compose(now);
 		const out: string[] = [];
-		for (const row of store.wakes.rows()) {
+		for (const row of store.wakes.rows("pending", lane)) {
 			if (owed.has(row.id) || (notBefore.get(row.id) ?? -Infinity) > clock()) continue;
 			if (await serially(() => send(row))) out.push(...row.members.map((m) => m.deliveryId));
 		}
@@ -187,20 +198,20 @@ export function createRelay(d: RelayDeps) {
 	const reported = new Set<string>();
 	/** Dead letters raise the `wake-dead-letter` alarm until the operator retries or cancels them. */
 	function flagDead() {
-		const dead = store.wakes.rows("dead_letter");
+		const dead = store.wakes.rows("dead_letter", lane);
 		if (!dead.length) return;
 		for (const w of dead) if (!reported.has(w.deliveryId)) { reported.add(w.deliveryId); d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts }); }
-		d.alarm("wake-dead-letter", "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "bun src/wakes.ts list" shows them, "bun src/wakes.ts retry <id>" sends one again (${max} more attempts at most) and "bun src/wakes.ts cancel <id>" gives it up.`);
+		d.alarm(akey("wake-dead-letter"), desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "bun src/wakes.ts list" shows them, "bun src/wakes.ts retry <id>" sends one again (${max} more attempts at most) and "bun src/wakes.ts cancel <id>" gives it up.`);
 	}
 
 	/** Once a minute: keeps the Steward's busy stretch measured, and raises the stale and dead-letter alarms. */
 	function audit() {
 		const now = clock();
 		try { observe(gate, d.gate(), now, ceiling); } catch (e) { d.log("gate-error", { error: String(e).slice(0, 200) }); }
-		const waiting = [...store.wakes.rows().map((r) => ({ deliveryId: r.deliveryId, queuedAt: r.createdAt })), ...store.wakes.held()];
+		const waiting = [...store.wakes.rows("pending", lane).map((r) => ({ deliveryId: r.deliveryId, queuedAt: r.createdAt })), ...store.wakes.held(lane)];
 		const old = waiting.filter((w) => now - w.queuedAt > (d.staleAfterMs ?? STALE_AFTER_MS));
 		for (const w of old) if (!reported.has(`stale:${w.deliveryId}`)) { reported.add(`stale:${w.deliveryId}`); d.log("deliver-stale", { deliveryId: w.deliveryId, ageMs: now - w.queuedAt }); }
-		if (old.length) d.alarm("wake-stale", "chamberlain has wakes it could not deliver", `${old.length} wake${old.length === 1 ? " has" : "s have"} waited more than ${Math.round((d.staleAfterMs ?? STALE_AFTER_MS) / 3600_000)} hours without reaching the Steward. They are kept; none is dropped. Is the daemon running, and is the wake URL right?`);
+		if (old.length) d.alarm(akey("wake-stale"), "chamberlain has wakes it could not deliver", `${old.length} wake${old.length === 1 ? " has" : "s have"} waited more than ${Math.round((d.staleAfterMs ?? STALE_AFTER_MS) / 3600_000)} hours without reaching the Steward. They are kept; none is dropped. Is the daemon running, and is the wake URL right?`);
 		flagDead();
 	}
 

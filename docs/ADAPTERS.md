@@ -106,6 +106,9 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   `threadReadKey` so the check can count repeated reads of one thread).
 - **`stewardProbe()`** returns `{ readable, contextTokens?, stalled?, compactBlocked? }` once a minute.
 - **`compact`** is a wake transport whose `send` takes no message.
+- **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
+  gate. With it the core drains the alert inbox into wakes for the `desk` receiver and a second relay sends them (docs/alert-desk.md). The T3 adapter
+  reads `desk-wake-url` and `desk-thread` from the config directory; without the URL `wake.ready()` is false and nothing is drained.
 - **Wording**: `serverLine()` and `approvalHint` adapt the sentences a wake says about the server and about approvals.
 
 ## Testing an adapter
@@ -140,7 +143,7 @@ The mapping, from the contract to herdr:
 | `isBusy()` | the last `agent_status` seen for the Steward's pane (kept from the event stream, refreshed with `agent.get`): `working` or `blocked` → `busy`, `idle` or `done` → `idle`, `unknown` → `unknown` |
 | `post` | `notification.show { title, body }`: a toast, so `where` is `"notice"`; the page is the live view |
 | `listWaiting` | optional: `agent.list`, the `blocked` panes, as read-only `question` cards whose `why` is "answer it in its pane" |
-| `answer`, `setTitle`, `send`, `compact` | omitted: herdr answers happen in the terminal, and there is no Decisions thread |
+| `answer`, `setTitle`, `send`, `compact`, `alertDesk` | omitted: herdr answers happen in the terminal, and there is no Decisions thread |
 | `inspect` | omitted at first. `agent.read` could supply `lastMessage` from the screen, but herdr keeps no instruction history, so without `inspect` every top-level turn end is its own report |
 | `transcriptPath` | optional: when the Steward is a Claude Code pane, `agent.get` returns its `agent_session` (a path or an id) |
 | the Steward | the `steward-thread` file holds its pane id, as it holds a thread id for T3 |

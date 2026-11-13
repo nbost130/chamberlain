@@ -312,6 +312,21 @@ INSERT OR IGNORE INTO wake_tombstones (delivery_id, outcome, ended_at)
 	SELECT m.delivery_id, o.status, COALESCE(o.finished_at, 0) FROM outbox o JOIN outbox_members m ON m.outbox_id = o.id WHERE o.status IN ('delivered', 'cancelled');
 `,
 	},
+	{
+		version: 8,
+		name: "wake receivers (the Alert Desk lane)",
+		sql: `
+-- A wake goes to a receiver (Alertmanager's term for the integration a notification is sent to). NULL is the Steward, as every row so far;
+-- "desk" is the Alert Desk's own thread, sent by its own relay with its own gate. A held wake waits for ITS receiver's thread to go idle, and a
+-- digest only ever holds one receiver's wakes. The receiver is frozen with the row, like its text.
+ALTER TABLE outbox ADD COLUMN receiver TEXT;
+ALTER TABLE held_wakes ADD COLUMN receiver TEXT;
+DROP TRIGGER outbox_frozen;
+CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver ON outbox
+BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
+CREATE INDEX outbox_by_receiver ON outbox (receiver, status, id);
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
