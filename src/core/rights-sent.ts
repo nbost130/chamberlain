@@ -4,7 +4,7 @@
  * trusted, means the next wake sends them in full: doubt always sends them again.
  */
 import { createHash } from "node:crypto";
-import { RIGHTS_MARKER, RIGHTS_UNCHANGED, rightsInFull, type RightsSent } from "./decide.ts";
+import { RIGHTS_MARKER, rightsInFull, rightsUnchanged, type RightsSent } from "./decide.ts";
 import type { Store } from "./store.ts";
 
 export const RIGHTS_SENT_KEY = "rights-sent";
@@ -12,11 +12,12 @@ export const RIGHTS_SENT_KEY = "rights-sent";
 /** Pure: the record a stored value holds, or undefined when it is anything but a well-formed record. */
 export function parseRightsSent(raw: unknown): RightsSent | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-	const { hash, used } = raw as Record<string, unknown>;
+	const { hash, used, at } = raw as Record<string, unknown>;
 	if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) return undefined;
-	if (used === undefined) return { hash };
+	if (at !== undefined && typeof at !== "string") return undefined;
+	if (used === undefined) return { hash, ...(at ? { at } : {}) };
 	if (typeof used !== "number" || !Number.isFinite(used) || used < 0) return undefined;
-	return { hash, used };
+	return { hash, used, ...(at ? { at } : {}) };
 }
 
 /** The record in the database, or undefined (so the next wake sends in full) when there is none or it can't be trusted. */
@@ -29,7 +30,7 @@ export function saveRightsSent(sent: RightsSent | undefined, store: Store) {
 	if (sent) store.state.set(RIGHTS_SENT_KEY, sent); else store.state.delete(RIGHTS_SENT_KEY);
 }
 
-const same = (a: RightsSent | undefined, b: RightsSent | undefined) => a?.hash === b?.hash && a?.used === b?.used;
+const same = (a: RightsSent | undefined, b: RightsSent | undefined) => a?.hash === b?.hash && a?.used === b?.used && a?.at === b?.at;
 
 /**
  * The daemon's one copy of the record: read once at startup, written through on every change. A failed write is reported
@@ -55,13 +56,13 @@ export function rightsHighWater(sent: RightsSent | undefined, used: number | und
 	return rightsInFull(sent, sent.hash, used) ? undefined : { ...sent, used };
 }
 
-/** Pure: what this wake records as sent: the Steward thread, its rules and the mandate, and its context size now. */
-export const rightsHash = (stewardId: string | undefined, rules: string, mandate: string) =>
-	createHash("sha256").update([stewardId, rules, mandate].join("\n")).digest("hex");
+/** Pure: what this wake records as sent: the Steward thread and its rights and rulings. The away mandate rides every wake, so it is not part of the hash: toggling away mode never re-sends the block. */
+export const rightsHash = (stewardId: string | undefined, rules: string) =>
+	createHash("sha256").update([stewardId, rules].join("\n")).digest("hex");
 
-/** Pure: the rights text a wake carries, and the record to keep if it is delivered. */
-export function rightsFor(sent: RightsSent | undefined, stewardId: string | undefined, rules: string, mandate: string, used: number | undefined): { text: string; record: RightsSent } {
-	const hash = rightsHash(stewardId, rules, mandate);
-	const body = rightsInFull(sent, hash, used) ? `${RIGHTS_MARKER}\n${rules}` : RIGHTS_UNCHANGED;
-	return { text: [body, mandate].filter(Boolean).join("\n"), record: { hash, used } };
+/** Pure: the rights text a wake carries, and the record to keep if it is delivered. `at` is when the full text last went out. */
+export function rightsFor(sent: RightsSent | undefined, stewardId: string | undefined, rules: string, mandate: string, used: number | undefined, now = new Date().toISOString()): { text: string; record: RightsSent } {
+	const hash = rightsHash(stewardId, rules), full = rightsInFull(sent, hash, used);
+	const body = full ? `${RIGHTS_MARKER}\n${rules}` : rightsUnchanged(sent?.at);
+	return { text: [body, mandate].filter(Boolean).join("\n"), record: { hash, used, at: full ? now : sent?.at } };
 }

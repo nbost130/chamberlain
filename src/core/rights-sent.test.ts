@@ -4,19 +4,20 @@
  */
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { RIGHTS_UNCHANGED } from "./decide.ts";
+import { rightsUnchanged } from "./decide.ts";
 import { loadRightsSent, openRightsSent, parseRightsSent, RIGHTS_SENT_KEY, rightsFor, rightsHash, rightsHighWater, saveRightsSent } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 
 const STEWARD = "steward-thread-1";
 const RULES = "decision rights text\nR-1 a ruling";
 const MANDATE = "";
+const AT = "2026-11-13T18:00:00.000Z";
 const FULL = `Decision rights (standing rules):\n${RULES}`;
 
 /** One daemon process: the startup load, then one wake that lands. */
-function daemonWake(store: Store, used: number | undefined, o: { steward?: string; rules?: string } = {}) {
+function daemonWake(store: Store, used: number | undefined, o: { steward?: string; rules?: string; mandate?: string; now?: string } = {}) {
 	const ledger = openRightsSent(store);
-	const r = rightsFor(ledger.get(), o.steward ?? STEWARD, o.rules ?? RULES, MANDATE, used);
+	const r = rightsFor(ledger.get(), o.steward ?? STEWARD, o.rules ?? RULES, o.mandate ?? MANDATE, used, o.now ?? AT);
 	ledger.set(r.record);
 	return r.text;
 }
@@ -25,7 +26,21 @@ describe("a restart keeps what was sent", () => {
 	test("a fresh daemon with a matching record and no compaction sends the pointer", () => {
 		const s = memStore();
 		expect(daemonWake(s, 80_000)).toBe(FULL);
-		expect(daemonWake(s, 90_000)).toBe(RIGHTS_UNCHANGED);
+		expect(daemonWake(s, 90_000, { now: "2026-11-13T19:00:00.000Z" })).toBe(rightsUnchanged(AT));
+	});
+	test("unchanged rights are one line, and name when the full text went out, through further wakes and a restart", () => {
+		const s = memStore();
+		daemonWake(s, 80_000);
+		const pointer = daemonWake(s, 90_000, { now: "2026-11-13T19:00:00.000Z" });
+		expect(pointer.split("\n")).toHaveLength(1);
+		expect(pointer).toContain(AT);
+		expect(daemonWake(s, 95_000, { now: "2026-11-13T20:00:00.000Z" })).toBe(pointer);
+	});
+	test("an away mandate riding the wake, on or off, does not make the rulings count as changed", () => {
+		const s = memStore();
+		daemonWake(s, 80_000);
+		expect(daemonWake(s, 90_000, { mandate: "- AFK MANDATE" })).toBe(`${rightsUnchanged(AT)}\n- AFK MANDATE`);
+		expect(daemonWake(s, 91_000)).toBe(rightsUnchanged(AT));
 	});
 	test("a compaction while the daemon was down sends them in full", () => {
 		const s = memStore();
@@ -35,7 +50,9 @@ describe("a restart keeps what was sent", () => {
 	test("changed rulings send them in full", () => {
 		const s = memStore();
 		daemonWake(s, 80_000);
-		expect(daemonWake(s, 90_000, { rules: `${RULES}\nR-2 a new ruling` })).toBe(`Decision rights (standing rules):\n${RULES}\nR-2 a new ruling`);
+		expect(daemonWake(s, 90_000, { rules: `${RULES}\nR-2 a new ruling`, now: "2026-11-13T19:00:00.000Z" })).toBe(`Decision rights (standing rules):\n${RULES}\nR-2 a new ruling`);
+		// The new full text restarts the "since" time.
+		expect(daemonWake(s, 95_000, { rules: `${RULES}\nR-2 a new ruling`, now: "2026-11-13T20:00:00.000Z" })).toBe(rightsUnchanged("2026-11-13T19:00:00.000Z"));
 	});
 	test("a different Steward thread sends them in full", () => {
 		const s = memStore();
@@ -71,7 +88,7 @@ describe("a record that can't be trusted sends them in full", () => {
 		expect(daemonWake(s, 90_000)).toBe(FULL);
 	});
 	test("well-formed JSON of the wrong shape", () => {
-		for (const bad of [null, [], "x", { hash: 1 }, { hash: "short" }, { hash: rightsHash(STEWARD, RULES, MANDATE), used: "80000" }, { hash: rightsHash(STEWARD, RULES, MANDATE), used: -1 }])
+		for (const bad of [null, [], "x", { hash: 1 }, { hash: "short" }, { hash: rightsHash(STEWARD, RULES), used: "80000" }, { hash: rightsHash(STEWARD, RULES), used: -1 }])
 			expect(parseRightsSent(bad)).toBeUndefined();
 	});
 });
@@ -116,9 +133,15 @@ describe("a database that refuses the write", () => {
 });
 
 describe("the record", () => {
+	test("keeps when the full text last went out, and refuses an `at` that is not text", () => {
+		const hash = rightsHash(STEWARD, RULES);
+		expect(parseRightsSent({ hash, used: 1, at: AT })).toEqual({ hash, used: 1, at: AT });
+		expect(parseRightsSent({ hash })).toEqual({ hash });
+		expect(parseRightsSent({ hash, at: 5 })).toBeUndefined();
+	});
 	test("is one state row holding the hash and the size", () => {
 		const s = memStore();
-		saveRightsSent({ hash: rightsHash(STEWARD, RULES, MANDATE), used: 80_000 }, s);
-		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ hash: rightsHash(STEWARD, RULES, MANDATE), used: 80_000 });
+		saveRightsSent({ hash: rightsHash(STEWARD, RULES), used: 80_000 }, s);
+		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ hash: rightsHash(STEWARD, RULES), used: 80_000 });
 	});
 });

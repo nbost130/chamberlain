@@ -168,8 +168,10 @@ export function needsCompact(usedTokens: number | undefined, limit: number, cool
 	return !coolingDown && usedTokens !== undefined && usedTokens > limit;
 }
 
-export type RightsSent = { hash: string; used?: number };
-export const RIGHTS_UNCHANGED = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
+/** What the Steward was last sent of its rights: the hash of the rights and rulings, its context size then, and when the full text last went out. */
+export type RightsSent = { hash: string; used?: number; at?: string };
+/** The one line a wake carries when the rights and rulings have not changed since the full text went out at `at`. The hand-off holds them. */
+export const rightsUnchanged = (at?: string) => `Decision rights and rulings unchanged since ${at ?? "your last wake"} and still in force; your hand-off (steward-brief.md) has them.`;
 export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Hold anything on the ASK list and tell ${principal()}.`;
 /** The marker that starts the full rights block in a wake; hold.ts folds repeated copies of everything after it. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
