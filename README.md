@@ -333,7 +333,7 @@ already in the state directory is never replaced.
 | table `items` | The one item system: sweep findings, decision-queue questions, alarms, the notification log of what already woke the Steward, what is held for your return. |
 | tables `claims`, `relays`, `evidence` | A question's answer flow: the one-wake claim (unique per item, carrying the wake text and its delivery id), the one direct send of a thread-routed answer, and rows pointing at its evidence files. |
 | tables `outbox`, `outbox_members`, `held_wakes`, `wake_tombstones` | The transactional outbox: one row per wake to send (`pending`, `delivered`, `dead_letter` or `cancelled`), the delivery ids each row carries (bound to that row for good), turn ends and sweeps held while the Steward is busy, which become one digest row, and one permanent tombstone per delivery id that was delivered or cancelled, which outlives retention of its row. |
-| tables `rulings`, `decisions`, `butlers`, `away` | The rulings ledger, the Steward's self-answers, the butler ledger and the away record. |
+| tables `rulings`, `decisions`, `butlers`, `away` | The rulings ledger (with each ruling's expiry, what it supersedes and why it left force), the Steward's self-answers, the butler ledger and the away record. |
 | table `events` | The log: every wake, skip, alarm and answer. `queue-waits.ts` and the return brief read it with SQL. |
 | table `state` | Small named records: the sweep clock, what rights text the Steward last received, the latest health verdict, the heartbeat. |
 | table `migrations` | The schema's version history (see [Schema versions](#schema-versions)). |
@@ -369,8 +369,8 @@ already in the state directory is never replaced.
 | --- | --- | --- |
 | `bun src/daemon.ts` | you | The watcher, and the one process that sends wakes. One per state directory: a second exits 5. |
 | `bun src/web/server.ts [--test]` | you | The Decisions page. |
-| `bun src/ask.ts '<json>'` | the Steward | Put one question on the queue and in the Decisions thread. |
-| `bun src/core/ruling.ts [--stated-in-chat] "<words>" "<decides>"` | the Steward | Record a proposed (or, stated in chat, in-force) ruling. |
+| `bun src/ask.ts '<json>'` | the Steward | Put one question on the queue and in the Decisions thread. `proposedRuling` is the ruling you may save with your answer; add `proposedExpires` (a date or a date-time with a zone) when it is about one run, launch or week, and the saved ruling expires by itself. |
+| `bun src/core/ruling.ts [--stated-in-chat] [--expires <ISO>] [--until "<event>"] [--supersedes R32,R16] [--] "<words>" "<decides>"` | the Steward | Record a proposed (or, stated in chat, in-force) ruling. Recording the same words and decision again adds nothing and prints the id already held. `--expires` (a date, through the end of that day UTC, or a date-time with a zone) makes it time-bound: it drops out of every wake after that and the rulings page marks it expired. `--until` is a note for a bound only a person can judge, shown and never enforced. `--supersedes` names the rulings it replaces: they leave force when this one is in force. `list` shows every ruling. |
 | `bun src/core/decided.ts "<thread>" "<decision>" "R12: why"` | the Steward | Log a self-answer, citing rulings by id. `decided.ts list [n]` shows the last n. |
 | `bun src/core/afk.ts enter\|status\|hold\|held\|note\|close\|brief\|exit` | you, the Steward | The away record and the held-for-return ledger. `hold` takes `--item`, `--pr`, `--issue`, `--branch`, `--run`, `--thread`; the daemon closes a hold when its item is answered or its PR, issue, branch or thread is done. GitHub reads use `gh` (or `CHAMBERLAIN_GH`). |
 | `bun src/brief.ts steward [--mode test\|live]` | you | Print the Steward's hand-off. |

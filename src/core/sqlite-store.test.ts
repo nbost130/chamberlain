@@ -113,6 +113,59 @@ describe("opening the database", () => {
 		expect(s.wakes.find("w")?.rights).toEqual(stamp);
 	});
 
+	test("a database at migration 10 gains the ruling fields: every ruling kept as it was, the new columns empty, the new retirement reasons allowed", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v10.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		const ins = db.query("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+		ins.run("R1", 1, "2026-11-01", "w1", "d1", "chat", "in-force", 1, "2026-11-01T09:00:00.000Z", null, null, null, '[{"t":"x","what":"stated"}]');
+		ins.run("R2", 2, "2026-11-02", "w2", "d2", "card", "proposed", 0, null, null, null, "Q-abc12", "[]");
+		ins.run("R10", 10, "2026-11-03", "w3", "d3", "card", "retired", 1, "2026-11-03T09:00:00.000Z", "2026-11-04T09:00:00.000Z", "only this once", null, "[]");
+		const before = db.query("SELECT * FROM rulings ORDER BY seq").all() as Record<string, unknown>[];
+		db.close();
+		const s = openStore(path);
+		open.push(s);
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(LATEST_MIGRATION);
+		expect(LATEST_MIGRATION).toBeGreaterThanOrEqual(11);
+		expect(after.query("SELECT version FROM migrations WHERE version = 11").get()).toEqual({ version: 11 });
+		// Every old column is as it was; the new ones are NULL.
+		const rows = after.query("SELECT * FROM rulings ORDER BY seq").all() as Record<string, unknown>[];
+		expect(rows.map((r) => Object.fromEntries(Object.keys(before[0]!).map((k) => [k, r[k]])))).toEqual(before);
+		for (const r of rows) for (const k of ["retired_why", "superseded_by", "supersedes", "expires", "until_event"]) expect(r[k]).toBeNull();
+		after.close();
+		expect(s.rulings.list().map((r) => [r.id, r.status, r.confirmed, r.retiredHow, r.item])).toEqual([["R1", "in-force", true, undefined, undefined], ["R2", "proposed", false, undefined, "Q-abc12"], ["R10", "retired", true, "only this once", undefined]]);
+		// The new reasons and fields are accepted now, and an unknown reason still is not.
+		s.rulings.save({ ...s.rulings.list()[0]!, status: "retired", retiredHow: "duplicate", retiredWhy: "twice", supersededBy: "R2", expires: "2026-12-01", supersedes: ["R10"] });
+		expect(s.rulings.list()[0]).toMatchObject({ retiredHow: "duplicate", retiredWhy: "twice", supersededBy: "R2", expires: "2026-12-01", supersedes: ["R10"] });
+		expect(() => s.rulings.save({ ...s.rulings.list()[0]!, retiredHow: "bogus" as never })).toThrow();
+		// Ids and order are unchanged: the next id continues after the highest.
+		s.rulings.save({ id: "R11", date: "d", words: "w", decides: "d", source: "chat", status: "in-force", confirmed: true, history: [] });
+		expect(s.rulings.list().map((r) => r.id)).toEqual(["R1", "R2", "R10", "R11"]);
+	});
+
+	test("migration 11 is one transaction: a failure leaves the database at 10, rulings untouched", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v10b.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w', 'd', 'chat', 'in-force', 1, '[]')");
+		// A leftover table of the same name makes the rebuild fail part-way, after rulings_new exists.
+		db.exec("CREATE TABLE rulings_new (x)");
+		db.close();
+		expect(() => openStore(path)).toThrow();
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(10);
+		expect(after.query("SELECT id FROM rulings").all()).toEqual([{ id: "R1" }]);
+		expect(after.query("SELECT name FROM pragma_table_info('rulings') WHERE name = 'expires'").all()).toEqual([]);
+		after.close();
+	});
+
 	test("a database newer than this build is refused with a clear error", () => {
 		const { s, path } = file();
 		s.close();

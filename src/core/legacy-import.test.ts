@@ -13,7 +13,7 @@ import { memStore } from "../testing/store.ts";
 import { heldOpen } from "./afk.ts";
 import { formatReport, importLegacy } from "./legacy-import.ts";
 import { answerDeliveryId, getQuestion, pageClaim, questionStates, QUEUE, readClaim, readRelay, recordAnswerDelivered, type Answer, type Question } from "./questions.ts";
-import { readRulings } from "./rulings.ts";
+import { inForceNow, readRulings, type Ruling } from "./rulings.ts";
 import { SchemaTooNewError } from "./schema.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath, type Store } from "./store.ts";
@@ -332,6 +332,116 @@ describe("what it refuses and what it tolerates", () => {
 		const r = importLegacy(s, [w.conf, w.cache], { now: NOW });
 		expect(readRulings(s)[0]!.decides).toBe("Edited in the new system.");
 		expect(r.skipped).toContainEqual({ what: "ruling R1", why: "already in the database with different content: the database's copy was kept" });
+	});
+
+	describe("rulings with the hygiene fields (the earlier system's newer records)", () => {
+		/** rulings.jsonl as the earlier system now writes it: unversioned, with its own `legacy` key, and every hygiene field. */
+		const NEW_SHAPE: (Ruling & { legacy?: string })[] = [
+			{ id: "R1", date: "2026-11-01", words: "w1", decides: "A standing rule.", source: "chat", status: "in-force", confirmed: true, confirmedAt: T("1T09:00:00"), legacy: "9f2c4a1b7d3e5a60:1", history: [{ t: T("1T09:00:00"), what: "stated in chat" }] },
+			{ id: "R2", date: "2026-11-02", words: "w2", decides: "Hold the deploy for this launch.", source: "card", status: "in-force", confirmed: true, confirmedAt: T("2T09:00:00"), item: "Q-bbbb2", expires: "2026-11-20", until: "the V2 launch", history: [] },
+			{ id: "R3", date: "2026-11-03", words: "w3", decides: "Replaces R5 and R6.", source: "chat", status: "in-force", confirmed: true, confirmedAt: T("3T09:00:00"), supersedes: ["R5", "R6"], expires: "2026-12-01T09:00:00Z", history: [] },
+			{ id: "R4", date: "2026-11-04", words: "w4", decides: "Said twice.", source: "chat", status: "retired", confirmed: true, retiredAt: T("4T10:00:00"), retiredHow: "duplicate", retiredWhy: "same rule as R1", supersededBy: "R1", legacy: "aaaa:1", history: [{ t: T("4T10:00:00"), what: "duplicate (R1): same rule as R1" }] },
+			{ id: "R5", date: "2026-11-05", words: "w5", decides: "Old one.", source: "chat", status: "retired", confirmed: true, retiredAt: T("3T09:00:00"), retiredHow: "superseded", retiredWhy: "replaced by R3", supersededBy: "R3", history: [] },
+			{ id: "R6", date: "2026-11-06", words: "w6", decides: "Older one.", source: "card", status: "retired", confirmed: false, retiredAt: T("5T10:00:00"), retiredHow: "expired", retiredWhy: "the launch is over", expires: "2026-11-05", history: [] },
+			{ id: "R7", date: "2026-11-07", words: "w7", decides: "Already in the rights file.", source: "chat", status: "retired", confirmed: true, retiredAt: T("6T10:00:00"), retiredHow: "repeat", retiredWhy: "decision-rights.md says it", history: [] },
+			{ id: "R8", date: "2026-11-08", words: "w8", decides: "Once.", source: "card", status: "retired", confirmed: true, retiredAt: T("7T10:00:00"), retiredHow: "only this once", history: [] },
+		];
+		const install = (rows: object[]) => {
+			const root = scratch();
+			const conf = `${root}/conf`, cache = `${root}/cache`;
+			mkdirSync(conf, { recursive: true }); mkdirSync(cache, { recursive: true });
+			writeFileSync(`${conf}/rulings.jsonl`, jl(rows));
+			return { conf, cache };
+		};
+
+		test("round trip: every field of every record comes across, retired-with-reason records included, and the earlier system's bookkeeping does not", () => {
+			const w = install(NEW_SHAPE);
+			const s = memStore();
+			const r = importLegacy(s, [w.conf, w.cache], { now: NOW });
+			expect(r.counts.rulings).toEqual({ read: 8, imported: 8, present: 0 });
+			expect(r.skipped).toEqual([]);
+			const got = readRulings(s);
+			expect(got).toEqual(NEW_SHAPE.map(({ legacy: _l, ...rest }) => rest));
+			expect(got.find((x) => x.id === "R2")).toMatchObject({ expires: "2026-11-20", until: "the V2 launch", item: "Q-bbbb2" });
+			expect(got.find((x) => x.id === "R3")).toMatchObject({ supersedes: ["R5", "R6"], expires: "2026-12-01T09:00:00Z" });
+			expect(got.map((x) => [x.id, x.retiredHow, x.retiredWhy, x.supersededBy])).toEqual([
+				["R1", undefined, undefined, undefined], ["R2", undefined, undefined, undefined], ["R3", undefined, undefined, undefined],
+				["R4", "duplicate", "same rule as R1", "R1"], ["R5", "superseded", "replaced by R3", "R3"], ["R6", "expired", "the launch is over", undefined],
+				["R7", "repeat", "decision-rights.md says it", undefined], ["R8", "only this once", undefined, undefined],
+			]);
+			for (const x of got) expect(x).not.toHaveProperty("legacy");
+		});
+
+		test("what is imported behaves: R2 is in force until its date passes, R3 retired nothing by itself (its targets arrive already retired)", () => {
+			const w = install(NEW_SHAPE);
+			const s = memStore();
+			importLegacy(s, [w.conf, w.cache], { now: NOW });
+			const ids = (nowMs: number) => inForceNow(readRulings(s), nowMs).map((x) => x.id);
+			expect(ids(Date.parse("2026-11-12T00:00:00Z"))).toEqual(["R1", "R2", "R3"]);
+			expect(ids(Date.parse("2026-11-21T00:00:00Z"))).toEqual(["R1", "R3"]);
+			expect(ids(Date.parse("2026-12-02T00:00:00Z"))).toEqual(["R1"]);
+		});
+
+		test("importing again imports nothing, and reports no difference between the file and the database", () => {
+			const w = install(NEW_SHAPE);
+			const s = memStore();
+			importLegacy(s, [w.conf, w.cache], { now: NOW });
+			const first = JSON.stringify(readRulings(s));
+			const again = importLegacy(s, [w.conf, w.cache], { now: NOW });
+			expect(again.counts.rulings).toEqual({ read: 8, imported: 0, present: 8 });
+			expect(again.skipped).toEqual([]);
+			expect(JSON.stringify(readRulings(s))).toBe(first);
+		});
+
+		test("the versioned shape this project writes carries the same fields", () => {
+			const w = install(NEW_SHAPE.map((x) => ({ schemaVersion: 2, ...x })));
+			const s = memStore();
+			importLegacy(s, [w.conf, w.cache], { now: NOW });
+			expect(readRulings(s)).toEqual(NEW_SHAPE.map(({ legacy: _l, ...rest }) => rest));
+		});
+
+		test("a malformed hygiene field is left out and noted; it never stops the import or changes what the record says", () => {
+			const w = install([
+				{ id: "R1", date: "d", words: "w", decides: "d", source: "chat", status: "retired", confirmed: true, retiredHow: "vanished", supersededBy: "somebody", supersedes: "R2", history: [] },
+				{ id: "R2", date: "d", words: "w2", decides: "d2", source: "chat", status: "in-force", confirmed: true, expires: "next week", supersedes: ["R1", 7], history: [] },
+				{ id: "R3", date: "d", words: "w3", decides: "d3", source: "chat", status: "in-force", confirmed: true, expires: "2026-12-01T09:00:00", history: [] },
+			]);
+			const s = memStore();
+			const r = importLegacy(s, [w.conf, w.cache], { now: NOW });
+			expect(r.counts.rulings).toEqual({ read: 3, imported: 3, present: 0 });
+			const got = readRulings(s);
+			expect(got[0]).not.toHaveProperty("retiredHow");
+			expect(got[0]).not.toHaveProperty("supersededBy");
+			expect(got[0]).not.toHaveProperty("supersedes");
+			expect(got[1]).not.toHaveProperty("supersedes");
+			expect(got[1]!.expires).toBe("next week");
+			expect(r.notes).toContain('R1: retiredHow "vanished" is not one this version knows; it was not imported');
+			expect(r.notes).toContain('R1: supersededBy "somebody" is not a ruling id; it was not imported');
+			expect(r.notes).toContain("R1: supersedes is not a list of ruling ids; it was not imported");
+			expect(r.notes).toContain("R2: supersedes is not a list of ruling ids; it was not imported");
+			// An expiry that cannot be read counts as passed, so it leaves force rather than staying in it by mistake; the report says so.
+			expect(r.notes).toContain('R2: expires "next week" is not an ISO date or a date-time with a zone, so it counts as already expired');
+			expect(r.notes).toContain('R3: expires "2026-12-01T09:00:00" is not an ISO date or a date-time with a zone, so it counts as already expired');
+			expect(inForceNow(got, NOW).map((x) => x.id)).toEqual([]);
+		});
+
+		test("a record already in the database with the same fields is the same record, whatever the order of its keys", () => {
+			const w = install(NEW_SHAPE);
+			const s = memStore();
+			const { legacy: _l, ...r2 } = NEW_SHAPE[1]!;
+			s.rulings.save(r2 as never);
+			const r = importLegacy(s, [w.conf, w.cache], { now: NOW });
+			expect(r.counts.rulings).toEqual({ read: 8, imported: 7, present: 1 });
+			expect(r.skipped).toEqual([]);
+		});
+
+		test("a dry run counts the rulings and writes nothing", () => {
+			const w = install(NEW_SHAPE);
+			const s = memStore();
+			const r = importLegacy(s, [w.conf, w.cache], { now: NOW, dryRun: true });
+			expect(r.counts.rulings).toEqual({ read: 8, imported: 0, present: 0 });
+			expect(readRulings(s)).toEqual([]);
+		});
 	});
 
 	test("an unreadable JSON document is counted and skipped, and the rest still imports", () => {

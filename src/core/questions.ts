@@ -24,6 +24,8 @@ export type Question = {
 	options: Option[];
 	recommended?: number;
 	proposedRuling?: string;
+	/** An ISO date or date-time the proposed ruling stops being in force; omitted for a standing one. */
+	proposedExpires?: string;
 	evidence?: Evidence[];
 	thread: string;
 	server: string;

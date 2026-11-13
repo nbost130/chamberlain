@@ -377,7 +377,7 @@ start with exit code 3, the way a config file from a newer build is.
 | table `confirmation_challenges` | the single-use confirmations an approval answer must present (hashed, expiring) | the page |
 | tables `claims`, `relays`, `evidence` | a question's one-wake claim (wake text, delivery id, the answer, any ruling), its one direct send, and rows pointing at its evidence files | the page |
 | tables `outbox`, `outbox_members`, `held_wakes` | the transactional outbox: one row per wake to send (pending, delivered, dead_letter, cancelled), the ids each row carries (its own, or a digest's members, each bound to one row ever), and holdable wakes not yet composed | rows: daemon, page; status: the daemon's relay and `wakes.ts` |
-| tables `rulings`, `decisions`, `butlers`, `away` | the rulings ledger, the Steward's self-answers, the butler ledger, the away record | the Steward's tools and the page |
+| tables `rulings`, `decisions`, `butlers`, `away` | the rulings ledger (see [Rulings](#rulings)), the Steward's self-answers, the butler ledger, the away record | the Steward's tools and the page |
 | table `events` | every wake, skip, alarm and answer; read with SQL by the return brief and `queue-waits.ts` | daemon, page |
 | table `state` | the sweep clock, `rights-sent`, `steward-health`, `heartbeat` | daemon |
 | files, beside the database | `evidence/<item>/` (copied in by `ask.ts`, served by the page, listed by `evidence` rows) and `steward-brief.md` | `ask.ts`, `brief.ts` |
@@ -489,6 +489,33 @@ monitor*), and a reviewer should ask of any new map or set: "if this process die
 **Adding a monitor.** Implement `ItemSource` (`name`, optional `mode`, `run()` returning findings or throwing when it cannot
 see) and run it from the sweep. It gets identity, de-duplication, the repeat policy, the error state, shadow mode and the wake for
 free, and no other state of its own.
+
+## Rulings
+
+Rulings (`src/core/rulings.ts`, table `rulings`) are the principal's standing decisions. Four properties are kept in the store layer, so
+every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets them and none has to remember to check:
+
+- **Recording is idempotent.** `propose` and `addInForce` run their read, their duplicate check and their write in one `updateRulings`
+  transaction, which is `BEGIN IMMEDIATE` (the database's write lock, taken when the transaction starts). Words and a decision that match a
+  live ruling (proposed or in force, not expired; case and runs of whitespace ignored) return that ruling, flagged `duplicate`, and write
+  nothing new. A held proposal said again as a rule goes in force; an unconfirmed card answer said again is confirmed. A retired or expired
+  ruling can be said again as a new one. The page's "save as a ruling" goes through the same `recordInForce`, inside its answer transaction, so
+  two questions saved with one wording give one ruling. There is no unique index on the text: whether two texts are "the same" is a
+  comparison in code (and an expired ruling must stay restatable), which a column constraint cannot express.
+- **Expiry is read, never applied.** A ruling's `expires` is compared with a clock every time the rulings are read: `Clock` is
+  `() => number` and every function takes one (the page's is its injectable `now`). Past it, `renderInForce` leaves the ruling out of every
+  wake and the page marks it expired; the row is not rewritten. The hand-off's rulings section also names the expired ones
+  ("Expired, NOT in force") so a Steward does not act on one from memory. Setting an expiry that is unreadable, has no zone, does not exist
+  (2026-02-30) or is already past is refused. An expired ruling cannot be confirmed.
+- **Supersession is one write.** A ruling's `supersedes` retires the named rulings in the same transaction that puts it in force (for a proposal:
+  the transaction that confirms it); a missing id is an error and changes nothing.
+- **A ruling that leaves force keeps its record**: `retiredHow` (`retired`, `only this once`, `superseded`, `duplicate`, `expired`, `repeat`),
+  `retiredWhy` and `supersededBy`. A replacing ruling must itself be live.
+
+Migration 11 adds the columns (`expires`, `until_event`, `supersedes`, `superseded_by`, `retired_why`) and widens the `retired_how` check by
+rebuilding the table inside the migration's one transaction: every row is copied as it was and the new columns are NULL. A build that does not
+know migration 11 refuses the database, like any newer one (`DatabaseTooNewError`). `legacy-import.ts` brings the same fields in from an old
+`rulings.jsonl`, leaves out and notes any that are malformed, and never carries the earlier system's own bookkeeping.
 
 ## Why these seams
 

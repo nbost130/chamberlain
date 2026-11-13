@@ -19,7 +19,7 @@ import { decideNotification, NOTIFY_ONCE } from "./notification.ts";
 import type { Butler } from "./butler.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { DIR_MODE, enforceMode, FILE_MODE } from "./private.ts";
-import type { Ruling } from "./rulings.ts";
+import type { RetiredHow, Ruling } from "./rulings.ts";
 import { SchemaTooNewError } from "./schema.ts";
 import type { AwayRecord, Challenge, ChallengeVerdict, ClaimRecord, DecisionRow, EventQuery, EvidenceRow, HeldItem, Item, ItemFilter, ItemStatus, LogEvent, Observation, Observed, OutboxRow, OutboxStatus, RelayRecord, RightsStamp, Store, WakeRow } from "./store.ts";
 
@@ -257,17 +257,21 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		id: r.id as string, date: r.date as string, words: r.words as string, decides: r.decides as string,
 		source: r.source as Ruling["source"], status: r.status as Ruling["status"], confirmed: r.confirmed === 1,
 		...(r.confirmed_at ? { confirmedAt: r.confirmed_at as string } : {}), ...(r.retired_at ? { retiredAt: r.retired_at as string } : {}),
-		...(r.retired_how ? { retiredHow: r.retired_how as "retired" | "only this once" } : {}), ...(r.item ? { item: r.item as string } : {}),
+		...(r.retired_how ? { retiredHow: r.retired_how as RetiredHow } : {}), ...(r.retired_why ? { retiredWhy: r.retired_why as string } : {}),
+		...(r.superseded_by ? { supersededBy: r.superseded_by as string } : {}), ...(r.supersedes ? { supersedes: parse<string[]>(r.supersedes) } : {}),
+		...(r.expires ? { expires: r.expires as string } : {}), ...(r.until_event ? { until: r.until_event as string } : {}), ...(r.item ? { item: r.item as string } : {}),
 		history: parse<Ruling["history"]>(r.history) ?? [],
 	});
 	const rulings: Store["rulings"] = {
 		list: () => all("SELECT * FROM rulings ORDER BY seq").map(toRuling),
 		save(r) {
 			run(
-				`INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				`INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, retired_why, superseded_by, supersedes, expires, until_event, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT (id) DO UPDATE SET date = excluded.date, words = excluded.words, decides = excluded.decides, source = excluded.source, status = excluded.status, confirmed = excluded.confirmed,
-				 confirmed_at = excluded.confirmed_at, retired_at = excluded.retired_at, retired_how = excluded.retired_how, item = excluded.item, history = excluded.history`,
-				r.id, Number(r.id.slice(1)), r.date, r.words, r.decides, r.source, r.status, r.confirmed ? 1 : 0, r.confirmedAt ?? null, r.retiredAt ?? null, r.retiredHow ?? null, r.item ?? null, JSON.stringify(r.history ?? []),
+				 confirmed_at = excluded.confirmed_at, retired_at = excluded.retired_at, retired_how = excluded.retired_how, retired_why = excluded.retired_why, superseded_by = excluded.superseded_by,
+				 supersedes = excluded.supersedes, expires = excluded.expires, until_event = excluded.until_event, item = excluded.item, history = excluded.history`,
+				r.id, Number(r.id.slice(1)), r.date, r.words, r.decides, r.source, r.status, r.confirmed ? 1 : 0, r.confirmedAt ?? null, r.retiredAt ?? null, r.retiredHow ?? null, r.retiredWhy ?? null, r.supersededBy ?? null,
+				r.supersedes?.length ? JSON.stringify(r.supersedes) : null, r.expires ?? null, r.until ?? null, r.item ?? null, JSON.stringify(r.history ?? []),
 			);
 		},
 	};

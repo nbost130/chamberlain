@@ -15,7 +15,7 @@ import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, principal, REPO } from "./core/config.ts";
 import { startup } from "./core/migrate.ts";
 import { loadOperatingRules } from "./core/rules.ts";
-import { rulingsText } from "./core/rulings.ts";
+import { rulingsBriefText } from "./core/rulings.ts";
 import { homeServer } from "./core/servers.ts";
 import { adapterEntry, loadServers } from "./adapters/index.ts";
 
@@ -36,7 +36,7 @@ console.log(stewardBrief({
 	mode: flag("--mode") === "live" ? "live" : "test",
 	repo: REPO,
 	rights: text(`${CONF}/decision-rights.md`),
-	rulings: rulingsText(store),
+	rulings: rulingsBriefText(store),
 	operatingRules: loadOperatingRules(CONF),
 	afk: readAfk(store),
 	environments: servers,

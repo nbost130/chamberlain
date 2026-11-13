@@ -19,7 +19,7 @@ describe("the table", () => {
 	test("ids are allocated in order and orders past R9 sort by number, not text", () => {
 		const d = seeded();
 		addInForce(d, "w", "d", "chat", "x");
-		addInForce(d, "w", "d", "chat", "x");
+		addInForce(d, "w2", "d2", "chat", "x");
 		expect(readRulings(d).map((r) => r.id).slice(-3)).toEqual(["R8", "R9", "R10"]);
 		expect(nextId(readRulings(d))).toBe("R11");
 	});

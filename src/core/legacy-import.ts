@@ -29,7 +29,7 @@ import { appendHeld, HELD, heldId, type Held } from "./afk.ts";
 import { NOTIFICATION_LOG } from "./notification.ts";
 import { LEGACY_STAMP, parseRightsSent, RIGHTS_SENT_KEY } from "./rights-sent.ts";
 import { askQuestion, claimWake, finishRelay, notNow, pageClaim, startRelay, type Answer, type Claim, type Question } from "./questions.ts";
-import { type Ruling } from "./rulings.ts";
+import { expiresAt, type RetiredHow, type Ruling } from "./rulings.ts";
 import { checkVersion } from "./schema.ts";
 import type { DecisionRow, Store } from "./store.ts";
 import { HEALTH_KEY, type Health } from "./steward-health.ts";
@@ -271,8 +271,9 @@ export function importLegacy(store: Store, dirs: string[], o: ImportOptions = {}
 		for (const x of rulings) {
 			if (typeof x.id !== "string" || !/^R\d+$/.test(x.id)) { report.skipped.push({ what: "rulings.jsonl", why: `a record without a ruling id (${String(x.id).slice(0, 20)})` }); continue; }
 			const fresh = !have.has(x.id);
-			if (fresh) { const { schemaVersion: _s, ...clean } = x as Ruling & Raw; store.rulings.save({ ...clean, history: clean.history ?? [] } as Ruling); have.set(x.id, x); }
-			else if (JSON.stringify(strip(have.get(x.id)!)) !== JSON.stringify(strip(x))) report.skipped.push({ what: `ruling ${x.id}`, why: "already in the database with different content: the database's copy was kept" });
+			const rec = normalizeRuling(x as Ruling & Raw, (m) => report.notes.push(m));
+			if (fresh) { store.rulings.save(rec); have.set(x.id, rec); }
+			else if (canon(have.get(x.id)!) !== canon(rec)) report.skipped.push({ what: `ruling ${x.id}`, why: "already in the database with different content: the database's copy was kept" });
 			tally(report, "rulings", fresh);
 		}
 
@@ -366,7 +367,28 @@ export function importLegacy(store: Store, dirs: string[], o: ImportOptions = {}
 	return report;
 }
 
-const strip = (x: Ruling & Raw) => { const { schemaVersion: _s, ...rest } = x; return { ...rest, history: rest.history ?? [] }; };
+const RETIRED_HOWS = new Set<string>(["retired", "only this once", "superseded", "duplicate", "expired", "repeat"] satisfies RetiredHow[]);
+const RULING_ID = /^R\d+$/;
+/**
+ * A ruling record from rulings.jsonl as this database holds it: the fields a ruling has, and only those. The earlier system's own
+ * bookkeeping (`legacy`, the rulings.md line a record came from) and `schemaVersion` are not carried. The hygiene fields (`expires`,
+ * `until`, `supersedes`, `supersededBy`, `retiredWhy`, and the four housekeeping values of `retiredHow`) come across when they are
+ * well formed; one that is not is left out and noted, so a bad value can never stop the import or turn into a different rule.
+ */
+function normalizeRuling(x: Ruling & Raw, note: (m: string) => void): Ruling {
+	const out: Ruling = { id: x.id, date: x.date, words: x.words, decides: x.decides, source: x.source, status: x.status, confirmed: x.confirmed, history: x.history ?? [] };
+	for (const k of ["confirmedAt", "retiredAt", "retiredWhy", "expires", "until", "item"] as const) if (typeof x[k] === "string" && x[k]) out[k] = x[k] as string;
+	if (x.retiredHow !== undefined) { if (typeof x.retiredHow === "string" && RETIRED_HOWS.has(x.retiredHow)) out.retiredHow = x.retiredHow; else note(`${x.id}: retiredHow ${JSON.stringify(x.retiredHow)} is not one this version knows; it was not imported`); }
+	if (x.supersededBy !== undefined) { if (typeof x.supersededBy === "string" && RULING_ID.test(x.supersededBy)) out.supersededBy = x.supersededBy; else note(`${x.id}: supersededBy ${JSON.stringify(x.supersededBy)} is not a ruling id; it was not imported`); }
+	if (x.supersedes !== undefined) {
+		if (Array.isArray(x.supersedes) && x.supersedes.every((s) => typeof s === "string" && RULING_ID.test(s))) { if (x.supersedes.length) out.supersedes = [...x.supersedes]; }
+		else note(`${x.id}: supersedes is not a list of ruling ids; it was not imported`);
+	}
+	if (out.expires && Number.isNaN(expiresAt(out.expires))) note(`${x.id}: expires ${JSON.stringify(out.expires)} is not an ISO date or a date-time with a zone, so it counts as already expired`);
+	return out;
+}
+/** A ruling as one string whatever the order of its keys, to compare two copies. */
+const canon = (r: Ruling) => JSON.stringify(Object.fromEntries(Object.entries({ ...r, history: r.history ?? [] }).sort(([a], [b]) => a.localeCompare(b))));
 
 /** The event log, inside the import's one transaction: each row under a hash of its own line, so a rerun adds nothing. */
 function importEvents(store: Store, events: { line: string; rec: Raw }[], report: ImportReport) {
