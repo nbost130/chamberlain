@@ -53,9 +53,12 @@ describe("a relay lock is the lock on the relay's own database", () => {
 
 	test("a handle for a database that has been replaced by another file at the same path is refused", () => {
 		const dir = scratch();
-		const store = open(`${dir}/chamberlain.db`);
+		const store = openStore(`${dir}/chamberlain.db`);
 		const lock = hold(store.path);
 		expect(lockCovers(lock, store.path)).toBe(true);
+		// Closed first: a live WAL database renamed away leaves its -wal and -shm at the old name, and a new database there would
+		// inherit them (macOS SQLite then reports "disk I/O error").
+		store.close();
 		renameSync(store.path, `${dir}/moved.db`);
 		open(`${dir}/chamberlain.db`);
 		expect(lockCovers(lock, `${dir}/chamberlain.db`)).toBe(false);
