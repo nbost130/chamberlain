@@ -61,32 +61,37 @@ describe("opening the database", () => {
 		expect(s.wakes.rows("pending", "desk")).toEqual([]);
 	});
 
-	test("an upgrade marks only undelivered wakes that carry an old, unstamped rights pointer, so the relay supersedes them", () => {
-		const V010 = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
-		const dated = "Decision rights and rulings unchanged since 2026-11-13T18:00:00.000Z and still in force; your hand-off (steward-brief.md) has them.";
+	test("an upgrade marks every undelivered, unstamped Steward wake legacy whatever its text, and never touches the text", () => {
+		const OLD = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
 		const legacy = [{ hash: "", legacy: "unstamped" as const }];
-		for (const version of [7, 8]) {
+		for (const version of [7, 8, 9]) {
 			const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
 			dirs.push(d);
 			const path = `${d}/v${version}.db`;
 			const db = raw(path);
 			db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
 			for (const m of MIGRATIONS.filter((x) => x.version <= version)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
-			const rows: [string, string, string][] = [["p1", `a\n${V010}\nb`, "pending"], ["p2", `a\n${dated}`, "pending"], ["dl", `x\n${V010}`, "dead_letter"], ["done", `x\n${V010}`, "delivered"], ["gone", `x\n${dated}`, "cancelled"], ["plain", "Decision rights (standing rules):\nmerge green PRs", "pending"], ["near", "Decision rights and rulings unchanged since then, but no more", "pending"]];
+			const rows: [string, string, string][] = [["p1", `a\n${OLD}\nb`, "pending"], ["plain", "Decision rights (standing rules):\nmerge green PRs", "pending"], ["dl", "x", "dead_letter"], ["done", `x\n${OLD}`, "delivered"], ["gone", `x\n${OLD}`, "cancelled"]];
 			rows.forEach(([id, message, status], i) => {
 				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status) VALUES (?, ?, ?, 1, ?)").run(i + 1, id, message, status);
 				db.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES (?, ?, 1)").run(id, i + 1);
 			});
-			db.exec(`INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h-pointer', 'held\n${dated}', 2, 'turn'), ('h-plain', 'held', 2, 'turn');`);
+			db.exec("INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h-plain', 'held', 2, 'turn')");
+			// From schema 8, a wake can be for another receiver (the desk): never the Steward's, so never marked.
+			if (version >= 8) {
+				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status, receiver) VALUES (9, 'desk-row', ?, 1, 'pending', 'desk')").run(`x\n${OLD}`);
+				db.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('desk-row', 9, 1)").run();
+				db.exec("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, receiver) VALUES ('h-desk', 'held', 2, 'turn', 'desk')");
+			}
 			db.close();
 			const s = openStore(path);
 			open.push(s);
 			const stamps = (id: string) => s.wakes.find(id)?.rights;
-			expect([stamps("p1"), stamps("p2"), stamps("dl")]).toEqual([legacy, legacy, legacy]);
-			expect([stamps("done"), stamps("gone"), stamps("plain"), stamps("near")]).toEqual([undefined, undefined, undefined, undefined]);
-			expect(Object.fromEntries(s.wakes.held().map((h) => [h.deliveryId, h.rights]))).toEqual({ "h-pointer": legacy, "h-plain": undefined });
+			expect([stamps("p1"), stamps("plain"), stamps("dl")]).toEqual([legacy, legacy, legacy]);
+			expect([stamps("done"), stamps("gone"), stamps("desk-row")]).toEqual([undefined, undefined, undefined]);
+			expect(Object.fromEntries(s.wakes.held().map((h) => [h.deliveryId, h.rights]))).toEqual({ "h-plain": legacy, ...(version >= 8 ? { "h-desk": undefined } : {}) });
 			// The text itself is never touched: rows stay immutable, only the stamp column is set, and the freeze trigger is back.
-			expect(s.wakes.find("p1")?.message).toBe(`a\n${V010}\nb`);
+			expect(s.wakes.find("p1")?.message).toBe(`a\n${OLD}\nb`);
 			const after = raw(path);
 			expect(() => after.exec("UPDATE outbox SET rights_for = NULL WHERE delivery_id = 'p1'")).toThrow("immutable");
 			after.close();

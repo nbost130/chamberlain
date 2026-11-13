@@ -317,7 +317,7 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 	};
 
 	// ---- wakes --------------------------------------------------------------------------------------
-	/** The stamps a row or held item carries (migration 9): a JSON array, or nothing. Unreadable is treated as a stamp nothing matches, so the relay supersedes it: doubt sends the full rights. */
+	/** The stamps a row or held item carries (migration 9): a JSON array, or nothing. Unreadable is treated as a stamp nothing matches, so the relay sends the full rights ahead of it: doubt sends them again. */
 	const stampsOf = (r: Row): { rights?: RightsStamp[] } => {
 		if (r.rights_for === null || r.rights_for === undefined) return {};
 		try { const v = JSON.parse(r.rights_for as string); if (Array.isArray(v) && v.length) return { rights: v as RightsStamp[] }; } catch {}

@@ -5,7 +5,6 @@
  */
 import { createHash } from "node:crypto";
 import { RIGHTS_MARKER, rightsInFull, rightsUnchanged, type RightsSent } from "./decide.ts";
-import { RIGHTS_SEE_ABOVE } from "./hold.ts";
 import type { RightsStamp, Store } from "./store.ts";
 
 export const RIGHTS_SENT_KEY = "rights-sent";
@@ -83,7 +82,7 @@ export const rightsStamp = (record: RightsSent, stewardId: string | undefined, s
  */
 export function staleRights(stamps: readonly RightsStamp[], now: { steward: string | undefined; session: string | undefined; record: RightsSent | undefined; rules: string | undefined }): string | undefined {
 	for (const st of stamps) {
-		if (st.legacy) return "the rights pointer was queued before pointers were stamped (an upgrade from before migration 9): the Steward it was composed for is unknown";
+		if (st.legacy) return "the wake was queued before wakes were stamped (an upgrade from before migration 9, or an import): the Steward it was composed for is unknown";
 		if (st.steward !== now.steward) return `the Steward thread changed (${st.steward ?? "none"} to ${now.steward ?? "none"}) since the rights pointer was queued`;
 		if (st.session !== now.session) return `the Steward session changed (${st.session ?? "unknown"} to ${now.session ?? "unknown"}) since the rights pointer was queued`;
 		if (now.record?.hash !== st.hash) return "the rights record no longer matches the pointer (a compaction, or a full block that was never delivered): the Steward may not hold them";
@@ -92,23 +91,15 @@ export function staleRights(stamps: readonly RightsStamp[], now: { steward: stri
 	return undefined;
 }
 
-/** The pointer line of v0.1.0, before it named a time. Only a wake queued before migration 9 carries it (`RightsStamp.legacy`). */
-export const LEGACY_RIGHTS_UNCHANGED = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
-const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const literally = (text: string) => new RegExp(escaped(text), "g");
-const [datedHead, datedTail] = rightsUnchanged("\u0000").split("\u0000") as [string, string];
-/** Both pointer lines a pre-migration-9 wake may carry: the v0.1.0 one, and the dated one whatever time it names (one line, so no newline). */
-const LEGACY_POINTERS = [literally(LEGACY_RIGHTS_UNCHANGED), new RegExp(`${escaped(datedHead)}.*?${escaped(datedTail)}`, "g")];
+/** The stamp of a Steward wake queued before the stamps existed (migration 10, and every wake legacy-import.ts brings in): its text is never read. */
+export const LEGACY_STAMP: RightsStamp = { hash: "", legacy: "unstamped" };
+
+/** The delivery id of the standalone full-rights wake the relay sends ahead of the row `deliveryId` names: one per row, ever (the outbox refuses a known id). */
+export const rightsFirstId = (deliveryId: string) => `${deliveryId}:rights-first`;
 
 /**
- * Pure: a superseded wake's text with its rights pointers replaced: the first by `full` (the full block, or the unreadable notice), any later
- * one (a digest) by a line pointing at it. A legacy stamp (`RightsStamp.legacy`) names no time, so for it either old pointer line is found
- * whatever it says. A message in which no pointer line is found gets `full` at its end.
+ * Pure: the standalone wake that goes ahead of a row whose rights pointer may not hold for the Steward it is about to reach. It carries the
+ * full block (`full`: the block, or the unreadable notice) and names the row that follows; that row is then sent exactly as it was queued.
  */
-export function withFullRights(message: string, stamps: readonly RightsStamp[], full: string): string {
-	const lines = [...new Set(stamps.filter((st) => !st.legacy).map((st) => rightsUnchanged(st.at)))].map(literally);
-	const patterns = stamps.some((st) => st.legacy) ? [...lines, ...LEGACY_POINTERS] : lines;
-	let out = message, first = true;
-	for (const p of patterns) out = out.replace(p, () => { const put = first ? full : RIGHTS_SEE_ABOVE; first = false; return put; });
-	return first ? `${out}\n${full}` : out;
-}
+export const rightsFirstMessage = (forId: string, full: string) =>
+	`[chamberlain] rights: your decision rights and the rulings in force, in full. The next wake (${forId}) was queued for a Steward that may not hold them; where it says they are unchanged, these are the ones it means.\n${full}`;

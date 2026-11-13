@@ -11,7 +11,9 @@ import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { CRASH_STEPS } from "./core/crash.ts";
+import { withDeliveryId } from "./core/deliver.ts";
 import { askQuestion, getQuestion, readClaim, type Question } from "./core/questions.ts";
+import { LEGACY_STAMP } from "./core/rights-sent.ts";
 import { readRulings } from "./core/rulings.ts";
 import { openStore } from "./core/sqlite-store.ts";
 import { dbPath, type Store } from "./core/store.ts";
@@ -271,6 +273,48 @@ describe("relay path: the real daemon dies at each step of sending a row, and it
 		expect(accepted.map((a) => a.deliveryId)).toEqual([String(digest!.delivery_id)]);
 		for (const id of ["sweep:1", "sweep:2"]) expect(accepted[0]!.message).toContain(`deliveryId: ${id}`);
 		expect(outbox(w)).toEqual([{ ...digest, status: "delivered", attempts: 1 }]);
+	}, TIMEOUT);
+});
+
+describe("rights first: the real daemon dies between a Steward row's full-rights wake and the row, and the restart sends each once", () => {
+	const ID = "Q-rite1", ROW = "legacy:row:1", FIRST = `${ROW}:rights-first`;
+	const TEXT = "[chamberlain] needs_input: a wake queued before the stamps existed.\nDecision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
+	/** A legacy-stamped Steward row (an upgrade or an import): the relay must send the full rights ahead of it. */
+	async function legacyRow() {
+		const w = await world(ID);
+		secret(`${w.conf}/decision-rights.md`, "The Steward may merge green PRs.");
+		w.store.wakes.enqueue({ deliveryId: ROW, message: TEXT, queuedAt: Date.now(), kind: "needs_input", rights: [LEGACY_STAMP] });
+		return w;
+	}
+	/** Exactly one POST of each, the rights first, the row byte for byte as queued, and both rows delivered once. */
+	function oneOfEach(w: World) {
+		expect(accepted.map((a) => a.deliveryId)).toEqual([FIRST, ROW]);
+		expect(accepted[0]!.message).toContain("Decision rights (standing rules):");
+		expect(accepted[0]!.message).toContain("The Steward may merge green PRs.");
+		expect(accepted[1]!.message).toBe(withDeliveryId(TEXT, ROW));
+		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "delivered", attempts: 1 }, { delivery_id: FIRST, status: "delivered", attempts: 1 }]);
+	}
+
+	test("killed right after the rights-first wake was queued: nothing was sent; the restart sends it, then the row, once each", async () => {
+		const w = await legacyRow();
+		await diedAt(w.spawn(daemonArgs, "rights-first-queued"), "rights-first-queued");
+		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "pending", attempts: 0 }, { delivery_id: FIRST, status: "pending", attempts: 0 }]);
+		expect(accepted).toHaveLength(0);
+		await daemon(w, () => accepted.length >= 2);
+		oneOfEach(w);
+		await daemon(w);
+		oneOfEach(w);
+	}, TIMEOUT);
+
+	test("killed right after the rights-first wake was delivered, before the row: the restart sends only the row, once", async () => {
+		const w = await legacyRow();
+		await diedAt(w.spawn(daemonArgs, "delivered"), "delivered");
+		expect(outbox(w)).toEqual([{ delivery_id: ROW, status: "pending", attempts: 0 }, { delivery_id: FIRST, status: "delivered", attempts: 1 }]);
+		expect(accepted.map((a) => a.deliveryId)).toEqual([FIRST]);
+		await daemon(w, () => accepted.length >= 2);
+		oneOfEach(w);
+		await daemon(w);
+		oneOfEach(w);
 	}, TIMEOUT);
 });
 

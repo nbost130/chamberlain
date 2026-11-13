@@ -333,8 +333,8 @@ CREATE INDEX outbox_by_receiver ON outbox (receiver, status, id);
 		sql: `
 -- A wake that carries the one-line "rights unchanged" pointer instead of the full rights block records which Steward (thread and session) and
 -- which rights hash it was composed for: a JSON array of stamps, one per pointer it carries (a digest may carry several), NULL for any other wake.
--- The relay checks the stamps just before each POST, and a row whose Steward or rights record no longer matches is superseded (cancelled, so
--- its ids keep their tombstones) by a fresh wake with the full block. Frozen with the row, like its text.
+-- The relay checks the stamps just before each POST, and ahead of a row whose Steward or rights record no longer matches it first sends a
+-- standalone full-rights wake (<id>:rights-first), then the row as it is. Frozen with the row, like its text.
 ALTER TABLE outbox ADD COLUMN rights_for TEXT;
 ALTER TABLE held_wakes ADD COLUMN rights_for TEXT;
 DROP TRIGGER outbox_frozen;
@@ -344,25 +344,21 @@ BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 	},
 	{
 		version: 10,
-		name: "unstamped rights pointers from before migration 9",
+		name: "undelivered Steward wakes from before the rights stamps",
 		sql: `
--- A wake queued before migration 9 may carry the "rights unchanged" pointer with no stamp, and the relay checks only stamped rows, so after an
--- upgrade and a Steward replacement that pointer would reach a Steward that never had the rights. Every UNDELIVERED one (a pending or
--- dead-lettered row, or a held wake) that has no stamp and carries either line the daemon ever wrote is stamped "legacy-unstamped": which
--- Steward it was composed for is unknown, so the relay always supersedes it with the full block. The two lines, verbatim from history: the
--- fixed one of v0.1.0 (RIGHTS_UNCHANGED), and the dated one that replaced it (rightsUnchanged, "since <time or your last wake>").
--- A wake with neither line is left as it is. Its text is never changed; only the stamp column is set, here, with the freeze trigger lifted for
--- this one statement and restored in the same transaction. A database already at 9 has stamped every pointer since, so it has no such row
--- unless one was queued before 9 there too: the same rule finds it.
+-- A wake queued before migration 9 has no stamp, whatever pointer line (or none) its text carries, and the relay checks only stamped rows, so
+-- after an upgrade and a Steward replacement such a wake could tell a Steward that never had the rights that they are unchanged. Every
+-- UNDELIVERED Steward wake (receiver NULL: a pending or dead-lettered row, or a held wake) that has no stamp is stamped "legacy-unstamped",
+-- WHATEVER ITS TEXT: no text is matched, because the daemon wrote more pointer forms than any list remembers. Which Steward it was composed
+-- for is unknown, so the relay always sends a standalone full-rights wake ahead of it (<id>:rights-first), then the row as it is.
+-- Its text is never changed; only the stamp column is set, with the freeze trigger lifted for these two statements and restored in the same
+-- transaction. A database already at 9 has stamped every pointer since; any other unstamped Steward wake it holds is marked too, and costs at
+-- most one extra full-rights wake.
 DROP TRIGGER outbox_frozen;
 UPDATE outbox SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
-	WHERE rights_for IS NULL AND status IN ('pending', 'dead_letter')
-	AND (instr(message, 'Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (\`bun src/brief.ts steward\`).') > 0
-		OR message GLOB '*Decision rights and rulings unchanged since * and still in force; your hand-off (steward-brief.md) has them.*');
+	WHERE rights_for IS NULL AND receiver IS NULL AND status IN ('pending', 'dead_letter');
 UPDATE held_wakes SET rights_for = '[{"hash":"","legacy":"unstamped"}]'
-	WHERE rights_for IS NULL
-	AND (instr(message, 'Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (\`bun src/brief.ts steward\`).') > 0
-		OR message GLOB '*Decision rights and rulings unchanged since * and still in force; your hand-off (steward-brief.md) has them.*');
+	WHERE rights_for IS NULL AND receiver IS NULL;
 CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver, rights_for ON outbox
 BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 `,

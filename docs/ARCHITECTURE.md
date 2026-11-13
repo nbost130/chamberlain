@@ -173,15 +173,19 @@ sequenceDiagram
    then four, before its next attempt.
    **A rights pointer is checked at send time.** A wake that carries the one-line "rights unchanged" pointer instead of the full rights
    block is stamped, when it is queued, with the Steward thread and session and the rights hash it was composed for (`rights_for`,
-   migration 9, frozen with the row; a digest carries every member's stamp). Just before each attempt the relay asks the engine
-   (`supersede`) whether that still holds: the same Steward thread and session, a rights record with the same hash, and the same rights
-   and rulings. If not (a new Steward, a compaction, changed rulings), the row is **superseded** in one transaction: it is cancelled, so its
-   ids keep their tombstones and it is never POSTed, and a fresh wake with the same text and the full block, composed for the current
-   Steward, is queued under `<id>:full-rights` and sent at once. The `wake-superseded` log line names both ids and the reason. Rows stay
-   immutable: a stale pointer is replaced, never rewritten. A pointer queued **before** the stamps existed has none, so migration 10
-   stamps every undelivered one (a pending or dead-lettered row, or a held wake, whose text carries either pointer line the daemon ever
-   wrote and that has no stamp) as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`). Which Steward it was composed for is unknown,
-   so the check never holds and it is always superseded the same way. A wake with no pointer line is left as it is.
+   migration 9, frozen with the row; a digest carries every member's stamp). Just before an attempt of a stamped Steward row the relay asks
+   the engine (`rightsFirst`) whether that still holds: the same Steward thread and session, a rights record with the same hash, and the same
+   rights and rulings. If not (a new Steward, a compaction, changed rulings), a **rights-first wake** is queued in one transaction: a
+   standalone wake with the full block, composed for the current Steward, under `<id>:rights-first`. It is sent first, and the row follows it
+   in the same serial job **exactly as it was queued**: no row's text is ever rewritten or searched. The outbox refuses a known id, and a row
+   whose rights-first wake exists is never asked about again, so it happens once per row; a crash between the two sends each once on restart.
+   While the rights-first wake is failing or dead-lettered the row waits and uses no attempt; if the operator cancels it, the row goes as
+   queued. The rights-first wake updates the rights record when it is delivered, like any wake, so later wakes carry the pointer again. The
+   `rights-first` log line names both ids and the reason. A Steward wake queued **before** the stamps existed has none, and its text cannot be
+   trusted to say which pointer form it carries, so migration 10 stamps **every** undelivered Steward wake with no stamp (a pending or
+   dead-lettered row, or a held wake, receiver NULL), whatever its text, as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`), and
+   `legacy-import.ts` stamps every wake it brings in the same way. Which Steward it was composed for is unknown, so the check never holds and
+   the full rights always go ahead of it.
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
    ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the
@@ -201,7 +205,6 @@ stateDiagram-v2
   pending --> dead_letter: attempts reached maxAttempts
   dead_letter --> pending: wakes.ts retry (attempts back to 0)
   pending --> cancelled: wakes.ts cancel
-  pending --> cancelled: superseded (a stale rights pointer, replaced by a full-block wake)
   dead_letter --> cancelled: wakes.ts cancel
   delivered --> [*]
   cancelled --> [*]

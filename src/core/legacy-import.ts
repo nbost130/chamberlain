@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { appendHeld, HELD, heldId, type Held } from "./afk.ts";
 import { NOTIFICATION_LOG } from "./notification.ts";
-import { parseRightsSent, RIGHTS_SENT_KEY } from "./rights-sent.ts";
+import { LEGACY_STAMP, parseRightsSent, RIGHTS_SENT_KEY } from "./rights-sent.ts";
 import { askQuestion, claimWake, finishRelay, notNow, pageClaim, startRelay, type Answer, type Claim, type Question } from "./questions.ts";
 import { type Ruling } from "./rulings.ts";
 import { checkVersion } from "./schema.ts";
@@ -306,18 +306,19 @@ export function importLegacy(store: Store, dirs: string[], o: ImportOptions = {}
 		}
 		for (const c of closures) if (typeof c.id === "string") store.items.resolve(HELD, c.id, Date.parse(c.t) || now, { closedAt: c.t, how: c.how });
 
-		// Wakes still pending or held, unless they delivered.
+		// Wakes still pending or held, unless they delivered. Each is a Steward wake composed for the old system's Steward, whatever rights line
+		// its text carries, so each is stamped legacy (LEGACY_STAMP): the relay sends the full rights ahead of it, and its text goes as it is.
 		for (const [owner, list] of [["daemon", pendingDaemon], ["queue-web", pendingPage]] as const) {
 			for (const w of Array.isArray(list) ? list : []) {
 				if (typeof w.deliveryId !== "string" || typeof w.message !== "string") { report.skipped.push({ what: `pending wakes (${owner})`, why: "a wake without an id and a message" }); continue; }
 				if (delivered.has(w.deliveryId) || store.wakes.isDelivered(w.deliveryId)) { report.skipped.push({ what: `pending wake ${w.deliveryId}`, why: "already delivered: never sent again" }); continue; }
-				tally(report, "pending wakes", store.wakes.enqueue({ deliveryId: w.deliveryId, message: w.message, queuedAt: Number(w.queuedAt) || now, ...(w.kind ? { kind: w.kind } : {}), ...(w.thread ? { thread: w.thread } : {}) }));
+				tally(report, "pending wakes", store.wakes.enqueue({ deliveryId: w.deliveryId, message: w.message, queuedAt: Number(w.queuedAt) || now, ...(w.kind ? { kind: w.kind } : {}), ...(w.thread ? { thread: w.thread } : {}), rights: [LEGACY_STAMP] }));
 			}
 		}
 		for (const w of heldWakes?.items ?? []) {
 			if (typeof w.deliveryId !== "string" || typeof w.message !== "string") continue;
 			if (delivered.has(w.deliveryId) || store.wakes.isDelivered(w.deliveryId)) { report.skipped.push({ what: `held wake ${w.deliveryId}`, why: "already delivered: never sent again" }); continue; }
-			const fresh = store.wakes.hold({ deliveryId: w.deliveryId, message: w.message, queuedAt: Number(w.queuedAt) || now, ...(w.kind ? { kind: w.kind } : {}), ...(w.thread ? { thread: w.thread } : {}) });
+			const fresh = store.wakes.hold({ deliveryId: w.deliveryId, message: w.message, queuedAt: Number(w.queuedAt) || now, ...(w.kind ? { kind: w.kind } : {}), ...(w.thread ? { thread: w.thread } : {}), rights: [LEGACY_STAMP] });
 			tally(report, "held wakes", fresh);
 		}
 		if (heldWakes?.items?.length === undefined && report.found["held-wakes.json"]) report.notes.push("held-wakes.json held no items");

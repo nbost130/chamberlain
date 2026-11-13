@@ -166,13 +166,14 @@ export interface AwayStore {
 /** What a wake is about, so a repeat can be told from a new event. A wake about no thread (a sweep) has a kind alone. */
 /**
  * What a wake carrying the "rights unchanged" pointer was composed for: the Steward's thread and session, the rights hash (rights-sent.ts)
- * and when the full text last went out (the pointer names it). The relay checks it just before each POST (`RelayDeps.supersede`).
+ * and when the full text last went out (the pointer names it). The relay checks it just before each POST (`RelayDeps.rightsFirst`).
  */
 export type RightsStamp = {
 	steward?: string; session?: string; hash: string; at?: string;
 	/**
-	 * "unstamped": a wake queued before the stamps existed (migration 10 marks every undelivered row and held wake whose text has one of the
-	 * old pointer lines and no stamp). Which Steward it was composed for is unknown, so it never holds: the relay always supersedes it.
+	 * "unstamped": a Steward wake queued before the stamps existed (migration 10 marks every undelivered Steward row and held wake that has no
+	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it never
+	 * holds: the relay always sends the full rights ahead of it.
 	 */
 	legacy?: "unstamped";
 };
@@ -192,8 +193,7 @@ export type HoldClock = { busySince?: number; seenAt?: number; lastPostAt?: numb
 
 /**
  * pending: the relay sends it. delivered: the transport accepted it (terminal). dead_letter: it used every attempt without a delivered record,
- * and waits for the operator's retry or cancel. cancelled: given up by the operator, or superseded by the relay (a stale rights pointer
- * replaced by a full-block wake), kept as a tombstone (terminal).
+ * and waits for the operator's retry or cancel. cancelled: given up by the operator, kept as a tombstone (terminal).
  */
 export type OutboxStatus = "pending" | "delivered" | "dead_letter" | "cancelled";
 /** One outbox row. Everything but status, attempts and the two times is frozen when the row is created (a database trigger refuses a change). */

@@ -161,6 +161,10 @@ describe("the versioned files this project wrote", () => {
 		// Both old owners' pending wakes are pending rows now: one relay sends them all.
 		expect(s.wakes.rows().map((x) => x.deliveryId)).toEqual(["pending-1", answerDeliveryId("Q-cccc3")]);
 		expect(s.wakes.held().map((i) => i.deliveryId)).toEqual(["held-1"]);
+		// Each was composed for the old system's Steward, whatever rights line its text carries: stamped legacy, so the relay sends the full
+		// rights ahead of it, and its text is kept as it was.
+		const legacy = [{ hash: "", legacy: "unstamped" as const }];
+		expect([...s.wakes.rows().map((x) => x.rights), ...s.wakes.held().map((i) => i.rights)]).toEqual([legacy, legacy, legacy]);
 		// The event log, with its torn line skipped.
 		expect(s.events.query().map((e) => e.event)).toEqual(["fire", "answered", "delivered"]);
 		expect(s.events.query({ src: "queue-web" })[0]).toMatchObject({ id: "Q-bbbb2" });

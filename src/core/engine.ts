@@ -28,7 +28,7 @@ import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
 import { privateFile as readPrivateFile } from "./private.ts";
 import { settleReport } from "./report.ts";
-import { openRightsSent, rightsFor, rightsHighWater, rightsStamp, staleRights, withFullRights } from "./rights-sent.ts";
+import { openRightsSent, rightsFirstId, rightsFirstMessage, rightsFor, rightsHighWater, rightsStamp, staleRights } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
 import type { OutboxRow, Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
@@ -152,7 +152,7 @@ export function createEngine(d: EngineDeps) {
 	const relay = createRelay({
 		store, lock: d.lock, wake: homeAdapter.wake, ...(has(homeAdapter, "compact") ? { compact: homeAdapter.compact } : {}), gate: stewardGate, log, alarm, ...d.relay,
 		...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
-		supersede: (row) => supersedeStale(row),
+		rightsFirst: (row) => rightsAhead(row),
 		onDelivered: (id) => {
 			recordAnswerDelivered(store, id);
 			const r = firedRights.get(id);
@@ -346,7 +346,7 @@ export function createEngine(d: EngineDeps) {
 			const what = { needs_input: "is waiting for your answer or approval", failed: failedWhat, turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
 			const afk = readAfk(store);
 			const rights = wakeRights(afk ? mandateLine(afk) : "");
-			// A pointer is stamped with the Steward it was composed for: the relay checks it again just before sending (supersedeStale).
+			// A pointer is stamped with the Steward it was composed for: the relay checks it again just before sending (rightsAhead).
 			const stamp = rights.record && !rights.full ? rightsStamp(rights.record, privateFile("steward-thread"), await stewardSession()) : undefined;
 			const message = [
 				`[chamberlain] ${c.kind}: thread "${clip(live.title, 80)}" ${what}.`,
@@ -499,12 +499,14 @@ export function createEngine(d: EngineDeps) {
 	}
 
 	/**
-	 * The relay's check just before it sends a row carrying a rights pointer. The row is immutable and was composed for the Steward of its
-	 * time; if that Steward has been replaced (a new thread or session), or the rights record or the rights no longer match, the pointer would
-	 * tell a Steward that never had them that they are unchanged. Then the row is superseded by a wake with the same text and the full block,
-	 * composed for the Steward that is there now, under a new delivery id; its record is kept once it is delivered, like any wake's.
+	 * The relay's check just before it sends a Steward row carrying rights stamps. The row is immutable and was composed for the Steward of its
+	 * time; if that Steward has been replaced (a new thread or session), or the rights record or the rights no longer match, or the row was
+	 * queued before stamps existed (a legacy stamp), a pointer in it would tell a Steward that never had them that they are unchanged. Then a
+	 * standalone wake with the full block, composed for the Steward that is there now, goes AHEAD of it under `<id>:rights-first`, and the row
+	 * follows exactly as it was queued. The rights-first wake's record is kept once it is delivered, like any wake's, so later wakes carry the
+	 * pointer again; the row's own record (composed for the old Steward) is dropped, so its delivery does not put the old record back.
 	 */
-	async function supersedeStale(row: OutboxRow) {
+	async function rightsAhead(row: OutboxRow) {
 		const stamps = row.rights;
 		if (!stamps?.length) return undefined;
 		const steward = privateFile("steward-thread");
@@ -512,10 +514,10 @@ export function createEngine(d: EngineDeps) {
 		if (!reason) return undefined;
 		// No record: the full block, whatever the size check would say.
 		const full = wakeRights("", { full: true });
-		const deliveryId = `${row.deliveryId}:full-rights`;
+		const deliveryId = rightsFirstId(row.deliveryId);
 		for (const m of row.members) firedRights.delete(m.deliveryId);
 		if (full.record) firedRights.set(deliveryId, full.record);
-		return { reason, wake: { deliveryId, message: withFullRights(row.message, stamps, full.text), meta: { kind: row.kind ?? "wake", ...(row.thread ? { thread: row.thread } : {}) } } };
+		return { reason, wake: { deliveryId, message: rightsFirstMessage(row.deliveryId, full.text), meta: { kind: "rights" } } };
 	}
 
 	/** The rulings a wake carries: the in-force ones with their IDs. */
