@@ -4,16 +4,23 @@ import { tmpdir } from "node:os";
 import { checkCommand, checkPath, checkTool, LOG_DIRS } from "./desk-allowlist.ts";
 
 const HOME = process.env.HOME!;
-const refused = (cmd: string) => { const v = checkCommand(cmd); expect(v.ok).toBe(false); return v.ok ? "" : v.reason; };
-const allowed = (cmd: string) => expect(checkCommand(cmd)).toEqual({ ok: true });
+/** The operator's morning sources, as alert-desk.json would list them (`<N>` is a number). Nothing of the kind is built in. */
+const MONITOR = "/opt/monitor/report.ts";
+const MORNING = [
+	`bun ${MONITOR} heartbeat --json`,
+	`bun ${MONITOR} list --limit <N> --json`,
+	`docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= <N>\\nOutputFormat: csv\\n' | lq"`,
+];
+const refused = (cmd: string) => { const v = checkCommand(cmd, { morning: MORNING }); expect(v.ok).toBe(false); return v.ok ? "" : v.reason; };
+const allowed = (cmd: string) => expect(checkCommand(cmd, { morning: MORNING })).toEqual({ ok: true });
 
 describe("the approved shapes are accepted", () => {
 	test.each([
 		"journalctl -u monitor.service -n 50 --no-pager",
-		"journalctl --user -u legacy-wake.service --since '1 hour ago' -p err",
+		"journalctl --user -u chamberlain.service --since '1 hour ago' -p err",
 		'journalctl -u a.service --since "2026-11-13 08:00:00" --until "2026-11-13 09:00:00" -o short-iso',
 		"systemctl status monitor.service",
-		"systemctl --user status legacy-wake.service --no-pager -n 20",
+		"systemctl --user status chamberlain.service --no-pager -n 20",
 		"systemctl is-active monitor.service",
 		"systemctl list-units --failed",
 		"systemctl --user list-units --failed",
@@ -38,8 +45,8 @@ describe("the approved shapes are accepted", () => {
 		"journalctl -u a.service -n 50 | head -n 20",
 		"docker logs --tail 500 mc-paper | tail -n 40",
 		"journalctl -u a.service | wc -l",
-		`bun ${HOME}/bin/example-monitor heartbeat --json`,
-		`bun ${HOME}/bin/example-monitor list --limit 1000 --json`,
+		`bun ${MONITOR} heartbeat --json`,
+		`bun ${MONITOR} list --limit 1000 --json`,
 		`docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= 1731400000\\nOutputFormat: csv\\n' | lq"`,
 		`bun ${HOME}/Projects/chamberlain/src/ask.ts '{"kind":"product","title":"Restart a.service?","options":[{"label":"yes"},{"label":"no"}]}'`,
 	])("%s", (cmd) => allowed(cmd));
@@ -47,7 +54,7 @@ describe("the approved shapes are accepted", () => {
 
 describe("each widened argument is refused", () => {
 	test("git diff with --output, in every spelling, and any file-writing flag", () => {
-		for (const c of ["git diff --output=/tmp/x", "git diff --output /tmp/x", "git diff -o /tmp/x", "git log --output=/tmp/x", "git diff HEAD --output=/home/someone/.bashrc", "git diff -- --output=/tmp/x", "git diff --ext-diff", "git diff --no-index /etc/passwd /tmp/x", "git diff --textconv", "git log --format=%H --output=/tmp/x"]) expect(refused(c).length).toBeGreaterThan(0);
+		for (const c of ["git diff --output=/tmp/x", "git diff --output /tmp/x", "git diff -o /tmp/x", "git log --output=/tmp/x", "git diff HEAD --output=/home/u/.bashrc", "git diff -- --output=/tmp/x", "git diff --ext-diff", "git diff --no-index /etc/passwd /tmp/x", "git diff --textconv", "git log --format=%H --output=/tmp/x"]) expect(refused(c).length).toBeGreaterThan(0);
 	});
 	test("git paths cannot climb out of the repo or be absolute", () => {
 		refused("git diff -- /etc/passwd");
@@ -71,31 +78,31 @@ describe("each widened argument is refused", () => {
 	});
 	test("systemctl cat and show are refused, and so is every mutating verb", () => {
 		expect(refused("systemctl cat monitor.service")).toContain("cat");
-		refused("systemctl --user cat legacy-wake.service");
+		refused("systemctl --user cat chamberlain.service");
 		refused("systemctl show monitor.service");
 		for (const v of ["restart", "stop", "start", "enable", "disable", "daemon-reload", "kill", "edit", "mask", "reload", "set-environment A=b"]) refused(`systemctl ${v} monitor.service`);
 		refused("systemctl status");
 		refused("systemctl");
 	});
 	test("journalctl cannot read another file or change anything", () => {
-		for (const c of ["journalctl --file=/home/someone/.env", "journalctl -D /tmp/x", "journalctl --directory=/tmp/x", "journalctl --vacuum-size=1M", "journalctl --rotate", "journalctl --flush", "journalctl --setup-keys", "journalctl --root=/x", "journalctl -u a -o export", "journalctl -u 'a b;id'", "journalctl /usr/bin/sudo", "journalctl -n abc", "journalctl --since '$(id)'"]) refused(c);
+		for (const c of ["journalctl --file=/home/u/.env", "journalctl -D /tmp/x", "journalctl --directory=/tmp/x", "journalctl --vacuum-size=1M", "journalctl --rotate", "journalctl --flush", "journalctl --setup-keys", "journalctl --root=/x", "journalctl -u a -o export", "journalctl -u 'a b;id'", "journalctl /usr/bin/sudo", "journalctl -n abc", "journalctl --since '$(id)'"]) refused(c);
 	});
 	test("gh and example-tool: only the listed reads", () => {
 		for (const c of ["gh run view 1 --web", "gh pr merge 1", "gh run rerun 1", "gh run view abc", "gh api repos/x/y", "gh pr checks 1 --repo ../../x", "gh run view 1 --log", "example-tool update", "example-tool update --check", "example-tool docker restart", "example-tool journal", "example-tool bogus", "example-tool --version"]) refused(c);
 	});
 	test("a command outside the set, by name, path or environment prefix", () => {
-		for (const c of ["cat /var/log/syslog", "ls /var/log", "rm -rf /tmp/x", "sudo journalctl", "curl https://x.test", "bash -c 'id'", "sh -c id", "python3 -c 'print(1)'", "/usr/bin/journalctl -n 5", "./journalctl", "FOO=bar journalctl -n 5", "env journalctl", "find / -name .env", "grep -r token /var/log", "tee /tmp/x", "kill 1", "bun -e '1'", `bun ${HOME}/Projects/legacy-wake/src/daemon.ts`, `bun ${HOME}/bin/example-monitor emit --source x`, `bun ${HOME}/bin/example-monitor heartbeat`]) refused(c);
+		for (const c of ["cat /var/log/syslog", "ls /var/log", "rm -rf /tmp/x", "sudo journalctl", "curl https://x.test", "bash -c 'id'", "sh -c id", "python3 -c 'print(1)'", "/usr/bin/journalctl -n 5", "./journalctl", "FOO=bar journalctl -n 5", "env journalctl", "find / -name .env", "grep -r token /var/log", "tee /tmp/x", "kill 1", "bun -e '1'", `bun ${HOME}/Projects/chamberlain/src/daemon.ts`, `bun ${MONITOR} emit --source x`, `bun ${MONITOR} heartbeat`]) refused(c);
 	});
 	test("shell syntax: chaining, substitution, redirection, globs, newlines", () => {
 		for (const t of ["journalctl -n 5; id", "journalctl -n 5 && id", "journalctl -n 5 || id", "journalctl -n 5 & id", "journalctl -n $(id)", "journalctl -n `id`", "journalctl -n 5 > /tmp/x", "journalctl -n 5 >> /tmp/x", "journalctl -n 5 < /etc/passwd", "journalctl -u *", "journalctl -u a?", "journalctl -n 5\nid", "journalctl -u \"$HOME\"", "journalctl -u '", "journalctl -n 5 | sh", "journalctl -n 5 | head -n 5 | sh", "journalctl -n 5 | tee /tmp/x", "journalctl -n 5 | head", "journalctl -n 5 | head -n 5 -c 3", "journalctl -n 5 |", "| journalctl", "journalctl -u ~root", "journalctl -u a\\ b", "journalctl --since=${IFS}x"]) refused(t);
 	});
 	test("appending shell syntax to any approved command refuses it", () => {
 		const cmds = ["journalctl -u a.service -n 5", "systemctl status a.service", "example-tool health", "gh pr checks 1 --repo a/b", "git status", "docker ps", "docker logs --tail 5 c"];
-		for (const c of cmds) for (const tail of [" ; id", " && id", " > /tmp/x", " $(id)", " `id`", " | sh", "\nid"]) expect(checkCommand(c + tail).ok).toBe(false);
+		for (const c of cmds) for (const tail of [" ; id", " && id", " > /tmp/x", " $(id)", " `id`", " | sh", "\nid"]) expect(checkCommand(c + tail, { morning: MORNING }).ok).toBe(false);
 	});
 	test("the exact shapes cannot be extended", () => {
-		refused(`bun ${HOME}/bin/example-monitor list --limit 1000 --json; id`);
-		refused(`bun ${HOME}/bin/example-monitor list --limit 1000 --json --out /tmp/x`);
+		refused(`bun ${MONITOR} list --limit 1000 --json; id`);
+		refused(`bun ${MONITOR} list --limit 1000 --json --out /tmp/x`);
 		refused(`docker exec -u svc db1 bash -lc "printf 'GET log\\nFilter: time >= 1731400000\\n' | lq; id"`);
 		refused(`docker exec -u svc db1 bash -lc "id"`);
 		refused(`bun ${HOME}/Projects/chamberlain/src/ask.ts '{}' ; id`);
@@ -165,7 +172,7 @@ describe("file reads", () => {
 	test("never a credential, even inside a log directory", () => {
 		for (const p of ["/var/log/.env", "/var/log/app/.env.production", `${HOME}/.cache/alert-desk/.env`, `${HOME}/.cache/alert-desk/read-token`, "/var/log/id_ed25519", "/var/log/server.pem", "/var/log/credentials.json", "/var/log/.ssh/config", "/var/log/auth-token.txt", "/var/log/passage/x", "/var/log/db-password", "/var/log/.aws/credentials"]) expect(checkPath(p).ok).toBe(false);
 		expect(checkPath(`${HOME}/monitor/.env`).ok).toBe(false);
-		expect(checkPath(`${HOME}/.config/legacy-wake/read-token`).ok).toBe(false);
+		expect(checkPath(`${HOME}/.config/chamberlain/read-token`).ok).toBe(false);
 	});
 	test("`..` and symlinks are resolved before the check", () => {
 		expect(checkPath("/var/log/../../etc/passwd").ok).toBe(false);
@@ -235,5 +242,15 @@ describe("the hook's decision per tool", () => {
 		expect(bad.err).toContain("refused");
 		// Fail closed: input that is not a tool call is refused, never waved through.
 		expect((await run("not an object")).code).toBe(2);
+	});
+});
+
+describe("the morning sources are the operator's, never built in", () => {
+	test("with no morning sources configured, a monitor's command is refused", () => {
+		expect(checkCommand(`bun ${MONITOR} heartbeat --json`, { morning: [] }).ok).toBe(false);
+	});
+	test("<N> is digits only, and the rest of the command must match exactly", () => {
+		expect(checkCommand(`bun ${MONITOR} list --limit 12 --json`, { morning: MORNING }).ok).toBe(true);
+		for (const c of [`bun ${MONITOR} list --limit x --json`, `bun ${MONITOR} list --limit 1 --json --out /tmp/x`, `bun ${MONITOR} list --limit 1;id --json`]) expect(checkCommand(c, { morning: MORNING }).ok).toBe(false);
 	});
 });

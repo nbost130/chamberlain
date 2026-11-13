@@ -4,7 +4,7 @@
  * Alert sources append one JSON line each to an inbox file (default ~/.cache/alert-desk/inbox.jsonl; CHAMBERLAIN does not care who
  * writes it). This module drains the file and decides, per alert FAMILY, whether the desk is woken. It is backend-agnostic: it reads
  * a file, uses the item system for every decision about what notifies, and hands wake text to the outbox for the `desk` receiver. The
- * second relay (core/relay.ts, `receiver: "desk"`) sends it through the adapter's `alertDesk` capability, with the desk thread's own
+ * one relay (core/relay.ts, the `desk` lane of `receivers`) sends it through the adapter's `alertDesk` capability, with the desk thread's own
  * gate, so the hold-and-digest path folds a burst of families into one wake and a busy desk never holds the Steward's wakes.
  *
  * The inbox line (one object per line, one O_APPEND write per line):
@@ -21,13 +21,15 @@
  *   - the daily cap (`dailyCap` alert wakes per rolling 24 h, 0 = no cap) is counted from the desk's own outbox rows and held wakes; the
  *     desk is told once a day (an item of kind `cap-note`, repeating every 24 h).
  * The first pass of each local day from `morningHour` also sends the morning wake: an item of kind `morning`, keyed by the date and
- * notified once. It folds in the 07:00 "Morning alert triage" (docs/alert-desk-prompt.md, "Morning sweep").
+ * notified once. The desk then runs the Morning sweep of its standing prompt (docs/alert-desk-prompt.md), over the operator's own
+ * morning sources (`morningCommands` in alert-desk.json; `renderDeskPrompt` fills them in, and src/desk-allowlist.ts allows exactly them).
  */
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { Outbox, WakeDraft } from "./deliver.ts";
 import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
+import { authorityProblem } from "./private.ts";
 import type { Item, Store } from "./store.ts";
 
 export const ALERT_DESK = "alert-desk";
@@ -75,6 +77,70 @@ export function parseConfig(raw: unknown): DeskConfig {
 }
 export function readConfig(conf: string): DeskConfig {
 	try { return parseConfig(JSON.parse(readFileSync(configPath(conf), "utf8"))); } catch { return { ...DEFAULTS }; }
+}
+
+// ---- the morning sources and the standing prompt ------------------------------------------------------
+
+/**
+ * The Morning sweep's own sources, the operator's (alert-desk.json): `morningCommands`, each run exactly as written (`<N>` stands for a
+ * number the desk fills in), and `morningNotes`, how to read them. src/desk-allowlist.ts allows exactly these commands, so they widen what
+ * the desk may run: they are read only from an alert-desk.json the operator owns that no group or other user can write (`authorityProblem`).
+ */
+export type MorningSources = { commands: string[]; notes?: string };
+/** In a morning command, the place for a number (`--limit <N>`, `time >= <N>`). */
+export const NUMBER_SLOT = "<N>";
+
+/** Pure: the morning sources from a parsed alert-desk.json. Anything malformed is left out. */
+export function parseMorning(raw: unknown): MorningSources {
+	const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+	const commands = Array.isArray(o.morningCommands) ? o.morningCommands.filter((c): c is string => typeof c === "string" && c.trim().length > 0 && c.length <= 2000 && !c.includes("\n")).map((c) => c.trim()) : [];
+	const notes = typeof o.morningNotes === "string" && o.morningNotes.trim() ? o.morningNotes.trim() : undefined;
+	return { commands, ...(notes ? { notes } : {}) };
+}
+
+/** The morning sources in `<conf>/alert-desk.json`, or none (with a warning saying why) when the file is not the operator's alone. */
+export function readMorning(conf: string, warn: (msg: string) => void = () => {}): MorningSources {
+	const path = configPath(conf);
+	let fd: number;
+	try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
+		if ((e as NodeJS.ErrnoException).code !== "ENOENT") warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
+		return { commands: [] };
+	}
+	try {
+		const bad = authorityProblem(fstatSync(fd), "file");
+		if (bad) { warn(`alert desk: ignoring the morning sources in ${path}: ${bad}`); return { commands: [] }; }
+		return parseMorning(JSON.parse(readFileSync(fd, "utf8")));
+	} catch (e) {
+		warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
+		return { commands: [] };
+	} finally { closeSync(fd); }
+}
+
+/** Pure: the pattern a morning command is matched by: the command exactly, with each `<N>` one to twelve digits. */
+export function morningPattern(command: string): RegExp {
+	return new RegExp(`^${command.split(NUMBER_SLOT).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\d{1,12}")}$`);
+}
+
+/** What the desk's standing prompt is filled with: who it works for, the server it runs on, the Chamberlain checkout, the morning sources. */
+export type DeskPromptVars = { principalName: string; serverName: string; repo: string; morning: MorningSources };
+
+/** Pure: the morning sources as the prompt lists them. */
+export function morningSourcesText(m: MorningSources): string {
+	if (!m.commands.length) return "   No morning sources are configured (`morningCommands` in alert-desk.json). Report what the morning wake carries, and say that no other source was read.";
+	const code = (c: string) => (c.includes("`") ? `\`\` ${c} \`\`` : `\`${c}\``);
+	return [...m.commands.map((c) => `   - ${code(c)}`), ...(m.notes ? ["", ...m.notes.split("\n").map((l) => `   ${l}`.trimEnd())] : [])].join("\n");
+}
+
+/**
+ * Pure: the desk's standing prompt from its template (docs/alert-desk-prompt.md): `<!-- -->` comments dropped, and `{{principalName}}`,
+ * `{{serverName}}`, `{{repo}}` and `{{morningSources}}` filled in, the way the sweep prompt is (sweep.ts `renderSweepPrompt`).
+ */
+export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
+	return template.replace(/<!--[\s\S]*?-->\s*/g, "").trim()
+		.replaceAll("{{principalName}}", v.principalName)
+		.replaceAll("{{serverName}}", v.serverName)
+		.replaceAll("{{repo}}", v.repo)
+		.replaceAll("{{morningSources}}", morningSourcesText(v.morning));
 }
 
 // ---- events -----------------------------------------------------------------------------------------

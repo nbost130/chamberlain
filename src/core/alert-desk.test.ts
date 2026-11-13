@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
-	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, parseConfig, parseLine, readInbox, severityOf, signature,
+	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, morningPattern, parseConfig, parseLine, parseMorning, readInbox, readMorning, renderDeskPrompt, severityOf, signature,
 	type Cursor, type CrashPoint, type DeskConfig, type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
@@ -436,5 +436,47 @@ describe("a drain pass", () => {
 			r.pass(T0 + 1000);
 			expect(familiesOf(r)).toEqual(new Set(["fa"]));
 		});
+	});
+});
+
+describe("the standing prompt is a template, filled from config", () => {
+	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
+	const vars = { principalName: "Ada", serverName: "box-1", repo: "/opt/chamberlain", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
+	test("the bundled prompt names nobody and no host: who it works for and where are placeholders", () => {
+		for (const v of ["{{principalName}}", "{{serverName}}", "{{repo}}", "{{morningSources}}"]) expect(template).toContain(v);
+		expect(template).not.toMatch(/\.claude\//);
+	});
+	test("rendered, every placeholder is filled from the config, and the morning sources are listed", () => {
+		const out = renderDeskPrompt(template, vars);
+		expect(out).not.toMatch(/\{\{(principalName|serverName|repo|morningSources)\}\}/);
+		expect(out).not.toContain("<!--");
+		expect(out).toContain("every alert Ada's systems raise");
+		expect(out).toContain('"server":"box-1"');
+		expect(out).toContain("cd /opt/chamberlain && bun src/ask.ts");
+		expect(out).toContain("   - `bun /opt/monitor/report.ts list --limit <N> --json`");
+		expect(out).toContain("   Skip source monitor.");
+		// docker's own {{.Field}} templates are left alone.
+		expect(out).toContain("{{.State.Status}}");
+	});
+	test("with no morning sources the prompt says none are configured", () => {
+		expect(renderDeskPrompt(template, { ...vars, morning: { commands: [] } })).toContain("No morning sources are configured");
+	});
+	test("morning sources parse from alert-desk.json, and anything malformed is left out", () => {
+		expect(parseMorning({ morningCommands: ["a <N>", "", 3, "two\nlines"], morningNotes: " n " })).toEqual({ commands: ["a <N>"], notes: "n" });
+		expect(parseMorning({})).toEqual({ commands: [] });
+		expect(morningPattern("x --limit <N> 'a.b'").test("x --limit 12 'a.b'")).toBe(true);
+		expect(morningPattern("x --limit <N> 'a.b'").test("x --limit 12 'aXb'")).toBe(false);
+	});
+	test("they are read only from an alert-desk.json the operator owns that no one else can write", () => {
+		const conf = mkdtempSync(`${tmpdir()}/desk-morning-`);
+		writeFileSync(`${conf}/alert-desk.json`, JSON.stringify({ morningCommands: ["a <N>"] }));
+		chmodSync(`${conf}/alert-desk.json`, 0o644);
+		expect(readMorning(conf).commands).toEqual(["a <N>"]);
+		chmodSync(`${conf}/alert-desk.json`, 0o664);
+		const warned: string[] = [];
+		expect(readMorning(conf, (m) => warned.push(m)).commands).toEqual([]);
+		expect(warned[0]).toContain("group-writable");
+		expect(readMorning(mkdtempSync(`${tmpdir()}/desk-none-`), (m) => warned.push(m))).toEqual({ commands: [] });
+		expect(warned).toHaveLength(1);
 	});
 });

@@ -1,40 +1,45 @@
 /**
  * The one judge. Anything in the daemon that needs a small model's opinion asks it here, by trigger name, and the trigger's
- * configuration says which backend answers: Haiku (the cheap tier of the inference tool) or Custom. There is no second path to a
- * model: src/core/judge.test.ts fails when another core file spawns one.
+ * configuration says which backend answers. There is no second path to a model: src/core/judge.test.ts fails when another core
+ * file spawns one.
  *
- * Configuration is `<conf>/judge.json`, optional:
- *   { "triggers": { "stalled-recovery": { "backend": "haiku" } },
- *     "backends": { "haiku": { "command": ["bun", "/path/Inference.ts", "--level", "low", "--json", "--vendor", "anthropic", "--no-fallback"] },
- *                   "custom":   { "command": ["/path/to/custom-judge"] } } }
+ * The backend is an EXPLICIT setting, with no default: `<conf>/judge.json` names each backend's command and which backend judges
+ * each trigger, for example
+ *   { "triggers": { "stalled-recovery": { "backend": "small-model" } },
+ *     "backends": { "small-model": { "command": ["/usr/local/bin/my-judge", "--json"] } } }
  * A backend's command receives the system prompt and the user prompt as its last two arguments and prints one JSON object
- * `{ "verdict": ..., "reason": ... }` on stdout. Without a file, `stalled-recovery` goes to Haiku through the inference tool at
- * ~/bin/example-inference when it exists, and there is no Custom command until the file names one.
+ * `{ "verdict": ..., "reason": ... }` on stdout. Backend names are the operator's own. Without the file, or without a trigger in it,
+ * that trigger is not judged: the engine logs `judge-off` with why once at start, and every question goes on to a person.
  *
- * Privacy, and an open point: a judge sees only what `scrubForJudge` leaves of an error message, never thread text. Haiku is the
- * default for the recovery trigger because Custom may retain its input, and an error message can carry a path or a fragment of
- * work. Whether Custom may judge this trigger is the principal's call, made by editing `judge.json`.
+ * Privacy: a judge sees only what `scrubForJudge` leaves of an error message, never thread text. Whether a backend that may retain
+ * its input is acceptable is the operator's call, made by naming it in `judge.json`.
  *
  * A judge that cannot answer never blocks anything: the caller gets `{ ok: false }` and sends the question on to a person.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
 
-export type JudgeBackend = "haiku" | "custom";
+/** A backend's name: the operator's own, as written in judge.json. */
+export type JudgeBackend = string;
 export type TriggerConfig = { backend: JudgeBackend };
-export type JudgeConfig = { triggers: Record<string, TriggerConfig>; backends: Partial<Record<JudgeBackend, { command: string[] }>> };
+export type JudgeConfig = { triggers: Record<string, TriggerConfig>; backends: Record<JudgeBackend, { command: string[] }> };
 
 export const TRIGGERS = ["stalled-recovery"] as const;
 export type Trigger = (typeof TRIGGERS)[number];
 
-const INFERENCE = `${homedir()}/bin/example-inference`;
+/** A backend name: letters, digits, `.`, `_` and `-`. */
+const BACKEND_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
-/** Pure: the configuration with every default filled in. `inference` is where the inference tool is, or undefined when it is not installed. */
-export function defaultJudgeConfig(inference: string | undefined = existsSync(INFERENCE) ? INFERENCE : undefined): JudgeConfig {
-	return {
-		triggers: { "stalled-recovery": { backend: "haiku" } },
-		backends: inference ? { haiku: { command: [process.execPath, inference, "--level", "low", "--json", "--vendor", "anthropic", "--no-fallback"] } } : {},
-	};
+/** Pure: the configuration without a judge.json. Nothing is judged: there is no default backend. */
+export function defaultJudgeConfig(): JudgeConfig {
+	return { triggers: {}, backends: {} };
+}
+
+/** Pure: why `trigger` is not judged under `config`, or undefined when a backend with a command judges it. */
+export function judgeOff(config: JudgeConfig, trigger: Trigger): string | undefined {
+	const backend = config.triggers[trigger]?.backend;
+	if (!backend) return `judge.json names no backend for the "${trigger}" trigger, so it is not judged: its questions go to a person`;
+	if (!config.backends[backend]?.command) return `the "${backend}" backend has no command in judge.json, so the "${trigger}" trigger is not judged: its questions go to a person`;
+	return undefined;
 }
 
 /** Pure: a judge.json text merged over the defaults, or the first thing wrong with it. */
@@ -43,15 +48,16 @@ export function parseJudgeConfig(text: string | undefined, base: JudgeConfig = d
 	try {
 		const raw = JSON.parse(text) as { triggers?: Record<string, { backend?: unknown }>; backends?: Record<string, { command?: unknown }> };
 		const config: JudgeConfig = { triggers: { ...base.triggers }, backends: { ...base.backends } };
+		for (const [name, b] of Object.entries(raw.backends ?? {})) {
+			if (!BACKEND_NAME.test(name)) throw Error(`backend name "${name.slice(0, 64)}" must be letters, digits, ".", "_" or "-"`);
+			if (!Array.isArray(b?.command) || !b.command.length || !b.command.every((x) => typeof x === "string" && x.length > 0)) throw Error(`backend "${name}": command must be a non-empty list of strings`);
+			config.backends[name] = { command: b.command as string[] };
+		}
 		for (const [name, t] of Object.entries(raw.triggers ?? {})) {
 			if (!(TRIGGERS as readonly string[]).includes(name)) throw Error(`unknown trigger "${name}"`);
-			if (t?.backend !== "haiku" && t?.backend !== "custom") throw Error(`trigger "${name}": backend must be "haiku" or "custom"`);
+			if (typeof t?.backend !== "string" || !BACKEND_NAME.test(t.backend)) throw Error(`trigger "${name}": backend must name a backend`);
+			if (!config.backends[t.backend]) throw Error(`trigger "${name}": backend "${t.backend}" is not in "backends"`);
 			config.triggers[name] = { backend: t.backend };
-		}
-		for (const [name, b] of Object.entries(raw.backends ?? {})) {
-			if (name !== "haiku" && name !== "custom") throw Error(`unknown backend "${name}"`);
-			if (!Array.isArray(b?.command) || !b.command.length || !b.command.every((x) => typeof x === "string")) throw Error(`backend "${name}": command must be a non-empty list of strings`);
-			config.backends[name] = { command: b.command as string[] };
 		}
 		return { config };
 	} catch (e) {

@@ -328,9 +328,42 @@ describe("one relay: the only code that calls a wake transport", () => {
 
 	test("the relay really is the sender: it calls the transport, and only after checking the lock", () => {
 		const code = stripComments(readFileSync(join(SRC, RELAY), "utf8"));
-		expect(code).toMatch(/d\.wake\.send\(/);
+		expect(code).toMatch(/\bl\.wake\.send\(/);
 		expect(code).toMatch(/d\.compact\.send\(/);
 		expect(code).toMatch(/isRelayLock\(d\.lock\)/);
+	});
+
+	test("production code builds ONE relay: one createRelay call, in the engine, and one createEngine call, in the daemon", () => {
+		const calls = (name: string) => sources().flatMap((f) => (stripComments(readFileSync(join(SRC, f), "utf8")).match(new RegExp(`\\b${name}\\(`, "g")) ?? []).map(() => f));
+		// The definitions are `function createRelay(` / `function createEngine(`; every other match is a call.
+		expect(calls("createRelay").sort()).toEqual([RELAY, "core/engine.ts", "testing/relay.ts"].sort());
+		expect(calls("createEngine").sort()).toEqual(["core/engine.ts", "daemon.ts"]);
+		// Every receiver (the Steward, the Alert Desk) is a lane of that relay, never a relay of its own.
+		expect(stripComments(readFileSync(join(SRC, "core/engine.ts"), "utf8"))).toMatch(/receivers:\s*\{\s*\[DESK_RECEIVER\]/);
+	});
+
+	test("one relay per process and per store, at run time: a second relay or engine on the held lock is refused, and so is a second lock", async () => {
+		const { holdRelayLock, RelayRunningError } = await import("./core/singleton.ts");
+		const { openStore } = await import("./core/sqlite-store.ts");
+		const { createRelay } = await import("./core/relay.ts");
+		const { createEngine } = await import("./core/engine.ts");
+		const { createFakeAdapter } = await import("./testing/fake-adapter.ts");
+		const root = mkdtempSync(join(tmpdir(), "chamberlain-one-relay-"));
+		const db = join(root, "chamberlain.db");
+		const lock = holdRelayLock(db);
+		const store = openStore(db);
+		try {
+			const wake = { ready: () => true, send: async () => ({ ok: true }) };
+			const base = { store, lock, wake, gate: () => "idle" as const, log: () => {}, alarm: () => {} };
+			expect(() => createRelay(base)).not.toThrow();
+			expect(() => createRelay({ ...base, receivers: { desk: { wake, gate: () => "idle" as const } } })).toThrow("a relay already exists on this lock");
+			expect(() => createEngine({ conf: root, lock, store, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: createFakeAdapter() }], log: () => {} })).toThrow("a relay already exists on this lock");
+			expect(() => holdRelayLock(db)).toThrow(RelayRunningError);
+		} finally {
+			store.close();
+			lock.release();
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	test("production code never imports src/testing/ (so testRelay and its stubbed lock cannot reach an entry point)", () => {

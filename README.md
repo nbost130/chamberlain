@@ -172,7 +172,7 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `servers.json` | optional | The T3 servers to watch. See below. |
 | `web.json` | for the page | The page's bind address and options. See below. |
 | `sweep.json` | optional | Your own routine checks. See below. |
-| `judge.json` | optional | Which backend judges each trigger: `{"triggers": {"stalled-recovery": {"backend": "haiku"}}, "backends": {"haiku": {"command": [...]}, "custom": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. Default: `stalled-recovery` to Haiku through the inference tool, when it is installed. Only error text, scrubbed, is ever sent. |
+| `judge.json` | optional | Which backend judges each trigger, with backend names of your own: `{"triggers": {"stalled-recovery": {"backend": "small-model"}}, "backends": {"small-model": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. There is **no default**: without this file nothing is judged, the daemon logs `judge-off` with why at start, and a second failure goes to the Steward unjudged. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
 | `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See below. |
 | `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See below. |
@@ -201,9 +201,12 @@ is built, so there is no second copy to drift ([`examples/operating-rules.json`]
   `{ "section": heading, "lines": ..., "as": heading }` is the same with a heading of its own.
 - `{ "table": heading, "rows": "whole" | [row prefixes], "as": heading }` takes the one markdown table under `## heading`: its
   header and separator rows, then every body row or one row per prefix. Text around the table is left out.
+- `{ "path": ..., "sections": "whole" }` copies that source whole. It is the only way a whole file reaches the hand-off.
 - A heading that is gone or doubled, a prefix that matches no line or several, a wrapped rule, or a table that is missing,
-  headerless or not alone under its heading stops the excerpt. That source is then copied whole, with a warning on stderr,
-  and the other sources are still excerpted.
+  headerless or not alone under its heading stops that selector. It contributes **nothing**, with a `WARNING` on stderr
+  naming the source, the selector and why; the source's other selectors and the other sources are still excerpted. (Until
+  this release a failed excerpt copied the whole source instead, which could put text you never selected in front of the
+  Steward.)
 - The 0.1 form, `{ "source": path, "sections": [...] }`, still works: it is one source.
 
 **`brief.d/`** (brief fragments): procedure that belongs to your project, not to Chamberlain, goes in `brief.d/` in the config
@@ -211,6 +214,12 @@ directory ([`examples/brief.d/`](examples/brief.d/)), and `bun src/brief.ts stew
 
 - Only regular files whose names end in `.md` are used. A symlink, a directory or any other entry is ignored, with a
   warning on stderr. No `brief.d/` is fine.
+- Fragments become the Steward's instructions, so they are checked like authority config. `brief.d/` must be a real
+  directory (not a symlink), owned by you (the daemon's effective user), and not group- or world-writable; otherwise no
+  fragment is read, with one warning. Each fragment must be owned by you and not group- or world-writable: `0600` and
+  `0644` are fine, `0664` is not. A refused fragment is skipped with a warning naming it and why; the others are still
+  used, and the hand-off always comes out. With a umask of `002`, set the modes yourself:
+  `chmod 755 brief.d && chmod 644 brief.d/*.md`.
 - Fragments are sorted by filename in byte order (so `10-repo.md` before `20-landing.md`, and `B.md` before `a.md`), and
   each is appended verbatim, its own headings kept as written, after the generic brief and before any
   `## Open work at hand-over` section. Blank lines at a fragment's start and end are dropped, so fragments sit exactly one
@@ -340,7 +349,7 @@ already in the state directory is never replaced.
 | `CHAMBERLAIN_DRY` | unset | `1`: the daemon watches and logs, and posts nothing. |
 | `CHAMBERLAIN_VERBOSE` | unset | Also print each log line to stdout. |
 | `CHAMBERLAIN_EXCLUDE` | unset | Comma-separated thread ids to never wake about. |
-| `CHAMBERLAIN_RECOVER` | unset (off) | `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge.json`). Needs the server's operate token. See [`docs/GLOSSARY.md`](docs/GLOSSARY.md#recovering-a-failed-thread). |
+| `CHAMBERLAIN_RECOVER` | unset (off) | `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge.json`; without it, to the Steward unjudged). Needs the server's operate token. See [`docs/GLOSSARY.md`](docs/GLOSSARY.md#recovering-a-failed-thread). |
 | `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn must stay quiet before it is reported (a PR update often follows). |
 | `CHAMBERLAIN_REPORT_HOLD_MS` | `3600000` | How long a report waits on a thread's own background work before it goes anyway. |
 | `CHAMBERLAIN_STALL_MS` | `1200000` | How long queued wakes may sit with nothing moving in the Steward's thread before an alarm. |

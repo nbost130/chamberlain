@@ -317,7 +317,7 @@ INSERT OR IGNORE INTO wake_tombstones (delivery_id, outcome, ended_at)
 		name: "wake receivers (the Alert Desk lane)",
 		sql: `
 -- A wake goes to a receiver (Alertmanager's term for the integration a notification is sent to). NULL is the Steward, as every row so far;
--- "desk" is the Alert Desk's own thread, sent by its own relay with its own gate. A held wake waits for ITS receiver's thread to go idle, and a
+-- "desk" is the Alert Desk's own thread, with its own transport and gate in the one relay. A held wake waits for ITS receiver's thread to go idle, and a
 -- digest only ever holds one receiver's wakes. The receiver is frozen with the row, like its text.
 ALTER TABLE outbox ADD COLUMN receiver TEXT;
 ALTER TABLE held_wakes ADD COLUMN receiver TEXT;

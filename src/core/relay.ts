@@ -7,9 +7,14 @@
  * Producers (the engine, the sweep, the page, `synthetic-wake.ts`) only insert rows (deliver.ts); `wakes.ts` only changes a row's status;
  * no other process talks to the webhook. src/architecture.test.ts fails if another module calls a transport or POSTs.
  *
+ * ONE relay per lock, so one per store and per process (`createRelay` refuses a second relay on a lock that already has one), and it sends
+ * for every receiver: the Steward (rows with no receiver) and each named receiver it is given (`receivers`, the Alert Desk's "desk"). Each
+ * row's receiver column (migration 8) picks its transport; each receiver has its own gate, failure count, alarms and per-receiver order, and
+ * every POST of every receiver goes through the relay's ONE serial queue, so no two requests are ever in flight at once.
+ *
  * Each pass, a short poll (CHAMBERLAIN_RELAY_POLL_MS, default 1 s) or a nudge from a producer in this process:
- *   1. Held wakes are composed into ONE row when the Steward is idle or has been busy for the ceiling (hold.ts): one transaction freezes the
- *      row's delivery id, text and members, and binds each held item to it for good.
+ *   1. Held wakes are composed, per receiver, into ONE row when that receiver is idle or has been busy for the ceiling (hold.ts): one
+ *      transaction freezes the row's delivery id, text and members, and binds each held item to it for good.
  *   2. Each pending row, oldest first, is sent: attempts + 1 is COMMITTED, then the POST, then the row is committed `delivered`.
  *
  * The guarantee: at-least-once with bounded retries: a row is POSTed until one POST is accepted or it has used `maxAttempts` attempts, and
@@ -40,14 +45,14 @@ export type RelayDeps = {
 	 * It sends nothing once the lock is released.
 	 */
 	lock: RelayLock;
-	/** The way a wake reaches its thread (`Adapter.wake` for the Steward, `Adapter.alertDesk.wake` for the desk). */
+	/** The way a wake reaches the Steward (`Adapter.wake`): rows with no receiver. */
 	wake: WakeTransport;
 	/**
-	 * Whose wakes this relay sends: absent is the Steward's, "desk" is the Alert Desk's. Each receiver has its own relay, its own gate and its
-	 * own transport (a different webhook), and reads only its own rows and held wakes, so a busy desk never holds the Steward's wakes. Both
-	 * need the one lock and run in the daemon.
+	 * The other receivers this relay sends for, by the name in a row's receiver column ("desk": `Adapter.alertDesk`). Each has its own
+	 * transport (a different webhook) and its own gate, so a busy desk holds only the desk's wakes; every POST still goes through the one
+	 * serial queue. A row whose receiver is not here is never sent to another receiver's webhook: it waits (and is logged once).
 	 */
-	receiver?: string;
+	receivers?: Record<string, { wake: WakeTransport; gate: () => Gate }>;
 	/** The way a compaction reaches the Steward's compaction task (`Adapter.compact`), if the adapter has one. Sent only through `relay.compact`. */
 	compact?: WakeTransport;
 	/** The Steward's thread, read fresh: held wakes are composed when it is idle (or at the ceiling). */
@@ -64,29 +69,36 @@ export type RelayDeps = {
 	now?: () => number;
 };
 
+/** The lock handles a relay has been built on. One relay per handle, for good: with `holdRelayLock` refusing a second lock in a process, that is one relay per store and per process. */
+const relayed = new WeakSet<RelayLock>();
+
+/** One receiver the relay sends for: its rows and held wakes (`name`, `null` for the Steward's), its transport and gate, and its own counters. */
+type Lane = { name: string | null; wake: WakeTransport; gate: () => Gate; look: HoldClock; failures: number; notReadyAt: number; desk: boolean; akey: (k: string) => string };
+
 export function createRelay(d: RelayDeps) {
 	const { store } = d;
 	if (!isRelayLock(d.lock) || !d.lock.held()) throw new Error("createRelay needs the one-relay lock, held: take it first (singleton.ts) and pass the handle it returns");
 	// The handle must be the lock on THIS store's database file: a lock held on some other database authorizes nothing here.
 	if (!lockCovers(d.lock, store.path)) throw new Error(`createRelay was given a lock that is not on this store's database: the lock handle is for ${d.lock.path}, the store is ${store.path}. Take the lock on the very database file the store opened.`);
+	// One relay per lock: a second relay would be a second POST queue beside the first. Every receiver is a lane of this one (`receivers`).
+	if (relayed.has(d.lock)) throw new Error("createRelay: a relay already exists on this lock, and there is one relay per store. Send another receiver's wakes through that relay (`receivers`), never a second one.");
+	relayed.add(d.lock);
 	const clock = () => d.now?.() ?? Date.now();
-	/** The rows and held wakes this relay owns: the Steward's (`null`) or one named receiver's. */
-	const lane = d.receiver ?? null;
-	/** Alarm keys and titles of a named receiver say whose relay raised them, so the desk's alarm never silences the Steward's. */
-	const akey = (k: string) => (d.receiver ? `${d.receiver}:${k}` : k);
-	const desk = d.receiver !== undefined;
+	/** Alarm keys and titles of a named receiver say whose wakes they are, so the desk's alarm never silences the Steward's. */
+	const lane = (name: string | null, wake: WakeTransport, gate: () => Gate): Lane => ({ name, wake, gate, look: {}, failures: 0, notReadyAt: -Infinity, desk: name !== null, akey: (k) => (name ? `${name}:${k}` : k) });
+	const steward = lane(null, d.wake, d.gate);
+	const lanes: Lane[] = [steward, ...Object.entries(d.receivers ?? {}).map(([name, r]) => lane(name, r.wake, r.gate))];
+	const laneOf = (receiver: string | undefined) => lanes.find((l) => l.name === (receiver ?? null));
 	const max = d.maxAttempts !== undefined && Number.isInteger(d.maxAttempts) && d.maxAttempts >= 1 ? d.maxAttempts : maxAttemptsFromEnv();
 	const pause = d.retryAfterMs ?? retryAfterMs;
 	const ceiling = d.ceilingMs ?? HOLD_CEILING_MS;
-	/** The look at the Steward. In memory: there is one relay, and a restart only restarts the busy stretch. */
-	const gate: HoldClock = {};
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
 	const owed = new Map<number, OutboxRow>();
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */
 	const notBefore = new Map<number, number>();
-	let failures = 0;
 	let lockLost = false;
-	let notReadyAt = -Infinity;
+	/** Rows whose receiver this relay has no transport for, already logged. */
+	const unrouted = new Set<number>();
 
 	/** The row's delivered commit. False while it cannot commit (the row stays owed). */
 	function land(row: OutboxRow): boolean {
@@ -102,30 +114,30 @@ export function createRelay(d: RelayDeps) {
 		return true;
 	}
 
-	function deadLetter(row: OutboxRow, attempts: number) {
-		if (store.wakes.finish(row.id, "dead_letter", clock())) d.log("deliver-dead-letter", { deliveryId: row.deliveryId, attempts });
+	function deadLetter(l: Lane, row: OutboxRow, attempts: number) {
+		if (store.wakes.finish(row.id, "dead_letter", clock())) d.log("deliver-dead-letter", { deliveryId: row.deliveryId, attempts, ...(l.name ? { receiver: l.name } : {}) });
 		notBefore.delete(row.id);
-		flagDead();
+		flagDead(l);
 	}
 
-	/** Held wakes become ONE row when the Steward may take a wake. */
-	function compose(now: number) {
-		if (!store.wakes.held(lane).length) return;
-		const look = observe(gate, d.gate(), now, ceiling);
+	/** A receiver's held wakes become ONE row when that receiver may take a wake. */
+	function compose(l: Lane, now: number) {
+		if (!store.wakes.held(l.name).length) return;
+		const look = observe(l.look, l.gate(), now, ceiling);
 		if (!look.post) return;
 		const row = store.wakes.compose(now, (held) => {
 			const c = composeWake(held, now);
 			const only = held.length === 1 ? held[0]! : undefined;
-			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(d.receiver ? { receiver: d.receiver } : {}) };
-		}, lane);
+			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(l.name ? { receiver: l.name } : {}) };
+		}, l.name);
 		if (!row) return;
 		crashPoint("composed");
-		if (look.forced) gate.lastForcedAt = now;
+		if (look.forced) l.look.lastForcedAt = now;
 		d.log("composed", { deliveryId: row.deliveryId, members: row.members.map((m) => m.deliveryId), folded: row.folded, ...(look.forced ? { forced: "ceiling" } : {}) });
 	}
 
 	/**
-	 * The one serial queue every transport POST goes through, a wake or a compaction: each job starts only when the one before it has settled
+	 * The one serial queue every transport POST goes through, a wake of any receiver or a compaction: each job starts only when the one before it has settled
 	 * (resolved, rejected or timed out: the transports have a deadline), so the webhook never has two requests in flight. A job's failure is
 	 * its caller's, never the queue's.
 	 */
@@ -137,27 +149,27 @@ export function createRelay(d: RelayDeps) {
 	}
 
 	/** One attempt of one row: counted and committed first, then the POST. True when it is delivered. It runs in the serial queue (see `serially`). */
-	async function send(row: OutboxRow): Promise<boolean> {
+	async function send(l: Lane, row: OutboxRow): Promise<boolean> {
 		if (!d.lock.held()) return false;
-		if (row.attempts >= max) { deadLetter(row, row.attempts); return false; }
+		if (row.attempts >= max) { deadLetter(l, row, row.attempts); return false; }
 		const n = store.tx(() => { const n = store.wakes.beginAttempt(row.id, clock()); crashPoint("attempt-begun"); return n; });
 		if (n === undefined) return false;
 		crashPoint("attempt-counted");
 		let r: WakeResult;
-		try { r = await d.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId)); } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+		try { r = await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId)); } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 		const digest = row.members.length !== 1 || row.members[0]!.deliveryId !== row.deliveryId;
 		if (r.ok) {
 			crashPoint("accepted");
 			owed.set(row.id, row);
-			gate.lastPostAt = clock();
-			failures = 0;
+			l.look.lastPostAt = clock();
+			l.failures = 0;
 			notBefore.delete(row.id);
-			d.log("delivered", { deliveryId: row.deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: n, queuedAt: row.createdAt, ...(row.kind ? { kind: row.kind } : {}), ...(row.thread ? { thread: row.thread } : {}), ...(digest ? { members: row.members.map((m) => ({ deliveryId: m.deliveryId, queuedAt: m.queuedAt, ...(m.kind ? { kind: m.kind } : {}), ...(m.thread ? { thread: m.thread } : {}) })) } : {}) });
+			d.log("delivered", { deliveryId: row.deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: n, queuedAt: row.createdAt, ...(row.kind ? { kind: row.kind } : {}), ...(row.thread ? { thread: row.thread } : {}), ...(l.name ? { receiver: l.name } : {}), ...(digest ? { members: row.members.map((m) => ({ deliveryId: m.deliveryId, queuedAt: m.queuedAt, ...(m.kind ? { kind: m.kind } : {}), ...(m.thread ? { thread: m.thread } : {}) })) } : {}) });
 			return land(row);
 		}
-		d.log("deliver-error", { deliveryId: row.deliveryId, attempt: n, ...(r.status !== undefined ? { http: r.status } : {}), ...(r.error ? { error: r.error.slice(0, 200) } : {}) });
-		if (++failures >= 2) d.alarm(akey("wake-delivery"), desk ? "chamberlain cannot reach the Alert Desk thread" : "chamberlain cannot reach its wake thread", `${failures} wake attempts in a row failed. The ${desk ? "Alert Desk" : "Steward"} thread may be deleted, the webhook revoked, or the server down or asleep. Each wake is tried ${max} times, then kept as a dead letter.`);
-		if (n >= max) deadLetter(row, n);
+		d.log("deliver-error", { deliveryId: row.deliveryId, attempt: n, ...(l.name ? { receiver: l.name } : {}), ...(r.status !== undefined ? { http: r.status } : {}), ...(r.error ? { error: r.error.slice(0, 200) } : {}) });
+		if (++l.failures >= 2) d.alarm(l.akey("wake-delivery"), l.desk ? "chamberlain cannot reach the Alert Desk thread" : "chamberlain cannot reach its wake thread", `${l.failures} wake attempts in a row failed. The ${l.desk ? "Alert Desk" : "Steward"} thread may be deleted, the webhook revoked, or the server down or asleep. Each wake is tried ${max} times, then kept as a dead letter.`);
+		if (n >= max) deadLetter(l, row, n);
 		else notBefore.set(row.id, clock() + pause(n));
 		return false;
 	}
@@ -167,19 +179,25 @@ export function createRelay(d: RelayDeps) {
 		if (!d.lock.held()) { if (!lockLost) { lockLost = true; d.log("relay-lock-released"); } return []; }
 		for (const row of [...owed.values()]) land(row);
 		const now = clock();
-		if (!d.wake.ready()) {
-			if (now - notReadyAt >= 60_000 && (store.wakes.held(lane).length || store.wakes.rows("pending", lane).length)) {
-				notReadyAt = now;
-				d.log("deliver-not-ready");
-				d.alarm(akey("wake-not-ready"), "chamberlain has nowhere to send wakes", `Wakes are waiting but no ${desk ? "desk wake URL" : "wake URL"} is configured (or readable), so nothing can reach ${desk ? "the Alert Desk" : "the Steward"}. They are kept, no attempt is used, and they go as soon as there is one.`);
+		const ready = new Set<Lane>();
+		for (const l of lanes) {
+			if (l.wake.ready()) { ready.add(l); compose(l, now); continue; }
+			if (now - l.notReadyAt >= 60_000 && (store.wakes.held(l.name).length || store.wakes.rows("pending", l.name).length)) {
+				l.notReadyAt = now;
+				d.log("deliver-not-ready", l.name ? { receiver: l.name } : undefined);
+				d.alarm(l.akey("wake-not-ready"), "chamberlain has nowhere to send wakes", `Wakes are waiting but no ${l.desk ? "desk wake URL" : "wake URL"} is configured (or readable), so nothing can reach ${l.desk ? "the Alert Desk" : "the Steward"}. They are kept, no attempt is used, and they go as soon as there is one.`);
 			}
-			return [];
 		}
-		compose(now);
 		const out: string[] = [];
-		for (const row of store.wakes.rows("pending", lane)) {
-			if (owed.has(row.id) || (notBefore.get(row.id) ?? -Infinity) > clock()) continue;
-			if (await serially(() => send(row))) out.push(...row.members.map((m) => m.deliveryId));
+		// Every receiver's pending rows, oldest first: each receiver's own rows keep their order, and each row goes to its receiver's transport.
+		for (const row of store.wakes.rows("pending")) {
+			const l = laneOf(row.receiver);
+			if (!l) {
+				if (!unrouted.has(row.id)) { unrouted.add(row.id); d.log("deliver-no-receiver", { deliveryId: row.deliveryId, receiver: row.receiver }); }
+				continue;
+			}
+			if (!ready.has(l) || owed.has(row.id) || (notBefore.get(row.id) ?? -Infinity) > clock()) continue;
+			if (await serially(() => send(l, row))) out.push(...row.members.map((m) => m.deliveryId));
 		}
 		return out;
 	}
@@ -196,23 +214,26 @@ export function createRelay(d: RelayDeps) {
 	}
 
 	const reported = new Set<string>();
-	/** Dead letters raise the `wake-dead-letter` alarm until the operator retries or cancels them. */
-	function flagDead() {
-		const dead = store.wakes.rows("dead_letter", lane);
+	/** A receiver's dead letters raise its `wake-dead-letter` alarm until the operator retries or cancels them. */
+	function flagDead(l: Lane) {
+		const dead = store.wakes.rows("dead_letter", l.name);
 		if (!dead.length) return;
 		for (const w of dead) if (!reported.has(w.deliveryId)) { reported.add(w.deliveryId); d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts }); }
-		d.alarm(akey("wake-dead-letter"), desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "bun src/wakes.ts list" shows them, "bun src/wakes.ts retry <id>" sends one again (${max} more attempts at most) and "bun src/wakes.ts cancel <id>" gives it up.`);
+		d.alarm(l.akey("wake-dead-letter"), l.desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "bun src/wakes.ts list" shows them, "bun src/wakes.ts retry <id>" sends one again (${max} more attempts at most) and "bun src/wakes.ts cancel <id>" gives it up.`);
 	}
 
-	/** Once a minute: keeps the Steward's busy stretch measured, and raises the stale and dead-letter alarms. */
+	/** Once a minute: keeps each receiver's busy stretch measured, and raises its stale and dead-letter alarms. */
 	function audit() {
+		for (const l of lanes) auditLane(l);
+	}
+	function auditLane(l: Lane) {
 		const now = clock();
-		try { observe(gate, d.gate(), now, ceiling); } catch (e) { d.log("gate-error", { error: String(e).slice(0, 200) }); }
-		const waiting = [...store.wakes.rows("pending", lane).map((r) => ({ deliveryId: r.deliveryId, queuedAt: r.createdAt })), ...store.wakes.held(lane)];
+		try { observe(l.look, l.gate(), now, ceiling); } catch (e) { d.log("gate-error", { error: String(e).slice(0, 200), ...(l.name ? { receiver: l.name } : {}) }); }
+		const waiting = [...store.wakes.rows("pending", l.name).map((r) => ({ deliveryId: r.deliveryId, queuedAt: r.createdAt })), ...store.wakes.held(l.name)];
 		const old = waiting.filter((w) => now - w.queuedAt > (d.staleAfterMs ?? STALE_AFTER_MS));
 		for (const w of old) if (!reported.has(`stale:${w.deliveryId}`)) { reported.add(`stale:${w.deliveryId}`); d.log("deliver-stale", { deliveryId: w.deliveryId, ageMs: now - w.queuedAt }); }
-		if (old.length) d.alarm(akey("wake-stale"), "chamberlain has wakes it could not deliver", `${old.length} wake${old.length === 1 ? " has" : "s have"} waited more than ${Math.round((d.staleAfterMs ?? STALE_AFTER_MS) / 3600_000)} hours without reaching the Steward. They are kept; none is dropped. Is the daemon running, and is the wake URL right?`);
-		flagDead();
+		if (old.length) d.alarm(l.akey("wake-stale"), "chamberlain has wakes it could not deliver", `${old.length} wake${old.length === 1 ? " has" : "s have"} waited more than ${Math.round((d.staleAfterMs ?? STALE_AFTER_MS) / 3600_000)} hours without reaching ${l.desk ? "the Alert Desk" : "the Steward"}. They are kept; none is dropped. Is the daemon running, and is the wake URL right?`);
+		flagDead(l);
 	}
 
 	/** Whether the adapter has a compaction target that can take a request now. */
@@ -233,7 +254,9 @@ export function createRelay(d: RelayDeps) {
 
 	let timer: ReturnType<typeof setInterval> | undefined;
 	return {
-		pass, audit, compact, compactReady, failures: () => failures,
+		pass, audit, compact, compactReady,
+		/** Failed attempts in a row: the Steward's, or a named receiver's. */
+		failures: (receiver?: string) => laneOf(receiver)?.failures ?? 0,
 		/** Starts the poll. Resolves when the first pass (startup recovery) is done. */
 		start(pollMs = relayPollMs()) { timer ??= setInterval(() => { void pass(); }, pollMs); return pass(); },
 		async stop() { clearInterval(timer); timer = undefined; await chain; await queueTail; },
