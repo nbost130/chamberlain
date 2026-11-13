@@ -273,7 +273,7 @@
 				if (!live.length) { panes.Rulings.replaceChildren(el("div", "dq-empty", "No rulings in force.")); return; }
 				panes.Rulings.replaceChildren(...live.map((x) => {
 					const row = el("div", "dq-row");
-					const meta = `${x.id} · ${x.status === "in-force" ? (x.confirmed ? "in force" : "in force, unconfirmed") : "proposed"}${x.cited ? ` · cited ${x.cited}×` : ""}`;
+					const meta = `${x.id} · ${x.expired ? `expired ${x.expires}` : x.status === "in-force" ? (x.confirmed ? "in force" : "in force, unconfirmed") : "proposed"}${x.cited ? ` · cited ${x.cited}×` : ""}`;
 					row.append(el("div", "dq-meta", meta), el("div", "dq-ctx", x.decides));
 					return row;
 				}), el("div", "dq-meta", "Change a ruling on the queue page."));

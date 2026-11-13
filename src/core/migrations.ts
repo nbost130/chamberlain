@@ -366,6 +366,41 @@ CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread
 BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 `,
 	},
+	{
+		version: 11,
+		name: "ruling expiry, supersession and housekeeping retirements",
+		sql: `
+-- A ruling can now be time-bound and can replace others. expires: an ISO date (through the end of that day, UTC) or date-time, after which the ruling is no
+-- longer in force (it is read against a clock, never rewritten by a timer; the row stays). until_event: a time bound only a person can judge ("until the
+-- launch"), shown and never enforced. supersedes: the ids a ruling replaces (a JSON array). superseded_by and retired_why say, for a ruling that left force
+-- for a housekeeping reason, which ruling took its place and why. retired_how gains four values (superseded, duplicate, expired, repeat); SQLite cannot
+-- change a CHECK in place, so the table is rebuilt and every row copied as it is. Every new column is NULL for the rows already there.
+CREATE TABLE rulings_new (
+	id TEXT PRIMARY KEY,
+	seq INTEGER NOT NULL UNIQUE,
+	date TEXT NOT NULL,
+	words TEXT NOT NULL,
+	decides TEXT NOT NULL,
+	source TEXT NOT NULL CHECK (source IN ('chat', 'card')),
+	status TEXT NOT NULL CHECK (status IN ('in-force', 'proposed', 'retired')),
+	confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1)),
+	confirmed_at TEXT,
+	retired_at TEXT,
+	retired_how TEXT CHECK (retired_how IS NULL OR retired_how IN ('retired', 'only this once', 'superseded', 'duplicate', 'expired', 'repeat')),
+	retired_why TEXT,
+	superseded_by TEXT,
+	supersedes TEXT CHECK (supersedes IS NULL OR json_valid(supersedes)),
+	expires TEXT,
+	until_event TEXT,
+	item TEXT,
+	history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history))
+);
+INSERT INTO rulings_new (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history)
+	SELECT id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history FROM rulings;
+DROP TABLE rulings;
+ALTER TABLE rulings_new RENAME TO rulings;
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

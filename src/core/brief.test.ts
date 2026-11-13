@@ -23,6 +23,17 @@ describe("stewardBrief", () => {
 		expect(b).toContain(base.rights);
 		expect(b).toContain(base.rulings);
 	});
+	test("tells the Steward how to record a time-bound or replacing ruling, and that recording twice adds nothing", () => {
+		const b = stewardBrief(base);
+		expect(b).toContain("--expires <ISO date>");
+		expect(b).toContain("--supersedes R32,R16");
+		expect(b).toContain("recording the same words twice adds nothing");
+		expect(b).toContain("proposedExpires?");
+	});
+	test("an expired ruling the section names is carried as given", () => {
+		const rulings = `${base.rulings}\nExpired, NOT in force (do not act on them): R2 (expired 2026-11-20).`;
+		expect(stewardBrief({ ...base, rulings })).toContain("Expired, NOT in force (do not act on them): R2 (expired 2026-11-20).");
+	});
 	test("carries the operating rules", () => {
 		expect(stewardBrief(base)).toContain("Use timeout, not gtimeout.");
 		expect(stewardBrief({ ...base, operatingRules: "" })).not.toContain("Operating rules");

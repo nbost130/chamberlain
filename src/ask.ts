@@ -6,8 +6,11 @@
  *   bun src/ask.ts '<json>'        or   bun src/ask.ts - < item.json
  *
  * JSON: {kind: "only-you"|"product"|"ruling"|"idea", title, context, options: [{label, detail, route?: "thread"|"steward",
- *        relay?}], recommended?: index, proposedRuling?, evidence?: [{type: "image"|"video"|"link", path|url, caption}],
+ *        relay?}], recommended?: index, proposedRuling?, proposedExpires?, evidence?: [{type: "image"|"video"|"link", path|url, caption}],
  *        thread, server, threadId?, blocks?, tag?, secret?}
+ * `proposedExpires` (an ISO date, or a date-time with a zone) makes the proposed ruling time-bound: if the principal saves it, it
+ * drops out of every wake after that moment and the rulings page marks it expired. Give it whenever the ruling is about one run,
+ * one launch or one week; leave it off only for a rule meant to stand.
  * Routing is per option and defaults to "steward". An option with `route: "thread"` and its `relay` text (the exact
  * instruction the thread gets) goes straight to `threadId` when the principal picks it with no note: use it for a simple
  * step the thread can carry out alone, like a product or design pick or leave for its own next step. Keep "steward" for
@@ -23,6 +26,7 @@ import { CONF, STATE } from "./core/config.ts";
 import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
+import { expiresAt, isExpired } from "./core/rulings.ts";
 import { askQuestion, evidenceRoot, KINDS, type Evidence, type Question, type Option } from "./core/questions.ts";
 
 export const newItemId = () => `Q-${Date.now().toString(36).slice(-5)}${randomBytes(3).toString("hex").slice(0, 4)}`;
@@ -70,12 +74,19 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 		return { type: e.type, ...(e.path ? { path: e.path } : {}), ...(e.url ? { url: e.url } : {}), ...(e.caption ? { caption: String(e.caption) } : {}) };
 	});
 	const proposedRuling = str("proposedRuling", false);
+	const proposedExpires = str("proposedExpires", false);
+	if (proposedExpires) {
+		if (!proposedRuling) throw Error("ask: proposedExpires needs a proposedRuling");
+		if (Number.isNaN(expiresAt(proposedExpires))) throw Error("ask: proposedExpires must be an ISO date (2026-12-01) or date-time with a zone (2026-12-01T09:00:00Z)");
+		if (isExpired({ expires: proposedExpires })) throw Error("ask: proposedExpires is already past");
+	}
 	if (options.some((x) => x.route === "thread") && !str("threadId", false)) throw Error("ask: an option routed to the thread needs the item's threadId");
 	if (secret && options.some((x) => x.route === "thread")) throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
 	const item: Question = {
 		id, kind, title: str("title")!, context: str("context", false) ?? "", options,
 		...(recommended !== undefined ? { recommended } : {}),
 		...(proposedRuling ? { proposedRuling } : {}),
+		...(proposedExpires ? { proposedExpires } : {}),
 		...(evidence.length ? { evidence } : {}),
 		thread: str("thread")!, server: str("server")!,
 		...(str("threadId", false) ? { threadId: str("threadId", false) } : {}),

@@ -299,19 +299,22 @@ const rvisible = () => {
 	// Unconfirmed first, then newest.
 	return [...list].sort((a, b) => Number(a.confirmed) - Number(b.confirmed) || b.date.localeCompare(a.date) || Number(b.id.slice(1)) - Number(a.id.slice(1)));
 };
-const rstate = (r) => r.status === "retired" ? `<div class="state off">${r.retiredHow === "only this once" ? "only this once" : "retired"}</div>`
+const rretired = (r) => r.retiredHow === "only this once" ? "only this once" : r.retiredHow === "superseded" ? `superseded${r.supersededBy ? ` by ${r.supersededBy}` : ""}` : r.retiredHow === "duplicate" ? `duplicate${r.supersededBy ? ` of ${r.supersededBy}` : ""}` : r.retiredHow === "expired" || r.retiredHow === "repeat" ? r.retiredHow : "retired";
+const rbound = (r) => `${r.expires ? `expires ${r.expires}` : ""}${r.expires && r.until ? ", " : ""}${r.until ? `until ${r.until}` : ""}`;
+const rstate = (r) => r.status === "retired" ? `<div class="state off">${esc(rretired(r))}</div>`
+	: r.expired ? `<div class="state warn">expired ${esc(r.expires)}</div>`
 	: r.status === "proposed" ? '<div class="state warn">proposed, not in force</div>' : r.confirmed ? '<div class="state">confirmed</div>' : '<div class="state warn">unconfirmed</div>';
 
 function renderRulings() {
 	const live = S.rulings.filter((r) => r.status !== "retired");
-	const inForce = S.rulings.filter((r) => r.status === "in-force").length;
+	const inForce = S.rulings.filter((r) => r.status === "in-force" && !r.expired).length;
 	const unconf = live.filter((r) => !r.confirmed).length;
 	const v = rvisible();
 	S.rsel = Math.min(S.rsel, Math.max(0, v.length - 1));
 	const sel = v[S.rsel];
 	app.className = "app";
 	const rows = v.map((r, k) => `<tr class="r" data-rsel="${k}" aria-current="${k === S.rsel}">
-		<td><span class="rid">${esc(r.id)}</span>“${esc(r.words)}”<div class="date">${esc(r.date)}</div></td>
+		<td><span class="rid">${esc(r.id)}</span>“${esc(r.words)}”<div class="date">${esc(r.date)}${rbound(r) ? ` · ${esc(rbound(r))}` : ""}</div></td>
 		<td class="dec">${esc(r.decides)}</td>
 		<td><span class="${r.source === "chat" ? "src-chat" : "src-card"}">${r.source === "chat" ? "Chat" : "Card answer"}</span>${rstate(r)}</td>
 		<td class="n mono ${r.cited ? "" : "zero"}">${r.cited || "–"}</td></tr>`).join("");
@@ -330,18 +333,19 @@ function renderRulings() {
 }
 
 function rasideHtml(r) {
-	const label = r.status === "retired" ? ["RETIRED", "off"] : r.status === "proposed" ? ["PROPOSED, NOT IN FORCE", "warn"] : r.confirmed ? ["IN FORCE", "ok"] : ["UNCONFIRMED", "warn"];
+	const label = r.status === "retired" ? ["RETIRED", "off"] : r.expired ? ["EXPIRED, NOT IN FORCE", "warn"] : r.status === "proposed" ? ["PROPOSED, NOT IN FORCE", "warn"] : r.confirmed ? ["IN FORCE", "ok"] : ["UNCONFIRMED", "warn"];
 	const from = r.source === "chat" ? `Your words in chat, ${esc(r.date)}` : `Your answer on a question card, ${esc(r.date)}`;
 	const wording = S.rwording[r.id] ?? r.decides;
 	const cites = r.recent?.length ? r.recent.map((c) => `<span>${esc(c.decision)}</span>`).join("") : '<span class="zero">Not cited by ID yet.</span>';
 	const btns = r.status === "retired" ? "" : `<div class="btns">
-		${!r.confirmed || r.status === "proposed" ? '<button type="button" class="btn-green" data-ract="confirm">Confirm <span class="kbd">Enter</span></button>' : '<button type="button" class="btn-sm" data-ract="edit">Save wording <span class="kbd">Enter</span></button>'}
+		${r.expired ? "" : !r.confirmed || r.status === "proposed" ? '<button type="button" class="btn-green" data-ract="confirm">Confirm <span class="kbd">Enter</span></button>' : '<button type="button" class="btn-sm" data-ract="edit">Save wording <span class="kbd">Enter</span></button>'}
 		<button type="button" class="btn-sm" data-ract="once">Only this once <span class="kbd">O</span></button>
 		<button type="button" class="btn-sm btn-red" data-ract="retire">Retire <span class="kbd">X</span></button></div>`;
 	return `<aside class="raside" aria-label="Selected ruling"><span class="status s-${label[1]}">${label[0]} · ${esc(r.id)}</span>
 		<div class="stack"><span class="from">${from}</span><span class="words">“${esc(r.words)}”</span></div>
 		<div class="stack"><label for="rw" class="from">${r.status === "retired" ? "What it decided" : "Wording I saved (edit before you confirm)"}</label>
 		<textarea id="rw" rows="4" ${r.status === "retired" ? "readonly" : ""}>${esc(wording)}</textarea></div>
+		${r.status === "retired" && (r.retiredWhy || r.supersededBy) ? `<div class="stack"><span class="from">Why it left force: ${esc(rretired(r))}</span><span class="words">${esc(r.retiredWhy || "")}</span></div>` : ""}${rbound(r) ? `<div class="stack"><span class="from">Time-bound: ${esc(rbound(r))}</span></div>` : ""}
 		<div class="cites"><span class="lbl">Last cited${r.cited ? ` (${r.cited})` : ""}</span>${cites}</div>${btns}</aside>`;
 }
 
