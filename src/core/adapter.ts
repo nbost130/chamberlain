@@ -17,6 +17,7 @@
  *   - no `stewardProbe`    no stall alarm, no context-size tracking, no compaction
  *   - no `compact`         the daemon only alarms that the Steward is over its size
  *   - no `alertDesk`       alerts are not routed to a desk thread: the inbox is never drained
+ *   - no `handoffInstruction`  a HAND OFF verdict is put to the operator as a question; the daemon does not start the hand-off itself
  *   - no `transcriptPath`  Steward health reports "unavailable"
  */
 import type { Gate } from "./hold.ts";
@@ -216,7 +217,7 @@ export type ThreadFactsRow = { id: string; archived: boolean; settled: boolean; 
 /** A whole read of an adapter's server. `complete` is false when the answer may be partial, and then it says nothing about a thread it lacks. */
 export type ThreadSnapshot = { complete: boolean; threads: ThreadFactsRow[] };
 
-export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot" | "alertDesk";
+export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot" | "alertDesk" | "handoffInstruction";
 
 /**
  * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
@@ -272,6 +273,12 @@ export interface Adapter {
 	readonly compact?: WakeTransport;
 	/** The Alert Desk thread: its wake transport and busy gate. */
 	readonly alertDesk?: AlertDeskLane;
+	/**
+	 * How the Steward starts its own hand-off on this backend: one or two sentences the hand-off wake carries (T3: run the `/steward-handoff`
+	 * command). When the Steward-health check says HAND OFF the daemon queues that wake itself. An adapter without this capability leaves
+	 * the hand-off to the operator: the daemon asks them instead.
+	 */
+	handoffInstruction?(): string;
 
 	// -- wording --
 
@@ -327,7 +334,7 @@ export type AdapterEntry = { create: AdapterFactory; brief?: (ctx: { repo: strin
 export function has<K extends OptionalCapability>(a: Adapter, cap: K): a is Adapter & Required<Pick<Adapter, CapabilityMethod[K]>> {
 	return a.capabilities.includes(cap);
 }
-type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot"; alertDesk: "alertDesk" };
+type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot"; alertDesk: "alertDesk"; handoffInstruction: "handoffInstruction" };
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
 export function conformance(a: Adapter): string[] {
@@ -335,7 +342,7 @@ export function conformance(a: Adapter): string[] {
 	if (!a.id) bad.push("no id");
 	for (const m of ["watch", "isBusy", "post"] as const) if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
 	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function") bad.push("required capability wake needs ready() and send()");
-	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot, alertDesk: a.alertDesk };
+	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot, alertDesk: a.alertDesk, handoffInstruction: a.handoffInstruction };
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);
 		if (declared && !impl) bad.push(`declares ${cap} but does not implement it`);

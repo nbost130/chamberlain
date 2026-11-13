@@ -17,7 +17,7 @@ import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
 import type { Question } from "../core/questions.ts";
 
-export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk"];
+export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk", "handoffInstruction"];
 
 /** What `inspect` reports for one thread; anything unset reads as empty. */
 export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
@@ -154,6 +154,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		...(caps.has("stewardProbe") ? { stewardProbe: () => fake.probe } : {}),
 		...(caps.has("snapshot") ? { snapshot: async () => { if (fake.snapshotError) throw Error(fake.snapshotError); return { complete: fake.snapshotComplete, threads: [...fake.listed.values()].map((t) => { const n = normalizeThread(t); return { id: n.id, archived: n.archived, settled: n.settled, pendingRequestId: n.pendingRequestId, status: n.status }; }) }; } } : {}),
 		...(caps.has("alertDesk") ? { alertDesk: { wake: { ready: () => deskReady, send: async (deliveryId: string, message: string) => { handles.deskAttempts++; handles.deskWakes.push({ deliveryId, message }); return { ok: true, status: 202 }; } }, isBusy: () => deskBusy } } : {}),
+		...(caps.has("handoffInstruction") ? { handoffInstruction: () => "Run the hand-off now." } : {}),
 		...(caps.has("compact") ? { compact: { ready: () => wakeReady, send: async (deliveryId: string) => { handles.compactions.push(deliveryId); return { ok: true, status: 202 }; } } satisfies WakeTransport } : {}),
 	};
 	Object.assign(adapter, optional);

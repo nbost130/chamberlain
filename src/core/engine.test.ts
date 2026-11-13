@@ -27,7 +27,7 @@ afterEach(async () => {
 
 type Logged = { event: string; [k: string]: unknown };
 /** A scratch config and state directory, a fake backend, and an engine on them, fast enough to test (milliseconds, not minutes). */
-function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean; gh?: EngineDeps["gh"] } = {}) {
+function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean; gh?: EngineDeps["gh"]; ask?: EngineDeps["ask"] } = {}) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
 	dirs.push(root);
 	const conf = `${root}/conf`;
@@ -41,7 +41,7 @@ function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: s
 	const clock = { t: Date.now() };
 	const events: Logged[] = [];
 	const deps: EngineDeps = {
-		conf, lock: testRelayLock(store), store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false, gh: o.gh,
+		conf, lock: testRelayLock(store), store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false, gh: o.gh, ask: o.ask,
 		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 		log: (event, data) => events.push({ event, ...data }),
 		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -659,5 +659,91 @@ describe("fix round 1: recovery is OFF unless asked for, and the production laun
 	test("the daemon launcher turns it on only for CHAMBERLAIN_RECOVER=1", () => {
 		const src = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
 		expect(src).toContain('recover: process.env.CHAMBERLAIN_RECOVER === "1"');
+	});
+});
+
+describe("wakes carry the rights and rulings only when they changed", () => {
+	const waitingOn = (r: ReturnType<typeof rig>, id: string, req: string) => {
+		r.fake.threads.set(id, { waiting: [{ ...question, requestId: req }] });
+		r.fake.emit({ kind: "needs_input", thread: thread(id, "waiting", { pendingRequestId: req }) });
+	};
+	test("unchanged rights give the one-line pointer, and a toggle of away mode never re-sends the block", async () => {
+		const r = rig({ steward: "steward-1" });
+		r.fake.probe = { readable: true, contextTokens: 1000 };
+		waitingOn(r, "t1", "req-1");
+		await r.until("the first wake", () => r.fake.wakes.length === 1);
+		expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
+		r.fake.probe = { readable: true, contextTokens: 2000 };
+		waitingOn(r, "t2", "req-2");
+		await r.until("the second wake", () => r.fake.wakes.length === 2);
+		const pointer = r.fake.wakes[1]!.message.split("\n").filter((l) => l.startsWith("Decision rights and rulings unchanged since"));
+		expect(pointer).toHaveLength(1);
+		expect(r.fake.wakes[1]!.message).not.toContain("Decision rights (standing rules):");
+		// Away on: the mandate rides the wake, the block still does not.
+		r.store.away.enter({ enteredAt: new Date().toISOString(), words: "back at five" });
+		r.fake.probe = { readable: true, contextTokens: 3000 };
+		waitingOn(r, "t3", "req-3");
+		await r.until("the away wake", () => r.fake.wakes.length === 3);
+		expect(r.fake.wakes[2]!.message).not.toContain("Decision rights (standing rules):");
+		expect(r.fake.wakes[2]!.message).toContain(pointer[0]!);
+		expect(r.fake.wakes[2]!.message).toContain("back at five");
+		// Away off: still the pointer.
+		r.store.away.exit(new Date().toISOString());
+		r.fake.probe = { readable: true, contextTokens: 4000 };
+		waitingOn(r, "t4", "req-4");
+		await r.until("the wake after", () => r.fake.wakes.length === 4);
+		expect(r.fake.wakes[3]!.message).not.toContain("Decision rights (standing rules):");
+		expect(r.fake.wakes[3]!.message).toContain(pointer[0]!);
+	});
+
+	test("a changed ruling sends the full block again", async () => {
+		const r = rig({ steward: "steward-1" });
+		r.fake.probe = { readable: true, contextTokens: 1000 };
+		waitingOn(r, "t1", "req-1");
+		await r.until("the first wake", () => r.fake.wakes.length === 1);
+		r.fake.probe = { readable: true, contextTokens: 2000 };
+		waitingOn(r, "t2", "req-2");
+		await r.until("the second wake", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.message).not.toContain("Decision rights (standing rules):");
+		r.priv("decision-rights.md", "The Steward may merge green PRs and nothing else.");
+		r.fake.probe = { readable: true, contextTokens: 3000 };
+		waitingOn(r, "t3", "req-3");
+		await r.until("the third wake", () => r.fake.wakes.length === 3);
+		expect(r.fake.wakes[2]!.message).toContain("Decision rights (standing rules):");
+		expect(r.fake.wakes[2]!.message).toContain("and nothing else.");
+	});
+});
+
+describe("a HAND OFF verdict from the Steward-health check", () => {
+	/** A transcript on disk that reads as degraded: the Steward has read its own transcript three times. */
+	function degradedTranscript(): string {
+		const dir = mkdtempSync(`${tmpdir()}/chamberlain-health-`);
+		dirs.push(dir);
+		const path = `${dir}/session-1.jsonl`;
+		const call = (i: number) => ({ type: "assistant", timestamp: `2026-11-13T18:0${i}:00Z`, message: { usage: { input_tokens: 1000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: "tool_use", id: `read-${i}`, name: "Read", input: { file_path: `${dir}/session-1.jsonl` } }] } });
+		writeFileSync(path, [1, 2, 3].map((i) => JSON.stringify(call(i))).join("\n") + "\n");
+		return path;
+	}
+
+	test("starts the hand-off itself as a wake through the outbox and relay, and asks the operator nothing", async () => {
+		const asked: object[] = [];
+		const r = rig({ steward: "steward-1", housekeeping: true, ask: async (raw) => { asked.push(raw); } });
+		r.fake.transcript = { path: degradedTranscript(), session: "session-1", thread: "steward-1" };
+		await r.engine.tick();
+		await r.until("the hand-off wake", () => r.fake.wakes.some((w) => w.deliveryId === "steward-handoff:session-1"));
+		const w = r.fake.wakes.find((x) => x.deliveryId === "steward-handoff:session-1")!;
+		expect(w.message).toContain("Run the hand-off now.");
+		expect(w.message).toContain("Steward health: HAND OFF");
+		expect(asked).toEqual([]);
+	});
+
+	test("asks the operator instead when the adapter cannot say how a Steward hands off", async () => {
+		const asked: any[] = [];
+		const r = rig({ steward: "steward-1", housekeeping: true, capabilities: ["transcriptPath"], ask: async (raw) => { asked.push(raw); } });
+		r.fake.transcript = { path: degradedTranscript(), session: "session-1", thread: "steward-1" };
+		await r.engine.tick();
+		await r.until("the question", () => asked.length === 1);
+		expect(asked[0].tag).toBe("steward-health:session-1");
+		expect(r.fake.wakes.filter((w) => w.deliveryId.startsWith("steward-handoff:"))).toEqual([]);
 	});
 });

@@ -32,7 +32,7 @@ import { openRightsSent, rightsFor, rightsHighWater } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
 import type { Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
-import { HEALTH_CONFIG, healthTicker, liveHealth } from "./steward-health.ts";
+import { HEALTH_CONFIG, handoffDeliveryId, handoffWakeMessage, healthTicker, liveHealth, type Health } from "./steward-health.ts";
 import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
 import { BUSY_TURNS, commitsAhead, configuredSources, renderSweepPrompt, runawaySource, SWEEP_MS, sweepAction, sweepClock, sweepMessage, type BusyFact, type SweepClock } from "./sweep.ts";
 
@@ -68,7 +68,7 @@ export type EngineDeps = {
 	timing?: Partial<EngineTiming>;
 	/** Extra relay options (tests: the pause between attempts, the attempts, the hold ceiling, a clock). */
 	relay?: Partial<Pick<RelayDeps, "retryAfterMs" | "maxAttempts" | "staleAfterMs" | "now" | "ceilingMs">>;
-	/** Runs `ask.ts` for the Steward-health hand-off question. Undefined: that question is not asked. */
+	/** Runs `ask.ts` for the Steward-health hand-off question, asked only when the adapter cannot start the hand-off itself (no `handoffInstruction`). Undefined: that question is not asked. */
 	ask?: (raw: object) => Promise<void>;
 	/** The Steward's compaction size, in tokens. */
 	compactAt?: number;
@@ -568,8 +568,12 @@ export function createEngine(d: EngineDeps) {
 	}
 
 	const ask = d.ask;
-	const healthTick = ask && has(homeAdapter, "transcriptPath")
-		? healthTicker({ store, server: () => home.name, collect: () => liveHealth(() => homeAdapter.transcriptPath!()), ask })
+	const healthTick = has(homeAdapter, "transcriptPath")
+		? healthTicker({
+			store, server: () => home.name, collect: () => liveHealth(() => homeAdapter.transcriptPath!()), ...(ask ? { ask } : {}),
+			// A HAND OFF verdict starts the hand-off itself when the adapter says how: a wake, as an outbox row like any other, so the relay's attempts and dead-letter rules apply. Without that capability the operator is asked.
+			...(has(homeAdapter, "handoffInstruction") ? { handoff: (h: Health, session: string) => { outbox.deliver(handoffWakeMessage(h, homeAdapter.handoffInstruction()), handoffDeliveryId(session), { kind: "handoff" }); } } : {}),
+		})
 		: undefined;
 
 	/**

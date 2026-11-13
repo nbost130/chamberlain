@@ -105,6 +105,7 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`transcriptPath()`** points at the Steward's Claude Code transcript for the health check (and may give
   `threadReadKey` so the check can count repeated reads of one thread).
 - **`stewardProbe()`** returns `{ readable, contextTokens?, stalled?, compactBlocked? }` once a minute.
+- **`handoffInstruction()`** returns the sentence the hand-off wake carries: how the Steward on this backend starts its own hand-off (T3: run `/steward-handoff`). With it, a HAND OFF verdict from the health check is a wake the daemon queues itself; without it the operator is asked instead (docs/steward-health.md).
 - **`snapshot()`** returns a fresh, whole read of every thread on the server, `{ complete, threads: [{ id, archived, settled, pendingRequestId, status }] }`, taken now over a connection of its own and never from the watcher's cache. It rejects when the server cannot be reached. The held-ledger reconciler closes a hold on a thread only from this: an unreachable server, a partial answer or an adapter without it leaves that thread unknown.
 - **`compact`** is a wake transport whose `send` takes no message.
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy

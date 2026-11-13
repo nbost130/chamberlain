@@ -120,7 +120,8 @@ The webhook dies if its bound thread is deleted.
 
 **4. Write the Steward's rules.** `~/.config/chamberlain/decision-rights.md` is your standing decision rights, in your own
 words: what the Steward may decide, what it must ask you. It is copied verbatim into every wake (in full after a
-compaction, otherwise as a one-line "unchanged"). Start from [`examples/decision-rights.md`](examples/decision-rights.md).
+compaction or after you change it, otherwise as a one-line pointer to the hand-off that holds it; the away mandate rides
+every wake and never makes the rules count as changed). Start from [`examples/decision-rights.md`](examples/decision-rights.md).
 Set your name for the wakes with `principalName` in `settings.json` ([`examples/settings.json`](examples/settings.json));
 without it they say "the operator".
 
@@ -164,7 +165,7 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `read-token` | T3 adapter: yes (or per-server `tokenFile`) | An `orchestration:read` token for the default server. Never logged. |
 | `wake-url` | T3 adapter: to deliver | The webhook URL of the scheduled task bound to the Steward's thread. Never logged. |
 | `steward-thread` | recommended | The Steward's thread id (for another adapter, whatever id it uses for the Steward). The daemon never wakes the Steward about itself, and uses it for the busy gate, stall alarm and compaction. |
-| `decision-rights.md` | recommended | Your standing rules, in your words, verbatim in every wake. Without it a wake tells the Steward to hold anything on the ASK list. |
+| `decision-rights.md` | recommended | Your standing rules, in your words, verbatim in a wake whenever it may be new to the Steward (a one-line pointer otherwise). Without it a wake tells the Steward to hold anything on the ASK list. |
 | `decisions-thread` | T3 adapter: for the inline view | The pinned Decisions thread's id. `ask.ts` posts there and refuses to run without it. |
 | `compact-url` | T3 adapter: optional | Webhook whose task prompt is `/compact`. Without it the daemon only alarms that the Steward is over its size. |
 | `settings.json` | optional | See below. |

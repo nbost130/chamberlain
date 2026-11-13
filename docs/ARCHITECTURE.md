@@ -85,6 +85,7 @@ optional ones it has in `capabilities`. The core and the page degrade cleanly wh
 | `inspect` | optional | Reads of one thread for building a wake: last message, what it waits on, subagents, its latest instruction. | a turn end wakes once per turn with no excerpt or question; there is no report gating |
 | `send` | optional | Sends a message into a thread as the Steward. | an option routed straight to its thread goes to the Steward instead |
 | `stewardProbe` | optional | The Steward's context size, stall and whether a compaction may go. | no stall alarm, no size tracking, no compaction |
+| `handoffInstruction` | optional | How the Steward starts its own hand-off on this backend; the health check's HAND OFF verdict queues that wake. | the operator is asked to hand off instead |
 | `compact` | optional | How a compaction request reaches the Steward. | the daemon only alarms that the Steward is over its size |
 
 Thread states use one vocabulary whatever the backend says (`running`, `queued`, `starting`, `preparing`, `waiting`,
