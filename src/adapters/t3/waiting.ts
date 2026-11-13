@@ -24,6 +24,7 @@ import { createRpcPing, messageCommand, openWithin, readToken, redact, stableId,
 export { redact, stableId, within, CALL_TIMEOUT_MS };
 import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { normalizeWaitKind } from "./state.ts";
+import { checkProjection } from "./projection.ts";
 import { tagIn } from "../../core/questions.ts";
 import type { AnswerOutcome, ListWaitingOptions, WaitingCard } from "../../core/adapter.ts";
 import type { T3Server } from "./server.ts";
@@ -112,7 +113,13 @@ async function snapshot(rpc: Rpc, timeoutMs = 10_000): Promise<ShellThread[]> {
 	return await new Promise<ShellThread[]>((resolve, reject) => {
 		const timer = setTimeout(() => reject(Error("snapshot timed out")), timeoutMs);
 		rpc.call("orchestration.subscribeShell", {}, (v) => {
-			if (v?.kind === "snapshot" && v.snapshot) { clearTimeout(timer); resolve((v.snapshot.threads ?? []) as ShellThread[]); }
+			if (v?.kind === "snapshot" && v.snapshot) {
+				clearTimeout(timer);
+				// A snapshot with no thread list, or a thread with no id, is malformed: an empty mirror would say nothing waits.
+				const threads: unknown = v.snapshot.threads;
+				if (!Array.isArray(threads) || !threads.every((t) => typeof t === "object" && t !== null && typeof (t as ShellThread).id === "string" && (t as ShellThread).id !== "")) reject(Error("malformed snapshot"));
+				else resolve(threads as ShellThread[]);
+			}
 		}).catch((e) => { clearTimeout(timer); reject(e); });
 	});
 }
@@ -164,12 +171,14 @@ export function createT3Waiting(d: WaitingDeps) {
 	const goalSeen = new Map<string, { updatedAt: string; proposal?: { messageId: string; goal: string } }>();
 	const GOAL_WINDOW_MS = 7 * 24 * 3600_000;
 	const GOAL_READS_PER_POLL = 40;
-	const project = (rpc: { request: Rpc["request"] }, threadId: string) => within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as Promise<{ turnItems?: TurnItem[]; runs?: { status?: string }[] }>;
+	/** A projection in the expected shape, or a throw (projection.ts): a malformed one never reads as "nothing waiting". */
+	const project = async (rpc: { request: Rpc["request"] }, threadId: string) => checkProjection(await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read")) as { turnItems: TurnItem[]; runs?: { status?: string }[] };
 	const open_ = (token: string) => openWithin(conn, s.origin, token, ms);
 
 	async function listWaiting(o: ListWaitingOptions): Promise<MirrorCard[]> {
 		const token = readToken(d.conf, s.tokenFile);
-		if (!token) return [];
+		// No token is a server that cannot be read, not one with nothing waiting: the page keeps its last cards and says so.
+		if (!token) throw Error(`no ${s.tokenFile}`);
 		const skip = new Set(o.skipThreads);
 		const canAnswer = Boolean(readToken(d.conf, s.operateTokenFile));
 		try {
@@ -181,7 +190,7 @@ export function createT3Waiting(d: WaitingDeps) {
 				const cards: MirrorCard[] = [];
 				for (const t of threads) {
 					const p = await project(rpc, t.id);
-					cards.push(...cardsFrom(s.name, canAnswer, t, p.turnItems ?? [], link(t)));
+					cards.push(...cardsFrom(s.name, canAnswer, t, p.turnItems, link(t)));
 				}
 				// Goal proposals: idle, unsettled, unarchived threads changed in the last week.
 				let reads = 0;
@@ -198,7 +207,7 @@ export function createT3Waiting(d: WaitingDeps) {
 						if (reads >= GOAL_READS_PER_POLL) continue;
 						reads++;
 						const p = await project(rpc, t.id);
-						seen = { updatedAt: at, proposal: goalProposal(p.turnItems ?? []) };
+						seen = { updatedAt: at, proposal: goalProposal(p.turnItems) };
 						goalSeen.set(key, seen);
 					}
 					if (seen.proposal) cards.push(goalCard(s.name, canAnswer, t, seen.proposal, link(t)));

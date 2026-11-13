@@ -11,7 +11,7 @@
  * `capabilities` chooses which optional capabilities it declares (default: all of them). A capability it does not
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
-import { normalizeThread, type Adapter, type AnswerOutcome, type Inspector, type OptionalCapability, type PostOptions, type PostResult, type RunFailure, type RunLook, type StewardProbe, type ThreadEvent, type ThreadInput, type Transcript, type WaitingCard, type WaitingItem, type WatchSink } from "../core/adapter.ts";
+import { normalizeThread, type Adapter, type AnswerOutcome, type Inspector, type OptionalCapability, type PostOptions, type PostResult, type RunFailure, type RunLook, type StewardProbe, type ThreadEvent, type ThreadInput, type Transcript, type WaitingCard, type WaitingItem, type WaitingRead, type WatchSink } from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
 import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
@@ -19,8 +19,13 @@ import type { Question } from "../core/questions.ts";
 
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk", "handoffInstruction"];
 
-/** What `inspect` reports for one thread; anything unset reads as empty. */
-export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
+/**
+ * What `inspect` reports for one thread; anything unset reads as empty. `waiting` is an authoritative listing taken now,
+ * unless `waitingRead` replaces the whole result (an `ok: false`, an old `at`, or a shape that breaks the contract) or
+ * `waitingError` makes the read throw. Otherwise, while the fake is not connected, every waiting read is `ok: false`, as the
+ * contract says. `waitingRead` is returned whatever the connection, so a test can prove the core does not believe it.
+ */
+export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; waitingRead?: WaitingRead | (() => WaitingRead); waitingError?: string; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
 
 export type FakeOptions = {
 	id?: string;
@@ -58,6 +63,8 @@ export type FakeAdapter = Adapter & {
 	snapshotComplete: boolean;
 	emit(e: ThreadEvent): void;
 	unlist(id: string): void;
+	/** The watcher's connection drops (false) or comes back (true), as a real server's socket does; `watch` keeps running. */
+	setConnected(up: boolean): void;
 	setBusy(g: Gate): void;
 	setDeskBusy(g: Gate): void;
 	setDeskReady(ready: boolean): void;
@@ -115,7 +122,13 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 	};
 	const inspect: Inspector = {
 		lastMessage: async (id) => fake.threads.get(id)?.lastMessage ?? "",
-		waiting: async (id) => fake.threads.get(id)?.waiting ?? [],
+		waiting: async (id): Promise<WaitingRead> => {
+			const th = fake.threads.get(id);
+			if (th?.waitingError) throw Error(th.waitingError);
+			if (th?.waitingRead) return typeof th.waitingRead === "function" ? th.waitingRead() : th.waitingRead;
+			if (!fake.connected) return { ok: false, reason: "fake is not connected" };
+			return { ok: true, cards: th?.waiting ?? [], at: Date.now() };
+		},
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
 		instruction: async (id) => fake.threads.get(id)?.instruction ?? { items: [], state: "complete", byMachine: false },
 		failure: async (id) => fake.threads.get(id)?.failure,
@@ -164,6 +177,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		/** Reports a thread event as the backend would. Events emitted before `watch` starts are kept and delivered when it does. */
 		emit(e: ThreadEvent) { fake.listed.set(e.thread.id, e.thread); if (sink) sink.event(e); else early.push(e); },
 		unlist(id: string) { fake.listed.delete(id); },
+		setConnected(up: boolean) { fake.connected = up; sink?.connected(up); },
 		setBusy(g: Gate) { busy = g; },
 		setDeskBusy(g: Gate) { deskBusy = g; },
 		setDeskReady(ready: boolean) { deskReady = ready; },

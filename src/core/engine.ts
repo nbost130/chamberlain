@@ -11,7 +11,7 @@ import { closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
 import { cardWaitOf, holdCard, reconcileCardHolds, type CardThreadRead } from "./card-hold.ts";
 import type { Question } from "./questions.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
-import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
+import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem, type WaitingRead, isWaitingRead } from "./adapter.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal } from "./config.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
@@ -165,6 +165,8 @@ export function createEngine(d: EngineDeps) {
 		states = new Map<string, ThreadState>();
 		timers = new Map<string, ReturnType<typeof setTimeout>>();
 		connected = false;
+		/** Counts every change of `connected`: a read whose epoch moved while it was out spanned a disconnect, so it is not believed. */
+		epoch = 0;
 		version: string | undefined;
 		lastOk = Date.now();
 		lastEventAt = 0;
@@ -220,7 +222,20 @@ export function createEngine(d: EngineDeps) {
 
 		private lastMessage = (threadId: string) => (this.inspect ? this.inspect.lastMessage(threadId) : Promise.resolve(""));
 		subagents = (threadId: string) => (this.inspect ? this.inspect.runningSubagents(threadId) : Promise.resolve(0));
-		private waitingItems = (threadId: string): Promise<WaitingItem[]> => (this.inspect ? this.inspect.waiting(threadId) : Promise.resolve([]));
+		/**
+		 * What a thread waits on, as a `WaitingRead`. Only `ok: true` is a listing: a thrown read, an answer that breaks the contract,
+		 * or a read that spanned a disconnect is `ok: false`. An adapter with no `inspect` lists nothing, and says so as `ok: true`
+		 * (the needs-input path then wakes on the thread's own status; the card reconciler never reads through this).
+		 */
+		waitingRead = async (threadId: string): Promise<WaitingRead> => {
+			if (!this.inspect) return { ok: true, cards: [], at: Date.now() };
+			if (!this.connected) return { ok: false, reason: `${this.srv.name} is not connected` };
+			const epoch = this.epoch;
+			const r: unknown = await this.inspect.waiting(threadId).catch((e: unknown) => ({ ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) }));
+			if (!isWaitingRead(r)) return { ok: false, reason: "the adapter's waiting read did not keep the WaitingRead contract" };
+			if (r.ok && (!this.connected || this.epoch !== epoch)) return { ok: false, reason: `${this.srv.name} disconnected during the read` };
+			return r;
+		};
 
 		/** A thread that went idle with open work: an open PR, or commits on its branch that have not merged. */
 		async idleWork(th: ThreadState, read: InstructionRead): Promise<{ key: string; work: string } | undefined> {
@@ -303,11 +318,14 @@ export function createEngine(d: EngineDeps) {
 				}
 			} else if (c.kind === "needs_input") {
 				if (!live.pendingRequestId && live.status !== "waiting") return;
-				let items = await this.waitingItems(live.id).catch(this.readFailed("waiting items", live.id, [] as WaitingItem[]));
+				let read = await this.waitingRead(live.id);
 				// The projection can lag the status by a moment: look once more before calling the wait empty.
-				if (this.inspect && !items.length && !live.pendingRequestId) { await Bun.sleep(t.lagMs); items = await this.waitingItems(live.id).catch(this.readFailed("waiting items", live.id, [] as WaitingItem[])); }
+				if (this.inspect && read.ok && !read.cards.length && !live.pendingRequestId) { await Bun.sleep(t.lagMs); read = await this.waitingRead(live.id); }
+				// A failed read is not "nothing waiting": it is logged, and the thread's own status is the request, so it still wakes.
+				if (!read.ok) log("read-failed", { server: this.srv.name, threadId: live.id, what: "waiting items", error: read.reason });
+				const items: WaitingItem[] = read.ok ? read.cards : [];
 				// With nothing to read the thread's own status is the request.
-				const route = routeNeedsInput(items, Boolean(live.pendingRequestId) || !this.inspect, Boolean(readAfk(store)));
+				const route = routeNeedsInput(items, Boolean(live.pendingRequestId) || !this.inspect || !read.ok, Boolean(readAfk(store)));
 				if (route === "skip-empty") { log("skip-empty-wait", { server: this.srv.name, threadId: live.id }); return; }
 				// A request is seen once per (server, request ID): two servers may use the same request ID.
 				const reqKey = (requestId: string) => `req:${this.srv.name}:${requestId}`;
@@ -437,7 +455,7 @@ export function createEngine(d: EngineDeps) {
 			return this.adapter.watch({
 				event: (e) => this.onEvent(e),
 				// A fresh connection is when a restart can first see which held cards resolved while the daemon was down.
-				connected: (up, info) => { this.connected = up; if (!up) this.lastOk = Date.now(); if (info?.version) this.version = info.version; if (up) void cardReconcileTick(); },
+				connected: (up, info) => { if (up !== this.connected) this.epoch++; this.connected = up; if (!up) this.lastOk = Date.now(); if (info?.version) this.version = info.version; if (up) void cardReconcileTick(); },
 				log: (event, data) => log(event, data),
 			}, this.controller.signal).catch((e) => log("watch-error", { server: this.srv.name, error: String(e instanceof Error ? e.message : e).slice(0, 200) }));
 		}
@@ -653,38 +671,49 @@ export function createEngine(d: EngineDeps) {
 
 	/**
 	 * Card holds against the cards actually waiting (card-hold.ts `reconcileCardHolds`): every tick and on every (re)connection,
-	 * so a card answered, withdrawn or gone while the daemon was down closes its question and hold, exactly once. A thread is read
-	 * through its own server's adapter, and only while that server's watcher is connected (a disconnected adapter's read is empty,
-	 * not "nothing waiting"). A read that fails falls back to a fresh snapshot of that server: a thread missing from a whole snapshot,
-	 * or archived, is gone. Anything else is unknown, and its cards stay open.
+	 * so a card answered, withdrawn or gone while the daemon was down closes its question and hold, exactly once. A card closes
+	 * ONLY on an authoritative listing (`WaitingRead` `ok: true`) of its own server, begun after the card was held, that omits
+	 * it. A thread is read through its own server's watcher (`waitingRead`): a server not connected now (a `mayBeOffline` one
+	 * asleep included), a read that throws or is malformed, and a read that spans a disconnect are all `ok: false`, and close
+	 * nothing. When a connected server's read fails, a fresh whole snapshot of that server (its own connection, begun before it
+	 * is taken) may still show the thread gone: missing from the snapshot, or archived. Anything else is unknown, and its cards
+	 * stay open. A server whose reads fail is logged once per episode, and once more when they recover.
 	 */
 	let reconcilingCards: Promise<void> | undefined;
 	/** Asked for while a pass ran: that pass may have read before the change, so one more runs after it. */
 	let cardsAgain = false;
+	/** Servers whose card reads are failing now, with the first reason: one log line per episode. */
+	const cardReadFailing = new Map<string, string>();
 	function cardReconcileTick(): Promise<void> {
 		if (reconcilingCards) { cardsAgain = true; return reconcilingCards; }
 		reconcilingCards = (async () => {
-			const snaps = new Map<string, Promise<CardThreadRead | Map<string, boolean>>>();
+			const snaps = new Map<string, Promise<{ at: number; threads: Map<string, boolean> } | undefined>>();
 			const snapshotOf = (w: Watcher) => {
 				if (!snaps.has(w.srv.name)) snaps.set(w.srv.name, (async () => {
-					if (!has(w.adapter, "snapshot")) return { state: "unknown" } as const;
+					if (!has(w.adapter, "snapshot")) return undefined;
+					const at = Date.now();
 					const snap = await w.adapter.snapshot().catch(() => undefined);
-					return snap?.complete ? new Map(snap.threads.map((t) => [t.id, t.archived])) : ({ state: "unknown" } as const);
+					return snap?.complete && Array.isArray(snap.threads) ? { at, threads: new Map(snap.threads.map((t) => [t.id, t.archived])) } : undefined;
 				})());
 				return snaps.get(w.srv.name)!;
 			};
 			const read = async (server: string, threadId: string): Promise<CardThreadRead> => {
 				const w = watchers.find((x) => x.srv.name === server);
-				if (!w || !w.connected || !has(w.adapter, "inspect")) return { state: "unknown" };
-				try { return { state: "read", waiting: new Set((await w.adapter.inspect.waiting(threadId)).map((i) => i.requestId)) }; } catch {
-					const snap = await snapshotOf(w);
-					if (!(snap instanceof Map)) return { state: "unknown" };
-					return !snap.has(threadId) || snap.get(threadId) === true ? { state: "gone" } : { state: "unknown" };
-				}
+				if (!w) return { ok: false, reason: `no watcher for ${server}` };
+				if (!has(w.adapter, "inspect")) return { ok: false, reason: `${server} has no inspect capability` };
+				if (!w.connected) return { ok: false, reason: `${server} is not connected` };
+				const r = await w.waitingRead(threadId);
+				if (r.ok) return { ok: true, at: r.at, waiting: new Set(r.cards.map((i) => i.requestId)) };
+				const snap = await snapshotOf(w);
+				if (snap && (!snap.threads.has(threadId) || snap.threads.get(threadId) === true)) return { ok: true, at: snap.at, waiting: new Set(), gone: true };
+				return { ok: false, reason: r.reason };
 			};
 			try {
-				const { closed } = await reconcileCardHolds(store, read);
+				const { closed, failed } = await reconcileCardHolds(store, read);
 				for (const c of closed) log("card-reconciled", { server: c.server, threadId: c.threadId, requestId: c.requestId });
+				const failing = new Set(failed.map((f) => f.server));
+				for (const f of failed) if (!cardReadFailing.has(f.server)) { cardReadFailing.set(f.server, f.reason); log("card-read-unavailable", { server: f.server, reason: f.reason }); }
+				for (const server of [...cardReadFailing.keys()]) if (!failing.has(server)) { cardReadFailing.delete(server); log("card-read-recovered", { server }); }
 			} catch (e) { log("held-reconcile-error", { pass: "cards", error: String(e).slice(0, 200) }); }
 		})().finally(() => { reconcilingCards = undefined; if (cardsAgain) { cardsAgain = false; void cardReconcileTick(); } });
 		return reconcilingCards;

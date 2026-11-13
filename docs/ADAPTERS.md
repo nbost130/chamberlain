@@ -90,15 +90,26 @@ notice. Return `{ ok, detail, where: "view" | "notice" }`. Item text is data: qu
 Declare each one you implement in `capabilities` and give it a method; do not declare one you do not implement. Each
 missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITECTURE.md#the-adapter-contract)).
 
-- **`inspect`** (`lastMessage`, `waiting`, `runningSubagents`, `instruction`) reads one thread when a wake is built. It may
-  reject (the core logs it and goes on); `instruction` never rejects, it returns a state (`complete`, `truncated`, `failed`)
-  that says whether "nothing to report" can be believed. Without `inspect` the core has no way to know who instructed a
-  thread, so a turn end is reported once per turn instead of only for work the Steward sent.
+- **`inspect`** (`lastMessage`, `waiting`, `runningSubagents`, `instruction`) reads one thread when a wake is built.
+  `lastMessage` and `runningSubagents` may reject (the core logs it and goes on); `instruction` never rejects, it returns a
+  state (`complete`, `truncated`, `failed`) that says whether "nothing to report" can be believed, and `waiting` never
+  rejects either (below). Without `inspect` the core has no way to know who instructed a thread, so a turn end is reported
+  once per turn instead of only for work the Steward sent.
+- **`waiting` returns a `WaitingRead`, and only `ok: true` is a listing.** `{ ok: true, cards, at }` says the backend was
+  connected for the whole read and answered in exactly the shape you expect: `cards` is everything the thread waits on,
+  so an empty list means nothing waits, and `at` is when the read began (ms since the epoch). Everything else is
+  `{ ok: false, reason }`: the server down or not connected right now (a `mayBeOffline` server that is asleep included),
+  the connection dropping or being replaced while the read was out, any error, and any answer whose shape you do not
+  recognise. Validate the shape strictly; never turn a missing or malformed field into an empty list, because the core
+  closes card holds on an empty listing. The core treats a result that breaks this contract as `ok: false`.
 - **Card holds read `waiting`.** While the operator is away, every `approval_request`, `secret_request` or `link_request` that
   `waiting` reports is held behind a pointer question (src/core/card-hold.ts). Map your backend's own kinds onto `WaitKind`
-  there, give each card a stable `requestId` (the same one `ThreadState.pendingRequestId` carries, so the hold closes when it
-  changes), and keep `label` to a short name of what is asked: the core copies `type`, `requestId` and `label` and nothing else,
-  so a value or a prompt belongs in `questions`, which the hold never reads.
+  there, give each card a stable `requestId` (the same one `ThreadState.pendingRequestId` carries), and keep `label` to a
+  short name of what is asked: the core copies `type`, `requestId` and `label` and nothing else, so a value or a prompt
+  belongs in `questions`, which the hold never reads. A card hold and its question close only on an `ok: true` read of the
+  card's own server, begun after the hold was written, that no longer lists the card's (server, `requestId`); or, when a
+  connected server's read fails, on a whole `snapshot` of that server, begun after the hold, from which the thread is
+  missing or archived. An `ok: false` read closes nothing, and the core logs it once per episode.
 - **`listWaiting` and `answer`** are the page's card mirror. `listWaiting({ skipThreads, linkBase })` returns
   `WaitingCard`s and throws when the server cannot be read. Each card carries a `sig`, a fingerprint of everything it asks;
   `answer(card, choice, sig)` must re-read the card live and refuse (`kind: "stale"`) unless it is unchanged, and must

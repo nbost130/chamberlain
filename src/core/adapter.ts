@@ -110,6 +110,24 @@ export type WaitQuestion = { question?: string; options?: { label?: string; desc
 export type WaitingItem = { type: WaitKind; requestId: string; label: string; questions: WaitQuestion[] };
 
 /**
+ * A read of what one thread is waiting on. `ok: true` is AUTHORITATIVE: the backend was connected, answered, and its answer
+ * had exactly the expected shape, so `cards` is everything the thread waits on, and an empty list means nothing waits. `at`
+ * is when the read began (ms since the epoch): a listing older than a hold never closes it. Everything else is `ok: false`
+ * with a reason: a server that is down or not connected now (a `mayBeOffline` server that is asleep included), any error,
+ * and any answer in a shape the adapter does not expect. It is never `ok: true` with an empty list. `waiting` never rejects.
+ */
+export type WaitingRead = { ok: true; cards: WaitingItem[]; at: number } | { ok: false; reason: string };
+
+/** Pure: does a value from an adapter keep the `WaitingRead` contract? The core treats anything else as `ok: false`. */
+export function isWaitingRead(r: unknown): r is WaitingRead {
+	if (!r || typeof r !== "object") return false;
+	const o = r as Record<string, unknown>;
+	if (o.ok === false) return typeof o.reason === "string";
+	return o.ok === true && Array.isArray(o.cards) && typeof o.at === "number" && Number.isFinite(o.at)
+		&& o.cards.every((c) => !!c && typeof c === "object" && typeof (c as WaitingItem).requestId === "string" && (c as WaitingItem).requestId !== "" && typeof (c as WaitingItem).type === "string");
+}
+
+/**
  * Reads of one thread, made on demand when a wake is being built. A read that fails rejects; the core logs it and carries
  * on with a neutral value (no excerpt, no question, no subagents). `instruction` never rejects: its state says what happened.
  */
@@ -125,8 +143,8 @@ export type RunLook = { latestRunId?: string; latestStatus?: string; /** a run i
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
 	lastMessage(threadId: string): Promise<string>;
-	/** What the thread is waiting on now. */
-	waiting(threadId: string): Promise<WaitingItem[]>;
+	/** What the thread is waiting on now. Never rejects; only an `ok: true` read may be believed (see `WaitingRead`). */
+	waiting(threadId: string): Promise<WaitingRead>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
 	runningSubagents(threadId: string): Promise<number>;
 	/** The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means). */

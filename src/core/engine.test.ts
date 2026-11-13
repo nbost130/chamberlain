@@ -1223,7 +1223,9 @@ describe("(2)(3) card holds after a restart, and across servers", () => {
 		b.emit({ kind: "needs_input", thread: thread("tb", "waiting", { pendingRequestId: "a1" }) });
 		await e.until("both holds", () => heldOpen(store).length === 2);
 		expect(heldOpen(store).map((h) => h.server).sort()).toEqual(["alpha", "beta"]);
-		// The card leaves alpha's thread: alpha's question and hold close, beta's stay.
+		// The card leaves alpha's thread: alpha's question and hold close, beta's stay. A listing closes a card only when it was
+		// begun after the hold was written (in a later millisecond), so the test steps past the hold's millisecond first.
+		await Bun.sleep(2);
 		a.threads.set("ta", { waiting: [] });
 		a.emit({ kind: "state", thread: thread("ta", "running") });
 		await e.until("alpha closed", () => heldOpen(store).length === 1);
@@ -1254,5 +1256,100 @@ describe("(A)(D) one thread waiting on two cards keeps a hold per card; the live
 		await r.engine.tick();
 		expect(heldOpen(r.store).map((h) => h.card!.requestId)).toEqual(["a2"]);
 		expect([...questionStates(r.store).values()].map((q) => [q.cardRequest, q.status]).sort()).toEqual([["a1", "answered-on-card"], ["a2", "open"]]);
+	});
+});
+
+describe("a card hold closes only on an authoritative listing (WaitingRead ok: true) taken after the hold", () => {
+	const card: WaitingItem = { type: "approval_request", requestId: "a1", label: "deploy", questions: [] };
+	/** An engine on one fake server holding card a1 on thread t1 while away; the test then changes what a read of t1 says. */
+	async function held(o: { mayBeOffline?: boolean } = {}) {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-cardauth-`);
+		dirs.push(root);
+		mkdirSync(`${root}/conf`, { recursive: true, mode: 0o700 });
+		writeFileSync(`${root}/conf/decision-rights.md`, "ask", { mode: 0o600 });
+		const store = memStore();
+		store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		const fake = createFakeAdapter();
+		fake.threads.set("t1", { waiting: [card] });
+		const events: Logged[] = [];
+		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake", ...(o.mayBeOffline ? { mayBeOffline: true } : {}) }, adapter: fake }], log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
+		engines.push(engine);
+		void engine.start();
+		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
+		fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
+		await until("the hold", () => events.some((e) => e.event === "held-by-daemon"));
+		// Every read from here on begins in a later millisecond than the hold.
+		await Bun.sleep(2);
+		const open = () => ({ holds: heldOpen(store).length, questions: [...questionStates(store).values()].filter((q) => q.status === "open").length });
+		return { store, fake, engine, events, open };
+	}
+	const emptyNow = () => ({ ok: true as const, cards: [], at: Date.now() });
+
+	test("a disconnect, then an empty list: neither a read while disconnected nor one that spans the disconnect closes anything", async () => {
+		const h = await held();
+		// The server drops, and the backend would now list nothing: the watcher is not connected, so nothing is read or believed.
+		h.fake.setConnected(false);
+		h.fake.threads.set("t1", { waitingRead: emptyNow });
+		await h.engine.tick();
+		expect(h.open()).toEqual({ holds: 1, questions: 1 });
+		// Back up (the card still waits), then the socket drops while a read is out and that read answers "nothing waiting": not believed.
+		h.fake.threads.set("t1", { waiting: [card] });
+		h.fake.setConnected(true);
+		await h.engine.tick();
+		await Bun.sleep(2);
+		// Once only: the reconnection itself asks for another pass, which reads the card still waiting.
+		let dropped = false;
+		h.fake.threads.set("t1", { waitingRead: () => { if (dropped) return { ok: true, cards: [card], at: Date.now() }; dropped = true; h.fake.setConnected(false); h.fake.setConnected(true); return emptyNow(); } });
+		await h.engine.tick();
+		expect(h.open()).toEqual({ holds: 1, questions: 1 });
+		expect(h.events.some((e) => e.event === "card-reconciled")).toBe(false);
+	});
+
+	test("a mayBeOffline server that is offline: an empty answer is never a listing, and nothing closes", async () => {
+		const h = await held({ mayBeOffline: true });
+		h.fake.setConnected(false);
+		let asked = 0;
+		h.fake.threads.set("t1", { waitingRead: () => { asked++; return emptyNow(); } });
+		await h.engine.tick();
+		await h.engine.tick();
+		expect(asked).toBe(0);
+		expect(h.open()).toEqual({ holds: 1, questions: 1 });
+		// Logged once for the episode, not once a tick.
+		expect(h.events.filter((e) => e.event === "card-read-unavailable")).toHaveLength(1);
+	});
+
+	test("a thrown read closes nothing (the thread is still in its server's snapshot), is logged once, and recovery closes the card once", async () => {
+		const h = await held();
+		h.fake.threads.set("t1", { waitingError: "socket hung up" });
+		await h.engine.tick();
+		await h.engine.tick();
+		expect(h.open()).toEqual({ holds: 1, questions: 1 });
+		expect(h.events.filter((e) => e.event === "card-read-unavailable").map((e) => e.reason)).toEqual(["socket hung up"]);
+		// The read works again and an authoritative listing omits the card: it closes, hold and question, exactly once.
+		h.fake.threads.set("t1", { waiting: [] });
+		await h.engine.tick();
+		await h.engine.tick();
+		expect(h.open()).toEqual({ holds: 0, questions: 0 });
+		expect(h.events.filter((e) => e.event === "card-reconciled")).toHaveLength(1);
+		expect(h.events.filter((e) => e.event === "card-read-recovered")).toHaveLength(1);
+	});
+
+	test("a read that breaks the WaitingRead contract, or one begun before the hold, closes nothing", async () => {
+		const h = await held();
+		h.fake.threads.set("t1", { waitingRead: (() => ({ ok: true, cards: undefined, at: Date.now() })) as unknown as () => ReturnType<typeof emptyNow> });
+		await h.engine.tick();
+		expect(h.open()).toEqual({ holds: 1, questions: 1 });
+		h.fake.threads.set("t1", { waitingRead: { ok: true, cards: [], at: Date.now() - 60_000 } });
+		await h.engine.tick();
+		expect(h.open()).toEqual({ holds: 1, questions: 1 });
+	});
+
+	test("a failed waiting read is not 'nothing waiting' on the needs-input path either: the wake still goes", async () => {
+		const r = rig();
+		r.fake.threads.set("t2", { waitingError: "socket hung up" });
+		r.fake.emit({ kind: "needs_input", thread: thread("t2", "waiting") });
+		await r.until("the wake", () => r.fake.wakes.length === 1);
+		expect(r.events.some((e) => e.event === "skip-empty-wait")).toBe(false);
+		expect(r.events.some((e) => e.event === "read-failed" && e.what === "waiting items")).toBe(true);
 	});
 });

@@ -125,48 +125,78 @@ export function closeCard(store: Store, c: CardRef, how: string, now = new Date(
 	});
 }
 
-/** What a fresh read of one thread on one server says: the request IDs waiting there now, the thread gone, or nothing known. */
-export type CardThreadRead = { state: "read"; waiting: ReadonlySet<string> } | { state: "gone" } | { state: "unknown" };
+/**
+ * What a fresh read of one thread on one server says. `ok: true` is an AUTHORITATIVE listing (adapter.ts `WaitingRead`): the
+ * request IDs waiting there now, or the thread gone from a whole snapshot of its server, taken at `at` (ms, when the read
+ * began). `ok: false` is anything else (the server down or not connected, a failed or malformed read): nothing is known.
+ */
+export type CardThreadRead = { ok: true; at: number; waiting: ReadonlySet<string>; gone?: true } | { ok: false; reason: string };
+
+/** An open card, keyed by (server, request ID), and when its newest open hold or pointer question was written (ms). */
+export type OpenCard = CardRef & { since: number };
+
+const ms = (iso: string | undefined) => { const t = iso ? Date.parse(iso) : Number.NaN; return Number.isFinite(t) ? t : undefined; };
 
 /**
  * Every open card hold and every open pointer question, as the cards they wait on, keyed by (server, request ID). The
  * card's thread comes from the hold's `card`, else from its pointer question (a hold written before `card` existed). A
- * card whose thread cannot be told is left out: it is never closed on a guess.
+ * card whose thread cannot be told is left out: it is never closed on a guess. `since` is the newest creation time among
+ * its open hold and question; one with no readable time is never closed (`Infinity`).
  */
-export function openCards(store: Store): CardRef[] {
-	const out = new Map<string, CardRef>();
+export function openCards(store: Store): OpenCard[] {
+	const out = new Map<string, { server: string; requestId: string; threadId?: string; since: number }>();
 	const qs = questionStates(store);
-	const add = (c: Partial<CardRef>) => { if (c.server && c.threadId && c.requestId) out.set(`${c.server}\0${c.requestId}`, { server: c.server, threadId: c.threadId, requestId: c.requestId }); };
-	for (const q of qs.values()) if (q.status === "open" && q.cardRequest) add({ server: q.server, threadId: q.threadId, requestId: q.cardRequest });
+	const add = (c: Partial<CardRef>, created: number | undefined) => {
+		if (!c.server || !c.requestId) return;
+		const key = `${c.server}\0${c.requestId}`;
+		const prev = out.get(key);
+		out.set(key, { server: c.server, requestId: c.requestId, threadId: prev?.threadId ?? c.threadId, since: Math.max(prev?.since ?? 0, created ?? Number.POSITIVE_INFINITY) });
+	};
+	for (const q of qs.values()) if (q.status === "open" && q.cardRequest) add({ server: q.server, threadId: q.threadId, requestId: q.cardRequest }, ms(q.createdAt));
 	for (const h of heldOpen(store)) {
 		const c = cardRefOf(h);
 		if (!c) continue;
 		const q = h.item ? qs.get(h.item) : undefined;
-		add({ ...c, threadId: c.threadId ?? (q?.cardRequest === c.requestId && q.server === c.server ? q.threadId : undefined) });
+		add({ ...c, threadId: c.threadId ?? (q?.cardRequest === c.requestId && q.server === c.server ? q.threadId : undefined) }, ms(h.t));
 	}
-	return [...out.values()];
+	return [...out.values()].flatMap((c) => (c.threadId ? [{ server: c.server, threadId: c.threadId, requestId: c.requestId, since: c.since }] : []));
 }
 
 /**
  * Close every card that is no longer waiting: on each tick and at startup, so a card answered or withdrawn while the daemon
- * was down, or whose thread vanished, does not leave its question and hold open. Each (server, thread) is read once; a read
- * that cannot say (`unknown`: the server is down, the read failed) leaves its cards open. A card closes exactly once: a
- * closed card is no longer open, so a later pass does not see it.
+ * was down, or whose thread vanished, does not leave its question and hold open. Each (server, thread) is read once. A card
+ * closes ONLY on an `ok: true` read of its own server, begun after its hold and question were written (`at > since`), that
+ * does not list its request ID. A read that is `ok: false`, throws, or is older than the card leaves it open. A card closes
+ * exactly once: a closed card is no longer open, so a later pass does not see it.
  */
-export async function reconcileCardHolds(store: Store, read: (server: string, threadId: string) => Promise<CardThreadRead>, now = () => new Date()): Promise<{ closed: CardRef[]; unknown: number }> {
+export async function reconcileCardHolds(store: Store, read: (server: string, threadId: string) => Promise<CardThreadRead>, now = () => new Date()): Promise<{ closed: CardRef[]; unknown: number; failed: { server: string; reason: string }[] }> {
 	const cards = openCards(store);
 	const reads = new Map<string, Promise<CardThreadRead>>();
 	const closed: CardRef[] = [];
+	const failed: { server: string; reason: string }[] = [];
 	let unknown = 0;
 	for (const c of cards) {
 		const key = `${c.server}\0${c.threadId}`;
-		if (!reads.has(key)) reads.set(key, read(c.server, c.threadId).catch((): CardThreadRead => ({ state: "unknown" })));
+		if (!reads.has(key)) {
+			const p = read(c.server, c.threadId).then((r) => (isCardThreadRead(r) ? r : ({ ok: false, reason: "the read did not keep the CardThreadRead contract" }) as CardThreadRead), (e): CardThreadRead => ({ ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) }));
+			reads.set(key, p);
+			const r = await p;
+			if (!r.ok) failed.push({ server: c.server, reason: r.reason });
+		}
 		const r = await reads.get(key)!;
-		if (r.state === "unknown") { unknown++; continue; }
-		if (r.state === "read" && r.waiting.has(c.requestId)) continue;
-		const how = r.state === "gone" ? "The card's thread is gone from its server (closed by the daemon's card reconciler)." : "The card is no longer waiting in its thread: answered or withdrawn there (closed by the daemon's card reconciler).";
+		if (!r.ok || !(r.at > c.since)) { unknown++; continue; }
+		if (r.waiting.has(c.requestId)) continue;
+		const how = r.gone ? "The card's thread is gone from its server (closed by the daemon's card reconciler)." : "The card is no longer waiting in its thread: answered or withdrawn there (closed by the daemon's card reconciler).";
 		const n = closeCard(store, c, how, now());
-		if (n.questions || n.holds) closed.push(c);
+		if (n.questions || n.holds) closed.push({ server: c.server, threadId: c.threadId, requestId: c.requestId });
 	}
-	return { closed, unknown };
+	return { closed, unknown, failed };
+}
+
+/** Pure: a read result in the `CardThreadRead` shape. Anything else is treated as `ok: false`. */
+function isCardThreadRead(r: unknown): r is CardThreadRead {
+	if (!r || typeof r !== "object") return false;
+	const o = r as Record<string, unknown>;
+	if (o.ok === false) return typeof o.reason === "string";
+	return o.ok === true && typeof o.at === "number" && Number.isFinite(o.at) && o.waiting instanceof Set;
 }

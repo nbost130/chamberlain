@@ -130,12 +130,12 @@ describe("(2)(3) card holds reconcile against the cards actually waiting, keyed 
 		// A fresh process: nothing in memory, only the database.
 		const after = db.open();
 		const reads: string[] = [];
-		const read = async (server: string, threadId: string) => { reads.push(`${server}/${threadId}`); return { state: "read" as const, waiting: new Set<string>() }; };
+		const read = async (server: string, threadId: string) => { reads.push(`${server}/${threadId}`); return { ok: true as const, at: Date.now() + 1, waiting: new Set<string>() }; };
 		expect((await reconcileCardHolds(after, read)).closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
 		expect(reads).toEqual(["main/th-1"]);
 		expect(getQuestion(after, item)!.status).toBe("answered-on-card");
 		expect(heldOpen(after)).toEqual([]);
-		expect(await reconcileCardHolds(after, read)).toEqual({ closed: [], unknown: 0 });
+		expect(await reconcileCardHolds(after, read)).toEqual({ closed: [], unknown: 0, failed: [] });
 		after.close();
 	});
 	test("restart: a card whose thread disappeared closes; one that cannot be read, or still waits, stays open", async () => {
@@ -146,7 +146,7 @@ describe("(2)(3) card holds reconcile against the cards actually waiting, keyed 
 		holdCard(s, cardWaitOf({ ...approval, requestId: "req-a3" }, { ...AT, threadId: "th-live" }));
 		s.close();
 		const after = db.open();
-		const r = await reconcileCardHolds(after, async (_s, t) => (t === "th-gone" ? { state: "gone" } : t === "th-down" ? { state: "unknown" } : { state: "read", waiting: new Set(["req-a3"]) }));
+		const r = await reconcileCardHolds(after, async (_s, t) => (t === "th-gone" ? { ok: true, at: Date.now() + 1, waiting: new Set(), gone: true } : t === "th-down" ? { ok: false, reason: "server down" } : { ok: true, at: Date.now() + 1, waiting: new Set(["req-a3"]) }));
 		expect(r.closed.map((c) => c.threadId)).toEqual(["th-gone"]);
 		expect(r.unknown).toBe(1);
 		expect(heldOpen(after).map((h) => h.card!.requestId).sort()).toEqual(["req-a2", "req-a3"]);
@@ -154,6 +154,30 @@ describe("(2)(3) card holds reconcile against the cards actually waiting, keyed 
 		expect((await reconcileCardHolds(after, async () => { throw Error("socket down"); })).closed).toEqual([]);
 		expect(heldOpen(after)).toHaveLength(2);
 		after.close();
+	});
+	test("a listing begun before (or in the same millisecond as) the hold closes nothing; one begun after closes it exactly once", async () => {
+		const store = memStore();
+		const { item } = holdCard(store, cardWaitOf(approval, AT), new Date("2026-11-13T12:00:00.000Z"));
+		const since = Date.parse("2026-11-13T12:00:00.000Z");
+		const at = (t: number) => async () => ({ ok: true as const, at: t, waiting: new Set<string>() });
+		for (const t of [since - 60_000, since - 1, since]) {
+			expect((await reconcileCardHolds(store, at(t))).closed).toEqual([]);
+			expect(heldOpen(store)).toHaveLength(1);
+			expect(getQuestion(store, item)!.status).toBe("open");
+		}
+		expect((await reconcileCardHolds(store, at(since + 1))).closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
+		expect((await reconcileCardHolds(store, at(since + 2))).closed).toEqual([]);
+		expect(heldOpen(store)).toEqual([]);
+		expect(getQuestion(store, item)!.status).toBe("answered-on-card");
+	});
+	test("an ok: false read, or one that breaks the contract, closes nothing and is reported as failed", async () => {
+		const store = memStore();
+		holdCard(store, cardWaitOf(approval, AT), new Date(Date.now() - 1000));
+		const r = await reconcileCardHolds(store, async () => ({ ok: false, reason: "main is not connected" }));
+		expect(r).toEqual({ closed: [], unknown: 1, failed: [{ server: "main", reason: "main is not connected" }] });
+		expect((await reconcileCardHolds(store, async () => ({ state: "read", waiting: new Set() }) as never)).closed).toEqual([]);
+		expect((await reconcileCardHolds(store, async () => ({ ok: true, at: Date.now(), waiting: [] }) as never)).closed).toEqual([]);
+		expect(heldOpen(store)).toHaveLength(1);
 	});
 	test("a hold written before `card` existed takes its thread from its pointer question", async () => {
 		const store = memStore();
@@ -163,8 +187,8 @@ describe("(2)(3) card holds reconcile against the cards actually waiting, keyed 
 		const { card: _c, ...old } = h.payload as Record<string, unknown>;
 		store.items.observe({ source: "held", kind: "hold", dedupKey: h.dedupKey, mode: "silenced", payload: old, now: Date.now() });
 		expect(heldOpen(store)[0]!.card).toBeUndefined();
-		expect(openCards(store)).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
-		expect((await reconcileCardHolds(store, async () => ({ state: "read", waiting: new Set() }))).closed).toHaveLength(1);
+		expect(openCards(store)).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1", since: expect.any(Number) }]);
+		expect((await reconcileCardHolds(store, async () => ({ ok: true, at: Date.now() + 1, waiting: new Set<string>() }))).closed).toHaveLength(1);
 		expect(heldOpen(store)).toEqual([]);
 		expect(getQuestion(store, item)!.status).toBe("answered-on-card");
 	});
@@ -174,7 +198,7 @@ describe("(2)(3) card holds reconcile against the cards actually waiting, keyed 
 		const b = holdCard(store, cardWaitOf(approval, { ...AT, server: "second" }));
 		expect(a.item).not.toBe(b.item);
 		// Reconcile: "main" no longer waits on req-a1, "second" still does.
-		const r = await reconcileCardHolds(store, async (server) => ({ state: "read", waiting: new Set(server === "second" ? ["req-a1"] : []) }));
+		const r = await reconcileCardHolds(store, async (server) => ({ ok: true, at: Date.now() + 1, waiting: new Set(server === "second" ? ["req-a1"] : []) }));
 		expect(r.closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
 		expect(heldOpen(store).map((h) => h.server)).toEqual(["second"]);
 		expect(getQuestion(store, b.item)!.status).toBe("open");
@@ -193,7 +217,7 @@ describe("(A)(B) one hold per card, and a card hold closes only with its pointer
 		holdCard(store, cardWaitOf(secretCard, AT));
 		expect(heldOpen(store)).toHaveLength(2);
 		expect(questionStates(store).size).toBe(2);
-		const r = await reconcileCardHolds(store, async () => ({ state: "read", waiting: new Set(["req-s1"]) }));
+		const r = await reconcileCardHolds(store, async () => ({ ok: true, at: Date.now() + 1, waiting: new Set(["req-s1"]) }));
 		expect(r.closed.map((c) => c.requestId)).toEqual(["req-a1"]);
 		expect(heldOpen(store).map((h) => h.card!.requestId)).toEqual(["req-s1"]);
 	});

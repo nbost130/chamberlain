@@ -4,7 +4,7 @@
  * record becomes a normalized state for the core; the same socket serves the on-demand reads (`inspect`).
  */
 import { statSync } from "node:fs";
-import type { AdapterEnv, Inspector, RunFailure, WaitingItem, WaitQuestion, WatchSink } from "../../core/adapter.ts";
+import type { AdapterEnv, Inspector, RunFailure, WaitingItem, WaitingRead, WaitQuestion, WatchSink } from "../../core/adapter.ts";
 import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { failedRead } from "../../core/history.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
@@ -14,6 +14,7 @@ import type { ThreadSnapshot } from "../../core/adapter.ts";
 import type { T3Server } from "./server.ts";
 import { normalizeWaitKind, toState } from "./state.ts";
 import { failureOf, lookOf } from "./failure.ts";
+import { checkProjection, isObject, type Projection } from "./projection.ts";
 
 const TOKEN_MAX_AGE_DAYS = 25;
 
@@ -102,11 +103,14 @@ export class T3Link {
 		const token = this.token();
 		if (!token) throw Error(`no ${this.srv.tokenFile}`);
 		const { threads } = await fetchShellSnapshot(this.srv.origin, token);
+		// A thread with no id would read as every other thread missing from it: the whole snapshot is refused instead.
+		if (!threads.every((th) => isObject(th) && (typeof th.id === "string" || typeof th.id === "number") && String(th.id) !== "")) throw Error("malformed snapshot: a thread has no id");
 		return { complete: true, threads: threads.map((th) => { const t = toState(th); return { id: t.id, archived: t.archived, settled: t.settled, pendingRequestId: t.pendingRequestId, status: t.status }; }) };
 	}
 
-	private async projection(threadId: string): Promise<{ turnItems?: any[]; runs?: any[]; subagents?: { status?: string }[] }> {
-		return (await this.rpc!.request("orchestration.getThreadProjection", { threadId })) as { turnItems?: any[]; runs?: any[]; subagents?: { status?: string }[] };
+	/** One thread's projection over the watcher's socket, checked against the shape the reads expect: anything else throws. */
+	private async projection(threadId: string): Promise<Projection> {
+		return checkProjection(await this.rpc!.request("orchestration.getThreadProjection", { threadId }));
 	}
 
 	readonly inspector: Inspector = {
@@ -121,13 +125,22 @@ export class T3Link {
 			const p = await this.projection(threadId);
 			return (p.subagents ?? []).filter((x) => ["running", "starting", "queued"].includes(String(x.status))).length;
 		},
-		/** What the thread is waiting on, from its projection: kind and request id of each waiting item. */
-		waiting: async (threadId): Promise<WaitingItem[]> => {
-			if (!this.rpc) return [];
-			const p = await this.projection(threadId);
-			return (p.turnItems ?? [])
-				.filter((i) => i.status === "waiting" && (i.type === "user_input_request" || OPERATOR_ONLY_KINDS.has(normalizeWaitKind(String(i.type)))))
-				.map((i) => ({ type: normalizeWaitKind(String(i.type)) as WaitingItem["type"], requestId: String(i.requestId ?? i.id), label: String(i.label ?? i.prompt ?? i.questions?.[0]?.header ?? ""), questions: (i.questions ?? []) as WaitQuestion[] }));
+		/**
+		 * What the thread is waiting on, from its projection: kind and request id of each waiting item. Authoritative (`ok: true`)
+		 * only when the socket was up for the whole read and the projection had exactly the expected shape (`WaitingRead`).
+		 */
+		waiting: async (threadId): Promise<WaitingRead> => {
+			const rpc = this.rpc;
+			if (!rpc) return { ok: false, reason: `${this.srv.name} is not connected` };
+			const at = Date.now();
+			try {
+				const read = waitingOf(await rpc.request("orchestration.getThreadProjection", { threadId }), at);
+				// The socket dropped or was replaced while the read was out: what came back cannot be told from a stale answer.
+				if (this.rpc !== rpc) return { ok: false, reason: `${this.srv.name} disconnected during the read` };
+				return read;
+			} catch (e) {
+				return { ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) };
+			}
 		},
 		/** The thread's latest instruction, past T3's window if it has to be. HTTP can work while the socket is down, and then the state is stale, so no socket is a failed read. */
 		/** The thread's newest failed run and the error T3 recorded for it (src/adapters/t3/failure.ts). */
@@ -144,4 +157,24 @@ export class T3Link {
 		},
 		instruction: (threadId) => readWhenConnected(Boolean(this.rpc), threadId, historyGet(this.srv.origin, () => this.token())).catch((e) => failedRead(String(e).slice(0, 200))),
 	};
+}
+
+/**
+ * Pure: a projection read as a `WaitingRead`. Any shape this does not expect, including a waiting item with no request id
+ * or with questions that are not a list, is `ok: false`, never an empty listing.
+ */
+export function waitingOf(raw: unknown, at: number): WaitingRead {
+	let p: Projection;
+	try { p = checkProjection(raw); } catch (e) { return { ok: false, reason: (e as Error).message }; }
+	const cards: WaitingItem[] = [];
+	for (const i of p.turnItems) {
+		if (i.status !== "waiting") continue;
+		if (typeof i.type !== "string") return { ok: false, reason: "malformed projection: a waiting item has no type" };
+		if (!(i.type === "user_input_request" || OPERATOR_ONLY_KINDS.has(normalizeWaitKind(i.type)))) continue;
+		const id = i.requestId ?? i.id;
+		if ((typeof id !== "string" && typeof id !== "number") || String(id) === "") return { ok: false, reason: "malformed projection: a waiting item has no request id" };
+		if (i.questions !== undefined && !Array.isArray(i.questions)) return { ok: false, reason: "malformed projection: a waiting item's questions are not a list" };
+		cards.push({ type: normalizeWaitKind(i.type) as WaitingItem["type"], requestId: String(id), label: String(i.label ?? i.prompt ?? i.questions?.[0]?.header ?? ""), questions: (i.questions ?? []) as WaitQuestion[] });
+	}
+	return { ok: true, cards, at };
 }

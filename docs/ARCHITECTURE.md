@@ -499,9 +499,13 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
   per thread: a thread waiting on two cards has two holds and two questions. A card hold and its question close together, in one
   transaction (`closeCard`, the only code that closes a card hold); the ref pass and the thread close skip card holds. When a
   thread's one pending request ID changes, nothing is closed on that alone (the thread may still wait on the old card):
-  `reconcileCardHolds` runs at once, and on every tick and every watcher connection, and checks every open card: a card no longer waiting in a fresh read of its thread, or whose thread is gone from a whole fresh snapshot, closes
-  exactly once, so a card answered or withdrawn while the daemon was down does not stay open. A server that is not connected, or a
-  read that fails, says nothing, and its cards stay open.
+  `reconcileCardHolds` runs at once, and on every tick and every watcher connection, and checks every open card: a card closes only on an AUTHORITATIVE listing of its own server, begun after the card was held
+  (`WaitingRead` `ok: true`, docs/ADAPTERS.md), that no longer lists its (server, request ID), or on a whole fresh snapshot of
+  that server, begun after the hold, from which its thread is gone. It closes exactly once, so a card answered or withdrawn while
+  the daemon was down does not stay open. A server that is not connected (a `mayBeOffline` one asleep included), a read that
+  spans a disconnect, throws, or comes back malformed is `ok: false`: it says nothing, its cards stay open, and the daemon logs
+  `card-read-unavailable` once per episode (`card-read-recovered` when reads work again). A failed waiting read on the wake path
+  is not "nothing waiting" either: the thread's own status stands for the request and the wake goes.
   Which cards exist and their kind come from the adapter's `Inspector.waiting`, normalized to `WaitKind`; the core reads only the
   kind, the request ID and the label (`cardWaitOf`), never the card's questions, options or a value. A secret card's pointer is
   itself `secret`, so it is never posted and the page shows it only as a link to its thread; any other pointer is posted once,
