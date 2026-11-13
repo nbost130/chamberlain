@@ -661,3 +661,32 @@ describe("fix round 1: recovery is OFF unless asked for, and the production laun
 		expect(src).toContain('recover: process.env.CHAMBERLAIN_RECOVER === "1"');
 	});
 });
+
+describe("the judge is an explicit setting", () => {
+	const make = (o: { recover: boolean; judgeJson?: string }) => {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-judge-off-`);
+		dirs.push(root);
+		const conf = `${root}/conf`;
+		mkdirSync(conf, { recursive: true, mode: 0o700 });
+		if (o.judgeJson) writeFileSync(`${conf}/judge.json`, o.judgeJson, { mode: 0o600 });
+		const store = memStore();
+		const events: Logged[] = [];
+		const engine = createEngine({ conf, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: createFakeAdapter() }], log: (event, data) => events.push({ event, ...data }), ...(o.recover ? { recover: true } : {}) });
+		engines.push(engine);
+		return events;
+	};
+	test("recovery on and no judge.json: judging is off, and the log says why", () => {
+		const events = make({ recover: true });
+		const off = events.filter((e) => e.event === "judge-off");
+		expect(off).toHaveLength(1);
+		expect(off[0]).toMatchObject({ trigger: "stalled-recovery" });
+		expect(String(off[0]!.why)).toContain("names no backend");
+	});
+	test("a judge.json that names a backend turns judging on: no judge-off line", () => {
+		const events = make({ recover: true, judgeJson: JSON.stringify({ triggers: { "stalled-recovery": { backend: "small" } }, backends: { small: { command: ["/bin/false"] } } }) });
+		expect(events.filter((e) => e.event === "judge-off")).toEqual([]);
+	});
+	test("recovery off: nothing needs a judge, so nothing is said", () => {
+		expect(make({ recover: false }).filter((e) => e.event === "judge-off")).toEqual([]);
+	});
+});

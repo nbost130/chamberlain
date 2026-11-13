@@ -20,7 +20,7 @@ import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type 
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
-import { createJudge, readJudgeConfig, type Judge } from "./judge.ts";
+import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
 import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
 import type { Gate } from "./hold.ts";
 import { failedRead, skipEvent, type InstructionRead } from "./history.ts";
@@ -442,6 +442,12 @@ export function createEngine(d: EngineDeps) {
 		else if (a.why === "breaker") alarm(`recover-breaker:${a.kind}`, `chamberlain: ${a.count} "${a.kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
 	}
 	const judge = d.judge ?? createJudge({ config: () => { const r = readJudgeConfig(conf); if (r.error) log("judge-config-error", { error: r.error }); return r.config; }, log });
+	// The judge's backend is an explicit setting (judge.json), with no default. Without one, recovery still retries once, and a second failure
+	// goes to the Steward unjudged: say so once, at start, so an operator who expected a verdict can see why there is none.
+	if (!d.judge && d.recover !== undefined && d.recover !== false) {
+		const off = judgeOff(readJudgeConfig(conf).config, "stalled-recovery");
+		if (off) log("judge-off", { trigger: "stalled-recovery", why: off });
+	}
 	recovery = d.recover === undefined || d.recover === false ? undefined : createRecovery({
 		store: { load: () => store.state.get<RecoverState>(RECOVER_KEY), save: (s) => store.state.set(RECOVER_KEY, s) },
 		look: async (id) => watcherOf(id)?.adapter.inspect?.look?.(id),

@@ -171,7 +171,7 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `servers.json` | optional | The T3 servers to watch. See below. |
 | `web.json` | for the page | The page's bind address and options. See below. |
 | `sweep.json` | optional | Your own routine checks. See below. |
-| `judge.json` | optional | Which backend judges each trigger: `{"triggers": {"stalled-recovery": {"backend": "haiku"}}, "backends": {"haiku": {"command": [...]}, "custom": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. Default: `stalled-recovery` to Haiku through the inference tool, when it is installed. Only error text, scrubbed, is ever sent. |
+| `judge.json` | optional | Which backend judges each trigger, with backend names of your own: `{"triggers": {"stalled-recovery": {"backend": "small-model"}}, "backends": {"small-model": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. There is **no default**: without this file nothing is judged, the daemon logs `judge-off` with why at start, and a second failure goes to the Steward unjudged. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
 | `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See below. |
 | `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See below. |
@@ -348,7 +348,7 @@ already in the state directory is never replaced.
 | `CHAMBERLAIN_DRY` | unset | `1`: the daemon watches and logs, and posts nothing. |
 | `CHAMBERLAIN_VERBOSE` | unset | Also print each log line to stdout. |
 | `CHAMBERLAIN_EXCLUDE` | unset | Comma-separated thread ids to never wake about. |
-| `CHAMBERLAIN_RECOVER` | unset (off) | `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge.json`). Needs the server's operate token. See [`docs/GLOSSARY.md`](docs/GLOSSARY.md#recovering-a-failed-thread). |
+| `CHAMBERLAIN_RECOVER` | unset (off) | `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge.json`; without it, to the Steward unjudged). Needs the server's operate token. See [`docs/GLOSSARY.md`](docs/GLOSSARY.md#recovering-a-failed-thread). |
 | `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn must stay quiet before it is reported (a PR update often follows). |
 | `CHAMBERLAIN_REPORT_HOLD_MS` | `3600000` | How long a report waits on a thread's own background work before it goes anyway. |
 | `CHAMBERLAIN_STALL_MS` | `1200000` | How long queued wakes may sit with nothing moving in the Steward's thread before an alarm. |
