@@ -1,0 +1,26 @@
+# The decision-queue page. An EXAMPLE: edit the paths, then
+#   cp deploy/systemd/chamberlain-web.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now chamberlain-web.service
+# Needs ~/.config/chamberlain/web.json (mode 0600) with {"schemaVersion": 2, "host": "<loopback or Tailscale IP>", "port": 3790}.
+# The server refuses to start with no address, a wildcard one, or any address outside loopback and Tailscale ranges.
+# Without a "decisionsServer" operate token the page still answers; it just can't rename the Decisions thread or settle cards.
+[Unit]
+Description=Chamberlain decision queue: the page where the operator clears the Steward's questions
+After=network-online.target tailscaled.service chamberlain.service
+Wants=chamberlain.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+WorkingDirectory=%h/chamberlain
+ExecStart=%h/.bun/bin/bun src/web/server.ts
+Environment=HOME=%h
+EnvironmentFile=-%h/.config/chamberlain/daemon.env
+Restart=always
+RestartSec=10
+# The Tailscale IP may not exist yet at boot; a bind failure exits and the restart tries again.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

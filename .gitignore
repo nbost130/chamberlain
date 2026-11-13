@@ -1,0 +1,15 @@
+node_modules
+*.bak
+*.db*
+*.tmp-*
+.env
+.env.*
+# Local state and secrets never belong in the repository.
+read-token
+wake-url
+wake-url.*
+compact-url
+*-token
+daemon.env
+scratch/
+.claude/worktrees/

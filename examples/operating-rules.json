@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2,
+  "source": "~/notes/OPERATING_RULES.md",
+  "sections": [
+    ["Secrets", "whole"],
+    ["Working style", ["- Whole issue", "- Smallest change", "- Do not skip a gate"]]
+  ]
+}

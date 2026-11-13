@@ -1,0 +1,10 @@
+{"type":"assistant","uuid":"old","timestamp":"2026-11-10T12:00:00Z","message":{"usage":{"input_tokens":300000},"content":[]}}
+{"type":"attachment","uuid":"old-hook","rendered":"FORMAT CONTRACT: Last response broke: old","attachment":{"type":"hook_additional_context","hookEvent":"UserPromptSubmit"}}
+{"type":"system","subtype":"compact_boundary","timestamp":"2026-11-10T13:00:00Z"}
+{"type":"assistant","uuid":"a","timestamp":"2026-11-10T13:01:00Z","message":{"usage":{"input_tokens":1000,"cache_read_input_tokens":180000,"cache_creation_input_tokens":20000},"content":[{"type":"tool_use","id":"self1","name":"Read","input":{"file_path":"/sessions/{{SESSION}}.jsonl"}},{"type":"tool_use","id":"thread1","name":"mcp__t3-code__t3_thread_read","input":{"threadId":"thread-a"}}]}}
+{"type":"attachment","uuid":"hook1","rendered":"FORMAT CONTRACT: Last response broke: closer","attachment":{"content":"Last response broke: closer","type":"hook_additional_context","hookEvent":"UserPromptSubmit"}}
+{"type":"api-request-blob","message":"Last response broke: closer"}
+{"type":"attachment","uuid":"hook1","rendered":"FORMAT CONTRACT: Last response broke: closer","attachment":{"type":"hook_additional_context","hookEvent":"UserPromptSubmit"}}
+{"type":"assistant","timestamp":"2026-11-10T13:02:00Z","message":{"usage":{"input_tokens":2000,"cache_read_input_tokens":180000,"cache_creation_input_tokens":20000},"content":[{"type":"tool_use","id":"self1","name":"Read","input":{"file_path":"/sessions/{{SESSION}}.jsonl"}},{"type":"tool_use","id":"thread2","name":"mcp__t3-code__t3_thread_read","input":{"threadId":"thread-a"}}]}}
+{"type":"attachment","uuid":"hook2","rendered":"FORMAT CONTRACT: Last response was clean (4 lines)","attachment":{"type":"hook_additional_context","hookEvent":"UserPromptSubmit"}}
+{"type":"assistant","isSidechain":true,"message":{"usage":{"input_tokens":999999},"content":[]}}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "servers": [
+    {
+      "name": "main",
+      "adapter": "t3",
+      "origin": "http://127.0.0.1:3773",
+      "tokenFile": "read-token"
+    },
+    {
+      "name": "laptop",
+      "adapter": "t3",
+      "origin": "http://127.0.0.1:13773",
+      "tokenFile": "laptop-read-token",
+      "environmentId": "REPLACE-WITH-THE-ENVIRONMENT-ID-T3-SHOWS-FOR-THIS-SERVER",
+      "mayBeOffline": true,
+      "sshHost": "ada@laptop.example"
+    }
+  ]
+}

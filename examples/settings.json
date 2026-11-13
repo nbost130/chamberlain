@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 2,
+  "principalName": "Ada",
+  "t3BaseDir": "~/.t3",
+  "alertCommand": "~/bin/notify-me",
+  "compactTokens": 350000
+}

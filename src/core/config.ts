@@ -1,0 +1,91 @@
+/**
+ * Where Chamberlain keeps its files, and the few settings every module shares.
+ *
+ *   CHAMBERLAIN_CONF   config directory, default $XDG_CONFIG_HOME/chamberlain, i.e. ~/.config/chamberlain (secrets and settings, mode 0600 files)
+ *   CHAMBERLAIN_STATE  state directory, default $XDG_STATE_HOME/chamberlain, i.e. ~/.local/state/chamberlain (the database,
+ *                      the evidence files, the hand-off): durable data that survives restarts but is not user-edited config
+ *
+ * `settings.json` in the config directory (mode 0600) holds the rest, and each value can be overridden by an environment
+ * variable. See README.md, "Configuration reference".
+ */
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { isPrivateFile, modeText } from "./private.ts";
+import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
+import { configDir, stateDir } from "./state-dir.ts";
+
+const HOME = process.env.HOME!;
+export const CONF = configDir(process.env, HOME);
+export const STATE = stateDir(process.env, HOME);
+/** This checkout: the Steward's wakes and hand-off name the CLI tools by this path. */
+export const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
+
+/** What the wakes call the human when no `principalName` is configured. */
+export const DEFAULT_PRINCIPAL = "the operator";
+
+export type Settings = {
+	schemaVersion?: number;
+	/** What the Steward's wakes and hand-off call the human it works for: "Ada", "the operator". */
+	principalName?: string;
+	/** The T3 adapter's: T3's base directory. Default ~/.t3. */
+	t3BaseDir?: string;
+	/** The T3 adapter's: T3's state database. Default <t3BaseDir>/userdata/statev2.sqlite. */
+	t3StateDb?: string;
+	/** A command run for each alarm as `<command> <severity> <title> <summary>`. Without one, alarms are only logged. */
+	alertCommand?: string;
+	/** The Steward's context size, in tokens, past which the daemon sends a compact. Default 350000. */
+	compactTokens?: number;
+};
+
+/** Pure: the settings a parsed file holds, or the first thing wrong with it. */
+export function parseSettings(raw: unknown): Settings {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw Error("settings.json: expected a JSON object");
+	const o = raw as Record<string, unknown>;
+	checkVersion("settings.json", o.schemaVersion);
+	const str = (k: string) => {
+		const v = o[k];
+		if (v === undefined) return undefined;
+		if (typeof v !== "string" || !v.trim()) throw Error(`settings.json: "${k}" must be a non-empty string`);
+		return v.trim();
+	};
+	const compactTokens = o.compactTokens;
+	if (compactTokens !== undefined && (typeof compactTokens !== "number" || !Number.isFinite(compactTokens) || compactTokens <= 0)) throw Error('settings.json: "compactTokens" must be a positive number');
+	return {
+		schemaVersion: SCHEMA_VERSION,
+		...(str("principalName") ? { principalName: str("principalName") } : {}),
+		...(str("t3BaseDir") ? { t3BaseDir: str("t3BaseDir") } : {}),
+		...(str("t3StateDb") ? { t3StateDb: str("t3StateDb") } : {}),
+		...(str("alertCommand") ? { alertCommand: str("alertCommand") } : {}),
+		...(compactTokens !== undefined ? { compactTokens: compactTokens as number } : {}),
+	};
+}
+
+let cached: { conf: string; settings: Settings } | undefined;
+/** The settings file, or {} when there is none. A file that is not a private regular file (0600) is refused. */
+export function readSettings(conf = CONF): Settings {
+	if (cached?.conf === conf) return cached.settings;
+	const p = `${conf}/settings.json`;
+	let settings: Settings = {};
+	if (existsSync(p)) {
+		const st = statSync(p);
+		if (!isPrivateFile(st)) throw Error(`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`);
+		settings = parseSettings(JSON.parse(readFileSync(p, "utf8")));
+	}
+	cached = { conf, settings };
+	return settings;
+}
+/** For tests: forget the cached settings file. */
+export const resetSettings = () => { cached = undefined; };
+
+/** A leading ~ is the home directory. */
+export const tilde = (p: string) => p.replace(/^~(?=\/|$)/, HOME);
+
+export const alertCommand = (): string | undefined => { const v = process.env.CHAMBERLAIN_ALERT_CMD ?? readSettings().alertCommand; return v ? tilde(v) : undefined; };
+export const compactTokens = (fallback: number): number => Number(process.env.CHAMBERLAIN_COMPACT_TOKENS ?? readSettings().compactTokens ?? fallback);
+
+/** What wakes call the human: CHAMBERLAIN_PRINCIPAL, then `principalName` in settings.json, then "the operator". */
+export const principal = (): string => (process.env.CHAMBERLAIN_PRINCIPAL ?? readSettings().principalName ?? DEFAULT_PRINCIPAL).trim() || DEFAULT_PRINCIPAL;
+/** The same, for the start of a sentence. */
+export const Principal = (): string => { const p = principal(); return p[0]!.toUpperCase() + p.slice(1); };
+/** The possessive: "Ada's", "the operator's". */
+export const principalPoss = (): string => `${principal()}'s`;
+export const PrincipalPoss = (): string => `${Principal()}'s`;

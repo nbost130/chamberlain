@@ -1,0 +1,23 @@
+# The Chamberlain daemon: watches T3 and wakes the Steward. An EXAMPLE: edit the paths, then
+#   cp deploy/systemd/chamberlain.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now chamberlain.service
+# Not installed by anything in this repo. Tune the unit names in After= to match how T3 runs on your machine.
+[Unit]
+Description=Chamberlain: wakes the Steward when a T3 thread needs attention
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+# The checkout. %h is your home directory.
+WorkingDirectory=%h/chamberlain
+ExecStart=%h/.bun/bin/bun src/daemon.ts
+Environment=HOME=%h
+# Optional: CHAMBERLAIN_* settings, one KEY=value per line (see README, "Configuration reference").
+EnvironmentFile=-%h/.config/chamberlain/daemon.env
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

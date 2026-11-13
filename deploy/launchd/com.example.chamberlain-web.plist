@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Chamberlain decision-queue page on macOS (needs web.json; see README). An EXAMPLE: replace the label (reverse-DNS of your own domain), the
+     paths and YOUR_USER, then
+       cp deploy/launchd/com.example.chamberlain-web.plist ~/Library/LaunchAgents/
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.chamberlain-web.plist
+     Logs go to ~/Library/Logs; Chamberlain's own log is the events table of <state>/chamberlain.db (~/.local/state/chamberlain). -->
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>com.example.chamberlain-web</string>
+	<key>WorkingDirectory</key><string>/Users/YOUR_USER/chamberlain</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/YOUR_USER/.bun/bin/bun</string>
+		<string>src/web/server.ts</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key><string>/Users/YOUR_USER</string>
+	</dict>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+	<key>ThrottleInterval</key><integer>10</integer>
+	<key>StandardOutPath</key><string>/Users/YOUR_USER/Library/Logs/chamberlain-web.log</string>
+	<key>StandardErrorPath</key><string>/Users/YOUR_USER/Library/Logs/chamberlain-web.log</string>
+</dict>
+</plist>
