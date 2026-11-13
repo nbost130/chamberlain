@@ -17,8 +17,11 @@ export type RetiredHow = "retired" | "only this once" | "superseded" | "duplicat
 export const HOUSEKEEPING: ReadonlySet<RetiredHow> = new Set<RetiredHow>(["superseded", "duplicate", "expired", "repeat"]);
 /** What a new ruling may carry beyond its words and what it decides. */
 export type RulingOpts = { expires?: string; until?: string; supersedes?: string[] };
-/** What recording returns: the ruling, flagged when it was already held (nothing new was written for it). */
-export type Recorded = Ruling & { duplicate?: true };
+/**
+ * What recording returns: the ruling, flagged `duplicate` when it was already held (no new ruling was written), and on a repeat
+ * the ids it named in `supersedes` that the held ruling did not yet replace (`supersedesAdded`): they were added to it.
+ */
+export type Recorded = Ruling & { duplicate?: true; supersedesAdded?: string[] };
 export type RulingChange = { t: string; what: string; from?: string };
 /** The time every function here reads, in epoch milliseconds. Tests pass their own; nothing else changes how time is read. */
 export type Clock = () => number;
@@ -160,6 +163,21 @@ function adopt(r: Ruling, o: RulingOpts, nowMs: number) {
 	if (added.length) (r.history ??= []).push({ t: iso(nowMs), what: `${added.join(" and ")} added on a restatement` });
 }
 
+/**
+ * In place: the ids a restatement names in `supersedes` that the held ruling does not yet replace are added to its `supersedes`,
+ * and when it is in force they leave force now, in the caller's write. A proposal retires them when it is confirmed. The ids added.
+ */
+function mergeSupersedes(list: Ruling[], held: Ruling, o: RulingOpts, nowMs: number): string[] {
+	const added = (o.supersedes ?? []).filter((id) => id !== held.id && !(held.supersedes ?? []).includes(id));
+	if (!added.length) return [];
+	held.supersedes = [...(held.supersedes ?? []), ...added];
+	(held.history ??= []).push({ t: iso(nowMs), what: `supersedes ${added.join(", ")} added on a restatement` });
+	if (held.status === "in-force") applySupersedes(list, { ...held, supersedes: added }, nowMs);
+	return added;
+}
+
+const repeated = (held: Ruling, added: string[]): Recorded => ({ ...held, duplicate: true as const, ...(added.length ? { supersedesAdded: added } : {}) });
+
 function checkSupersedes(list: Ruling[], o: RulingOpts) {
 	for (const id of o.supersedes ?? []) if (!list.some((x) => x.id === id)) throw Error(`supersedes ${id}: no such ruling`);
 }
@@ -175,9 +193,9 @@ export function propose(store: Store, words: string, decides: string, item?: str
 	const nowMs = clock();
 	const o = checkOpts(opts, nowMs);
 	return updateRulings(store, (list) => {
-		const held = findHeld(list, words, decides, nowMs);
-		if (held) { adopt(held, o, nowMs); return { ...held, duplicate: true as const }; }
 		checkSupersedes(list, o);
+		const held = findHeld(list, words, decides, nowMs);
+		if (held) { adopt(held, o, nowMs); return repeated(held, mergeSupersedes(list, held, o, nowMs)); }
 		const r: Ruling = { id: nextId(list), date: today(nowMs), words, decides, source: "card", status: "proposed", confirmed: false, ...(item ? { item } : {}), ...o, history: [{ t: iso(nowMs), what: "proposed by the Steward" }] };
 		list.push(r);
 		return r;
@@ -203,8 +221,7 @@ export function recordInForce(list: Ruling[], words: string, decides: string, so
 	if (held) {
 		promote(list, held, `${how} (was not yet confirmed)`, nowMs);
 		adopt(held, o, nowMs);
-		for (const id of o.supersedes ?? []) applySupersedes(list, { ...held, supersedes: [id] }, nowMs);
-		return { ...held, duplicate: true as const };
+		return repeated(held, mergeSupersedes(list, held, o, nowMs));
 	}
 	const r = inForceRuling(list, words, decides, source, how, item, o, nowMs);
 	list.push(r);

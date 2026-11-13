@@ -58,10 +58,11 @@ function main() {
 		const sup = a.opts.supersedes?.length ? a.opts.supersedes.join(", ") : undefined;
 		if (a.chat) {
 			const r = addInForce(store, a.words, a.decides, "chat", `stated by ${principal()} in chat, recorded by the Steward`, undefined, a.opts);
-			console.log(r.duplicate ? `already recorded as ${r.id} (${r.status}); nothing new added${sup ? `; ${sup} retired as superseded` : ""}` : `recorded ${r.id}, in force${sup ? `; ${sup} retired as superseded` : ""}`);
+			console.log(r.duplicate ? `already recorded as ${r.id} (${r.status}); ${r.supersedesAdded?.length ? `it now also supersedes ${r.supersedesAdded.join(", ")}, retired as superseded now` : "nothing new added"}` : `recorded ${r.id}, in force${sup ? `; ${sup} retired as superseded` : ""}`);
 		} else {
 			const r = propose(store, a.words, a.decides, undefined, a.opts);
-			console.log(r.duplicate ? `already recorded as ${r.id} (${r.status}); nothing new added` : `proposed ${r.id}: not in force until ${principal()} confirms it on the rulings page${sup ? `; it retires ${sup} when they do` : ""}`);
+			const added = r.supersedesAdded?.join(", ");
+			console.log(r.duplicate ? `already recorded as ${r.id} (${r.status}); ${added ? `it now also supersedes ${added}, ${r.status === "in-force" ? "retired as superseded now" : `retired when ${principal()} confirms it`}` : "nothing new added"}` : `proposed ${r.id}: not in force until ${principal()} confirms it on the rulings page${sup ? `; it retires ${sup} when they do` : ""}`);
 		}
 	} catch (e) { console.error((e as Error).message); process.exit(1); }
 }

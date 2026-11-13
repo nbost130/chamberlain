@@ -522,7 +522,9 @@ every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets t
   ("Expired, NOT in force") so a Steward does not act on one from memory. Setting an expiry that is unreadable, has no zone, does not exist
   (2026-02-30) or is already past is refused. An expired ruling cannot be confirmed.
 - **Supersession is one write.** A ruling's `supersedes` retires the named rulings in the same transaction that puts it in force (for a proposal:
-  the transaction that confirms it); a missing id is an error and changes nothing.
+  the transaction that confirms it); a missing id is an error and changes nothing. A repeat that names `supersedes` adds the ids its held
+  ruling does not yet replace to that ruling, in the same transaction, and reports them (`supersedesAdded`): a held proposal retires them
+  when it is confirmed, a ruling already in force retires them at once.
 - **A ruling that leaves force keeps its record**: `retiredHow` (`retired`, `only this once`, `superseded`, `duplicate`, `expired`, `repeat`),
   `retiredWhy` and `supersededBy`. A replacing ruling must itself be live.
 

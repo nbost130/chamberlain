@@ -201,6 +201,37 @@ describe("a ruling replaces others", () => {
 		expect(again).toMatchObject({ id: r.id, duplicate: true });
 		expect(readRulings(d).find((x) => x.id === "R3")).toMatchObject({ status: "retired", supersededBy: r.id });
 	});
+	test("a proposal repeated with supersedes keeps them: confirming it retires what the repeat named", () => {
+		const d = memStore();
+		addInForce(d, "a", "old one", "chat", "x");
+		addInForce(d, "a2", "old two", "chat", "x");
+		const p = propose(d, "b", "new", undefined, { supersedes: ["R2"] }, NOW);
+		const again = propose(d, "b", "new", undefined, { supersedes: ["R1", "R2"] }, NOW);
+		expect(again).toMatchObject({ id: p.id, duplicate: true, supersedes: ["R2", "R1"], supersedesAdded: ["R1"] });
+		expect(readRulings(d).find((x) => x.id === p.id)!.supersedes).toEqual(["R2", "R1"]);
+		// Nothing retires before the confirm; both do on it.
+		expect(readRulings(d).filter((x) => x.status === "in-force").map((x) => x.id)).toEqual(["R1", "R2"]);
+		confirmRuling(d, p.id, undefined, NOW);
+		for (const id of ["R1", "R2"]) expect(readRulings(d).find((x) => x.id === id)).toMatchObject({ status: "retired", retiredHow: "superseded", supersededBy: p.id });
+	});
+	test("a repeat of an in-force ruling naming supersedes retires the newly named ones in the same write", () => {
+		const d = memStore();
+		addInForce(d, "a", "old", "chat", "x");
+		const r = addInForce(d, "b", "new", "chat", "x");
+		const again = propose(d, "b", "new", undefined, { supersedes: ["R1"] }, NOW);
+		expect(again).toMatchObject({ id: r.id, duplicate: true, supersedes: ["R1"], supersedesAdded: ["R1"] });
+		expect(readRulings(d)[0]).toMatchObject({ status: "retired", retiredHow: "superseded", supersededBy: r.id });
+		expect(readRulings(d).find((x) => x.id === r.id)!.supersedes).toEqual(["R1"]);
+		// A missing id changes nothing, even on a repeat.
+		expect(() => propose(d, "b", "new", undefined, { supersedes: ["R9"] }, NOW)).toThrow("supersedes R9: no such ruling");
+		expect(readRulings(d).find((x) => x.id === r.id)!.supersedes).toEqual(["R1"]);
+	});
+	test("a repeat that names nothing new reports nothing added", () => {
+		const d = memStore();
+		addInForce(d, "a", "old", "chat", "x");
+		propose(d, "b", "new", undefined, { supersedes: ["R1"] }, NOW);
+		expect(propose(d, "b", "new", undefined, { supersedes: ["R1"] }, NOW)).not.toHaveProperty("supersedesAdded");
+	});
 	test("an id that is not a ruling, or not an id, is refused", () => {
 		const d = memStore();
 		addInForce(d, "a", "old", "chat", "x");
