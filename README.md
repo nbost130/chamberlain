@@ -200,9 +200,12 @@ is built, so there is no second copy to drift ([`examples/operating-rules.json`]
   `{ "section": heading, "lines": ..., "as": heading }` is the same with a heading of its own.
 - `{ "table": heading, "rows": "whole" | [row prefixes], "as": heading }` takes the one markdown table under `## heading`: its
   header and separator rows, then every body row or one row per prefix. Text around the table is left out.
+- `{ "path": ..., "sections": "whole" }` copies that source whole. It is the only way a whole file reaches the hand-off.
 - A heading that is gone or doubled, a prefix that matches no line or several, a wrapped rule, or a table that is missing,
-  headerless or not alone under its heading stops the excerpt. That source is then copied whole, with a warning on stderr,
-  and the other sources are still excerpted.
+  headerless or not alone under its heading stops that selector. It contributes **nothing**, with a `WARNING` on stderr
+  naming the source, the selector and why; the source's other selectors and the other sources are still excerpted. (Until
+  this release a failed excerpt copied the whole source instead, which could put text you never selected in front of the
+  Steward.)
 - The 0.1 form, `{ "source": path, "sections": [...] }`, still works: it is one source.
 
 **`brief.d/`** (brief fragments): procedure that belongs to your project, not to Chamberlain, goes in `brief.d/` in the config

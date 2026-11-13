@@ -10,7 +10,8 @@
  *       { "path": "~/notes/OPERATING_RULES.md",
  *         "sections": [ ["Secrets", "whole"], ["Working style", ["- Whole issue", "- Smallest change"]] ] },
  *       { "path": "~/notes/hosts/this-host.md",
- *         "sections": [ { "table": "Deltas", "rows": ["| `timeout`", "| Shell"], "as": "On this host" } ] } ] }
+ *         "sections": [ { "table": "Deltas", "rows": ["| `timeout`", "| Shell"], "as": "On this host" } ] },
+ *       { "path": "~/notes/STEWARD.md", "sections": "whole" } ] }
  *
  * A selector is one of:
  *   - `[heading, "whole" | [line prefixes]]`: the `## heading` section of the source, every line or the lines that start
@@ -19,11 +20,13 @@
  *     to give the excerpt a heading of its own;
  *   - `{ "table": heading, "rows": "whole" | [row prefixes], "as"?: heading }`: the one markdown table under `## heading`,
  *     its header row and separator always kept, and every body row or the rows that start with each prefix.
+ * A source whose `sections` is `"whole"` is copied whole, and that is the only way a whole source is copied.
  * The excerpts come out in the order listed, sources first to last, after `intro` when there is one.
  *
  * A heading that is gone or appears twice, a prefix that matches no line or several, a rule that has wrapped onto a
- * second line, and a table that is missing, has lost its header or is not alone under its heading all throw. A source whose
- * excerpt throws is copied whole, and the others are still excerpted.
+ * second line, and a table that is missing, has lost its header or is not alone under its heading all throw. A selector
+ * that throws contributes NOTHING, with a warning naming the source, the selector and why; the source's other selectors
+ * and the other sources are still excerpted. Nothing the operator did not select reaches the Steward's hand-off.
  *
  * The single-source form `{ "source": path, "sections": [...] }` is still read, as one entry of `sources`. Without the
  * file, brief.ts uses `operating-rules.md` from the config directory whole, if there is one.
@@ -39,7 +42,8 @@ export type SectionSelector = { section: string; lines: string[] | "whole"; as?:
 /** The one markdown table under a section's heading: its header and separator, and every body row or the rows chosen by prefix. */
 export type TableSelector = { table: string; rows: string[] | "whole"; as?: string };
 export type Selector = RuleSpec | SectionSelector | TableSelector;
-export type RulesSource = { path: string; sections: Selector[] };
+/** A source and what to take from it: the selectors, or "whole" (the only way a whole file is copied). */
+export type RulesSource = { path: string; sections: Selector[] | "whole" };
 export type RulesConfig = { schemaVersion?: number; intro?: string; sources: RulesSource[] };
 
 /** The lines under `## name`, up to the next `## ` heading. Blank lines are dropped unless `keepBlank` (a table needs them to tell two tables apart). */
@@ -109,6 +113,26 @@ export function excerptRules(source: string, sections: Selector[]): string {
 	return sections.map((s) => excerptOne(source, s)).join("\n\n");
 }
 
+/** A selector's name, for a warning: its heading and what it takes. */
+const selectorName = (selector: Selector): string => {
+	const s = normalize(selector);
+	return "table" in s ? `table "${s.table}"` : `section "${s.section}"`;
+};
+
+/**
+ * The chosen sections of `source`, each selector on its own: one that throws contributes nothing and is warned about (`where` names the
+ * source), and the others still come out. Never the whole source.
+ */
+export function excerptEach(source: string, sections: Selector[], where: string, warn: (msg: string) => void): string {
+	const parts: string[] = [];
+	for (const s of sections) {
+		try { parts.push(excerptOne(source, s)); } catch (e) {
+			warn(`brief.ts: WARNING: operating rules from ${where}: the ${selectorName(s)} selector is left out of the hand-off, and nothing else is copied in its place. ${(e as Error).message}. Fix operating-rules.json or the source.`);
+		}
+	}
+	return parts.join("\n\n");
+}
+
 const WANTED = (x: unknown): x is string[] | "whole" => x === "whole" || (Array.isArray(x) && x.length > 0 && x.every((y) => typeof y === "string" && y.length > 0));
 
 function parseSelector(raw: unknown, where: string, i: number): Selector {
@@ -135,7 +159,8 @@ function parseSelector(raw: unknown, where: string, i: number): Selector {
 
 function parseSource(path: unknown, sections: unknown, where: string): RulesSource {
 	if (typeof path !== "string" || !path.trim()) throw Error(`operating-rules.json: ${where} needs the path of a markdown file`);
-	if (!Array.isArray(sections) || !sections.length) throw Error(`operating-rules.json: ${where} "sections" must list at least one [heading, "whole" | [line prefixes]] or table`);
+	if (sections === "whole") return { path: path.trim(), sections: "whole" };
+	if (!Array.isArray(sections) || !sections.length) throw Error(`operating-rules.json: ${where} "sections" must be "whole" or list at least one [heading, "whole" | [line prefixes]] or table`);
 	return { path: path.trim(), sections: sections.map((s, i) => parseSelector(s, where, i)) };
 }
 
@@ -167,8 +192,9 @@ const regular = (p: string, what: string) => {
 };
 
 /**
- * The operating-rules text for the hand-off, or "" when none is configured. A source whose excerpt fails (a rule moved)
- * is copied whole instead, and says so on stderr: a hand-off must always come out, and the whole file loses nothing.
+ * The operating-rules text for the hand-off, or "" when none is configured. A selector whose excerpt fails (a rule moved, a table became
+ * two) contributes nothing and says so loudly on stderr: a hand-off must always come out, and only what the operator selected may be in
+ * it. A source is copied whole only when its `sections` is "whole".
  */
 export function loadOperatingRules(conf: string, warn: (msg: string) => void = (m) => console.error(m)): string {
 	const cfg = `${conf}/operating-rules.json`;
@@ -177,14 +203,9 @@ export function loadOperatingRules(conf: string, warn: (msg: string) => void = (
 		const c = parseRulesConfig(JSON.parse(readFileSync(cfg, "utf8")));
 		const parts = c.sources.map((src) => {
 			const text = readFileSync(tilde(src.path), "utf8");
-			try {
-				return excerptRules(text, src.sections);
-			} catch (e) {
-				warn(`brief.ts: copying the rules whole from ${src.path}. ${(e as Error).message}`);
-				return text.trimEnd();
-			}
+			return src.sections === "whole" ? text.trimEnd() : excerptEach(text, src.sections, src.path, warn);
 		});
-		return [...(c.intro ? [c.intro] : []), ...parts].join("\n\n");
+		return [...(c.intro ? [c.intro] : []), ...parts.filter(Boolean)].join("\n\n");
 	}
 	const md = `${conf}/operating-rules.md`;
 	if (existsSync(md)) { regular(md, "operating-rules.md"); return readFileSync(md, "utf8"); }
