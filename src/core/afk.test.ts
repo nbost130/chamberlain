@@ -149,10 +149,10 @@ describe("hold refs, notes and the CLI", () => {
 
 	test("hold takes --pr, --issue, --branch, --run and --thread and stores them as a structured ref", () => {
 		const dir = scratch();
-		const r = cli(dir, "hold", "Billing", "approve the migration", "left it parked", "--pr", "o/r#42", "--issue", "o/r#5", "--branch", "o/r:feat/x", "--run", "01JRUN1234", "--thread", "th-abc1", "--item", "Q-abcd1");
+		const r = cli(dir, "hold", "Billing", "approve the migration", "left it parked", "--pr", "example-org/app#962", "--issue", "o/r#5", "--branch", "o/r:feat/x", "--run", "01JRUN1234", "--thread", "th-abc1", "--item", "Q-abcd1");
 		expect(r.status).toBe(0);
 		const store = open(dir);
-		expect(heldOpen(store)[0]).toMatchObject({ thread: "Billing", what: "approve the migration", taken: "left it parked", item: "Q-abcd1", ref: { pr: "o/r#42", issue: "o/r#5", branch: "o/r:feat/x", runId: "01JRUN1234", threadId: "th-abc1" } });
+		expect(heldOpen(store)[0]).toMatchObject({ thread: "Billing", what: "approve the migration", taken: "left it parked", item: "Q-abcd1", ref: { pr: "example-org/app#962", issue: "o/r#5", branch: "o/r:feat/x", runId: "01JRUN1234", threadId: "th-abc1" } });
 		store.close();
 	});
 

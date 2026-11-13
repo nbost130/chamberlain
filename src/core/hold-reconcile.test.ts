@@ -94,15 +94,15 @@ describe("pass 2: refs", () => {
 	const facts = (over: Partial<ThreadFacts> = {}): ThreadFacts => ({ archived: false, settled: false, pendingRequestId: null, status: "idle", ...over });
 	/** A server's snapshot taken this pass. */
 	const machine = (name: string, table: Record<string, ThreadFacts>, o: { healthy?: boolean; complete?: boolean } = {}): MachineSnapshot => ({ machine: name, healthy: o.healthy ?? true, complete: o.complete ?? true, get: (id) => table[id] });
-	const PR = "repos/o/r/pulls/42";
+	const PR = "repos/example-org/app/pulls/962";
 
 	test("a merged PR closes its hold and the closure says what was seen", async () => {
 		const store = memStore();
-		const id = hold(store, { thread: "pr", ref: { pr: "o/r#42" } });
+		const id = hold(store, { thread: "pr", ref: { pr: "example-org/app#962" } });
 		const r = await run(store, fakeGh({ [PR]: { state: "closed", merged_at: "2026-11-13T12:50:41Z", closed_at: "2026-11-13T12:50:41Z" } }).gh);
 		expect(r).toMatchObject({ ran: true, closed: 1, lookups: 1, errors: 0 });
 		expect(heldOpen(store)).toHaveLength(0);
-		expect(how(store, id)).toBe("PR o/r#42 merged 2026-11-13T12:50Z; closed by the daemon's hold reconciler.");
+		expect(how(store, id)).toBe("PR example-org/app#962 merged 2026-11-13T12:50Z; closed by the daemon's hold reconciler.");
 	});
 
 	test("a PR closed without merging closes its hold too, and an open PR leaves it", async () => {
@@ -186,7 +186,7 @@ describe("pass 2: refs", () => {
 
 	test("holds with no ref, a malformed ref, or only prose are never touched and cost no call", async () => {
 		const store = memStore();
-		hold(store, { thread: "none", what: "merge PR o/r#42 for me" });
+		hold(store, { thread: "none", what: "merge PR example-org/app#962 for me" });
 		hold(store, { thread: "bad", ref: { pr: "not a ref", branch: "o/r:b; rm -rf /", issue: "o/r#0", runId: "x" } as never });
 		const { gh, calls } = fakeGh({});
 		expect(await run(store, gh)).toMatchObject({ ran: true, closed: 0, lookups: 0 });
