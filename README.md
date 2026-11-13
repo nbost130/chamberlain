@@ -173,7 +173,8 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `sweep.json` | optional | Your own routine checks. See below. |
 | `judge.json` | optional | Which backend judges each trigger: `{"triggers": {"stalled-recovery": {"backend": "haiku"}}, "backends": {"haiku": {"command": [...]}, "custom": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. Default: `stalled-recovery` to Haiku through the inference tool, when it is installed. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
-| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See [Operating rules](#operating-rules) below. |
+| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See below. |
+| `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See [Brief fragments](#brief-fragments) below. |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `src/adapters/t3/switch-steward.ts` during a hand-off; the old URL is kept for one-rename rollback. |
 | `*-token` files | optional | Any `tokenFile` or `operateTokenFile` a server or `web.json` names. |
 
@@ -181,7 +182,7 @@ The away record, the rulings (ids R1, R2, ...), the butlers and everything held 
 are rows in the database (below), written by `afk.ts`, `ruling.ts`, `butler.ts` and the page.
 | `daemon.env` | optional | `KEY=value` lines for systemd's `EnvironmentFile`. |
 
-**Operating rules.** `operating-rules.json` lifts the lines a Steward acts on out of your own markdown files when the hand-off
+**`operating-rules.json`** lifts the lines a Steward acts on out of your own markdown files when the hand-off
 is built, so there is no second copy to drift ([`examples/operating-rules.json`](examples/operating-rules.json)):
 
 ```json
@@ -204,7 +205,7 @@ is built, so there is no second copy to drift ([`examples/operating-rules.json`]
   and the other sources are still excerpted.
 - The 0.1 form, `{ "source": path, "sections": [...] }`, still works: it is one source.
 
-
+**`settings.json`** (all keys optional; each has an environment override):
 
 | Key | Environment | Default | Meaning |
 | --- | --- | --- | --- |
