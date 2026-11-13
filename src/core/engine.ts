@@ -14,7 +14,7 @@ import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
 import type { RelayLock } from "./singleton.ts";
-import { breakerItem, createRecovery, DEFAULT_RECOVER_TIMING, verdictItem, type Handling, type Recovery, type RecoverTiming } from "./recover.ts";
+import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type Outcome, type Recovery, type RecoverTiming } from "./recover.ts";
 import { createJudge, readJudgeConfig, type Judge } from "./judge.ts";
 import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
 import type { Gate } from "./hold.ts";
@@ -380,20 +380,9 @@ export function createEngine(d: EngineDeps) {
 			if (forced) { this.forced.delete(live.id); return { note: forced }; }
 			if (!recovery || DRY || !this.adapter.inspect?.failure || !has(this.adapter, "send")) return {};
 			const h: Handling = await recovery.onFailure(live);
-			const where = { thread: live.title, server: this.srv.name, threadId: live.id };
-			switch (h.action) {
-				case "duplicate": return { stop: true };
-				case "retry-scheduled": return { stop: true };
-				case "wake": return { note: h.note };
-				case "breaker":
-					if (h.alarm) await raiseBreaker(h.kind, h.count, where);
-					return { stop: true };
-				case "verdict": {
-					if (h.ask) await d.ask?.(verdictItem(h.kind, h.reason, h.backend, where)).catch((e) => log("recover-ask-failed", { error: String(e).slice(0, 200) }));
-					const said = h.verdict === "unjudged" ? `the judge could not answer (${h.reason})` : `${h.backend} judge: ${h.verdict.replaceAll("_", " ")} — ${h.reason}`;
-					return { what: `run failed twice (${h.kind.replaceAll("_", " ")}) after an automatic retry`, note: `${said}. The daemon retries this thread no more until it finishes a turn.${h.ask ? " The principal has been asked on the decision queue." : ""}` };
-				}
-			}
+			const o = outcomeOf(h, { thread: live.title, server: this.srv.name, threadId: live.id }, timing);
+			if (o.ask) await raise(o.ask);
+			return { ...(o.stop ? { stop: true as const } : {}), ...(o.note ? { note: o.note } : {}), ...(o.what ? { what: o.what } : {}) };
 		}
 
 		/** Wakes the Steward about a failure whose retry could not be made, with the note why. */
@@ -433,12 +422,12 @@ export function createEngine(d: EngineDeps) {
 
 	const watchers = d.servers.map((x) => new Watcher(x.server, x.adapter));
 	const watcherOf = (threadId: string) => watchers.find((w) => w.states.has(threadId));
-	/** The one alarm of the outage breaker, through the decision queue; the dead-man alarm when no queue is wired. */
-	async function raiseBreaker(kind: Parameters<typeof breakerItem>[0], count: number, where: { thread: string; server: string; threadId: string }) {
-		const timing = { ...DEFAULT_RECOVER_TIMING, ...(typeof d.recover === "object" ? d.recover : {}) };
-		log("recover-breaker-alarm", { kind, count });
-		if (d.ask) await d.ask(breakerItem(kind, count, timing.breakerWindowMs, where)).catch((e) => log("recover-ask-failed", { error: String(e).slice(0, 200) }));
-		else alarm(`recover-breaker:${kind}`, `chamberlain: ${count} "${kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
+	const timing = { ...DEFAULT_RECOVER_TIMING, ...(typeof d.recover === "object" ? d.recover : {}) };
+	/** Raises a decision-queue item recovery asked for: the one outage alarm, or a verdict that needs the principal. With no queue wired, an outage falls back to the dead-man alarm. */
+	async function raise(a: NonNullable<Outcome["ask"]>) {
+		log(a.why === "breaker" ? "recover-breaker-alarm" : "recover-ask", { kind: a.kind, count: a.count });
+		if (d.ask) await d.ask(a.item).catch((e) => log("recover-ask-failed", { error: String(e).slice(0, 200) }));
+		else if (a.why === "breaker") alarm(`recover-breaker:${a.kind}`, `chamberlain: ${a.count} "${a.kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
 	}
 	const judge = d.judge ?? createJudge({ config: () => { const r = readJudgeConfig(conf); if (r.error) log("judge-config-error", { error: r.error }); return r.config; }, log });
 	recovery = d.recover === false ? undefined : createRecovery({

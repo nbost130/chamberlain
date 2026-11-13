@@ -260,6 +260,31 @@ export function createRecovery(d: RecoverDeps) {
 }
 export type Recovery = ReturnType<typeof createRecovery>;
 
+export type Where = { thread: string; server: string; threadId: string };
+/** What the engine does with a `Handling`: stop (no wake), or the words the ordinary failed wake should carry; `ask` is a decision-queue item to raise. */
+export type Outcome = { stop?: true; note?: string; what?: string; ask?: { why: "breaker" | "verdict"; kind: FailureKind; count: number; item: object } };
+
+/** Pure: the engine's reading of a `Handling`. The one place that words a verdict or an outage for the Steward and the queue. */
+export function outcomeOf(h: Handling, where: Where, timing: Pick<RecoverTiming, "breakerWindowMs"> = DEFAULT_RECOVER_TIMING): Outcome {
+	switch (h.action) {
+		case "duplicate":
+		case "retry-scheduled":
+			return { stop: true };
+		case "wake":
+			return { note: h.note };
+		case "breaker":
+			return { stop: true, ...(h.alarm ? { ask: { why: "breaker" as const, kind: h.kind, count: h.count, item: breakerItem(h.kind, h.count, timing.breakerWindowMs, where) } } : {}) };
+		case "verdict": {
+			const said = h.verdict === "unjudged" ? `the judge could not answer (${h.reason})` : `${h.backend} judge: ${h.verdict.replaceAll("_", " ")} — ${h.reason}`;
+			return {
+				what: `run failed twice (${h.kind.replaceAll("_", " ")}) after an automatic retry`,
+				note: `${said}. The daemon retries this thread no more until it finishes a turn.${h.ask ? " The principal has been asked on the decision queue." : ""}`,
+				...(h.ask ? { ask: { why: "verdict" as const, kind: h.kind, count: 2, item: verdictItem(h.kind, h.reason, h.backend, where) } } : {}),
+			};
+		}
+	}
+}
+
 /** Pure: the decision-queue item for the one outage alarm. `thread` and `server` name where it was seen. */
 export function breakerItem(kind: FailureKind, count: number, windowMs: number, where: { thread: string; server: string; threadId?: string }): object {
 	return {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RunFailure, ThreadState } from "./adapter.ts";
 import { normalizeThread } from "./adapter.ts";
-import { breakerItem, classifyFailure, createRecovery, DEFAULT_RECOVER_TIMING, judgeBrief, MIN, neverRetryThread, RETRY_KINDS, RETRY_TEXT, verdictItem, type FailureKind, type Handling, type RecoverDeps } from "./recover.ts";
+import { breakerItem, classifyFailure, createRecovery, DEFAULT_RECOVER_TIMING, judgeBrief, MIN, neverRetryThread, outcomeOf, RETRY_KINDS, RETRY_TEXT, verdictItem, type FailureKind, type Handling, type RecoverDeps } from "./recover.ts";
 import type { JudgeAnswer } from "./judge.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00Z");
@@ -457,5 +457,37 @@ describe("wording", () => {
 		expect(v.title).toContain("provider turn failed");
 		const b = breakerItem("provider_turn_failed", 3, 10 * MIN, { thread: "T", server: "s" }) as any;
 		expect(b.context).toContain("provider turn failed");
+	});
+});
+
+describe("outcomeOf: how a Handling reads for the wake and the queue", () => {
+	const where = { thread: "Thread one", server: "mac", threadId: "t1" };
+	test("a scheduled retry and a duplicate stop the wake", () => {
+		expect(outcomeOf({ action: "retry-scheduled", kind: "stream_closed", at: 1 }, where)).toEqual({ stop: true });
+		expect(outcomeOf({ action: "duplicate" }, where)).toEqual({ stop: true });
+	});
+	test("a wake carries its note and nothing else", () => {
+		expect(outcomeOf({ action: "wake", kind: "auth", note: "not retried automatically: authentication failed" }, where)).toEqual({ note: "not retried automatically: authentication failed" });
+	});
+	test("the breaker stops the wake, and asks only on the failure that tripped it", () => {
+		const first = outcomeOf({ action: "breaker", kind: "stream_closed", alarm: true, count: 3 }, where);
+		expect(first.stop).toBe(true);
+		expect(first.ask).toMatchObject({ why: "breaker", kind: "stream_closed", count: 3, item: { kind: "only-you", tag: "Outage" } });
+		expect(outcomeOf({ action: "breaker", kind: "stream_closed", alarm: false, count: 4 }, where)).toEqual({ stop: true });
+	});
+	test("a verdict words the failed wake with the judge and what the daemon will do next", () => {
+		const o = outcomeOf({ action: "verdict", kind: "provider_turn_failed", backend: "haiku", verdict: "retry_later", reason: "looks transient", ask: false }, where);
+		expect(o.what).toBe("run failed twice (provider turn failed) after an automatic retry");
+		expect(o.note).toBe("haiku judge: retry later — looks transient. The daemon retries this thread no more until it finishes a turn.");
+		expect(o.ask).toBeUndefined();
+	});
+	test("a verdict that needs the principal also raises a queue item", () => {
+		const o = outcomeOf({ action: "verdict", kind: "capacity", backend: "haiku", verdict: "ask_principal", reason: "a different model?", ask: true }, where);
+		expect(o.note).toContain("The principal has been asked on the decision queue.");
+		expect(o.ask).toMatchObject({ why: "verdict", item: { kind: "only-you", threadId: "t1" } });
+	});
+	test("an unjudged verdict says the judge could not answer", () => {
+		const o = outcomeOf({ action: "verdict", kind: "oom", backend: "haiku", verdict: "unjudged", reason: "haiku judge exited 1", ask: false }, where);
+		expect(o.note).toContain("the judge could not answer (haiku judge exited 1)");
 	});
 });
