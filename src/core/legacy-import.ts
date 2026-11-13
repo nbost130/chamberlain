@@ -29,7 +29,7 @@ import { appendHeld, HELD, heldId, type Held } from "./afk.ts";
 import { NOTIFICATION_LOG } from "./notification.ts";
 import { LEGACY_STAMP, parseRightsSent, RIGHTS_SENT_KEY } from "./rights-sent.ts";
 import { askQuestion, claimWake, finishRelay, notNow, pageClaim, startRelay, type Answer, type Claim, type Question } from "./questions.ts";
-import { expiresAt, type RetiredHow, type Ruling } from "./rulings.ts";
+import { expiresAt, expiresShape, type RetiredHow, type Ruling } from "./rulings.ts";
 import { checkVersion } from "./schema.ts";
 import type { DecisionRow, Store } from "./store.ts";
 import { HEALTH_KEY, type Health } from "./steward-health.ts";
@@ -385,7 +385,8 @@ function normalizeRuling(x: Ruling & Raw, note: (m: string) => void): Ruling {
 		if (Array.isArray(x.supersedes) && x.supersedes.every((s) => typeof s === "string" && RULING_ID.test(s))) { if (x.supersedes.length) out.supersedes = [...x.supersedes]; }
 		else note(`${x.id}: supersedes is not a list of ruling ids; it was not imported`);
 	}
-	if (out.expires && Number.isNaN(expiresAt(out.expires))) note(`${x.id}: expires ${JSON.stringify(out.expires)} is not an ISO date or a date-time with a zone, so it counts as already expired`);
+	// Kept, not dropped: an expiry that cannot be read counts as passed, so the ruling leaves force. Dropping it would turn a time-bound ruling into a standing one.
+	if (out.expires && Number.isNaN(expiresAt(out.expires))) note(`${x.id}: expires ${JSON.stringify(out.expires)} ${expiresShape(out.expires) ? "is not a real date and time" : "is not an ISO date or a date-time with a zone"}, so it counts as already expired`);
 	return out;
 }
 /** A ruling as one string whatever the order of its keys, to compare two copies. */

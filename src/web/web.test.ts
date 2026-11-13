@@ -296,6 +296,16 @@ describe("rulings from the page", () => {
 		// Answering without saving a ruling still works.
 		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 })).status).toBe(200);
 	});
+	test("saving a ruling whose stored proposed expiry does not exist is refused with that reason, before anything is claimed", async () => {
+		const s = setup({ now: () => Date.parse("2026-11-13T12:00:00Z") });
+		s.add(item("Q-abcd", { proposedExpires: "2027-02-30T09:00:00Z" }));
+		const before = readRulings(s.store).length;
+		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true });
+		expect(r.status).toBe(400);
+		expect(((await r.json()) as { error: string }).error).toContain('"2027-02-30T09:00:00Z" is not a real date and time');
+		expect(readRulings(s.store)).toHaveLength(before);
+		expect(getQuestion(s.store, "Q-abcd")!.status).toBe("open");
+	});
 	test("two questions saved with the same wording and choice give one ruling, and both answers cite it", async () => {
 		const s = setup();
 		s.add(item("Q-abcd"));

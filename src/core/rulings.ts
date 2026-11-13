@@ -92,15 +92,51 @@ const today = (nowMs: number) => iso(nowMs).slice(0, 10);
 
 // ---- expiry, duplicates, supersession -------------------------------------------------------------
 
-/** The moment an `expires` value ends, in ms. A date alone runs through the end of that day (UTC). NaN if it isn't one. */
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+// A date-time must say its zone: without one it would mean different moments on different machines.
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(?:Z|([+-])(\d{2}):(\d{2}))$/;
+
+/**
+ * Pure: the UTC moment these calendar fields name, or NaN when they name none. JavaScript's Date rolls an impossible field into
+ * the next one (February 30 becomes March 2, hour 24 the next day), so the moment is built and its fields read back: any that
+ * differ from the input mean the input does not exist.
+ */
+function realUtc(y: number, mo: number, d: number, h = 0, mi = 0, s = 0): number {
+	const t = new Date(0);
+	t.setUTCFullYear(y, mo - 1, d);
+	t.setUTCHours(h, mi, s, 0);
+	const same = t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === s;
+	return same ? t.getTime() : NaN;
+}
+
+/** Pure: is `expires` the shape of an ISO date or a date-time with a zone, whatever its numbers? */
+export const expiresShape = (expires: string) => DATE.test(expires) || DATE_TIME.test(expires);
+
+/**
+ * The moment an `expires` value ends, in ms. A date alone runs through the end of that day (UTC). NaN if it isn't one: a value
+ * of the wrong shape, or one whose date or time does not exist (2027-02-30, 2027-02-29, month 13, hour 24, an offset past 23:59).
+ */
 export function expiresAt(expires: string): number {
-	if (/^\d{4}-\d{2}-\d{2}$/.test(expires)) {
-		// A date that doesn't exist (2026-02-30) would roll into the next month: refuse it.
-		const d = new Date(`${expires}T00:00:00Z`);
-		return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== expires ? NaN : Date.parse(`${expires}T23:59:59.999Z`);
+	const day = DATE.exec(expires);
+	if (day) {
+		const start = realUtc(Number(day[1]), Number(day[2]), Number(day[3]));
+		return Number.isNaN(start) ? NaN : start + 86_400_000 - 1;
 	}
-	// A date-time must say its zone: without one it would mean different moments on different machines.
-	return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(expires) ? Date.parse(expires) : NaN;
+	const m = DATE_TIME.exec(expires);
+	if (!m) return NaN;
+	const at = realUtc(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] ?? 0));
+	const [oh, om] = [Number(m[9] ?? 0), Number(m[10] ?? 0)];
+	if (Number.isNaN(at) || oh > 23 || om > 59) return NaN;
+	const ms = m[7] ? Number(`${m[7].slice(1)}00`.slice(0, 3)) : 0;
+	return at + ms - (m[8] === "-" ? -1 : 1) * (oh * 60 + om) * 60_000;
+}
+
+/** Why `expires` can't be read, or undefined when it can: the wording every entry point (CLI, ask.ts, the page, the importer) uses. */
+export function expiresProblem(expires: string): string | undefined {
+	if (!Number.isNaN(expiresAt(expires))) return undefined;
+	return expiresShape(expires)
+		? `"${expires}" is not a real date and time: no such day, month, hour, minute, second or zone offset`
+		: `must be an ISO date (2026-12-01) or date-time with a zone (2026-12-01T09:00:00Z), got "${expires}"`;
 }
 
 /** Pure: has this ruling's `expires` passed at `nowMs`? A ruling without one never does. One that can't be read counts as passed. */
@@ -111,7 +147,8 @@ export function checkOpts(o: RulingOpts = {}, nowMs: number = Date.now()): Rulin
 	const out: RulingOpts = {};
 	if (o.expires !== undefined) {
 		const e = o.expires.trim();
-		if (Number.isNaN(expiresAt(e))) throw Error(`expires must be an ISO date (2026-12-01) or date-time with a zone (2026-12-01T09:00:00Z), got "${o.expires}"`);
+		const problem = expiresProblem(e);
+		if (problem) throw Error(`expires ${problem}`);
 		if (isExpired({ expires: e }, nowMs)) throw Error(`expires ${e} is already past`);
 		out.expires = e;
 	}

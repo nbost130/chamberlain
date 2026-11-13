@@ -405,10 +405,11 @@ describe("what it refuses and what it tolerates", () => {
 				{ id: "R1", date: "d", words: "w", decides: "d", source: "chat", status: "retired", confirmed: true, retiredHow: "vanished", supersededBy: "somebody", supersedes: "R2", history: [] },
 				{ id: "R2", date: "d", words: "w2", decides: "d2", source: "chat", status: "in-force", confirmed: true, expires: "next week", supersedes: ["R1", 7], history: [] },
 				{ id: "R3", date: "d", words: "w3", decides: "d3", source: "chat", status: "in-force", confirmed: true, expires: "2026-12-01T09:00:00", history: [] },
+				{ id: "R4", date: "d", words: "w4", decides: "d4", source: "chat", status: "in-force", confirmed: true, expires: "2027-02-30T09:00:00Z", history: [] },
 			]);
 			const s = memStore();
 			const r = importLegacy(s, [w.conf, w.cache], { now: NOW });
-			expect(r.counts.rulings).toEqual({ read: 3, imported: 3, present: 0 });
+			expect(r.counts.rulings).toEqual({ read: 4, imported: 4, present: 0 });
 			const got = readRulings(s);
 			expect(got[0]).not.toHaveProperty("retiredHow");
 			expect(got[0]).not.toHaveProperty("supersededBy");
@@ -422,6 +423,8 @@ describe("what it refuses and what it tolerates", () => {
 			// An expiry that cannot be read counts as passed, so it leaves force rather than staying in it by mistake; the report says so.
 			expect(r.notes).toContain('R2: expires "next week" is not an ISO date or a date-time with a zone, so it counts as already expired');
 			expect(r.notes).toContain('R3: expires "2026-12-01T09:00:00" is not an ISO date or a date-time with a zone, so it counts as already expired');
+			// One that names a day that does not exist is not rolled into March: it counts as passed too, and the report says why.
+			expect(r.notes).toContain('R4: expires "2027-02-30T09:00:00Z" is not a real date and time, so it counts as already expired');
 			expect(inForceNow(got, NOW).map((x) => x.id)).toEqual([]);
 		});
 

@@ -520,7 +520,8 @@ every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets t
   `() => number` and every function takes one (the page's is its injectable `now`). Past it, `renderInForce` leaves the ruling out of every
   wake and the page marks it expired; the row is not rewritten. The hand-off's rulings section also names the expired ones
   ("Expired, NOT in force") so a Steward does not act on one from memory. Setting an expiry that is unreadable, has no zone, does not exist
-  (2026-02-30) or is already past is refused. An expired ruling cannot be confirmed.
+  (2026-02-30, 2027-02-29T09:00:00Z, month 13, hour 24: parsed strictly and its fields read back, never rolled into the next day) or is
+  already past is refused, by the CLI, `ask.ts` and the page alike; the importer keeps such a value and notes it, so the ruling counts as expired. An expired ruling cannot be confirmed.
 - **Supersession is one write.** A ruling's `supersedes` retires the named rulings in the same transaction that puts it in force (for a proposal:
   the transaction that confirms it); a missing id is an error and changes nothing. A repeat that names `supersedes` adds the ids its held
   ruling does not yet replace to that ruling, in the same transaction, and reports them (`supersedesAdded`): a held proposal retires them

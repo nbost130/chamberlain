@@ -122,6 +122,22 @@ describe("expiry reads an injectable clock", () => {
 		// Unreadable counts as passed, so a bad stored value can never keep a ruling in force.
 		expect(isExpired({ expires: "tomorrow" }, 0)).toBe(true);
 	});
+	test("a date or date-time that does not exist is unreadable, never rolled into another day", () => {
+		for (const bad of ["2027-02-30T09:00:00Z", "2027-02-29T09:00:00Z", "2027-02-29", "2026-13-01T09:00:00Z", "2026-00-10T09:00:00Z", "2026-11-13T24:00:00Z", "2026-11-13T09:60:00Z", "2026-11-13T09:00:60Z", "2026-11-31T09:00:00+02:00", "2026-11-13T09:00:00+24:00", "2026-11-13T09:00:00+02:60"]) expect(expiresAt(bad)).toBeNaN();
+		expect(expiresAt("2028-02-29T09:00:00Z")).toBe(Date.parse("2028-02-29T09:00:00Z"));
+		expect(expiresAt("2028-02-29")).toBe(Date.parse("2028-02-29T23:59:59.999Z"));
+		expect(expiresAt("2026-11-13T09:00:00.250-05:30")).toBe(Date.parse("2026-11-13T09:00:00.250-05:30"));
+		expect(expiresAt("2026-11-13T09:00+01:00")).toBe(Date.parse("2026-11-13T08:00:00Z"));
+	});
+	test("recording refuses an expiry that does not exist, with a clear error, and writes nothing", () => {
+		const d = memStore();
+		for (const expires of ["2027-02-30T09:00:00Z", "2027-02-29T09:00:00Z", "2026-13-01T09:00:00Z", "2026-11-13T24:00:00Z"]) {
+			expect(() => propose(d, "w", "d", undefined, { expires }, NOW)).toThrow(`expires "${expires}" is not a real date and time`);
+			expect(() => addInForce(d, "w", "d", "chat", "x", undefined, { expires }, NOW)).toThrow(`expires "${expires}" is not a real date and time`);
+		}
+		expect(readRulings(d)).toHaveLength(0);
+		expect(propose(d, "w", "d", undefined, { expires: "2028-02-29T09:00:00Z" }, NOW).expires).toBe("2028-02-29T09:00:00Z");
+	});
 	test("a ruling leaves the in-force set when its time passes, and the record stays", () => {
 		const d = memStore();
 		addInForce(d, "stays", "Stays.", "chat", "x");

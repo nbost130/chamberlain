@@ -7,7 +7,7 @@ import { readHealth, HEALTH_CONFIG } from "../core/steward-health.ts";
 import { closeHeldForItem } from "../core/afk.ts";
 import { answerDeliveryId, batchable, claimWake, enqueueClaim, fallbackWake, finishRelay, notNow, PAGE, pageClaim, questionStates, ranked, readRelay, recordAnswerDelivered, recoverClaims, startRelay, wokenBy, type Answer, type Claim, type ClaimRelay, type QuestionState } from "../core/questions.ts";
 import { CHALLENGE_TTL_MS, consumeChallenge, issueChallenge, newSession, SESSION_COOKIE, sessionOf } from "../core/challenge.ts";
-import { citations, confirmRuling, editRuling, inForceNow, isExpired, readRulings, recordInForce, retireRuling, stageRulings, type Clock } from "../core/rulings.ts";
+import { citations, confirmRuling, editRuling, expiresProblem, inForceNow, isExpired, readRulings, recordInForce, retireRuling, stageRulings, type Clock } from "../core/rulings.ts";
 import type { Store } from "../core/store.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { checkCard, needsConfirmation, type SendToThread } from "./waiting.ts";
@@ -182,6 +182,8 @@ export function createApp(d: AppDeps) {
 			const wantsRuling = body.saveRuling === true && by === "page";
 			const decides = wantsRuling ? ((typeof body.rulingWording === "string" && body.rulingWording.trim()) || i.proposedRuling) : undefined;
 			if (wantsRuling && !decides) return { status: 400, body: { error: "there is no ruling wording to save" } };
+			const expiryProblem = decides && i.proposedExpires ? expiresProblem(i.proposedExpires) : undefined;
+			if (expiryProblem) return { status: 400, body: { error: `the proposed ruling's expiry ${expiryProblem}: save it without a ruling, or write a new one` } };
 			if (decides && i.proposedExpires && isExpired({ expires: i.proposedExpires }, clock())) return { status: 400, body: { error: `the proposed ruling expired on ${i.proposedExpires}: save it without a ruling, or write a new one` } };
 			const taken = (owner: string) => ({ status: 409, body: { error: owner === PAGE ? "already answered" : "already answered on its card in T3" } });
 			const held = wokenBy(d.store, i.id);

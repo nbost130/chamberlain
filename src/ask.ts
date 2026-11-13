@@ -26,7 +26,7 @@ import { CONF, STATE } from "./core/config.ts";
 import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
-import { expiresAt, isExpired } from "./core/rulings.ts";
+import { expiresProblem, isExpired } from "./core/rulings.ts";
 import { askQuestion, evidenceRoot, KINDS, type Evidence, type Question, type Option } from "./core/questions.ts";
 
 export const newItemId = () => `Q-${Date.now().toString(36).slice(-5)}${randomBytes(3).toString("hex").slice(0, 4)}`;
@@ -77,7 +77,8 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 	const proposedExpires = str("proposedExpires", false);
 	if (proposedExpires) {
 		if (!proposedRuling) throw Error("ask: proposedExpires needs a proposedRuling");
-		if (Number.isNaN(expiresAt(proposedExpires))) throw Error("ask: proposedExpires must be an ISO date (2026-12-01) or date-time with a zone (2026-12-01T09:00:00Z)");
+		const problem = expiresProblem(proposedExpires);
+		if (problem) throw Error(`ask: proposedExpires ${problem}`);
 		if (isExpired({ expires: proposedExpires })) throw Error("ask: proposedExpires is already past");
 	}
 	if (options.some((x) => x.route === "thread") && !str("threadId", false)) throw Error("ask: an option routed to the thread needs the item's threadId");
