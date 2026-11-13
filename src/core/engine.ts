@@ -8,6 +8,7 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { appendHeld, closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
+import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal } from "./config.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
@@ -78,6 +79,8 @@ export type EngineDeps = {
 	recover?: boolean | Partial<RecoverTiming>;
 	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
 	judge?: Judge;
+	/** Reads GitHub for the held-ledger reconciler (src/core/gh.ts). Undefined: holds that name a PR, issue or branch are not checked. */
+	gh?: GhRead;
 };
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
@@ -564,6 +567,27 @@ export function createEngine(d: EngineDeps) {
 		? healthTicker({ store, server: () => home.name, collect: () => liveHealth(() => homeAdapter.transcriptPath!()), ask })
 		: undefined;
 
+	/**
+	 * The held ledger's reconciler (src/core/hold-reconcile.ts). Items: every tick, database only. Refs: every ten minutes,
+	 * against GitHub and the watchers' thread tables.
+	 */
+	let reconcilingRefs = false;
+	/** A fresh snapshot of every server, taken now through its adapter. An adapter that cannot take one reads as unreachable: its threads stay unknown. */
+	const freshSnapshots = () => takeSnapshots(d.servers.map((x) => ({ name: x.server.name, fetch: async () => { if (!has(x.adapter, "snapshot")) throw Error("no snapshot capability"); return x.adapter.snapshot(); } })));
+	async function holdReconcileTick() {
+		try {
+			const { closed } = reconcileItemHolds(store);
+			if (closed) log("held-closed-for-item", { closed, by: "reconciler" });
+		} catch (e) { log("held-reconcile-error", { pass: "items", error: String(e).slice(0, 200) }); }
+		if (reconcilingRefs) return;
+		reconcilingRefs = true;
+		try {
+			const r = await reconcileRefHolds({ store, ...(d.gh ? { gh: d.gh } : {}), snapshots: freshSnapshots });
+			if (r.ran && (r.closed || r.errors)) log("held-reconciled", { ...r });
+		} catch (e) { log("held-reconcile-error", { pass: "refs", error: String(e).slice(0, 200) }); }
+		finally { reconcilingRefs = false; }
+	}
+
 	/** One pass of the once-a-minute housekeeping. The interval runs it; tests call it. */
 	async function tick() {
 		try { heartbeat(); } catch (e) { log("heartbeat-error", { error: String(e) }); }
@@ -571,6 +595,7 @@ export function createEngine(d: EngineDeps) {
 		// The relay polls on its own; a pass here too costs nothing (passes are one at a time) and makes the heartbeat a full look.
 		const checks: Promise<unknown>[] = [relay.pass(), stewardCheck().catch((e) => log("steward-check-error", { error: String(e) }))];
 		if (d.housekeeping !== false) {
+			checks.push(holdReconcileTick());
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
 			checks.push(sweepTick().catch((e) => { log("sweep-error", { error: String(e) }); alarm("sweep", "chamberlain sweep failed", "The daemon's routine sweep threw an error and did not finish, so nothing is checking the threads between wakes."); }));
 		}

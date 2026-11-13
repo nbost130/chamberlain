@@ -326,7 +326,7 @@ already in the state directory is never replaced.
 | `bun src/ask.ts '<json>'` | the Steward | Put one question on the queue and in the Decisions thread. |
 | `bun src/core/ruling.ts [--stated-in-chat] "<words>" "<decides>"` | the Steward | Record a proposed (or, stated in chat, in-force) ruling. |
 | `bun src/core/decided.ts "<thread>" "<decision>" "R12: why"` | the Steward | Log a self-answer, citing rulings by id. `decided.ts list [n]` shows the last n. |
-| `bun src/core/afk.ts enter\|status\|hold\|held\|close\|brief\|exit` | you, the Steward | The away record and the held-for-return ledger. |
+| `bun src/core/afk.ts enter\|status\|hold\|held\|note\|close\|brief\|exit` | you, the Steward | The away record and the held-for-return ledger. `hold` takes `--item`, `--pr`, `--issue`, `--branch`, `--run`, `--thread`; the daemon closes a hold when its item is answered or its PR, issue, branch or thread is done. GitHub reads use `gh` (or `CHAMBERLAIN_GH`). |
 | `bun src/brief.ts steward [--mode test\|live]` | you | Print the Steward's hand-off. |
 | `bun src/wakes.ts list\|retry <id>\|cancel <id>` | you | The outbox: what is pending, held and dead-lettered; retry a dead letter; cancel a row for good. See [Dead letters](#dead-letters). |
 | `bun src/adapters/t3/peek.ts <server> <threadId>` | the Steward | The end of a thread in plain lines, a tenth of what `t3_thread_read` costs. |

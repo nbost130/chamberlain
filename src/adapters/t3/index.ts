@@ -36,7 +36,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		const id = env.steward();
 		return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
 	};
-	const capabilities: OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"];
+	const capabilities: OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot"];
 	return {
 		id: "t3",
 		capabilities,
@@ -54,6 +54,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		},
 		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
 		inspect: link.inspector,
+		snapshot: () => link.snapshot(),
 		send: waiting.send,
 		stewardProbe: () => {
 			const id = env.steward();

@@ -14,7 +14,7 @@ describe("the T3 adapter", () => {
 		const a = makeAdapter(server);
 		expect(conformance(a)).toEqual([]);
 		expect(a.id).toBe("t3");
-		for (const cap of ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"] as const) expect(has(a, cap)).toBe(true);
+		for (const cap of ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot"] as const) expect(has(a, cap)).toBe(true);
 	});
 	test("a server it serves needs an origin and a token file", () => {
 		expect(t3Server(server).origin).toBe("http://127.0.0.1:3773");

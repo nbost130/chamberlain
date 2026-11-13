@@ -11,13 +11,13 @@
  * `capabilities` chooses which optional capabilities it declares (default: all of them). A capability it does not
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
-import type { Adapter, AnswerOutcome, Inspector, OptionalCapability, RunFailure, RunLook, PostOptions, PostResult, StewardProbe, ThreadEvent, Transcript, WaitingCard, WaitingItem, WatchSink } from "../core/adapter.ts";
+import { normalizeThread, type Adapter, type AnswerOutcome, type Inspector, type OptionalCapability, type PostOptions, type PostResult, type RunFailure, type RunLook, type StewardProbe, type ThreadEvent, type ThreadInput, type Transcript, type WaitingCard, type WaitingItem, type WatchSink } from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
 import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
 import type { Question } from "../core/questions.ts";
 
-export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"];
+export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot"];
 
 /** What `inspect` reports for one thread; anything unset reads as empty. */
 export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
@@ -48,7 +48,14 @@ export type FakeAdapter = Adapter & {
 	probe: StewardProbe;
 	transcript: Transcript;
 	connected: boolean;
+	/** Every thread the fake backend lists, as `snapshot` reports it: filled by `emit`, and by `unlist` removed. */
+	listed: Map<string, ThreadInput>;
+	/** Set to make `snapshot` reject, as an unreachable server does. */
+	snapshotError: string | undefined;
+	/** False makes `snapshot` say it may be partial. */
+	snapshotComplete: boolean;
 	emit(e: ThreadEvent): void;
+	unlist(id: string): void;
 	setBusy(g: Gate): void;
 	setWakeReady(ready: boolean): void;
 	setWakeStatus(f: () => number): void;
@@ -82,6 +89,9 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		probe: { readable: true } as StewardProbe,
 		transcript: { path: "/nonexistent/transcript.jsonl", session: "session-1", thread: "steward-1" } as Transcript,
 		connected: false,
+		listed: new Map<string, ThreadInput>(),
+		snapshotError: undefined as string | undefined,
+		snapshotComplete: true,
 	};
 
 	const wake: WakeTransport = {
@@ -133,13 +143,15 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		...(caps.has("inspect") ? { inspect } : {}),
 		...(caps.has("send") ? { send: async (threadId: string, text: string, seed: string, identity?: string) => { handles.sends.push({ threadId, text, seed, ...(identity ? { identity } : {}) }); return { ok: true, detail: `sent to fake:${threadId}` }; } } : {}),
 		...(caps.has("stewardProbe") ? { stewardProbe: () => fake.probe } : {}),
+		...(caps.has("snapshot") ? { snapshot: async () => { if (fake.snapshotError) throw Error(fake.snapshotError); return { complete: fake.snapshotComplete, threads: [...fake.listed.values()].map((t) => { const n = normalizeThread(t); return { id: n.id, archived: n.archived, settled: n.settled, pendingRequestId: n.pendingRequestId, status: n.status }; }) }; } } : {}),
 		...(caps.has("compact") ? { compact: { ready: () => wakeReady, send: async (deliveryId: string) => { handles.compactions.push(deliveryId); return { ok: true, status: 202 }; } } satisfies WakeTransport } : {}),
 	};
 	Object.assign(adapter, optional);
 
 	const fake: FakeAdapter = Object.assign(adapter, handles, {
 		/** Reports a thread event as the backend would. Events emitted before `watch` starts are kept and delivered when it does. */
-		emit(e: ThreadEvent) { if (sink) sink.event(e); else early.push(e); },
+		emit(e: ThreadEvent) { fake.listed.set(e.thread.id, e.thread); if (sink) sink.event(e); else early.push(e); },
+		unlist(id: string) { fake.listed.delete(id); },
 		setBusy(g: Gate) { busy = g; },
 		setWakeReady(ready: boolean) { wakeReady = ready; },
 		setWakeStatus(f: () => number) { status = f; },

@@ -8,7 +8,7 @@ Run this full supervision sweep quickly. Use small reads, and send a message onl
 3. Landing. Take reviewed, green PRs to merge, pinned to the reviewed head, after a disposition comment, if your decision rights give you that work.
 4. Findings. Handle each finding the routine checks listed in this wake, if any.
 5. New sessions, only while {{principalName}} is away. Only when there is idle, unblocked work you are not doing, and the machine has room: launch at most one new thread with a full brief and a workspaceStrategy worktree. Never for anything that needs {{principalName}}'s gate.
-6. Anything on the ASK list goes to `afk.ts hold`, never to {{principalName}} mid-sweep.
+6. Anything on the ASK list goes to `afk.ts hold` (with `--item`, `--pr`, `--issue`, `--branch` or `--thread` for what it waits on), never to {{principalName}} mid-sweep. A hold is a real wait on {{principalName}}, never an FYI; a new fact about an existing hold is `afk.ts note <id> "<text>"`, not a second hold.
 
 While {{principalName}} is marked away, their standing mandate is the one in the away record your wakes carry.
 

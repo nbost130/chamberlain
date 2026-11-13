@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Rpc } from "./rpc";
+import { Rpc, shellSnapshot } from "./rpc";
 
 /** A socket stand-in: records sends, and close() fires the close event like a real WebSocket. */
 class FakeSocket extends EventTarget {
@@ -38,5 +38,33 @@ describe("Rpc lifetime", () => {
 		const rpc = new Rpc(ws as unknown as WebSocket, Promise.resolve());
 		ws.close();
 		expect(() => rpc.fail()).not.toThrow();
+	});
+});
+
+describe("shellSnapshot: one fresh read of a server's threads", () => {
+	const chunk = (rpc: Rpc, value: unknown) => rpc.receive(JSON.stringify({ _tag: "Chunk", requestId: "100", values: [value] }));
+	test("resolves with the first snapshot's thread list", async () => {
+		const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
+		const p = shellSnapshot(rpc, 1000);
+		chunk(rpc, { kind: "snapshot", snapshot: { snapshotSequence: 5, threads: [{ id: "t1" }, { id: "t2" }] } });
+		expect((await p).threads.map((t) => t.id)).toEqual(["t1", "t2"]);
+		expect(rpc.pending.size).toBe(0);
+	});
+	test("a snapshot with no thread list is not a snapshot: it times out rather than reading as 'no threads'", async () => {
+		const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
+		const p = shellSnapshot(rpc, 30);
+		chunk(rpc, { kind: "snapshot", snapshot: {} });
+		await expect(p).rejects.toThrow("snapshot timed out");
+	});
+	test("a stream that ends first, or a socket that closes, is a failure", async () => {
+		const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
+		const p = shellSnapshot(rpc, 1000);
+		rpc.receive(JSON.stringify({ _tag: "Exit", requestId: "100", exit: { _tag: "Success", value: null } }));
+		await expect(p).rejects.toThrow("stream ended before a snapshot");
+		const ws2 = new FakeSocket();
+		const rpc2 = new Rpc(ws2 as unknown as WebSocket, Promise.resolve());
+		const p2 = shellSnapshot(rpc2, 1000);
+		ws2.close();
+		await expect(p2).rejects.toThrow("socket closed");
 	});
 });

@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
-import { heldOpen } from "./afk.ts";
+import { appendHeld, heldOpen } from "./afk.ts";
+import { askQuestion, claimWake, pageClaim } from "./questions.ts";
 import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
 import type { Judge } from "./judge.ts";
 import { createEngine, type EngineDeps } from "./engine.ts";
@@ -26,7 +27,7 @@ afterEach(async () => {
 
 type Logged = { event: string; [k: string]: unknown };
 /** A scratch config and state directory, a fake backend, and an engine on them, fast enough to test (milliseconds, not minutes). */
-function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean } = {}) {
+function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean; gh?: EngineDeps["gh"] } = {}) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
 	dirs.push(root);
 	const conf = `${root}/conf`;
@@ -40,7 +41,7 @@ function rig(o: { wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: s
 	const clock = { t: Date.now() };
 	const events: Logged[] = [];
 	const deps: EngineDeps = {
-		conf, lock: testRelayLock(store), store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false,
+		conf, lock: testRelayLock(store), store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false, gh: o.gh,
 		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 		log: (event, data) => events.push({ event, ...data }),
 		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -266,6 +267,64 @@ describe("an adapter with only the four required capabilities", () => {
 		const beat = r.store.state.get<{ servers: { name: string; connected: boolean; version: string | null }[] }>("heartbeat")!;
 		expect(beat.servers).toEqual([expect.objectContaining({ name: "fake", connected: true, version: "fake-1" })]);
 		expect(r.events.filter((e) => e.event.endsWith("-error"))).toEqual([]);
+	});
+});
+
+describe("the held ledger is reconciled on the heartbeat", () => {
+	test("a tick closes the holds of an answered question, a merged PR and a settled thread, and leaves the rest", async () => {
+		const gh = async (path: string) => (path.endsWith("/pulls/962") ? { state: "closed", merged_at: "2026-11-13T12:50:41Z" } : { state: "open" });
+		const r = rig({ housekeeping: true, gh });
+		await r.until("connected", () => r.fake.connected);
+		const q = { id: "Q-tick1", kind: "only-you" as const, title: "t", context: "", options: [{ label: "Yes" }], thread: "T", server: "fake", createdAt: "2026-11-13T00:00:00.000Z" };
+		askQuestion(r.store, q);
+		const at = new Date("2026-11-13T01:00:00.000Z");
+		appendHeld(r.store, { thread: "answered", what: "waits", item: "Q-tick1" }, at);
+		appendHeld(r.store, { thread: "merged", what: "waits", ref: { pr: "o/r#962" } }, at);
+		appendHeld(r.store, { thread: "open-pr", what: "waits", ref: { pr: "o/r#963" } }, at);
+		appendHeld(r.store, { thread: "settled", what: "waits", ref: { threadId: "th-settled" } }, at);
+		appendHeld(r.store, { thread: "prose", what: "merge o/r#962 for me" }, at);
+		claimWake(r.store, pageClaim(q, { choice: 0, label: "Yes", by: "page", t: "2026-11-13T02:00:00.000Z", deliveryId: "answer:item:Q-tick1" }));
+		r.fake.emit({ kind: "state", thread: thread("th-settled", "completed", { settled: true }) });
+		await r.until("the thread is known", () => r.engine.watchers[0]!.states.has("th-settled"));
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread).sort()).toEqual(["open-pr", "prose"]);
+		expect(r.events.filter((e) => e.event.endsWith("-error"))).toEqual([]);
+		expect(r.events.some((e) => e.event === "held-reconciled")).toBe(true);
+	});
+
+	// Fix 1. Must fail on 2845f33: the watcher's cache said settled and the hold closed while the server could not be reached.
+	test("fix 1: with the server unreachable, a thread the watcher's cache calls settled closes nothing", async () => {
+		const r = rig({ housekeeping: true });
+		await r.until("connected", () => r.fake.connected);
+		appendHeld(r.store, { thread: "cached-settled", what: "waits", ref: { threadId: "th-settled" } }, new Date("2026-11-13T01:00:00.000Z"));
+		r.fake.emit({ kind: "state", thread: thread("th-settled", "completed", { settled: true }) });
+		await r.until("the cache has it", () => r.engine.watchers[0]!.states.get("th-settled")?.settled === true);
+		r.fake.snapshotError = "connect ECONNREFUSED";
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["cached-settled"]);
+		r.fake.snapshotError = undefined;
+		r.fake.snapshotComplete = false;
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread)).toEqual(["cached-settled"]);
+	});
+
+	test("fix 1: a thread its named server no longer lists is gone, and the hold closes from a fresh snapshot; one naming no server stays", async () => {
+		const r = rig({ housekeeping: true, capabilities: ["snapshot"] });
+		await r.until("connected", () => r.fake.connected);
+		appendHeld(r.store, { thread: "deleted", what: "waits", server: "fake", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(r.store, { thread: "listed", what: "waits", server: "fake", ref: { threadId: "th-listed" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(r.store, { thread: "unnamed", what: "waits", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
+		r.fake.emit({ kind: "state", thread: thread("th-listed", "running") });
+		await r.engine.tick();
+		expect(heldOpen(r.store).map((h) => h.thread).sort()).toEqual(["listed", "unnamed"]);
+	});
+
+	test("fix 1: an adapter that cannot take a snapshot leaves its threads unknown", async () => {
+		const r = rig({ housekeeping: true, capabilities: [] });
+		await r.until("connected", () => r.fake.connected);
+		appendHeld(r.store, { thread: "h", what: "waits", ref: { threadId: "th-gone" } }, new Date("2026-11-13T01:00:00.000Z"));
+		await r.engine.tick();
+		expect(heldOpen(r.store)).toHaveLength(1);
 	});
 });
 
