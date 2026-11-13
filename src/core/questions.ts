@@ -72,11 +72,28 @@ export const cardTag = (id: string) => `[${id}]`;
 export const tagIn = (text: string): string | undefined => text.match(/\[(Q-[a-z0-9]{4,16})\]/)?.[1];
 
 /**
+ * Pure: an item that can never wait. A secret (`secret: true` or the tag "Secret"), an approval (the tag "Approval") and a
+ * daemon's card pointer (`cardRequest`: an approval, secret or link card) are ALWAYS urgent: `urgent: false` on one is
+ * ignored wherever it comes from (ask.ts says so on stderr), so none is ever posted late or listed under NOT URGENT.
+ */
+export const alwaysUrgent = (q: Pick<Question, "secret" | "tag" | "cardRequest">): boolean =>
+	q.secret === true || (typeof q.cardRequest === "string" && q.cardRequest !== "") || /^\s*(approval|secret)\s*$/i.test(q.tag ?? "");
+/** Pure: is this item urgent? Absent `urgent` is urgent, and so is every item `alwaysUrgent` names, whatever its field says. */
+export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean => q.urgent !== false || alwaysUrgent(q);
+/** Pure: the item with an `urgent: false` it may not have removed. Every write and every read of a question goes through it. */
+export function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
+	if (q.urgent !== false || !alwaysUrgent(q)) return q;
+	const { urgent: _dropped, ...rest } = q;
+	return rest as T;
+}
+
+/**
  * Puts a question on the queue as an item (triggered but silenced: its answer, not its arrival, is what wakes the Steward) and
  * records its evidence rows, in one transaction. Asking the same id twice changes nothing.
  */
 export function askQuestion(store: Store, q: Question, now = Date.now()) {
-	const { evidence, ...rest } = q;
+	// An approval or a secret is always urgent: a demotion is dropped here, so no path that files a question can store one.
+	const { evidence, ...rest } = withUrgency(q);
 	store.tx(() => {
 		if (store.items.get(QUEUE, q.id)) return;
 		store.items.observe({ source: QUEUE, kind: "question", dedupKey: q.id, mode: "silenced", ...(q.threadId ? { subject: { kind: "thread", id: q.threadId } } : {}), payload: rest, now });
@@ -98,7 +115,8 @@ export function questionStates(store: Store): Map<string, QuestionState> {
 		// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
 			const answered = claim !== undefined || i.status === "resolved";
 		out.set(i.dedupKey, {
-			...q,
+			// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
+			...withUrgency(q),
 			...(ev?.length ? { evidence: ev.map((e): Evidence => ({ type: e.type, ...(e.name ? { path: e.name } : {}), ...(e.url ? { url: e.url } : {}), ...(e.caption ? { caption: e.caption } : {}) })) } : {}),
 			status: i.payload.answeredOnCard === true ? "answered-on-card" : answered ? "answered" : "open",
 			...(claim?.answer ? { answer: claim.answer as Answer } : {}),
@@ -126,7 +144,7 @@ export const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\
  */
 export function ranked(items: Iterable<QuestionState>): QuestionState[] {
 	return [...items].filter((i) => i.status === "open").sort((a, b) =>
-		Number(a.urgent === false) - Number(b.urgent === false)
+		Number(!isUrgent(a)) - Number(!isUrgent(b))
 		|| Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt))
 		|| KIND_RANK[a.kind] - KIND_RANK[b.kind]
 		|| blockWeight(b.blocks) - blockWeight(a.blocks)

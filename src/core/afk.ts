@@ -43,7 +43,14 @@ export type Afk = AwayRecord;
 export type HoldRef = { pr?: string; issue?: string; branch?: string; runId?: string; threadId?: string };
 export type HeldNote = { t: string; text: string };
 /** `item` is the decision-queue item the hold waits on, so an answer on any path can close it. `notes` are appended to it, never a second hold. */
-export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[]; /** Why this was held although a settled record matched it. */ notSettled?: string };
+/**
+ * The card a daemon's card hold waits on, persisted on the hold so closing it needs nothing in memory: after a restart the
+ * reconciler (card-hold.ts `reconcileCardHolds`) reads the server, the thread and the request ID from here.
+ */
+export type CardRef = { server: string; threadId: string; requestId: string };
+export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[]; /** Why this was held although a settled record matched it. */ notSettled?: string; /** A daemon card hold's card. */ card?: CardRef };
+/** Pure: is this a daemon's card hold? It closes only when its card resolves, never because its pointer question was answered. */
+export const isCardHold = (h: Held): boolean => h.card !== undefined || (typeof h.requestId === "string" && h.requestId !== "");
 const ITEM_ID = /^Q-[a-z0-9]{4,16}$/;
 const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 /** The shapes a ref field may take. A field in any other shape is never acted on. */
@@ -133,8 +140,17 @@ export function noteHeld(store: Store, id: string, text: string, now = new Date(
 }
 /** The queue item a hold waits on: its structured `item` field and nothing else. The prose is never read. */
 export const itemIdOf = (h: Held): string | undefined => (h.item && ITEM_ID.test(h.item) ? h.item : undefined);
-/** A card or approval left its thread: close what was held against it. A hold with no card link is a decision, so it stays. */
-export const closeHeldForCard = (store: Store, threadId: string, requestId: string, how: string): number => closeWhere(store, (h) => h.requestId === requestId || h.threadId === threadId, how);
+/**
+ * A card or approval left its thread on `server`: close what was held against it. A card hold is keyed by (server, request
+ * ID): another server's card with the same request ID, and another card on the same thread, stay open. A Steward's hold
+ * that names the card's thread (and no request) closes when that thread's card leaves, on the same server when it names one.
+ * A hold with no card link is a decision, so it stays.
+ */
+export const closeHeldForCard = (store: Store, server: string, threadId: string, requestId: string, how: string): number =>
+	closeWhere(store, (h) => {
+		if (isCardHold(h)) { const c = h.card ?? { server: h.server, requestId: h.requestId }; return (c.server === undefined || c.server === server) && c.requestId === requestId; }
+		return h.threadId !== undefined && h.threadId === threadId && (h.server === undefined || h.server === server);
+	}, how);
 /**
  * Pure: why a hold is not a hold. A hold is a real wait on the operator, and an FYI waits on nothing, so the ledger refuses it
  * in code and points at the decision log. Only an opening counts: the thread, or the text, STARTS with "FYI", "for your
@@ -156,7 +172,8 @@ export const heldForItem = (h: Held, itemId: string) => h.item === itemId;
  */
 export function closeHeldForItem(store: Store, itemId: string, how: string): number {
 	if (!ITEM_ID.test(itemId)) return 0;
-	return closeWhere(store, (h) => heldForItem(h, itemId), how);
+	// A card hold waits on its card, not on its pointer question's answer.
+	return closeWhere(store, (h) => heldForItem(h, itemId) && !isCardHold(h), how);
 }
 
 /** Pure: the plain-words return brief. Newest facts last in each section. */

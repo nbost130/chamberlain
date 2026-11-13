@@ -73,11 +73,13 @@ async function load() {
 }
 
 // ---- queue ----
+// An approval, a secret and a card pointer are always urgent, whatever their `urgent` field says (questions.ts alwaysUrgent).
+const urgentOf = (i) => i.urgent !== false || i.secret === true || Boolean(i.cardRequest) || /^\s*(approval|secret)\s*$/i.test(i.tag || "");
 const visible = () => {
 	const f = S.filter === "all" ? S.items : S.items.filter((i) => i.kind === S.filter);
 	// Urgent first, grouped in kind order, then the non-urgent ones (urgent: false) in kind order; the server ranks within each kind.
 	const byKind = (list) => KINDS.flatMap((k) => list.filter((i) => i.kind === k.kind));
-	return [...byKind(f.filter((i) => i.urgent !== false)), ...byKind(f.filter((i) => i.urgent === false))];
+	return [...byKind(f.filter(urgentOf)), ...byKind(f.filter((i) => !urgentOf(i)))];
 };
 const current = () => visible()[S.sel];
 const defaultPick = (i) => (S.pick[i.id] ?? i.recommended ?? 0);
@@ -120,12 +122,12 @@ function listHtml() {
 			<span class="num">${idx + 1}</span>
 			${img ? `<img class="thumb" alt="" src="${esc(evUrl(i, img))}">` : ""}
 			<span class="body"><span class="title">${esc(i.title)}</span>
-			<span class="meta"><span class="${tagClass}">${esc(tag)}</span><span>${esc(i.thread)}</span>${evidenceCount(i) ? `<span>${esc(evidenceCount(i))}</span>` : ""}${i.blocks ? `<span>${esc(i.blocks)}</span>` : i.kind === "idea" ? "<span>no deadline</span>" : ""}<span>${ago(i.createdAt)}</span>${i.urgent === false ? '<span class="later">not urgent</span>' : ""}${i.notNowAt ? '<span class="later">not now</span>' : ""}</span></span>
+			<span class="meta"><span class="${tagClass}">${esc(tag)}</span><span>${esc(i.thread)}</span>${evidenceCount(i) ? `<span>${esc(evidenceCount(i))}</span>` : ""}${i.blocks ? `<span>${esc(i.blocks)}</span>` : i.kind === "idea" ? "<span>no deadline</span>" : ""}<span>${ago(i.createdAt)}</span>${!urgentOf(i) ? '<span class="later">not urgent</span>' : ""}${i.notNowAt ? '<span class="later">not now</span>' : ""}</span></span>
 			<span class="chev">${ICON.chev}</span></a>`;
 	};
 	// The urgent groups first, then the same kinds again under NOT URGENT: a question that can wait never sits among the urgent ones.
 	const groups = (urgent) => KINDS.map((k) => {
-		const rows = v.filter((i) => i.kind === k.kind && (i.urgent !== false) === urgent);
+		const rows = v.filter((i) => i.kind === k.kind && urgentOf(i) === urgent);
 		if (!rows.length) return "";
 		return `<div class="group c-${k.kind}"><span class="dot"></span>${urgent ? "" : "NOT URGENT · "}${k.label}</div>` + rows.map(rowHtml).join("");
 	}).join("");
@@ -183,6 +185,14 @@ function detailHtml() {
 	const mtop = `<div class="mtop"><a href="/" data-nav="/" aria-label="Back to decisions">${ICON.back}</a><span class="pos">${S.sel + 1} of ${v.length}</span><div class="bar" aria-hidden="true">${Array.from({ length: Math.min(total, 12) }, (_, k) => `<span class="${k < S.done ? "done" : k === pos - 1 ? "here" : ""}"></span>`).join("")}</div></div>`;
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
 		<div class="headline"><h1>${esc(i.title)}</h1>${i.context ? contextHtml(i.context) : ""}</div>`;
+	if (i.cardRequest && !i.secret) {
+		// A card pointer is never answered here: the card is acted on in its own thread, and this question closes only when the card does.
+		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
+			<div class="secret"><b>Act on the card itself.</b><span>This question points to a card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
+			${i.link ? `<a href="${esc(i.link)}" target="_blank" rel="noopener">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
+			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
+		</section>`;
+	}
 	if (i.secret) {
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
 			<div class="secret"><b>This needs a secret.</b><span>Enter it in its own thread. This page never takes a secret value, and the Steward never sees one.</span>
@@ -215,7 +225,7 @@ function renderQueue() {
 
 async function answerCurrent() {
 	const i = current();
-	if (!i || i.secret || S.busy) return;
+	if (!i || i.secret || i.cardRequest || S.busy) return;
 	S.busy = true; render();
 	try {
 		const body = { choice: defaultPick(i), note: S.note[i.id] || undefined, saveRuling: Boolean(S.save[i.id]) };
@@ -432,11 +442,11 @@ document.addEventListener("keydown", (ev) => {
 	if (k === "Enter" && ev.shiftKey) acceptAll();
 	else if (k === "j" || k === "J") { S.sel = Math.min(n - 1, S.sel + 1); render(); }
 	else if (k === "k" || k === "K") { S.sel = Math.max(0, S.sel - 1); render(); }
-	else if (/^[1-9]$/.test(k) && i && !i.secret) { const c = Number(k) - 1; if (c < i.options.length) { S.pick[i.id] = c; render(); } }
+	else if (/^[1-9]$/.test(k) && i && !i.secret && !i.cardRequest) { const c = Number(k) - 1; if (c < i.options.length) { S.pick[i.id] = c; render(); } }
 	else if (k === "Enter") answerCurrent();
 	else if (k === "h" || k === "H") notNow();
 	else if (k === "r" || k === "R") document.getElementById("note")?.focus();
-	else if ((k === "s" || k === "S") && i && !i.secret) { S.save[i.id] = !S.save[i.id]; render(); }
+	else if ((k === "s" || k === "S") && i && !i.secret && !i.cardRequest) { S.save[i.id] = !S.save[i.id]; render(); }
 	else return;
 	ev.preventDefault();
 });

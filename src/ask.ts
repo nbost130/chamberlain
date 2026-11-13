@@ -10,6 +10,8 @@
  *        thread, server, threadId?, blocks?, tag?, secret?, urgent?, notSettled?}
  * `urgent: false` marks a question that can wait: it is recorded and listed on the queue page below the urgent ones, but
  * nothing is posted where the operator reads, so no notification goes out. Leave it off and the question is urgent.
+ * An approval (tag "Approval") or a secret (`secret: true` or tag "Secret") is ALWAYS urgent: `urgent: false` on one is
+ * ignored, with a note on stderr, and the question is filed and posted as urgent.
  * Before it records anything, ask.ts looks the question up in what the principal already settled (answered questions,
  * rulings in force or retired, the Steward's decision log; src/core/settled.ts). A match is refused with exit 2 and one line
  * per match saying what it matched on: act on that answer instead. If it is truly a different question, add
@@ -32,15 +34,18 @@ import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
 import { expiresProblem, isExpired } from "./core/rulings.ts";
-import { askQuestion, evidenceRoot, KINDS, newItemId, type Evidence, type Question, type Option } from "./core/questions.ts";
+import { alwaysUrgent, askQuestion, evidenceRoot, isUrgent, KINDS, newItemId, type Evidence, type Question, type Option } from "./core/questions.ts";
 import { findSettled, refusalLines } from "./core/settled.ts";
 export { newItemId };
 
 const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const VIDEO = new Set([".mp4", ".webm", ".mov"]);
 
-/** Pure: a checked item from the Steward's JSON, or the first thing wrong with it. */
-export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOString()): Question {
+/**
+ * A checked item from the Steward's JSON, or the first thing wrong with it. `warn` hears what was changed rather than
+ * refused: an `urgent: false` on an approval or a secret, which is ignored.
+ */
+export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOString(), warn: (line: string) => void = (l) => console.error(l)): Question {
 	const o = raw as Record<string, unknown>;
 	if (!o || typeof o !== "object") throw Error("ask: expected a JSON object");
 	const str = (k: string, required = true) => {
@@ -91,6 +96,10 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 	if (secret && options.some((x) => x.route === "thread")) throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
 	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
 	const notSettled = str("notSettled", false);
+	const tag = str("tag", false);
+	// An approval or a secret never waits: the demotion is ignored, said on stderr, and the question goes out urgent.
+	const demoted = o.urgent === false && alwaysUrgent({ secret, ...(tag ? { tag } : {}) });
+	if (demoted) warn(`ask: "urgent": false ignored: ${secret || /secret/i.test(tag ?? "") ? "a secret" : "an approval"} is always urgent, so it is filed and posted as urgent`);
 	const item: Question = {
 		id, kind, title: str("title")!, context: str("context", false) ?? "", options,
 		...(recommended !== undefined ? { recommended } : {}),
@@ -100,9 +109,9 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 		thread: str("thread")!, server: str("server")!,
 		...(str("threadId", false) ? { threadId: str("threadId", false) } : {}),
 		...(str("blocks", false) ? { blocks: str("blocks", false) } : {}),
-		...(str("tag", false) ? { tag: str("tag", false) } : {}),
+		...(tag ? { tag } : {}),
 		...(secret ? { secret: true } : {}),
-		...(o.urgent === false ? { urgent: false as const } : {}),
+		...(o.urgent === false && !demoted ? { urgent: false as const } : {}),
 		...(notSettled ? { notSettled } : {}),
 		createdAt,
 	};
@@ -173,7 +182,7 @@ async function main() {
 	askQuestion(store, item, Date.parse(item.createdAt));
 	if (item.secret) { console.log(`${item.id} (secret: on the page as a link to its thread; no card)`); return; }
 	// A non-urgent question is on the page and nowhere else: the post is the only notification a new question sends.
-	if (item.urgent === false) { console.log(`${item.id} (on the queue page, not urgent: no notification sent)`); return; }
+	if (!isUrgent(item)) { console.log(`${item.id} (on the queue page, not urgent: no notification sent)`); return; }
 	const base = queueBase();
 	const inline = base !== undefined && (await queueUp(base));
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });

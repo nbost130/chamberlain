@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { heldOpen } from "../core/afk.ts";
+import { holdCard, reconcileCardHolds } from "../core/card-hold.ts";
+import { reconcileItemHolds } from "../core/hold-reconcile.ts";
 import { askQuestion, claimWake, getQuestion, pageClaim, questionStates, recordAnswerDelivered, type Question } from "../core/questions.ts";
 import { addInForce, propose, readRulings } from "../core/rulings.ts";
 import { openStore } from "../core/sqlite-store.ts";
@@ -160,6 +163,41 @@ describe("answering an item", () => {
 		expect(second.posts[0]!.message).toContain("item: Q-abcd");
 		// The page's record is derived from the claim: the item reads answered and delivered.
 		expect(getQuestion(first.store, "Q-abcd")).toMatchObject({ status: "answered", delivered: true });
+	});
+	test("(4) a card pointer's \"leave it\" answer is refused: the hold stays open while the card waits, and closes only when the card does", async () => {
+		const s = setup();
+		const { item: id } = holdCard(s.store, { thread: "Release", server: "main", threadId: "th-1", requestId: "a1", type: "approval_request", label: "bun run deploy" });
+		const q = getQuestion(s.store, id)!;
+		// No option says the card was handled.
+		expect(q.options.map((o) => o.label).join(" | ")).not.toMatch(/answered|done|handled|approved/i);
+		const leave = q.options.findIndex((o) => /leave/i.test(o.label));
+		const r = await s.post(`/api/items/${id}/answer`, { choice: leave });
+		expect(r.status).toBe(409);
+		expect((await r.json()).error).toContain("act on the card itself");
+		await s.app.idle();
+		expect(s.posts).toHaveLength(0);
+		expect(s.store.claims.list("queue")).toEqual([]);
+		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
+		expect(await reconcileCardHolds(s.store, async () => ({ state: "read", waiting: new Set(["a1"]) }))).toEqual({ closed: [], unknown: 0 });
+		expect(heldOpen(s.store)).toHaveLength(1);
+		expect(getQuestion(s.store, id)!.status).toBe("open");
+		// The card resolves: now, and only now, the question and the hold close.
+		expect((await reconcileCardHolds(s.store, async () => ({ state: "read", waiting: new Set() }))).closed).toHaveLength(1);
+		expect(heldOpen(s.store)).toEqual([]);
+		expect(getQuestion(s.store, id)!.status).toBe("answered-on-card");
+	});
+	test("(4) a pointer answered before this fix (a claim already on it) does not close its hold while the card waits", async () => {
+		const s = setup();
+		const { item: id } = holdCard(s.store, { thread: "Release", server: "main", threadId: "th-1", requestId: "a1", type: "approval_request", label: "deploy" });
+		const q = getQuestion(s.store, id)!;
+		claimWake(s.store, pageClaim(q, { choice: 1, label: "Leave it for now", by: "page", t: new Date().toISOString(), deliveryId: `answer:item:${id}` }));
+		expect(getQuestion(s.store, id)!.status).toBe("answered");
+		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
+		expect(heldOpen(s.store)).toHaveLength(1);
+		expect((await reconcileCardHolds(s.store, async () => ({ state: "read", waiting: new Set(["a1"]) }))).closed).toEqual([]);
+		expect(heldOpen(s.store)).toHaveLength(1);
+		expect((await reconcileCardHolds(s.store, async () => ({ state: "read", waiting: new Set() }))).closed).toHaveLength(1);
+		expect(heldOpen(s.store)).toEqual([]);
 	});
 	test("a secret item is never answered on the page", async () => {
 		const s = setup();

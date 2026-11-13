@@ -35,6 +35,23 @@ describe("(a) everything that waits on the operator goes through the queue first
 		expect(withStore(d, (s) => getQuestion(s, idOf(r))!.urgent)).toBe(false);
 		expect(ask(d, { urgent: "no", title: "x" }).stderr).toContain('"urgent" must be true or false');
 	});
+	test('(1) "urgent": false on an approval or a secret is ignored with a note on stderr: it is filed urgent, and an approval goes on to its post', () => {
+		const d = scratch();
+		for (const [o, what] of [[{ tag: "Approval", title: "Approve the payroll export" }, "an approval"], [{ tag: "approval", title: "Approve the ledger rebuild" }, "an approval"], [{ secret: true, options: [], title: "Paste the payroll API key" }, "a secret"], [{ tag: "Secret", title: "Rotate the vendor key" }, "a secret"]] as const) {
+			const r = ask(d, { ...o, urgent: false, notSettled: "test" });
+			expect(r.stderr).toContain(`"urgent": false ignored: ${what} is always urgent`);
+			expect(r.stdout).not.toContain("not urgent");
+			const q = withStore(d, (s) => [...questionStates(s).values()].find((x) => x.title === o.title));
+			expect(q).toBeDefined();
+			expect(q!.urgent).toBeUndefined();
+			// A secret is never posted. An approval goes on to its post: with no backend configured here that post fails (exit 1),
+			// where a question that may wait would have stopped before it and exited 0.
+			if ("secret" in o) expect([r.status, r.stdout]).toEqual([0, expect.stringContaining("(secret:")]);
+			else expect(r.status).toBe(1);
+		}
+		// An ordinary question keeps its demotion.
+		expect(ask(d, { urgent: false, title: "Pick a colour for the docs badge" }).stdout).toContain("not urgent: no notification sent");
+	});
 	test("a non-urgent question ranks below every urgent one, even one set aside with not now", () => {
 		const d = scratch();
 		const nu = idOf(ask(d, { urgent: false, kind: "only-you", title: "Waits a while" }));

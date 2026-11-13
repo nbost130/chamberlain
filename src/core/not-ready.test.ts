@@ -78,7 +78,7 @@ describe("the engine with no wake URL", () => {
 		fake.emit({ kind: "needs_input", thread: { id: "t1", title: "Build", status: "waiting", pendingRequestId: "req-1" } });
 		await Bun.sleep(100);
 		// The alert is on record as notified AND its wake is waiting: neither exists without the other.
-		expect(engine.notified().has("req:req-1")).toBe(true);
+		expect(engine.notified().has("req:fake:req-1")).toBe(true);
 		expect(store.wakes.rows()).toHaveLength(1);
 		expect(fake.wakes).toEqual([]);
 		fake.setWakeReady(true);

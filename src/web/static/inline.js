@@ -157,7 +157,7 @@
 
 	function card(it) {
 		const c = el("div", "dq-card");
-		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
+		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
 		if (it.context) c.append(context(it.context));
 		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
 		if (imgs.length) {
@@ -166,6 +166,7 @@
 			c.append(ev);
 		}
 		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); return c; }
+		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the card itself, in its thread. This question closes only when the card does.")); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);

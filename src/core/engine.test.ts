@@ -385,8 +385,8 @@ describe("the engine's own dedupe is the item system's", () => {
 		r.fake.threads.set("t1", { lastMessage: "Which one?", waiting: [question] });
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1" }) });
 		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.store.items.get("notification-log", "req:req-1")).toMatchObject({ kind: "sent", status: "triggered", notificationCount: 1 });
-		expect(r.engine.notified().has("req:req-1")).toBe(true);
+		expect(r.store.items.get("notification-log", "req:fake:req-1")).toMatchObject({ kind: "sent", status: "triggered", notificationCount: 1 });
+		expect(r.engine.notified().has("req:fake:req-1")).toBe(true);
 		r.engine.alarm("steward-stalled", "stalled", "it is");
 		r.engine.alarm("steward-stalled", "stalled", "it is");
 		expect(r.events.filter((e) => e.event === "alarm")).toHaveLength(1);
@@ -467,7 +467,7 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1" }) });
 		await r.until("the wake", () => r.fake.wakes.length === 1);
 		expect(r.fake.wakes[0]!.message).toContain("Merge now?");
-		expect([...r.engine.notified()].sort()).toEqual(expect.arrayContaining(["req:req-1"]));
+		expect([...r.engine.notified()].sort()).toEqual(expect.arrayContaining(["req:fake:req-1"]));
 		expect(r.store.wakes.rows()).toEqual([]);
 	});
 
@@ -521,12 +521,12 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		fail.at = "hold-item";
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("the failed commit", () => r.events.some((e) => e.event === "fire-error"));
-		expect(r.engine.notified().has("req:a1")).toBe(false);
+		expect(r.engine.notified().has("req:fake:a1")).toBe(false);
 		fail.at = undefined;
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
 		expect(heldOpen(r.store).map((h) => h.what).join("\n")).toContain("command or permission approval: deploy");
-		expect(r.engine.notified().has("req:a1")).toBe(true);
+		expect(r.engine.notified().has("req:fake:a1")).toBe(true);
 	});
 });
 
@@ -1148,5 +1148,86 @@ describe("the judge is an explicit setting", () => {
 	});
 	test("recovery off: nothing needs a judge, so nothing is said", () => {
 		expect(make({ recover: false }).filter((e) => e.event === "judge-off")).toEqual([]);
+	});
+});
+
+describe("(2)(3) card holds after a restart, and across servers", () => {
+	/** An engine on a given store and servers, with no housekeeping: the card reconciler still runs on connect and on every tick. */
+	function engineOn(store: Store, servers: { name: string; fake: FakeAdapter }[]) {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-cardeng-`);
+		dirs.push(root);
+		mkdirSync(`${root}/conf`, { recursive: true, mode: 0o700 });
+		writeFileSync(`${root}/conf/decision-rights.md`, "ask", { mode: 0o600 });
+		const events: Logged[] = [];
+		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: servers.map((x) => ({ server: { name: x.name, adapter: "fake" }, adapter: x.fake })), log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
+		engines.push(engine);
+		void engine.start();
+		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
+		return { engine, events, until };
+	}
+	const approvalCard: WaitingItem = { type: "approval_request", requestId: "a1", label: "deploy", questions: [] };
+
+	test("a card resolved while the daemon was down: the restarted daemon closes its question and hold once it connects", async () => {
+		const root = mkdtempSync(`${tmpdir()}/chamberlain-cardrestart-`);
+		dirs.push(root);
+		const first = openStore(`${root}/chamberlain.db`);
+		first.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		const fake1 = createFakeAdapter();
+		fake1.threads.set("t1", { waiting: [approvalCard] });
+		const one = engineOn(first, [{ name: "fake", fake: fake1 }]);
+		fake1.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
+		await one.until("the hold", () => one.events.some((e) => e.event === "held-by-daemon"));
+		await one.engine.stop();
+		engines.splice(engines.indexOf(one.engine), 1);
+		first.close();
+		// While it was down the card was answered in its thread; the new process never saw the old state.
+		const second = openStore(`${root}/chamberlain.db`);
+		expect(heldOpen(second)).toHaveLength(1);
+		const fake2 = createFakeAdapter();
+		fake2.threads.set("t1", { waiting: [] });
+		const two = engineOn(second, [{ name: "fake", fake: fake2 }]);
+		await two.until("the card reconciled", () => two.events.some((e) => e.event === "card-reconciled"));
+		expect(heldOpen(second)).toEqual([]);
+		expect([...questionStates(second).values()].map((q) => q.status)).toEqual(["answered-on-card"]);
+		await two.engine.tick();
+		expect(two.events.filter((e) => e.event === "card-reconciled")).toHaveLength(1);
+		await two.engine.stop();
+		engines.splice(engines.indexOf(two.engine), 1);
+		second.close();
+	});
+
+	test("a card still waiting after the restart stays held; one that disappears later closes on the next tick", async () => {
+		const store = memStore();
+		store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		const fake = createFakeAdapter();
+		fake.threads.set("t1", { waiting: [approvalCard] });
+		const e = engineOn(store, [{ name: "fake", fake }]);
+		fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
+		await e.until("the hold", () => e.events.some((x) => x.event === "held-by-daemon"));
+		await e.engine.tick();
+		expect(heldOpen(store)).toHaveLength(1);
+		fake.threads.delete("t1");
+		await e.engine.tick();
+		expect(heldOpen(store)).toEqual([]);
+	});
+
+	test("two servers with the same request ID: both are held, and the one that resolves closes only its own", async () => {
+		const store = memStore();
+		store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
+		const a = createFakeAdapter(), b = createFakeAdapter();
+		a.threads.set("ta", { waiting: [approvalCard] });
+		b.threads.set("tb", { waiting: [approvalCard] });
+		const e = engineOn(store, [{ name: "alpha", fake: a }, { name: "beta", fake: b }]);
+		a.emit({ kind: "needs_input", thread: thread("ta", "waiting", { pendingRequestId: "a1" }) });
+		b.emit({ kind: "needs_input", thread: thread("tb", "waiting", { pendingRequestId: "a1" }) });
+		await e.until("both holds", () => heldOpen(store).length === 2);
+		expect(heldOpen(store).map((h) => h.server).sort()).toEqual(["alpha", "beta"]);
+		// The card leaves alpha's thread: alpha's question and hold close, beta's stay.
+		a.threads.set("ta", { waiting: [] });
+		a.emit({ kind: "state", thread: thread("ta", "running") });
+		await e.until("alpha closed", () => heldOpen(store).length === 1);
+		await e.engine.tick();
+		expect(heldOpen(store).map((h) => h.server)).toEqual(["beta"]);
+		expect([...questionStates(store).values()].map((q) => [q.server, q.status]).sort()).toEqual([["alpha", "answered-on-card"], ["beta", "open"]]);
 	});
 });

@@ -129,3 +129,18 @@ test("(a) a queue with no non-urgent question renders as before", async () => {
 	expect(html).not.toContain("NOT URGENT");
 	expect(html).not.toContain("not urgent");
 });
+test("(a) an approval, a secret and a card pointer stay under the urgent groups even when their row says urgent: false", async () => {
+	const html = await list([
+		{ id: "Q-apr01", kind: "only-you", title: "Approval row", tag: "Approval", urgent: false },
+		{ id: "Q-sec01", kind: "only-you", title: "Secret row", secret: true, urgent: false },
+		{ id: "Q-ptr01", kind: "only-you", title: "Pointer row", cardRequest: "req-1", tag: "Approval", urgent: false },
+		{ id: "Q-nu001", kind: "idea", title: "Can wait row", urgent: false },
+	]);
+	const at = (t: string) => html.indexOf(t);
+	for (const t of ["Approval row", "Secret row", "Pointer row"]) {
+		expect(at(t)).toBeGreaterThan(-1);
+		expect(at(t)).toBeLessThan(at("NOT URGENT"));
+	}
+	expect(at("NOT URGENT")).toBeLessThan(at("Can wait row"));
+	expect(html.match(/not urgent<\/span>/g)).toHaveLength(1);
+});

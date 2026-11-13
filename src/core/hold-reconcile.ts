@@ -16,7 +16,7 @@
  * come from a fresh snapshot of each server taken in the pass (never the watchers' cache) and cost no GitHub calls. The engine is given the GitHub reader (core stays free of any one
  * host); tests pass fakes.
  */
-import { closeHeldWhere, cleanRef, heldOpen, itemIdOf, REF_SHAPES, type Held, type HoldRef } from "./afk.ts";
+import { closeHeldWhere, cleanRef, heldOpen, isCardHold, itemIdOf, REF_SHAPES, type Held, type HoldRef } from "./afk.ts";
 import { QUEUE, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
@@ -32,7 +32,8 @@ const STATE_KEY = "hold-reconcile";
 
 /**
  * Close the holds of every answered question, by the hold's structured `item` field only. A hold with no `item` is never
- * closed by an answer, whatever its text names: it closes through its other refs, or by hand.
+ * closed by an answer, whatever its text names: it closes through its other refs, or by hand. A daemon's card hold is closed
+ * here only once its pointer question was closed by the card itself (answered-on-card): an answer to the pointer leaves it open.
  */
 export function reconcileItemHolds(store: Store, now = new Date()): { closed: number } {
 	if (!heldOpen(store).length) return { closed: 0 };
@@ -50,6 +51,8 @@ export function reconcileItemHolds(store: Store, now = new Date()): { closed: nu
 	};
 	const closed = closeHeldWhere(store, (h) => {
 		const id = itemIdOf(h);
+		// A card hold closes only when its card resolves (the question then reads answered-on-card), never on an answer to its pointer.
+		if (id && isCardHold(h) && qs.get(id)?.status !== "answered-on-card") return undefined;
 		const a = id ? answered(id) : undefined;
 		return a ? `${a.how} (item ${id}); ${BY}.` : undefined;
 	}, now);

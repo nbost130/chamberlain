@@ -7,8 +7,8 @@
  */
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
-import { cardWaitOf, closeCardQuestions, holdCard } from "./card-hold.ts";
+import { mandateLine, readAfk } from "./afk.ts";
+import { cardWaitOf, closeCard, holdCard, reconcileCardHolds, type CardThreadRead } from "./card-hold.ts";
 import type { Question } from "./questions.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
@@ -309,14 +309,16 @@ export function createEngine(d: EngineDeps) {
 				// With nothing to read the thread's own status is the request.
 				const route = routeNeedsInput(items, Boolean(live.pendingRequestId) || !this.inspect, Boolean(readAfk(store)));
 				if (route === "skip-empty") { log("skip-empty-wait", { server: this.srv.name, threadId: live.id }); return; }
+				// A request is seen once per (server, request ID): two servers may use the same request ID.
+				const reqKey = (requestId: string) => `req:${this.srv.name}:${requestId}`;
 				if (route === "hold") {
-					for (const i of items.filter((x) => !notified.has(`req:${x.requestId}`))) {
+					for (const i of items.filter((x) => !notified.has(reqKey(x.requestId)))) {
 						// The record that it was seen, the question that points to the card and the hold the operator will read are one
 						// transaction: a crash between them would leave the request marked seen with nothing on the queue or held.
 						// Only the card's kind, request ID and label travel (card-hold.ts); its questions and any value never do.
 						let filed: Question | undefined;
 						store.tx(() => {
-							markNotified(`req:${i.requestId}`);
+							markNotified(reqKey(i.requestId));
 							filed = holdCard(store, cardWaitOf(i, { thread: live.title, server: this.srv.name, threadId: live.id })).question;
 						});
 						log("held-by-daemon", { server: this.srv.name, threadId: live.id, kind: i.type });
@@ -325,9 +327,9 @@ export function createEngine(d: EngineDeps) {
 					}
 					return;
 				}
-				const fresh = items.filter((i) => !notified.has(`req:${i.requestId}`));
+				const fresh = items.filter((i) => !notified.has(reqKey(i.requestId)));
 				if (items.length && !fresh.length) { log("skip-request-seen", { server: this.srv.name, threadId: live.id }); return; }
-				for (const i of fresh) stage(`req:${i.requestId}`);
+				for (const i of fresh) stage(reqKey(i.requestId));
 				const kinds = new Set(fresh.map((i) => i.type));
 				if (kinds.has("secret_request")) waitNote = `WAITING ON: a SECRET request. Never answer it and never supply a value; it is ${PrincipalPoss()} alone.`;
 				else if (kinds.has("approval_request")) waitNote = `WAITING ON: a command or permission APPROVAL. ${this.adapter.approvalHint ? `${this.adapter.approvalHint} ` : ""}Read the command and tell ${principal()}.`;
@@ -378,9 +380,9 @@ export function createEngine(d: EngineDeps) {
 			// An answer given in the thread reaches no one else, so the ledger closes here or it shows a settled decision as waiting.
 			if (prev?.pendingRequestId && prev.pendingRequestId !== next.pendingRequestId) {
 				try {
-					const closed = closeHeldForCard(store, next.id, prev.pendingRequestId, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
-					if (closed) log("held-closed", { server: this.srv.name, threadId: next.id, closed });
-					const questions = closeCardQuestions(store, this.srv.name, prev.pendingRequestId);
+					// Keyed by (server, request ID): the same request ID on another server is another card.
+					const { holds, questions } = closeCard(store, { server: this.srv.name, threadId: next.id, requestId: prev.pendingRequestId }, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
+					if (holds) log("held-closed", { server: this.srv.name, threadId: next.id, closed: holds });
 					if (questions) log("card-question-closed", { server: this.srv.name, threadId: next.id, closed: questions });
 				} catch (e) { log("held-close-error", { server: this.srv.name, threadId: next.id, error: String(e) }); }
 			}
@@ -432,7 +434,8 @@ export function createEngine(d: EngineDeps) {
 		run(): Promise<void> {
 			return this.adapter.watch({
 				event: (e) => this.onEvent(e),
-				connected: (up, info) => { this.connected = up; if (!up) this.lastOk = Date.now(); if (info?.version) this.version = info.version; },
+				// A fresh connection is when a restart can first see which held cards resolved while the daemon was down.
+				connected: (up, info) => { this.connected = up; if (!up) this.lastOk = Date.now(); if (info?.version) this.version = info.version; if (up) void cardReconcileTick(); },
 				log: (event, data) => log(event, data),
 			}, this.controller.signal).catch((e) => log("watch-error", { server: this.srv.name, error: String(e instanceof Error ? e.message : e).slice(0, 200) }));
 		}
@@ -646,12 +649,48 @@ export function createEngine(d: EngineDeps) {
 		finally { reconcilingRefs = false; }
 	}
 
+	/**
+	 * Card holds against the cards actually waiting (card-hold.ts `reconcileCardHolds`): every tick and on every (re)connection,
+	 * so a card answered, withdrawn or gone while the daemon was down closes its question and hold, exactly once. A thread is read
+	 * through its own server's adapter, and only while that server's watcher is connected (a disconnected adapter's read is empty,
+	 * not "nothing waiting"). A read that fails falls back to a fresh snapshot of that server: a thread missing from a whole snapshot,
+	 * or archived, is gone. Anything else is unknown, and its cards stay open.
+	 */
+	let reconcilingCards: Promise<void> | undefined;
+	function cardReconcileTick(): Promise<void> {
+		reconcilingCards ??= (async () => {
+			const snaps = new Map<string, Promise<CardThreadRead | Map<string, boolean>>>();
+			const snapshotOf = (w: Watcher) => {
+				if (!snaps.has(w.srv.name)) snaps.set(w.srv.name, (async () => {
+					if (!has(w.adapter, "snapshot")) return { state: "unknown" } as const;
+					const snap = await w.adapter.snapshot().catch(() => undefined);
+					return snap?.complete ? new Map(snap.threads.map((t) => [t.id, t.archived])) : ({ state: "unknown" } as const);
+				})());
+				return snaps.get(w.srv.name)!;
+			};
+			const read = async (server: string, threadId: string): Promise<CardThreadRead> => {
+				const w = watchers.find((x) => x.srv.name === server);
+				if (!w || !w.connected || !has(w.adapter, "inspect")) return { state: "unknown" };
+				try { return { state: "read", waiting: new Set((await w.adapter.inspect.waiting(threadId)).map((i) => i.requestId)) }; } catch {
+					const snap = await snapshotOf(w);
+					if (!(snap instanceof Map)) return { state: "unknown" };
+					return !snap.has(threadId) || snap.get(threadId) === true ? { state: "gone" } : { state: "unknown" };
+				}
+			};
+			try {
+				const { closed } = await reconcileCardHolds(store, read);
+				for (const c of closed) log("card-reconciled", { server: c.server, threadId: c.threadId, requestId: c.requestId });
+			} catch (e) { log("held-reconcile-error", { pass: "cards", error: String(e).slice(0, 200) }); }
+		})().finally(() => { reconcilingCards = undefined; });
+		return reconcilingCards;
+	}
+
 	/** One pass of the once-a-minute housekeeping. The interval runs it; tests call it. */
 	async function tick() {
 		try { heartbeat(); } catch (e) { log("heartbeat-error", { error: String(e) }); }
 		try { relay.audit(); } catch (e) { log("relay-audit-error", { error: String(e).slice(0, 200) }); }
 		// The relay polls on its own; a pass here too costs nothing (passes are one at a time) and makes the heartbeat a full look.
-		const checks: Promise<unknown>[] = [relay.pass(), stewardCheck().catch((e) => log("steward-check-error", { error: String(e) }))];
+		const checks: Promise<unknown>[] = [relay.pass(), stewardCheck().catch((e) => log("steward-check-error", { error: String(e) })), cardReconcileTick()];
 		if (d.housekeeping !== false) {
 			checks.push(holdReconcileTick());
 			if (deskLane) {

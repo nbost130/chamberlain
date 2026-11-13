@@ -467,7 +467,10 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
 - **Queue first.** `afk.ts hold` requires `--item <Q-id>` naming a question that is on the queue and still open; it refuses no
   item, an unknown one, or one already answered. ask.ts takes `"urgent": false` for a question that can wait: it is recorded,
   ranked below every urgent one (`ranked`, then grouped under NOT URGENT on the page), and nothing is posted where the operator
-  reads, so it sends no notification.
+  reads, so it sends no notification. **An approval (tag `Approval`), a secret (`secret: true` or tag `Secret`) and a card
+  pointer (`cardRequest`) are always urgent** (`alwaysUrgent`, `src/core/questions.ts`): ask.ts ignores `urgent: false` on one with a
+  note on stderr and posts it as urgent, `askQuestion` drops the field on every write, `questionStates` drops it on every read (a row
+  an older build stored), and the page groups by the same rule, so no path can demote one.
 - **Holds close by their item field only** (`heldForItem`, `itemIdOf`, pass 1 of `hold-reconcile.ts`). An item ID written in a
   hold's text links it to nothing.
 - **Settled never twice** (`src/core/settled.ts`). Before ask.ts records a question and before `afk.ts hold` writes a hold, the
@@ -480,14 +483,23 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
   3. *Title overlap* (`settledMatch.titleOverlap`, on by default): a two-word title must appear as one phrase (at most one word
      between) with a word that is not a generic workflow word; a longer title needs three shared words, three quarters of the
      shorter side, two distinctive, and against a long text every shared word inside a window of `2n + 2` words.
-  Words are lower-cased, stop words dropped and a plural `s` removed from words over four letters; `ignoreWords` and the
-  principal's name never count toward a topic. The rule favours precision: a paraphrase ("Should we call it Atlas?" after "Rename
+  Words are lower-cased, stop words dropped and a plural `s` removed from words over four letters; `ignoreWords` (case-insensitive)
+  and the principal's name are dropped before every count, the title overlap's as well as the topic's, so with `Acme` ignored a
+  settled "Acme deployment" does not block "Acme deployment database rollback?". The rule favours precision: a paraphrase ("Should we call it Atlas?" after "Rename
   the project to Atlas") is a documented miss that costs one question, while a false match costs a `notSettled` override with a
   reason, stored on the record. A malformed record is skipped and counted in the output, never silently. The daemon's own alarms
   are filed with `notSettled: "raised by the daemon: a live system alarm"`, since a live alarm recurs by nature.
 - **Card holds** (`src/core/card-hold.ts`). While the operator is away, the engine holds an approval, secret or link card behind
-  a **pointer question** that it files in the same transaction as the notification record and the hold: one per card (`cardRequest`
-  is the request ID, matched with the server), answered on the card, closed as `answered-on-card` when the card leaves its thread.
+  a **pointer question** that it files in the same transaction as the notification record and the hold: one per card, keyed by
+  **(server, request ID)** everywhere (filing, the `req:<server>:<id>` notification key, closing, reconciling), so two servers that use
+  the same request ID never close or suppress each other's. The hold stores its card (`card`: server, thread ID, request ID) and the
+  question its `server`, `threadId` and `cardRequest`, so closing needs nothing in memory. **A card hold closes only when its card
+  resolves**: the page refuses an answer to a pointer (409, "act on the card itself"), its options never say the card was handled, and
+  the item reconciler skips a card hold unless its question was closed by the card (`answered-on-card`). The card closes its question
+  and hold when it leaves its thread (seen live), and `reconcileCardHolds` checks every open card on every tick and on every watcher
+  connection: a card no longer waiting in a fresh read of its thread, or whose thread is gone from a whole fresh snapshot, closes
+  exactly once, so a card answered or withdrawn while the daemon was down does not stay open. A server that is not connected, or a
+  read that fails, says nothing, and its cards stay open.
   Which cards exist and their kind come from the adapter's `Inspector.waiting`, normalized to `WaitKind`; the core reads only the
   kind, the request ID and the label (`cardWaitOf`), never the card's questions, options or a value. A secret card's pointer is
   itself `secret`, so it is never posted and the page shows it only as a link to its thread; any other pointer is posted once,

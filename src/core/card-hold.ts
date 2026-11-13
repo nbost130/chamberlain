@@ -13,8 +13,14 @@
  *
  * Which cards there are, and their kinds, is the adapter's (`Inspector.waiting`, normalized to `WaitKind` in adapter.ts):
  * this module reads only the normalized fields, so it imports no adapter.
+ *
+ * A card is keyed by (server, request ID) everywhere: filing, de-duplication, closing and reconciling. Two servers may use
+ * the same request ID; one resolving never touches the other. A card hold closes ONLY when its card resolves: answering
+ * its pointer question changes nothing (the page refuses it and the item reconciler skips it). What closing needs, the
+ * server, the thread and the request ID, is stored on the hold (`card`) and on the question (`server`, `threadId`,
+ * `cardRequest`), so `reconcileCardHolds` can close a card that resolved or vanished while the daemon was down.
  */
-import { appendHeld, heldOpen } from "./afk.ts";
+import { appendHeld, closeHeldForCard, heldOpen, isCardHold, type CardRef, type Held } from "./afk.ts";
 import type { WaitingItem, WaitKind } from "./adapter.ts";
 import { askQuestion, newItemId, questionStates, QUEUE, type Question } from "./questions.ts";
 import type { Store } from "./store.ts";
@@ -49,10 +55,11 @@ export function cardQuestion(w: CardWait, id: string, createdAt: string): Questi
 		context: [
 			`- Thread: ${clip(flat(w.thread), 120)} (on ${flat(w.server)})`,
 			`- It asks for: ${k.asks}${w.label ? `: ${clip(flat(w.label), 100)}` : ""}`,
-			"- Answer it on the thread's own card. This question closes when the card does.",
+			"- Act on the card itself, in its thread. This question and its hold close only when the card does; answering here closes nothing.",
 			...(secret ? ["- The value never goes through this queue."] : []),
 		].join("\n"),
-		options: [{ label: "Answered on the card" }, { label: "Leave it for now" }],
+		// Neither option says the card was handled: the page refuses an answer to a pointer, and only the card resolving closes it.
+		options: [{ label: "Open the card in its thread" }, { label: "Leave the card waiting" }],
 		thread: clip(flat(w.thread), 80), server: w.server, threadId: w.threadId, tag: k.tag,
 		...(secret ? { secret: true } : {}),
 		cardRequest: w.requestId,
@@ -81,11 +88,16 @@ export function holdCard(store: Store, w: CardWait, now = new Date(), newId: () 
 			askQuestion(store, question, now.getTime());
 			item = question.id;
 		}
-		if (heldOpen(store).some((h) => h.server === w.server && h.requestId === w.requestId)) return { item, ...(question ? { question } : {}), filed: Boolean(question), held: false };
-		appendHeld(store, { thread: clip(w.thread, 80), server: w.server, requestId: w.requestId, what: holdText(w), taken: "left parked", item }, now);
+		if (heldOpen(store).some((h) => sameCard(cardRefOf(h), w))) return { item, ...(question ? { question } : {}), filed: Boolean(question), held: false };
+		appendHeld(store, { thread: clip(w.thread, 80), server: w.server, requestId: w.requestId, what: holdText(w), taken: "left parked", item, card: { server: w.server, threadId: w.threadId, requestId: w.requestId } }, now);
 		return { item, ...(question ? { question } : {}), filed: Boolean(question), held: true };
 	});
 }
+
+const sameCard = (a: Pick<CardRef, "server" | "requestId"> | undefined, b: Pick<CardRef, "server" | "requestId">) => a !== undefined && a.server === b.server && a.requestId === b.requestId;
+/** Pure: a hold's card as far as the hold itself says (its `card`, or the server and request ID an older hold carries). */
+const cardRefOf = (h: Held): Partial<CardRef> & Pick<CardRef, "server" | "requestId"> | undefined =>
+	h.card ?? (isCardHold(h) && h.server && h.requestId ? { server: h.server, requestId: h.requestId } : undefined);
 
 /** The card left its thread (answered or withdrawn there): its open pointer questions close with it, as answered on the card. */
 export function closeCardQuestions(store: Store, server: string, requestId: string, now = Date.now()): number {
@@ -98,4 +110,61 @@ export function closeCardQuestions(store: Store, server: string, requestId: stri
 		}
 		return n;
 	});
+}
+
+/**
+ * The card (server, request ID) resolved or vanished: its open pointer questions close as answered on the card and its open
+ * holds close, in one transaction. Idempotent: a second call closes nothing.
+ */
+export function closeCard(store: Store, c: CardRef, how: string, now = new Date()): { questions: number; holds: number } {
+	return store.tx(() => ({
+		questions: closeCardQuestions(store, c.server, c.requestId, now.getTime()),
+		holds: closeHeldForCard(store, c.server, c.threadId, c.requestId, how),
+	}));
+}
+
+/** What a fresh read of one thread on one server says: the request IDs waiting there now, the thread gone, or nothing known. */
+export type CardThreadRead = { state: "read"; waiting: ReadonlySet<string> } | { state: "gone" } | { state: "unknown" };
+
+/**
+ * Every open card hold and every open pointer question, as the cards they wait on, keyed by (server, request ID). The
+ * card's thread comes from the hold's `card`, else from its pointer question (a hold written before `card` existed). A
+ * card whose thread cannot be told is left out: it is never closed on a guess.
+ */
+export function openCards(store: Store): CardRef[] {
+	const out = new Map<string, CardRef>();
+	const qs = questionStates(store);
+	const add = (c: Partial<CardRef>) => { if (c.server && c.threadId && c.requestId) out.set(`${c.server}\0${c.requestId}`, { server: c.server, threadId: c.threadId, requestId: c.requestId }); };
+	for (const q of qs.values()) if (q.status === "open" && q.cardRequest) add({ server: q.server, threadId: q.threadId, requestId: q.cardRequest });
+	for (const h of heldOpen(store)) {
+		const c = cardRefOf(h);
+		if (!c) continue;
+		const q = h.item ? qs.get(h.item) : undefined;
+		add({ ...c, threadId: c.threadId ?? (q?.cardRequest === c.requestId && q.server === c.server ? q.threadId : undefined) });
+	}
+	return [...out.values()];
+}
+
+/**
+ * Close every card that is no longer waiting: on each tick and at startup, so a card answered or withdrawn while the daemon
+ * was down, or whose thread vanished, does not leave its question and hold open. Each (server, thread) is read once; a read
+ * that cannot say (`unknown`: the server is down, the read failed) leaves its cards open. A card closes exactly once: a
+ * closed card is no longer open, so a later pass does not see it.
+ */
+export async function reconcileCardHolds(store: Store, read: (server: string, threadId: string) => Promise<CardThreadRead>, now = () => new Date()): Promise<{ closed: CardRef[]; unknown: number }> {
+	const cards = openCards(store);
+	const reads = new Map<string, Promise<CardThreadRead>>();
+	const closed: CardRef[] = [];
+	let unknown = 0;
+	for (const c of cards) {
+		const key = `${c.server}\0${c.threadId}`;
+		if (!reads.has(key)) reads.set(key, read(c.server, c.threadId).catch((): CardThreadRead => ({ state: "unknown" })));
+		const r = await reads.get(key)!;
+		if (r.state === "unknown") { unknown++; continue; }
+		if (r.state === "read" && r.waiting.has(c.requestId)) continue;
+		const how = r.state === "gone" ? "The card's thread is gone from its server (closed by the daemon's card reconciler)." : "The card is no longer waiting in its thread: answered or withdrawn there (closed by the daemon's card reconciler).";
+		const n = closeCard(store, c, how, now());
+		if (n.questions || n.holds) closed.push(c);
+	}
+	return { closed, unknown };
 }

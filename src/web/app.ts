@@ -175,6 +175,9 @@ export function createApp(d: AppDeps) {
 			if (!i) return { status: 404, body: { error: "no such item" } };
 			if (i.status !== "open") return { status: 409, body: { error: i.status === "answered" ? "already answered" : "already answered on its card in T3" } };
 			if (i.secret) return { status: 400, body: { error: "a secret is entered in its own thread, never on this page" } };
+			// A card pointer closes only when its card does. An answer here would take it off the queue (and its hold off the ledger) while the
+			// card still waits, so it is refused, and the refusal says where to act.
+			if (i.cardRequest) return { status: 409, body: { error: "this question points to a card waiting in its thread: act on the card itself; this question and its hold close only when the card does" } };
 			if (!Number.isInteger(body.choice) || body.choice < 0 || body.choice >= i.options.length) return { status: 400, body: { error: "choose one of the options" } };
 			const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 4000) : undefined;
 			const label = i.options[body.choice]!.label;
