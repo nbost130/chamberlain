@@ -27,10 +27,10 @@
  * that exits before that commit leaves the row pending, and the restart sends it again under the same id, counted like any other attempt.
  */
 import { crashPoint } from "./crash.ts";
-import { maxAttemptsFromEnv, STALE_AFTER_MS, withDeliveryId, type WakeResult, type WakeTransport } from "./deliver.ts";
+import { maxAttemptsFromEnv, STALE_AFTER_MS, withDeliveryId, type WakeDraft, type WakeResult, type WakeTransport } from "./deliver.ts";
 import { composeWake, HOLD_CEILING_MS, observe, type Gate } from "./hold.ts";
 import { isRelayLock, lockCovers, type RelayLock } from "./singleton.ts";
-import type { HoldClock, OutboxRow, Store } from "./store.ts";
+import type { HoldClock, OutboxRow, RightsStamp, Store } from "./store.ts";
 
 /** The pause before a failed row is tried again: one minute, then four, so a webhook back within about five minutes loses nothing. */
 export const retryAfterMs = (attempts: number) => Math.min(60_000 * 4 ** (attempts - 1), 15 * 60_000);
@@ -59,6 +59,14 @@ export type RelayDeps = {
 	gate: () => Gate;
 	log: (event: string, data?: Record<string, unknown>) => void;
 	alarm: (key: string, title: string, summary: string) => void;
+	/**
+	 * Asked just before each attempt of a row that carries rights stamps (a "rights unchanged" pointer, `WakeMeta.rights`), in the serial queue:
+	 * does the Steward the pointer was composed for still hold those rights? Undefined means send the row as it is. Otherwise the row is
+	 * SUPERSEDED: in one transaction it is cancelled (its ids keep their tombstones, and it is never POSTed again) and the fresh wake returned
+	 * here, composed for the current Steward with the full block, is queued in its place and sent at once. Rows stay immutable: a stale pointer
+	 * is replaced, never rewritten.
+	 */
+	supersede?: (row: OutboxRow) => Promise<{ reason: string; wake: WakeDraft } | undefined>;
 	/** Runs for each delivery id a row carries, right after the row is committed delivered. Idempotent: recovery may run it again. */
 	onDelivered?: (deliveryId: string) => void;
 	/** Attempts per row before it is dead-lettered (default CHAMBERLAIN_MAX_ATTEMPTS, else 3). */
@@ -128,7 +136,10 @@ export function createRelay(d: RelayDeps) {
 		const row = store.wakes.compose(now, (held) => {
 			const c = composeWake(held, now);
 			const only = held.length === 1 ? held[0]! : undefined;
-			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(l.name ? { receiver: l.name } : {}) };
+			// The digest carries every pointer its members carry, so the relay checks each of their stamps before sending it.
+			const stamps = new Map<string, RightsStamp>();
+			for (const h of held) if (c.members.includes(h.deliveryId)) for (const st of h.rights ?? []) stamps.set(JSON.stringify(st), st);
+			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(l.name ? { receiver: l.name } : {}), ...(stamps.size ? { rights: [...stamps.values()] } : {}) };
 		}, l.name);
 		if (!row) return;
 		crashPoint("composed");
@@ -148,12 +159,43 @@ export function createRelay(d: RelayDeps) {
 		return run;
 	}
 
-	/** One attempt of one row: counted and committed first, then the POST. True when it is delivered. It runs in the serial queue (see `serially`). */
-	async function send(l: Lane, row: OutboxRow): Promise<boolean> {
-		if (!d.lock.held()) return false;
-		if (row.attempts >= max) { deadLetter(l, row, row.attempts); return false; }
+	/**
+	 * A row whose rights pointer no longer holds for the current Steward (`supersede`): cancelled, and the fresh wake queued in its place, in one
+	 * transaction. Returns the replacement row to send now, undefined to send this row as it is, or null when it is no longer pending (the
+	 * operator cancelled it meanwhile) or the check failed: then nothing is sent on this pass.
+	 */
+	async function replaced(row: OutboxRow): Promise<OutboxRow | undefined | null> {
+		let verdict: Awaited<ReturnType<NonNullable<RelayDeps["supersede"]>>>;
+		try { verdict = await d.supersede!(row); } catch (e) { d.log("supersede-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
+		if (!verdict) return undefined;
+		const reason = verdict.reason, fresh = verdict.wake;
+		const now = clock();
+		let done: boolean;
+		try {
+			done = store.tx(() => {
+				if (store.wakes.cancel(row.deliveryId, now) !== "pending") return false;
+				// Both or neither: a replacement that cannot be queued rolls the cancel back, and the row waits for the next pass.
+				if (!store.wakes.enqueue({ deliveryId: fresh.deliveryId, message: fresh.message, queuedAt: now, ...fresh.meta, ...(row.receiver ? { receiver: row.receiver } : {}) })) throw Error(`the replacement's delivery id ${fresh.deliveryId} is already known`);
+				return true;
+			});
+		} catch (e) { d.log("supersede-error", { deliveryId: row.deliveryId, by: fresh.deliveryId, error: String(e).slice(0, 200) }); return null; }
+		notBefore.delete(row.id);
+		if (!done) { d.log("supersede-skipped", { deliveryId: row.deliveryId, by: fresh.deliveryId, reason }); return null; }
+		d.log("wake-superseded", { deliveryId: row.deliveryId, by: fresh.deliveryId, reason, ...(row.receiver ? { receiver: row.receiver } : {}) });
+		return store.wakes.find(fresh.deliveryId) ?? null;
+	}
+
+	/** One attempt of one row: counted and committed first, then the POST. The row delivered (a superseded row's replacement), or undefined. It runs in the serial queue (see `serially`). */
+	async function send(l: Lane, row: OutboxRow): Promise<OutboxRow | undefined> {
+		if (!d.lock.held()) return undefined;
+		if (row.attempts >= max) { deadLetter(l, row, row.attempts); return undefined; }
+		if (row.rights?.length && d.supersede) {
+			const fresh = await replaced(row);
+			if (fresh) return send(l, fresh);
+			if (fresh === null) return undefined;
+		}
 		const n = store.tx(() => { const n = store.wakes.beginAttempt(row.id, clock()); crashPoint("attempt-begun"); return n; });
-		if (n === undefined) return false;
+		if (n === undefined) return undefined;
 		crashPoint("attempt-counted");
 		let r: WakeResult;
 		try { r = await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId)); } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
@@ -165,13 +207,13 @@ export function createRelay(d: RelayDeps) {
 			l.failures = 0;
 			notBefore.delete(row.id);
 			d.log("delivered", { deliveryId: row.deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: n, queuedAt: row.createdAt, ...(row.kind ? { kind: row.kind } : {}), ...(row.thread ? { thread: row.thread } : {}), ...(l.name ? { receiver: l.name } : {}), ...(digest ? { members: row.members.map((m) => ({ deliveryId: m.deliveryId, queuedAt: m.queuedAt, ...(m.kind ? { kind: m.kind } : {}), ...(m.thread ? { thread: m.thread } : {}) })) } : {}) });
-			return land(row);
+			return land(row) ? row : undefined;
 		}
 		d.log("deliver-error", { deliveryId: row.deliveryId, attempt: n, ...(l.name ? { receiver: l.name } : {}), ...(r.status !== undefined ? { http: r.status } : {}), ...(r.error ? { error: r.error.slice(0, 200) } : {}) });
 		if (++l.failures >= 2) d.alarm(l.akey("wake-delivery"), l.desk ? "chamberlain cannot reach the Alert Desk thread" : "chamberlain cannot reach its wake thread", `${l.failures} wake attempts in a row failed. The ${l.desk ? "Alert Desk" : "Steward"} thread may be deleted, the webhook revoked, or the server down or asleep. Each wake is tried ${max} times, then kept as a dead letter.`);
 		if (n >= max) deadLetter(l, row, n);
 		else notBefore.set(row.id, clock() + pause(n));
-		return false;
+		return undefined;
 	}
 
 	/** One pass. Returns the delivery ids delivered in it (a digest's members). */
@@ -197,7 +239,8 @@ export function createRelay(d: RelayDeps) {
 				continue;
 			}
 			if (!ready.has(l) || owed.has(row.id) || (notBefore.get(row.id) ?? -Infinity) > clock()) continue;
-			if (await serially(() => send(l, row))) out.push(...row.members.map((m) => m.deliveryId));
+			const sent = await serially(() => send(l, row));
+			if (sent) out.push(...sent.members.map((m) => m.deliveryId));
 		}
 		return out;
 	}

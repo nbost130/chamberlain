@@ -164,7 +164,16 @@ export interface AwayStore {
 // ---- wakes: the transactional outbox, held items ----------------------------------------------------
 
 /** What a wake is about, so a repeat can be told from a new event. A wake about no thread (a sweep) has a kind alone. */
-export type WakeMeta = { kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string };
+/**
+ * What a wake carrying the "rights unchanged" pointer was composed for: the Steward's thread and session, the rights hash (rights-sent.ts)
+ * and when the full text last went out (the pointer names it). The relay checks it just before each POST (`RelayDeps.supersede`).
+ */
+export type RightsStamp = { steward?: string; session?: string; hash: string; at?: string };
+export type WakeMeta = {
+	kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string;
+	/** One stamp per rights pointer the wake carries (a digest can carry several); absent when it carries none. */
+	rights?: RightsStamp[];
+};
 /** Which receiver's wakes a read is about: `null` is the Steward's, a name is that receiver's, and `undefined` is every receiver's. */
 export type Lane = string | null | undefined;
 /** A wake as a producer hands it in: its one delivery id, its text, when it was made and what it is about. */
@@ -176,12 +185,15 @@ export type HoldClock = { busySince?: number; seenAt?: number; lastPostAt?: numb
 
 /**
  * pending: the relay sends it. delivered: the transport accepted it (terminal). dead_letter: it used every attempt without a delivered record,
- * and waits for the operator's retry or cancel. cancelled: given up by the operator, kept as a tombstone (terminal).
+ * and waits for the operator's retry or cancel. cancelled: given up by the operator, or superseded by the relay (a stale rights pointer
+ * replaced by a full-block wake), kept as a tombstone (terminal).
  */
 export type OutboxStatus = "pending" | "delivered" | "dead_letter" | "cancelled";
 /** One outbox row. Everything but status, attempts and the two times is frozen when the row is created (a database trigger refuses a change). */
 export type OutboxRow = {
 	id: number; deliveryId: string; message: string; kind?: string; thread?: string; receiver?: string; createdAt: number;
+	/** The rights stamps it was composed with (`WakeMeta.rights`): checked just before each POST. */
+	rights?: RightsStamp[];
 	/** For a digest: how many held wakes were folded into a later one about the same thread and kind. */
 	folded: number;
 	status: OutboxStatus; attempts: number; lastAttemptAt?: number; finishedAt?: number;

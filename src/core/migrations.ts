@@ -327,6 +327,21 @@ BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 CREATE INDEX outbox_by_receiver ON outbox (receiver, status, id);
 `,
 	},
+	{
+		version: 9,
+		name: "rights stamps on wakes",
+		sql: `
+-- A wake that carries the one-line "rights unchanged" pointer instead of the full rights block records which Steward (thread and session) and
+-- which rights hash it was composed for: a JSON array of stamps, one per pointer it carries (a digest may carry several), NULL for any other wake.
+-- The relay checks the stamps just before each POST, and a row whose Steward or rights record no longer matches is superseded (cancelled, so
+-- its ids keep their tombstones) by a fresh wake with the full block. Frozen with the row, like its text.
+ALTER TABLE outbox ADD COLUMN rights_for TEXT;
+ALTER TABLE held_wakes ADD COLUMN rights_for TEXT;
+DROP TRIGGER outbox_frozen;
+CREATE TRIGGER outbox_frozen BEFORE UPDATE OF delivery_id, message, kind, thread, created_at, folded, receiver, rights_for ON outbox
+BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

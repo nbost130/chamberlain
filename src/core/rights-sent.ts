@@ -5,7 +5,8 @@
  */
 import { createHash } from "node:crypto";
 import { RIGHTS_MARKER, rightsInFull, rightsUnchanged, type RightsSent } from "./decide.ts";
-import type { Store } from "./store.ts";
+import { RIGHTS_SEE_ABOVE } from "./hold.ts";
+import type { RightsStamp, Store } from "./store.ts";
 
 export const RIGHTS_SENT_KEY = "rights-sent";
 
@@ -60,9 +61,44 @@ export function rightsHighWater(sent: RightsSent | undefined, used: number | und
 export const rightsHash = (stewardId: string | undefined, rules: string) =>
 	createHash("sha256").update([stewardId, rules].join("\n")).digest("hex");
 
-/** Pure: the rights text a wake carries, and the record to keep if it is delivered. `at` is when the full text last went out. */
-export function rightsFor(sent: RightsSent | undefined, stewardId: string | undefined, rules: string, mandate: string, used: number | undefined, now = new Date().toISOString()): { text: string; record: RightsSent } {
+/**
+ * Pure: the rights text a wake carries, the record to keep if it is delivered, and whether it is the full block. `at` is when the full text
+ * last went out. A wake that carries the pointer instead (`full` false) is stamped with what it was composed for (`rightsStamp`), so the
+ * relay can tell, just before it sends it, whether the Steward it reaches still holds them.
+ */
+export function rightsFor(sent: RightsSent | undefined, stewardId: string | undefined, rules: string, mandate: string, used: number | undefined, now = new Date().toISOString()): { text: string; record: RightsSent; full: boolean } {
 	const hash = rightsHash(stewardId, rules), full = rightsInFull(sent, hash, used);
 	const body = full ? `${RIGHTS_MARKER}\n${rules}` : rightsUnchanged(sent?.at);
-	return { text: [body, mandate].filter(Boolean).join("\n"), record: { hash, used, at: full ? now : sent?.at } };
+	return { text: [body, mandate].filter(Boolean).join("\n"), record: { hash, used, at: full ? now : sent?.at }, full };
+}
+
+/** Pure: the stamp a pointer wake carries: the Steward thread and session it was composed for, the rights hash, and the `at` its pointer line names. */
+export const rightsStamp = (record: RightsSent, stewardId: string | undefined, session: string | undefined): RightsStamp =>
+	({ ...(stewardId ? { steward: stewardId } : {}), ...(session ? { session } : {}), hash: record.hash, ...(record.at ? { at: record.at } : {}) });
+
+/**
+ * Pure: why a queued pointer no longer holds for the Steward it is about to reach, or undefined when it still does. It holds only for the same
+ * Steward thread and session, a rights record (what the Steward was last delivered) with the same hash, and, when the rights can be read now,
+ * the same rights and rulings. Anything else, doubt included, means the Steward may not hold them.
+ */
+export function staleRights(stamps: readonly RightsStamp[], now: { steward: string | undefined; session: string | undefined; record: RightsSent | undefined; rules: string | undefined }): string | undefined {
+	for (const st of stamps) {
+		if (st.steward !== now.steward) return `the Steward thread changed (${st.steward ?? "none"} to ${now.steward ?? "none"}) since the rights pointer was queued`;
+		if (st.session !== now.session) return `the Steward session changed (${st.session ?? "unknown"} to ${now.session ?? "unknown"}) since the rights pointer was queued`;
+		if (now.record?.hash !== st.hash) return "the rights record no longer matches the pointer (a compaction, or a full block that was never delivered): the Steward may not hold them";
+		if (now.rules !== undefined && rightsHash(now.steward, now.rules) !== st.hash) return "the rights or rulings changed since the rights pointer was queued";
+	}
+	return undefined;
+}
+
+/**
+ * Pure: a superseded wake's text with its rights pointers replaced: the first by `full` (the full block, or the unreadable notice), any later
+ * one (a digest) by a line pointing at it. A message in which no pointer line is found gets `full` at its end.
+ */
+export function withFullRights(message: string, stamps: readonly RightsStamp[], full: string): string {
+	let out = message, first = true;
+	for (const line of new Set(stamps.map((st) => rightsUnchanged(st.at)))) {
+		while (out.includes(line)) { const put = first ? full : RIGHTS_SEE_ABOVE; out = out.replace(line, () => put); first = false; }
+	}
+	return first ? `${out}\n${full}` : out;
 }

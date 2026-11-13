@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { rightsUnchanged } from "./decide.ts";
-import { loadRightsSent, openRightsSent, parseRightsSent, RIGHTS_SENT_KEY, rightsFor, rightsHash, rightsHighWater, saveRightsSent } from "./rights-sent.ts";
+import { loadRightsSent, openRightsSent, parseRightsSent, RIGHTS_SENT_KEY, rightsFor, rightsHash, rightsHighWater, rightsStamp, saveRightsSent, staleRights, withFullRights } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 
 const STEWARD = "steward-thread-1";
@@ -143,5 +143,41 @@ describe("the record", () => {
 		const s = memStore();
 		saveRightsSent({ hash: rightsHash(STEWARD, RULES), used: 80_000 }, s);
 		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ hash: rightsHash(STEWARD, RULES), used: 80_000 });
+	});
+});
+
+describe("a queued pointer checked against the Steward it is about to reach", () => {
+	const record = { hash: rightsHash(STEWARD, RULES), used: 80_000, at: AT };
+	const stamp = rightsStamp(record, STEWARD, "session-1");
+	const now = { steward: STEWARD, session: "session-1", record, rules: RULES };
+	test("the stamp names the thread, the session, the hash and the pointer's time", () => {
+		expect(stamp).toEqual({ steward: STEWARD, session: "session-1", hash: record.hash, at: AT });
+	});
+	test("holds for the same Steward, session, record and rights", () => {
+		expect(staleRights([stamp], now)).toBeUndefined();
+		// Rights that cannot be read now are no reason to doubt a record that still matches.
+		expect(staleRights([stamp], { ...now, rules: undefined })).toBeUndefined();
+	});
+	test("a new thread, a new session, a cleared or changed record, or changed rulings each make it stale", () => {
+		expect(staleRights([stamp], { ...now, steward: "steward-thread-2" })).toContain("Steward thread changed");
+		expect(staleRights([stamp], { ...now, session: "session-2" })).toContain("session changed");
+		expect(staleRights([stamp], { ...now, session: undefined })).toContain("session changed");
+		expect(staleRights([stamp], { ...now, record: undefined })).toContain("record no longer matches");
+		expect(staleRights([stamp], { ...now, record: { ...record, hash: rightsHash(STEWARD, "other") } })).toContain("record no longer matches");
+		expect(staleRights([stamp], { ...now, rules: `${RULES}\nR-2 new` })).toContain("rulings changed");
+		// One stale stamp in a digest is enough.
+		expect(staleRights([stamp, { ...stamp, steward: "old" }], now)).toContain("Steward thread changed");
+	});
+	test("the replacement text puts the full block where the pointer was, once, and points later copies at it", () => {
+		const one = `head\n${rightsUnchanged(AT)}\n- AFK MANDATE`;
+		expect(withFullRights(one, [stamp], FULL)).toBe(`head\n${FULL}\n- AFK MANDATE`);
+		const two = `a\n${rightsUnchanged(AT)}\n\nb\n${rightsUnchanged(AT)}`;
+		const out = withFullRights(two, [stamp, stamp], FULL);
+		expect(out.split(FULL)).toHaveLength(2);
+		expect(out).not.toContain(rightsUnchanged(AT));
+		expect(out).toContain("the same as in the first item of this digest above");
+		// A rule text with $& in it is copied as it is, not read as a replacement pattern.
+		expect(withFullRights(one, [stamp], "rules cost $& and $1")).toContain("rules cost $& and $1");
+		expect(withFullRights("no pointer here", [stamp], FULL)).toBe(`no pointer here\n${FULL}`);
 	});
 });

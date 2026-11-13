@@ -712,6 +712,105 @@ describe("wakes carry the rights and rulings only when they changed", () => {
 		expect(r.fake.wakes[2]!.message).toContain("Decision rights (standing rules):");
 		expect(r.fake.wakes[2]!.message).toContain("and nothing else.");
 	});
+
+	test("a full-block wake that is dead-lettered leaves the record unset, and the next wake carries the full block again", async () => {
+		const r = rig({ steward: "steward-1" });
+		r.fake.probe = { readable: true, contextTokens: 1000 };
+		r.fake.setWakeStatus(() => 503);
+		waitingOn(r, "t1", "req-1");
+		await r.until("the dead letter", () => r.store.wakes.rows("dead_letter").length === 1);
+		expect(r.fake.attempts).toBe(3);
+		expect(r.fake.wakes).toEqual([]);
+		// The block it carried never reached the Steward, so nothing says the Steward holds it.
+		expect(r.store.state.get("rights-sent")).toBeUndefined();
+		r.fake.setWakeStatus(() => 202);
+		r.fake.probe = { readable: true, contextTokens: 2000 };
+		waitingOn(r, "t2", "req-2");
+		await r.until("the next wake", () => r.fake.wakes.length === 1);
+		expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
+		expect(r.fake.wakes[0]!.message).not.toContain("Decision rights and rulings unchanged since");
+	});
+});
+
+describe("a queued rights pointer is checked against the Steward it is about to reach", () => {
+	const waitingOn = (r: ReturnType<typeof rig>, id: string, req: string) => {
+		r.fake.threads.set(id, { waiting: [{ ...question, requestId: req }] });
+		r.fake.emit({ kind: "needs_input", thread: thread(id, "waiting", { pendingRequestId: req }) });
+	};
+	/** One full wake delivered, then a pointer queued while the webhook has nowhere to send: it sits pending. */
+	async function pointerQueued() {
+		const r = rig({ steward: "steward-1" });
+		r.fake.probe = { readable: true, contextTokens: 1000 };
+		waitingOn(r, "t1", "req-1");
+		await r.until("the first wake", () => r.fake.wakes.length === 1);
+		expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
+		r.fake.setWakeReady(false);
+		r.fake.probe = { readable: true, contextTokens: 2000 };
+		waitingOn(r, "t2", "req-2");
+		await r.until("the pointer row", () => r.store.wakes.rows().length === 1);
+		const row = r.store.wakes.rows()[0]!;
+		expect(row.message).toContain("Decision rights and rulings unchanged since");
+		expect(row.message).not.toContain("Decision rights (standing rules):");
+		return { r, row };
+	}
+
+	test("a new Steward thread before it is sent: the pointer is superseded and a full-block wake goes instead", async () => {
+		const { r, row } = await pointerQueued();
+		r.priv("steward-thread", "steward-2");
+		r.fake.setWakeReady(true);
+		await r.engine.tick();
+		await r.until("the replacement", () => r.fake.wakes.length === 2);
+		const sent = r.fake.wakes[1]!;
+		expect(sent.deliveryId).not.toBe(row.deliveryId);
+		expect(sent.message).toContain("Decision rights (standing rules):");
+		expect(sent.message).toContain("The Steward may merge green PRs.");
+		expect(sent.message).not.toContain("Decision rights and rulings unchanged since");
+		expect(sent.message).toContain("threadId: t2");
+		// The pointer row is never sent: it is cancelled, with its tombstone, and the reason is logged.
+		expect(r.fake.wakes.map((w) => w.deliveryId)).not.toContain(row.deliveryId);
+		expect(r.store.wakes.find(row.deliveryId)?.status).toBe("cancelled");
+		expect(r.store.wakes.known(row.deliveryId)).toBe(true);
+		const logged = r.events.find((e) => e.event === "wake-superseded");
+		expect(logged).toMatchObject({ deliveryId: row.deliveryId, by: sent.deliveryId });
+		expect(String(logged!.reason)).toContain("Steward thread");
+		// The new Steward now holds them: the next wake is a pointer again.
+		r.fake.probe = { readable: true, contextTokens: 3000 };
+		waitingOn(r, "t3", "req-3");
+		await r.until("the third wake", () => r.fake.wakes.length === 3);
+		expect(r.fake.wakes[2]!.message).toContain("Decision rights and rulings unchanged since");
+	});
+
+	test("a new Steward session in the same thread supersedes it too", async () => {
+		const { r, row } = await pointerQueued();
+		r.fake.transcript = { ...r.fake.transcript, session: "session-2" };
+		r.fake.setWakeReady(true);
+		await r.engine.tick();
+		await r.until("the replacement", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.message).toContain("Decision rights (standing rules):");
+		expect(r.store.wakes.find(row.deliveryId)?.status).toBe("cancelled");
+		expect(String(r.events.find((e) => e.event === "wake-superseded")!.reason)).toContain("session");
+	});
+
+	test("a compaction that cleared the record supersedes it", async () => {
+		const { r, row } = await pointerQueued();
+		r.fake.probe = { readable: true, contextTokens: 10 };
+		await r.engine.tick();
+		r.fake.setWakeReady(true);
+		await r.engine.tick();
+		await r.until("the replacement", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.message).toContain("Decision rights (standing rules):");
+		expect(r.store.wakes.find(row.deliveryId)?.status).toBe("cancelled");
+	});
+
+	test("the same Steward and record: the pointer is sent as queued", async () => {
+		const { r, row } = await pointerQueued();
+		r.fake.setWakeReady(true);
+		await r.engine.tick();
+		await r.until("the pointer", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.deliveryId).toBe(row.deliveryId);
+		expect(r.fake.wakes[1]!.message).toContain("Decision rights and rulings unchanged since");
+		expect(r.events.some((e) => e.event === "wake-superseded")).toBe(false);
+	});
 });
 
 describe("a HAND OFF verdict from the Steward-health check", () => {

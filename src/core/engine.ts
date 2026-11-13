@@ -28,9 +28,9 @@ import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
 import { privateFile as readPrivateFile } from "./private.ts";
 import { settleReport } from "./report.ts";
-import { openRightsSent, rightsFor, rightsHighWater } from "./rights-sent.ts";
+import { openRightsSent, rightsFor, rightsHighWater, rightsStamp, staleRights, withFullRights } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
-import type { Store } from "./store.ts";
+import type { OutboxRow, Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
 import { HEALTH_CONFIG, handoffDeliveryId, handoffWakeMessage, healthTicker, liveHealth, type Health } from "./steward-health.ts";
 import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
@@ -152,6 +152,7 @@ export function createEngine(d: EngineDeps) {
 	const relay = createRelay({
 		store, lock: d.lock, wake: homeAdapter.wake, ...(has(homeAdapter, "compact") ? { compact: homeAdapter.compact } : {}), gate: stewardGate, log, alarm, ...d.relay,
 		...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
+		supersede: (row) => supersedeStale(row),
 		onDelivered: (id) => {
 			recordAnswerDelivered(store, id);
 			const r = firedRights.get(id);
@@ -345,6 +346,8 @@ export function createEngine(d: EngineDeps) {
 			const what = { needs_input: "is waiting for your answer or approval", failed: failedWhat, turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
 			const afk = readAfk(store);
 			const rights = wakeRights(afk ? mandateLine(afk) : "");
+			// A pointer is stamped with the Steward it was composed for: the relay checks it again just before sending (supersedeStale).
+			const stamp = rights.record && !rights.full ? rightsStamp(rights.record, privateFile("steward-thread"), await stewardSession()) : undefined;
 			const message = [
 				`[chamberlain] ${c.kind}: thread "${clip(live.title, 80)}" ${what}.`,
 				waitNote,
@@ -361,7 +364,7 @@ export function createEngine(d: EngineDeps) {
 			// the same event: the database says so, inside this transaction, and nothing is queued.
 			// The Steward holds these rights once this wake is delivered, not before: until then the next wake is built from the old record.
 			const deliveryId = `${c.key}:${Date.now()}`;
-			if (deliver(message, deliveryId, { kind: c.kind, thread: live.id }, () => mine.map(markNotified).every(Boolean)) === "queued" && rights.record) firedRights.set(deliveryId, rights.record);
+			if (deliver(message, deliveryId, { kind: c.kind, thread: live.id, ...(stamp ? { rights: [stamp] } : {}) }, () => mine.map(markNotified).every(Boolean)) === "queued" && rights.record) firedRights.set(deliveryId, rights.record);
 		}
 
 		/** Keeps what the engine knows of the thread, and answers what the new state means for the ledgers and the Steward. */
@@ -475,14 +478,44 @@ export function createEngine(d: EngineDeps) {
 	 * every time.
 	 */
 	const rightsSent = openRightsSent(store, (e) => log("rights-sent-unsaved", { error: String(e).slice(0, 200) }));
-	function wakeRights(mandate: string): { text: string; record?: RightsSent } {
-		const [rights, rulings] = [privateFile("decision-rights.md"), stewardRulings()];
-		if (!rights || !rulings) {
+	function wakeRights(mandate: string, o: { full?: boolean } = {}): { text: string; record?: RightsSent; full?: boolean } {
+		const rules = rightsRules();
+		if (rules === undefined) {
 			alarm("rights-unreadable", "chamberlain cannot read the decision rights", "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.");
 			return { text: [rightsUnreadable(), mandate].filter(Boolean).join("\n") };
 		}
 		const id = privateFile("steward-thread");
-		return rightsFor(rightsSent.get(), id, `${rights}\n${rulings}`, mandate, id ? probe()?.contextTokens : undefined);
+		return rightsFor(o.full ? undefined : rightsSent.get(), id, rules, mandate, id ? probe()?.contextTokens : undefined);
+	}
+	/** The decision rights and the in-force rulings, as one text, or undefined when either cannot be read. */
+	function rightsRules(): string | undefined {
+		const [rights, rulings] = [privateFile("decision-rights.md"), stewardRulings()];
+		return rights && rulings ? `${rights}\n${rulings}` : undefined;
+	}
+	/** The Steward's current session, when the adapter can say (`transcriptPath`). Undefined when it cannot, or the read fails. */
+	async function stewardSession(): Promise<string | undefined> {
+		if (!has(homeAdapter, "transcriptPath")) return undefined;
+		try { return (await homeAdapter.transcriptPath()).session; } catch { return undefined; }
+	}
+
+	/**
+	 * The relay's check just before it sends a row carrying a rights pointer. The row is immutable and was composed for the Steward of its
+	 * time; if that Steward has been replaced (a new thread or session), or the rights record or the rights no longer match, the pointer would
+	 * tell a Steward that never had them that they are unchanged. Then the row is superseded by a wake with the same text and the full block,
+	 * composed for the Steward that is there now, under a new delivery id; its record is kept once it is delivered, like any wake's.
+	 */
+	async function supersedeStale(row: OutboxRow) {
+		const stamps = row.rights;
+		if (!stamps?.length) return undefined;
+		const steward = privateFile("steward-thread");
+		const reason = staleRights(stamps, { steward, session: await stewardSession(), record: rightsSent.get(), rules: rightsRules() });
+		if (!reason) return undefined;
+		// No record: the full block, whatever the size check would say.
+		const full = wakeRights("", { full: true });
+		const deliveryId = `${row.deliveryId}:full-rights`;
+		for (const m of row.members) firedRights.delete(m.deliveryId);
+		if (full.record) firedRights.set(deliveryId, full.record);
+		return { reason, wake: { deliveryId, message: withFullRights(row.message, stamps, full.text), meta: { kind: row.kind ?? "wake", ...(row.thread ? { thread: row.thread } : {}) } } };
 	}
 
 	/** The rulings a wake carries: the in-force ones with their IDs. */

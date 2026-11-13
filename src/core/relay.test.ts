@@ -14,7 +14,7 @@ import { testRelayLock } from "../testing/lock.ts";
 import { createOutbox, MAX_ATTEMPTS, maxAttemptsFromEnv, type WakeResult } from "./deliver.ts";
 import type { Gate } from "./hold.ts";
 import { MIGRATIONS } from "./migrations.ts";
-import { createRelay, retryAfterMs } from "./relay.ts";
+import { createRelay, retryAfterMs, type RelayDeps } from "./relay.ts";
 import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 import { runWakesCli } from "./wakes-cli.ts";
@@ -24,7 +24,7 @@ afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, f
 const scratch = () => { const d = mkdtempSync(`${tmpdir()}/chamberlain-relay-`); dirs.push(d); return d; };
 
 /** A world: a store, a clock, a webhook whose answer the test sets, and relays (each a fresh process's) over the same store. */
-function rig(o: { store?: Store; max?: number } = {}) {
+function rig(o: { store?: Store; max?: number; supersede?: RelayDeps["supersede"] } = {}) {
 	const store = o.store ?? memStore();
 	const clock = { t: 1_000_000 };
 	const posts: { id: string; message: string }[] = [];
@@ -33,7 +33,7 @@ function rig(o: { store?: Store; max?: number } = {}) {
 	const w = { ready: true, gate: "idle" as Gate, answer: async (_id: string): Promise<WakeResult> => ({ ok: true, status: 202 }) };
 	const relay = (s: Store = store) => createRelay({
 		store: s, lock: testRelayLock(s), gate: () => w.gate, log: (event, data) => events.push({ event, ...(data ? { data } : {}) }), alarm: (k) => alarms.push(k), now: () => clock.t,
-		maxAttempts: o.max ?? 3, retryAfterMs: () => 1000,
+		maxAttempts: o.max ?? 3, retryAfterMs: () => 1000, ...(o.supersede ? { supersede: o.supersede } : {}),
 		wake: { ready: () => w.ready, send: async (id, message) => { posts.push({ id, message }); return w.answer(id); } },
 	});
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
@@ -626,5 +626,82 @@ describe("the relay cannot exist, or send, without the one-relay lock", () => {
 		await expect(relay.compact("compact:t:2")).rejects.toThrow("no longer holds");
 		expect(sent).toHaveLength(1);
 		expect(createRelay({ ...base(store), lock: testRelayLock(store) }).compactReady()).toBe(false);
+	});
+});
+
+describe("a row carrying a rights pointer is checked just before it is sent", () => {
+	const stamp = { steward: "steward-1", hash: "a".repeat(64), at: "2026-11-13T18:00:00.000Z" };
+	const asked: string[] = [];
+	const replaceWith = (reason = "the Steward thread changed"): RelayDeps["supersede"] => async (row) => { asked.push(row.deliveryId); return { reason, wake: { deliveryId: `${row.deliveryId}:full-rights`, message: `${row.message} FULL`, meta: { kind: row.kind ?? "wake" } } }; };
+
+	test("a stale pointer is cancelled with its tombstone, and the full-block replacement is queued and sent in the same pass", async () => {
+		asked.length = 0;
+		const r = rig({ supersede: replaceWith() });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", thread: "t1", rights: [stamp] });
+		expect(r.store.wakes.find("w1")?.rights).toEqual([stamp]);
+		expect(await r.relay().pass()).toEqual(["w1:full-rights"]);
+		expect(asked).toEqual(["w1"]);
+		expect(r.ids()).toEqual(["w1:full-rights"]);
+		expect(r.posts[0]!.message).toContain("pointer FULL");
+		expect(r.store.wakes.find("w1")?.status).toBe("cancelled");
+		expect(r.store.wakes.find("w1:full-rights")).toMatchObject({ status: "delivered", kind: "needs_input", attempts: 1 });
+		expect(r.store.wakes.find("w1:full-rights")?.rights).toBeUndefined();
+		expect(r.events.find((e) => e.event === "wake-superseded")?.data).toMatchObject({ deliveryId: "w1", by: "w1:full-rights", reason: "the Steward thread changed" });
+		// The tombstone keeps the old id out for good.
+		expect(r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] })).toBe("known");
+	});
+
+	test("a pointer that still holds is sent as queued; a row with no stamp is never asked about", async () => {
+		asked.length = 0;
+		const r = rig({ supersede: async (row) => { asked.push(row.deliveryId); return undefined; } });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		r.outbox.deliver("plain", "w2", { kind: "needs_input" });
+		expect(await r.relay().pass()).toEqual(["w1", "w2"]);
+		expect(asked).toEqual(["w1"]);
+		expect(r.events.some((e) => e.event === "wake-superseded")).toBe(false);
+	});
+
+	test("held pointers composed into a digest carry their stamps onto the digest row", async () => {
+		asked.length = 0;
+		const r = rig({ supersede: async (row) => { asked.push(row.deliveryId); return undefined; } });
+		const other = { ...stamp, at: "2026-11-13T19:00:00.000Z" };
+		r.outbox.deliver("a", "h1", { kind: "turn_ended", thread: "t1", rights: [stamp] });
+		r.outbox.deliver("b", "h2", { kind: "turn_ended", thread: "t2", rights: [other] });
+		r.outbox.deliver("c", "h3", { kind: "turn_ended", thread: "t3" });
+		expect(r.store.wakes.held().map((h) => h.rights)).toEqual([[stamp], [other], undefined]);
+		await r.relay().pass();
+		const digest = r.store.wakes.rows("all")[0]!;
+		expect(digest.kind).toBe("digest");
+		expect(digest.rights).toEqual([stamp, other]);
+		expect(asked).toEqual([digest.deliveryId]);
+	});
+
+	test("a replacement whose id is already known rolls the cancel back: the row stays pending and nothing is sent", async () => {
+		const r = rig({ supersede: replaceWith() });
+		r.outbox.deliver("taken", "w1:full-rights");
+		r.store.wakes.cancel("w1:full-rights", r.clock.t);
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		await r.relay().pass();
+		expect(r.posts).toEqual([]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+		expect(r.events.find((e) => e.event === "supersede-error")?.data).toMatchObject({ deliveryId: "w1" });
+	});
+
+	test("a check that throws sends nothing on this pass and uses no attempt", async () => {
+		const r = rig({ supersede: async () => { throw Error("transcript unreadable"); } });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		await r.relay().pass();
+		expect(r.posts).toEqual([]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+	});
+
+	test("the stamps are frozen with the row, like its text", () => {
+		const path = `${scratch()}/stamps.db`;
+		const r = rig({ store: openStore(path) });
+		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
+		const raw = new Database(path);
+		expect(() => raw.exec("UPDATE outbox SET rights_for = NULL")).toThrow("immutable");
+		raw.close();
+		expect(r.store.wakes.find("w1")?.rights).toEqual([stamp]);
 	});
 });

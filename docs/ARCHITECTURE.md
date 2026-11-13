@@ -167,6 +167,14 @@ sequenceDiagram
 6. **Sending it.** `relay.ts`, oldest row first: if the row has used `maxAttempts` attempts it becomes `dead_letter`; otherwise
    `attempts + 1` is **committed**, then the POST is made, then the row is committed `delivered`. A row that failed waits one minute,
    then four, before its next attempt.
+   **A rights pointer is checked at send time.** A wake that carries the one-line "rights unchanged" pointer instead of the full rights
+   block is stamped, when it is queued, with the Steward thread and session and the rights hash it was composed for (`rights_for`,
+   migration 9, frozen with the row; a digest carries every member's stamp). Just before each attempt the relay asks the engine
+   (`supersede`) whether that still holds: the same Steward thread and session, a rights record with the same hash, and the same rights
+   and rulings. If not (a new Steward, a compaction, changed rulings), the row is **superseded** in one transaction: it is cancelled, so its
+   ids keep their tombstones and it is never POSTed, and a fresh wake with the same text and the full block, composed for the current
+   Steward, is queued under `<id>:full-rights` and sent at once. The `wake-superseded` log line names both ids and the reason. Rows stay
+   immutable: a stale pointer is replaced, never rewritten.
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
    ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the
@@ -186,6 +194,7 @@ stateDiagram-v2
   pending --> dead_letter: attempts reached maxAttempts
   dead_letter --> pending: wakes.ts retry (attempts back to 0)
   pending --> cancelled: wakes.ts cancel
+  pending --> cancelled: superseded (a stale rights pointer, replaced by a full-block wake)
   dead_letter --> cancelled: wakes.ts cancel
   delivered --> [*]
   cancelled --> [*]
