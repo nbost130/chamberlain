@@ -597,3 +597,30 @@ describe("confirmation challenges", () => {
 		expect(s.challenges.consume("dead", want, 1001)).toBe("unknown");
 	});
 });
+
+describe("the sequence (migration 12): durable and monotonic, never the clock", () => {
+	test("next() only rises, survives a reopen, and the table refuses a second row, a delete and any update that does not raise it", () => {
+		const dir = mkdtempSync(`${tmpdir()}/chamberlain-seq-`);
+		const s1 = openStore(`${dir}/chamberlain.db`);
+		expect(s1.sequence.current()).toBe(0);
+		expect([s1.sequence.next(), s1.sequence.next(), s1.sequence.next()]).toEqual([1, 2, 3]);
+		s1.close();
+		const s2 = openStore(`${dir}/chamberlain.db`);
+		expect(s2.sequence.next()).toBe(4);
+		s2.close();
+		const db = new Database(`${dir}/chamberlain.db`);
+		expect(() => db.exec("INSERT INTO store_sequence (id, value) VALUES (2, 9)")).toThrow();
+		expect(() => db.exec("DELETE FROM store_sequence")).toThrow("exactly one row");
+		expect(() => db.exec("UPDATE store_sequence SET value = 1")).toThrow("only increases");
+		expect(() => db.exec("UPDATE store_sequence SET value = 4")).toThrow("only increases");
+		db.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+	test("a value taken inside a transaction that rolls back is not kept: the next one is not lower than any committed value", () => {
+		const s = openStore(":memory:");
+		s.sequence.next();
+		expect(() => s.tx(() => { s.sequence.next(); throw Error("abort"); })).toThrow("abort");
+		expect(s.sequence.next()).toBe(2);
+		s.close();
+	});
+});

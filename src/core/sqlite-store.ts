@@ -428,7 +428,13 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		prune: (before) => run("DELETE FROM events WHERE t < ?", before).changes,
 	};
 
-	return { path, tx, close: () => db.close(), items, claims, evidence, rulings, decisions, butlers, away, wakes, challenges, events, state };
+	// ---- the sequence (migration 12) -------------------------------------------------------------------
+	const sequence: Store["sequence"] = {
+		next: () => tx(() => one("UPDATE store_sequence SET value = value + 1 WHERE id = 1 RETURNING value")!.value as number),
+		current: () => one("SELECT value FROM store_sequence WHERE id = 1")!.value as number,
+	};
+
+	return { path, tx, close: () => db.close(), items, claims, evidence, rulings, decisions, butlers, away, wakes, challenges, events, state, sequence };
 }
 
 /**

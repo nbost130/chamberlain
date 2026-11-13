@@ -13,6 +13,7 @@
  *   bun src/core/afk.ts held                     (everything not closed, from any absence, with its notes)
  *   bun src/core/afk.ts note <id> "<what changed>"   (appended to the hold; never write a second hold about the same wait)
  *   bun src/core/afk.ts close <id> "<how it closed>"
+ *   bun src/core/afk.ts close-card <server> <request id> "<how it closed>"   (a daemon card hold and its pointer question, by hand)
  *   bun src/core/afk.ts brief
  *   bun src/core/afk.ts exit        (prints the brief, then ends the absence)
  *
@@ -31,6 +32,7 @@ import { createHash } from "node:crypto";
 import { REPO, principal, principalPoss } from "./config.ts";
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
+import { closeCardByHand } from "./card-hold.ts";
 import { getQuestion } from "./questions.ts";
 import { findSettled, refusalLines } from "./settled.ts";
 import type { AwayRecord, Store } from "./store.ts";
@@ -48,7 +50,7 @@ export type HeldNote = { t: string; text: string };
  * reconciler (card-hold.ts `reconcileCardHolds`) reads the server, the thread and the request ID from here.
  */
 export type CardRef = { server: string; threadId: string; requestId: string };
-export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[]; /** Why this was held although a settled record matched it. */ notSettled?: string; /** A daemon card hold's card. */ card?: CardRef };
+export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[]; /** Why this was held although a settled record matched it. */ notSettled?: string; /** A daemon card hold's card. */ card?: CardRef; /** A card hold's store sequence value when it was written (card-hold.ts): only a read started with a greater one may close it. */ seq?: number };
 /** Pure: is this a daemon's card hold? It closes only when its card resolves, never because its pointer question was answered. */
 export const isCardHold = (h: Held): boolean => h.card !== undefined || (typeof h.requestId === "string" && h.requestId !== "");
 const ITEM_ID = /^Q-[a-z0-9]{4,16}$/;
@@ -262,7 +264,17 @@ function main() {
 	} else if (cmd === "close") {
 		const [id, how] = rest;
 		if (!id || !how) { console.error('usage: afk.ts close <id> "<how it closed>"'); process.exit(2); }
-		try { console.log(`closed: ${closeHeld(store, id, how).thread}`); } catch (e) { console.error((e as Error).message); process.exit(1); }
+		try {
+			// A daemon card hold never closes alone: by hand it closes with its pointer question, as close-card does.
+			const h = store.items.get(HELD, id);
+			const card = h && h.status !== "resolved" ? (h.payload as Held).card ?? ((h.payload as Held).requestId && (h.payload as Held).server ? { server: (h.payload as Held).server!, requestId: (h.payload as Held).requestId! } : undefined) : undefined;
+			if (card) { const n = closeCardByHand(store, card.server, card.requestId, how); console.log(`closed card ${card.server} ${card.requestId}: ${n.holds} hold(s), ${n.questions} question(s)`); }
+			else console.log(`closed: ${closeHeld(store, id, how).thread}`);
+		} catch (e) { console.error((e as Error).message); process.exit(1); }
+	} else if (cmd === "close-card") {
+		const [server, requestId, how] = rest;
+		if (!server || !requestId || !how) { console.error('usage: afk.ts close-card <server> <request id> "<how it closed>"'); process.exit(2); }
+		try { const n = closeCardByHand(store, server, requestId, how); console.log(`closed card ${server} ${requestId}: ${n.holds} hold(s), ${n.questions} question(s)`); } catch (e) { console.error((e as Error).message); process.exit(1); }
 	} else if (cmd === "brief") {
 		const a = readAfk(store);
 		console.log(a ? brief(store, a) : "not away");
@@ -273,7 +285,7 @@ function main() {
 		store.away.exit(new Date().toISOString());
 		console.log("\nreturned; the absence is ended and stays on record");
 	} else {
-		console.error("usage: afk.ts enter|status|hold|held|note|close|brief|exit");
+		console.error("usage: afk.ts enter|status|hold|held|note|close|close-card|brief|exit");
 		process.exit(2);
 	}
 }

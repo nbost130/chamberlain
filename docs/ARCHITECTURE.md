@@ -499,13 +499,26 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
   per thread: a thread waiting on two cards has two holds and two questions. A card hold and its question close together, in one
   transaction (`closeCard`, the only code that closes a card hold); the ref pass and the thread close skip card holds. When a
   thread's one pending request ID changes, nothing is closed on that alone (the thread may still wait on the old card):
-  `reconcileCardHolds` runs at once, and on every tick and every watcher connection, and checks every open card: a card closes only on an AUTHORITATIVE listing of its own server, begun after the card was held
-  (`WaitingRead` `ok: true`, docs/ADAPTERS.md), that no longer lists its (server, request ID), or on a whole fresh snapshot of
-  that server, begun after the hold, from which its thread is gone. It closes exactly once, so a card answered or withdrawn while
-  the daemon was down does not stay open. A server that is not connected (a `mayBeOffline` one asleep included), a read that
-  spans a disconnect, throws, or comes back malformed is `ok: false`: it says nothing, its cards stay open, and the daemon logs
-  `card-read-unavailable` once per episode (`card-read-recovered` when reads work again). A failed waiting read on the wake path
-  is not "nothing waiting" either: the thread's own status stands for the request and the wake goes.
+  `reconcileCardHolds` runs at once, and on every tick and every watcher connection, and checks every open card. **A card closes
+  only on positive evidence**: its hold and pointer question close together, in one transaction, only when a read of its own
+  thread on its own server (`WaitingRead` `ok: true`, docs/ADAPTERS.md) started after the hold was written and shows the card's
+  own item (a request type, keyed `requestId ?? id`, on the same thread) in a terminal status (`resolved`; for T3 `completed`,
+  `cancelled`, `failed` or `interrupted`, with no other item of that card still going). "Started after" is the store's durable
+  sequence (migration 12, `Store.sequence`): the hold records a value when it is written and the reconciler takes a new one
+  before each read; the wall clock is never compared, so a clock rollback cannot stall or hasten a close. A hold written while
+  the read was out stays, with its question. Every card hold names its server, so no card is resolved across servers. It closes exactly once, so a card resolved while the daemon was down does not stay open. **Absence
+  never closes anything.** A backend's read can be a bounded window of the thread's history (T3's thread projection is: the
+  server builds it with `buildBoundedThreadProjection`, bounded by item count and bytes, and the RPC drops its `hasMoreHistory`
+  flag), so a card that still waits can be missing from it. A card missing from a read, a thread that is gone, archived or
+  missing from a snapshot, and a card item with a missing or invalid request ID or status or an unknown status (skipped by the
+  adapter, logged as `card-item-ignored`) all leave the hold open; no snapshot is consulted. A server that is not connected (a `mayBeOffline` one asleep included), a read that spans a disconnect,
+  throws, or comes back in an unexpected shape is `ok: false`: it says nothing, and the daemon logs `card-read-unavailable` once
+  per episode (`card-read-recovered` when reads work again). A hold with no evidence (not seen waiting, not seen resolved) for
+  longer than `cardUnverifiedAlarmMs` (default 24 hours, `CHAMBERLAIN_CARD_UNVERIFIED_ALARM_MS`; tracked in the store as a
+  `card-unverified` item, so a restart does not reset it) raises an alarm through the normal repeat policy, naming the hold, the
+  card and the hand close command (`afk.ts close-card <server> <request id> "<how>"`; `afk.ts close <id>` on a card hold does the
+  same). Only the operator closes it then. A failed waiting read on the wake path, or one that skipped a card item, is not
+  "nothing waiting" either: the thread's own status stands for the request and the wake goes.
   Which cards exist and their kind come from the adapter's `Inspector.waiting`, normalized to `WaitKind`; the core reads only the
   kind, the request ID and the label (`cardWaitOf`), never the card's questions, options or a value. A secret card's pointer is
   itself `secret`, so it is never posted and the page shows it only as a link to its thread; any other pointer is posted once,
@@ -600,6 +613,11 @@ place before release, so a database that ran an earlier draft of either records 
 (delete `chamberlain.db` and its `-wal` and `-shm` files, then start again or run `legacy-import.ts`). A draft build that knew an earlier 11 also
 opens a database this 11 made without refusing it. Only databases from unreleased builds are affected. `legacy-import.ts` brings the same fields in from an old
 `rulings.jsonl`, leaves out and notes any that are malformed, and never carries the earlier system's own bookkeeping.
+
+Migration 12 only adds: `store_sequence`, one row holding a durable counter, created at 0, with triggers that refuse a second row, a delete
+and any update that does not raise it. `Store.sequence.next()` raises it in a transaction and returns the new value, which is greater than
+every value any process took before; the card reconciler uses it to tell that a read started after a hold was written, without the wall
+clock. Nothing existing changes, and a build that does not know migration 12 refuses the database (`DatabaseTooNewError`).
 
 ## Why these seams
 

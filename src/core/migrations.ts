@@ -396,6 +396,29 @@ CREATE TRIGGER rulings_retired_reason_update BEFORE UPDATE OF retired_reason, re
 BEGIN SELECT RAISE(ABORT, 'retired_reason must be superseded, duplicate, expired or repeat, on a retired row'); END;
 `,
 	},
+	{
+		version: 12,
+		name: "the store's monotonic sequence",
+		sql: `
+-- One durable counter, taken in a transaction (Store.sequence.next): every value is greater than every value taken before it, by any
+-- process, whatever the wall clock says. A card hold records the value when it is written and the card reconciler takes a new one before
+-- each read, so "this read started after this hold was written" compares two sequence values, never two clock readings (a clock that
+-- rolls back cannot reorder them). One row, created here at 0; triggers refuse a second row, a delete, and any update that does not raise
+-- the value. Additive only: nothing existing changes. A build that knows only migrations up to 11 refuses this database.
+CREATE TABLE store_sequence (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	value INTEGER NOT NULL CHECK (value >= 0)
+);
+INSERT INTO store_sequence (id, value) VALUES (1, 0);
+CREATE TRIGGER store_sequence_one_row BEFORE INSERT ON store_sequence
+BEGIN SELECT RAISE(ABORT, 'the store sequence has exactly one row'); END;
+CREATE TRIGGER store_sequence_no_delete BEFORE DELETE ON store_sequence
+BEGIN SELECT RAISE(ABORT, 'the store sequence has exactly one row'); END;
+CREATE TRIGGER store_sequence_monotonic BEFORE UPDATE ON store_sequence
+	WHEN NEW.value <= OLD.value OR NEW.id IS NOT OLD.id
+BEGIN SELECT RAISE(ABORT, 'the store sequence only increases'); END;
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

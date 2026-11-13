@@ -20,12 +20,13 @@ import type { Question } from "../core/questions.ts";
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk", "handoffInstruction"];
 
 /**
- * What `inspect` reports for one thread; anything unset reads as empty. `waiting` is an authoritative listing taken now,
- * unless `waitingRead` replaces the whole result (an `ok: false`, an old `at`, or a shape that breaks the contract) or
+ * What `inspect` reports for one thread; anything unset reads as empty. `waiting` is the cards seen waiting and `resolved` the
+ * request IDs seen in a terminal status,
+ * unless `waitingRead` replaces the whole result (an `ok: false`, or a shape that breaks the contract) or
  * `waitingError` makes the read throw. Otherwise, while the fake is not connected, every waiting read is `ok: false`, as the
  * contract says. `waitingRead` is returned whatever the connection, so a test can prove the core does not believe it.
  */
-export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; waitingRead?: WaitingRead | (() => WaitingRead); waitingError?: string; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
+export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; /** Request IDs the backend shows in a terminal status: the only thing that closes a card hold. */ resolved?: string[]; waitingRead?: WaitingRead | (() => WaitingRead); waitingError?: string; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
 
 export type FakeOptions = {
 	id?: string;
@@ -127,7 +128,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 			if (th?.waitingError) throw Error(th.waitingError);
 			if (th?.waitingRead) return typeof th.waitingRead === "function" ? th.waitingRead() : th.waitingRead;
 			if (!fake.connected) return { ok: false, reason: "fake is not connected" };
-			return { ok: true, cards: th?.waiting ?? [], at: Date.now() };
+			return { ok: true, cards: th?.waiting ?? [], resolved: th?.resolved ?? [] };
 		},
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
 		instruction: async (id) => fake.threads.get(id)?.instruction ?? { items: [], state: "complete", byMachine: false },

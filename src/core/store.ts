@@ -292,6 +292,17 @@ export interface StateStore {
 	update<T>(key: string, fn: (prior: T | undefined) => T | undefined): T | undefined;
 }
 
+/**
+ * One durable, monotonic counter (migration 12). `next` raises it by one in a transaction and returns the new value, which is
+ * greater than every value any process took before it. It orders events without the wall clock: a card hold records a value
+ * when it is written, and a read taken with a greater value started after that hold was committed.
+ */
+export interface SequenceStore {
+	next(): number;
+	/** The newest value taken (0 before any). */
+	current(): number;
+}
+
 export interface Store {
 	/** The database file, or ":memory:". */
 	readonly path: string;
@@ -309,6 +320,7 @@ export interface Store {
 	readonly challenges: ChallengeStore;
 	readonly events: EventStore;
 	readonly state: StateStore;
+	readonly sequence: SequenceStore;
 }
 
 /** The database file's name in the state directory. */

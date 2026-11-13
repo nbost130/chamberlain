@@ -110,20 +110,27 @@ export type WaitQuestion = { question?: string; options?: { label?: string; desc
 export type WaitingItem = { type: WaitKind; requestId: string; label: string; questions: WaitQuestion[] };
 
 /**
- * A read of what one thread is waiting on. `ok: true` is AUTHORITATIVE: the backend was connected, answered, and its answer
- * had exactly the expected shape, so `cards` is everything the thread waits on, and an empty list means nothing waits. `at`
- * is when the read began (ms since the epoch): a listing older than a hold never closes it. Everything else is `ok: false`
- * with a reason: a server that is down or not connected now (a `mayBeOffline` server that is asleep included), any error,
- * and any answer in a shape the adapter does not expect. It is never `ok: true` with an empty list. `waiting` never rejects.
+ * A read of one thread's cards. `ok: true`: the backend was connected for the whole read and answered in the shape the adapter
+ * expects. It is NOT a complete list of the thread's cards: a backend may return a bounded window of the thread's history (T3
+ * does), so a card missing from it says nothing about that card.
+ *   - `cards`: the cards seen waiting now, for the wake path.
+ *   - `resolved`: request IDs of cards whose OWN item the read saw in a terminal status (resolved: answered, declined,
+ *     cancelled, failed or interrupted). This is the ONLY evidence that closes a card hold (card-hold.ts). An adapter that
+ *     cannot tell leaves it out, and its card holds close only by hand.
+ *   - `ignored`: why a card item was skipped (a missing or invalid request ID or status, an unknown status, two items of one
+ *     card that disagree). A skipped item is never evidence of anything; the core logs the reasons.
+ * Everything else is `ok: false` with a reason: a server that is down or not connected now (a `mayBeOffline` server asleep
+ * included), a thread the backend cannot find, any error, an answer in a shape the adapter does not expect. `waiting` never rejects.
  */
-export type WaitingRead = { ok: true; cards: WaitingItem[]; at: number } | { ok: false; reason: string };
+export type WaitingRead = { ok: true; cards: WaitingItem[]; resolved?: string[]; ignored?: string[] } | { ok: false; reason: string };
 
 /** Pure: does a value from an adapter keep the `WaitingRead` contract? The core treats anything else as `ok: false`. */
 export function isWaitingRead(r: unknown): r is WaitingRead {
 	if (!r || typeof r !== "object") return false;
 	const o = r as Record<string, unknown>;
 	if (o.ok === false) return typeof o.reason === "string";
-	return o.ok === true && Array.isArray(o.cards) && typeof o.at === "number" && Number.isFinite(o.at)
+	const strings = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string" && x !== ""));
+	return o.ok === true && Array.isArray(o.cards) && strings(o.resolved) && strings(o.ignored)
 		&& o.cards.every((c) => !!c && typeof c === "object" && typeof (c as WaitingItem).requestId === "string" && (c as WaitingItem).requestId !== "" && typeof (c as WaitingItem).type === "string");
 }
 

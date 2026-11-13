@@ -178,11 +178,11 @@ describe("answering an item", () => {
 		expect(s.posts).toHaveLength(0);
 		expect(s.store.claims.list("queue")).toEqual([]);
 		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
-		expect(await reconcileCardHolds(s.store, async () => ({ ok: true, at: Date.now() + 1, waiting: new Set(["a1"]) }))).toEqual({ closed: [], unknown: 0, failed: [] });
+		expect(await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set(["a1"]), resolved: new Set<string>() }))).toEqual({ closed: [], verified: [expect.objectContaining({ requestId: "a1" })], unverified: [], failed: [] });
 		expect(heldOpen(s.store)).toHaveLength(1);
 		expect(getQuestion(s.store, id)!.status).toBe("open");
 		// The card resolves: now, and only now, the question and the hold close.
-		expect((await reconcileCardHolds(s.store, async () => ({ ok: true, at: Date.now() + 1, waiting: new Set<string>() }))).closed).toHaveLength(1);
+		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set<string>(), resolved: new Set(["a1"]) }))).closed).toHaveLength(1);
 		expect(heldOpen(s.store)).toEqual([]);
 		expect(getQuestion(s.store, id)!.status).toBe("answered-on-card");
 	});
@@ -194,9 +194,9 @@ describe("answering an item", () => {
 		expect(getQuestion(s.store, id)!.status).toBe("answered");
 		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
 		expect(heldOpen(s.store)).toHaveLength(1);
-		expect((await reconcileCardHolds(s.store, async () => ({ ok: true, at: Date.now() + 1, waiting: new Set(["a1"]) }))).closed).toEqual([]);
+		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set(["a1"]), resolved: new Set<string>() }))).closed).toEqual([]);
 		expect(heldOpen(s.store)).toHaveLength(1);
-		expect((await reconcileCardHolds(s.store, async () => ({ ok: true, at: Date.now() + 1, waiting: new Set<string>() }))).closed).toHaveLength(1);
+		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set<string>(), resolved: new Set(["a1"]) }))).closed).toHaveLength(1);
 		expect(heldOpen(s.store)).toEqual([]);
 	});
 	test("a secret item is never answered on the page", async () => {

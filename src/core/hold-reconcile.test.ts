@@ -323,6 +323,27 @@ describe("pass 2: refs", () => {
 		expect(threadViewAcross([machine("a", { "th-1": facts() }), machine("b", { "th-1": facts({ archived: true }) })], "th-1")).toEqual({ state: "unknown" });
 	});
 
+	test("N1: a hold that names no server stays unknown when any snapshot that answered has an unreadable record or is incomplete", async () => {
+		// Mac lists th-1 archived; Main lists th-1 too, but that record cannot be read.
+		const [mac, mith] = await takeSnapshots([
+			{ name: "mac", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts({ archived: true }) }] }) },
+			{ name: "main", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts(), pendingRequestId: {} } as never, { id: "th-9", ...facts() }] }) },
+		]);
+		expect(mith).toMatchObject({ healthy: true, complete: true, partial: true });
+		expect(threadViewAcross([mac!, mith!], "th-1")).toEqual({ state: "unknown" });
+		// An incomplete snapshot that answered could hold the copy too.
+		expect(threadViewAcross([mac!, machine("main", {}, { complete: false })], "th-1")).toEqual({ state: "unknown" });
+		// Named server: a readable record still counts; absence from a snapshot with an unreadable record does not.
+		expect(threadViewAcross([mac!, mith!], "th-9", "main")).toEqual({ state: "live" });
+		expect(threadViewAcross([mac!, mith!], "th-gone", "main")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([mac!, mith!], "th-1", "mac")).toEqual({ state: "gone", saw: "archived" });
+		// Through the pass: the server-less hold stays open.
+		const store = memStore();
+		hold(store, { thread: "unnamed", ref: { threadId: "th-1" } });
+		expect((await run(store, undefined, async () => [mac!, mith!])).closed).toBe(0);
+		expect(whats(store)).toEqual(["unnamed"]);
+	});
+
 	test("fix 1: the ledger closes a missing thread only for a hold that names its server", async () => {
 		const store = memStore();
 		hold(store, { thread: "named", server: "main", ref: { threadId: "th-del" } });

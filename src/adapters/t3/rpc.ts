@@ -61,13 +61,21 @@ export async function connect(origin: string, token: string): Promise<Rpc> {
 /**
  * One fresh, whole read of a T3 server's threads over a socket of its own: subscribe to the shell stream with no resume
  * point, take the first snapshot, and close. Rejects when the stream ends first, errors, or says nothing within `ms`.
- * Resolves only with a snapshot that carries a thread list, so a short or empty answer is a failure, never "no threads".
+ * Resolves only with a snapshot that carries a thread list, so a short or empty answer is a failure, never "no threads"; one that
+ * marks itself partial (`partial`, `complete: false`, `truncated`, `hasMore`, a `nextCursor`) rejects.
  */
 export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: any[] }> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => { reject(Error("snapshot timed out")); rpc.ws.close(); }, ms);
 		rpc.call("orchestration.subscribeShell", {}, (v) => {
-			if (v?.kind === "snapshot" && Array.isArray(v.snapshot?.threads)) { clearTimeout(timer); resolve({ threads: v.snapshot.threads }); rpc.ws.close(); }
+			if (v?.kind === "snapshot" && Array.isArray(v.snapshot?.threads)) {
+				clearTimeout(timer);
+				// A snapshot that says it is not whole is refused, never read as "these are all the threads".
+				const s = v.snapshot;
+				if (s.partial === true || s.complete === false || s.truncated === true || s.hasMore === true || (s.nextCursor !== undefined && s.nextCursor !== null)) reject(Error("partial snapshot"));
+				else resolve({ threads: s.threads });
+				rpc.ws.close();
+			}
 		}).then(() => reject(Error("stream ended before a snapshot")), reject).finally(() => clearTimeout(timer));
 	});
 }

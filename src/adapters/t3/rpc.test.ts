@@ -56,6 +56,14 @@ describe("shellSnapshot: one fresh read of a server's threads", () => {
 		chunk(rpc, { kind: "snapshot", snapshot: {} });
 		await expect(p).rejects.toThrow("snapshot timed out");
 	});
+	test("a snapshot that marks itself partial is refused, never read as every thread", async () => {
+		for (const mark of [{ partial: true }, { complete: false }, { truncated: true }, { hasMore: true }, { nextCursor: "c2" }]) {
+			const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
+			const p = shellSnapshot(rpc, 1000);
+			chunk(rpc, { kind: "snapshot", snapshot: { threads: [{ id: "t1" }], ...mark } });
+			await expect(p).rejects.toThrow("partial snapshot");
+		}
+	});
 	test("a stream that ends first, or a socket that closes, is a failure", async () => {
 		const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
 		const p = shellSnapshot(rpc, 1000);
