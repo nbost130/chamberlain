@@ -50,6 +50,18 @@ describe("looksLikeAsk", () => {
 	test("a closing offer is an ask", () => expect(looksLikeAsk("It is built. Say if you want it.")).toBe(true));
 	test("empty is not", () => expect(looksLikeAsk("")).toBe(false));
 	test("a still-waiting line with no trailing question mark is an ask", () => expect(looksLikeAsk("Git tidy done.\n\n3. Still waiting on your answer: all four places, or staging only? The secret card stays closed until you decide.")).toBe(true));
+	test("a hand-back said only in the spoken closing line is an ask (a real miss)", () => expect(looksLikeAsk("**The independent review returned PASS for `076072df`.** The compatibility fix is complete and reviewed; nothing is installed or activated.\n\nThe reviewer independently verified reconnect, launch-then-connect, and symlink-swap cases. The swap left the victim unchanged.\n\nTwo older tests still fail on macOS due to fixture assumptions. Installation safeguards and acceptance against the real pinned browser context remain outstanding, so this is **build approval, not live readiness**.\n\n🗣️ Agent: [steady] The fix passed independent review. I’m handing it back before activation, as agreed.")).toBe(true));
+	test("a hold on the operator's last approval is an ask (a real miss)", () => expect(looksLikeAsk("Next is **installation preparation and live acceptance**. The code passed review, but the trusted launcher and protected bundle still need to be built and verified.\n\n1. Prepare the fixed launcher, protected runtime storage and version-pinned bundle; resolve the test-fixture gaps.\n\n2. Review those installation protections before activation, keeping the existing guard unchanged.\n\n3. Run the dedicated operation against the real isolated browser context and capture `READY` with exit **0**.\n\nYour last approval covered the fix and review only, so installation remains held.\n\n🧠 memory 6/6 fresh\n\n🗣️ Agent: [steady] The code is reviewed. Next I need to prove the protected installation and real browser readiness.")).toBe(true));
+	test("each hand-back phrase alone is an ask", () => {
+		for (const t of ["Built.\n\nInstallation remains held.", "Done; held until your go.", "Parked, held for your sign-off.", "Your approval covered the review only.", "This needs your approval.", "It needs your go-ahead to ship.", "Reviewed, stopping before activation."])
+			expect(looksLikeAsk(t)).toBe(true);
+	});
+	test("an ordinary completion report is not an ask", () => {
+		expect(looksLikeAsk("PR #957 remains ready and unmerged; the completion report is already with the Steward.")).toBe(false);
+		expect(looksLikeAsk("Tests pass and the branch is pushed. The result was handed back to the Steward.\n\n🗣️ Agent: [steady] Finished; the report is with the Steward.")).toBe(false);
+		expect(looksLikeAsk("The deploy ran fine. The rollout stays held in staging by design, which is the plan.")).toBe(false);
+		expect(looksLikeAsk("Done. I am handing it back to the Steward now.")).toBe(false);
+	});
 	test("a /goal proposal is an ask", () => expect(looksLikeAsk("### 🎯 Proposed goal\n\n```markdown\n/goal Make PR #1 green.\n```\n\nSubmit the /goal block as-is, edit it, or say 'no goal' to proceed without one.\n\n🗣️ Agent: proposal ready.")).toBe(true));
 });
 

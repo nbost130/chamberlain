@@ -58,8 +58,19 @@ export function looksLikeStall(text: string): boolean {
 	return /\b(starts? next|next up|(i'?ll|i will|we'?ll) (now |next )?(start|begin|proceed|build|move on)|will (now )?(start|begin) (next|now)|now (starting|building|moving on))\b/i.test(body.slice(-900));
 }
 
+/**
+ * Phrases that hand finished work back to the operator for authorization without asking anything: "handing it back",
+ * "installation remains held", "held until/for your ...", "your last approval covered X only", "needs your go-ahead",
+ * "before activation". Read against the whole message tail, sign-off lines included, because a hand-back is often
+ * said only in a spoken closing line. Narrow on purpose: a bare "handed back to the Steward" or "remains ready and
+ * unmerged" is a report, not an ask.
+ */
+const HANDBACK =
+	/\bhanding (?:it|this|that|them|everything) back\b(?! to (?:the )?steward)|\bremains? held\b|\bheld (?:until|for) your\b|\byour (?:last |latest |previous )?approval (?:only )?covered\b[^.\n]{0,120}\bonly\b|\bneeds? your (?:approval|go-ahead|go ahead|ok|okay)\b|\bbefore (?:live )?activation\b/i;
+
 /** True when a finished turn's final message hands a question or decision back to the operator. */
 export function looksLikeAsk(text: string): boolean {
+	if (HANDBACK.test(text.trim().slice(-500))) return true;
 	const body = text
 		.split("\n")
 		.filter((l) => !l.trimStart().startsWith("🗣️") && !l.trimStart().startsWith("🧠") && !l.trimStart().startsWith("🤖"))
