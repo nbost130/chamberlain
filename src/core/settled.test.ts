@@ -91,6 +91,21 @@ describe("title overlap (rule 3)", () => {
 		// Stemming is light and literal: a plural "s" is dropped from words over four letters, so "atlas" reads "atla" in an explanation.
 		expect(tokens("The Tests builds runs Atlas")).toEqual(["test", "build", "runs", "atla"]);
 	});
+	test("ignoreWords count on the title-overlap path too, case-insensitively: an ignored product name never carries a match", () => {
+		const store = memStore();
+		answered(store, "Q-ign01", "Acme deployment");
+		// The reviewer's case: with "Acme" ignored, the settled two-word title is one word, so it settles nothing new.
+		for (const ignoreWords of [["Acme"], ["ACME"], ["acme"]]) expect(find(store, { title: "Acme deployment database rollback?" }, { ignoreWords }).matches).toEqual([]);
+		// Without the setting it is the documented phrase match, so the ignore is what changed it.
+		expect(find(store, { title: "Acme deployment database rollback?" }).matches.map((m) => m.id)).toEqual(["Q-ign01"]);
+		expect(titlesOverlap("Acme deployment", "Acme deployment database rollback?", new Set(["acme"]))).toBeUndefined();
+	});
+	test("a true repeat still matches with the product name ignored, and the match names no ignored word", () => {
+		const store = memStore();
+		answered(store, "Q-ign02", "Acme billing invoice retry policy");
+		const r = find(store, { title: "ACME billing invoice retry policy again?" }, { ignoreWords: ["Acme"] });
+		expect(r.matches.map((m) => [m.id, m.why])).toEqual([["Q-ign02", "title overlap: billing, invoice, retry, policy"]]);
+	});
 });
 
 describe("the three sources", () => {

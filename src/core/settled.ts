@@ -102,9 +102,14 @@ export function tokens(text: string): string[] {
 	return out;
 }
 
-/** Pure: the shared words when two titles overlap strongly enough to be the same question, else undefined. */
-export function titlesOverlap(x: string, y: string): string[] | undefined {
-	const tx = tokens(x), ty = tokens(y);
+/**
+ * Pure: the shared words when two titles overlap strongly enough to be the same question, else undefined. `ignore` are words
+ * that say nothing about the topic (settings `ignoreWords`, the principal's name, lower-cased by `matchSettings`): they are
+ * dropped from both titles before any count, so "Acme deployment" and "Acme deployment database rollback?" share one word.
+ */
+export function titlesOverlap(x: string, y: string, ignore: ReadonlySet<string> = new Set()): string[] | undefined {
+	const drop = (t: string[]) => t.filter((w) => !ignore.has(w)).filter((w, i, kept) => i === 0 || kept[i - 1] !== w);
+	const tx = drop(tokens(x)), ty = drop(tokens(y));
 	const [a, b] = new Set(tx).size <= new Set(ty).size ? [tx, ty] : [ty, tx];
 	const aSet = new Set(a), bSet = new Set(b);
 	if (aSet.size < 2) return undefined;
@@ -182,7 +187,8 @@ function decisionRecords(store: Store): SettledRecord[] {
 
 /** The matching rule's settings: settings.json `settledMatch`, else the defaults (title overlap on, no extra ignored words). */
 export function matchSettings(m: SettledMatch | undefined = readSettings().settledMatch): { titleOverlap: boolean; ignore: Set<string> } {
-	const ignore = new Set([...(m?.ignoreWords ?? []), principal()].flatMap((w) => tokens(w)));
+	// Case-insensitive: `tokens` lower-cases, so "ACME", "Acme" and "acme" ignore the same word.
+	const ignore = new Set([...(m?.ignoreWords ?? []), principal()].flatMap((w) => tokens(String(w))));
 	return { titleOverlap: m?.titleOverlap !== false, ignore };
 }
 
@@ -222,7 +228,7 @@ export function findSettled(store: Store, s: Subject, match: SettledMatch | unde
 			else {
 				const topic = weak.length ? sameTopic(s.title, r.title, ignore) : undefined;
 				if (topic) why = `${weak.slice(0, 2).join(", ")} + topic: ${topic.slice(0, 4).join(", ")}`;
-				else if (titleOverlap) { const words = titlesOverlap(s.title, r.title); if (words) why = `title overlap: ${words.slice(0, 5).join(", ")}`; }
+				else if (titleOverlap) { const words = titlesOverlap(s.title, r.title, ignore); if (words) why = `title overlap: ${words.slice(0, 5).join(", ")}`; }
 			}
 			if (why) matches.push({ source: r.source, date: r.date, id: r.id, answer: r.answer, why });
 		} catch {
