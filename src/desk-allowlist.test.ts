@@ -135,7 +135,7 @@ describe("the whole argument list is parsed: a flag given twice is refused, in a
 	test("a flag may be given once on every command: journalctl, systemctl, docker, git, gh", () => {
 		for (const c of [
 			"journalctl -u a.service -u b.service", "journalctl -u a.service --unit b.service", "journalctl -n 5 --lines 6", "journalctl --since '1 hour ago' --since '1 day ago'", "journalctl --user --user", "journalctl -p err --priority warning", "journalctl -o cat --output short",
-			"systemctl status a.service --user --user", "systemctl status a.service -n 5 -n 6",
+			"systemctl status a.service --user --user", "systemctl status a.service -n 5 -n 6", "systemctl status a.service -l --full", "systemctl status a.service --full -l", "systemctl status a.service -n 5 --lines 6",
 			"docker ps -a --all", "docker ps -a -a", "docker ps --format '{{.Names}}' --format '{{.Labels}}'", "docker logs --tail 1 --tail 2 c", "docker logs -t --timestamps c",
 			"git diff -n 1 --max-count 2", "git log --stat --stat", "git diff --since 1.day --since 2.day",
 			"gh run view 1 --repo a/b --repo c/d", "gh run view 1 --log-failed --log-failed", "gh run list --limit 1 --limit 2", "example-tool journal x --limit 1 --limit 2",
@@ -146,6 +146,11 @@ describe("the whole argument list is parsed: a flag given twice is refused, in a
 		refused("journalctl -n 5 -u 'a b'");
 		refused("docker logs --tail x c");
 		refused("docker inspect --format '{{.Name}}' --format=");
+	});
+	test("a journald priority is a real level or a range of two, and nothing else", () => {
+		for (const p of ["err", "warning", "0", "7", "debug", "warning..emerg", "0..3"]) allowed(`journalctl -u a.service -p ${p}`);
+		for (const p of ["nonsense", "8", "error", "err..", "..err", "err..warning..info", "e.r.r"]) expect(refused(`journalctl -u a.service -p ${p}`)).toContain("value of -p");
+		expect(refused("journalctl -u a.service --priority nonsense")).toContain("value of --priority");
 	});
 });
 
@@ -208,8 +213,16 @@ describe("the hook's decision per tool", () => {
 	});
 	test("the Agent tool starts a example-gatherer gatherer and nothing else", () => {
 		expect(checkTool("Agent", { subagent_type: "example-gatherer", prompt: "read /var/log/syslog" }).ok).toBe(true);
-		expect(checkTool("Task", { subagent_type: "example-gatherer" }).ok).toBe(true);
+		expect(checkTool("Task", { subagent_type: "example-gatherer", description: "d", prompt: "p", run_in_background: true }).ok).toBe(true);
+		expect(checkTool("Task", { subagent_type: "example-gatherer" }).ok).toBe(false);
 		for (const input of [{}, { subagent_type: "general-purpose" }, { subagent_type: "other-agent" }, { subagent_type: "example-gatherer2" }, { prompt: "x" }]) expect(checkTool("Agent", input).ok).toBe(false);
+	});
+	test("a example-gatherer start cannot carry any other field: no checkout, no model, no remote run, no name or team", () => {
+		const base = { subagent_type: "example-gatherer", prompt: "read /var/log/syslog" };
+		for (const extra of [{ isolation: "worktree" }, { isolation: "remote" }, { model: "opus" }, { name: "x" }, { team_name: "t" }, { mode: "bypassPermissions" }, { cwd: "/" }, { Isolation: "worktree" }, { subagent_type: "example-gatherer", prompt: 1 }, { run_in_background: "yes" }]) {
+			expect(checkTool("Agent", { ...base, ...extra }).ok).toBe(false);
+			expect(checkTool("Task", { ...base, ...extra }).ok).toBe(false);
+		}
 	});
 	test("run as the hook: exit 2 with a reason for a refusal, 0 for an allow", async () => {
 		const run = async (payload: unknown) => {

@@ -158,7 +158,9 @@ const OVERSIZED = "\u0000oversized";
 /**
  * Reads whole lines of `path` from `from`, at most MAX_READ bytes. `end` is the offset after the last byte consumed, so a caller that saves
  * `end` has recorded exactly what it read. A torn tail is left for the next pass, unless `final` (a retired file no writer holds any more) and
- * the chunk reached the end of the file: then the tail is the file's last line. A chunk with no newline in all of MAX_READ bytes is skipped.
+ * the chunk reached the end of the file: then the tail is the file's last line. A chunk with no newline in all of MAX_READ bytes is skipped,
+ * and so is the rest of that line: a cursor that does not sit just after a newline is inside a line already counted as bad, so everything up
+ * to and including its newline is consumed without being read as an event.
  */
 function readLines(path: string, from: number, final = false): { lines: string[]; end: number; size: number; inode: number } | undefined {
 	let fd: number;
@@ -171,12 +173,27 @@ function readLines(path: string, from: number, final = false): { lines: string[]
 		let got = 0;
 		while (got < len) { const n = readSync(fd, buf, got, len - got, start + got); if (n <= 0) break; got += n; }
 		const chunk = buf.subarray(0, got);
-		const cut = chunk.lastIndexOf(10);
 		const atEof = start + got >= st.size;
-		let end = start + (cut < 0 ? 0 : cut + 1);
-		const lines = cut < 0 ? [] : chunk.subarray(0, cut + 1).toString("utf8").split("\n").filter(Boolean);
-		if (cut < 0 && got >= MAX_READ) { lines.push(OVERSIZED); end = start + got; }
-		else if (final && atEof && end < start + got) { lines.push(chunk.subarray(end - start).toString("utf8")); end = start + got; }
+		let skip = 0;
+		if (start > 0 && got > 0) {
+			const prev = Buffer.alloc(1);
+			if (readSync(fd, prev, 0, 1, start - 1) === 1 && prev[0] !== 10) {
+				const nl = chunk.indexOf(10);
+				if (nl < 0) {
+					// Still inside the skipped line: a full chunk (or a retired file's last bytes) is consumed; a partial one waits for its newline.
+					const consumed = got >= MAX_READ || (final && atEof);
+					return { lines: [], end: consumed ? start + got : start, size: st.size, inode: st.ino };
+				}
+				skip = nl + 1;
+			}
+		}
+		const body = chunk.subarray(skip);
+		const base = start + skip;
+		const cut = body.lastIndexOf(10);
+		let end = base + (cut < 0 ? 0 : cut + 1);
+		const lines = cut < 0 ? [] : body.subarray(0, cut + 1).toString("utf8").split("\n").filter(Boolean);
+		if (cut < 0 && skip === 0 && got >= MAX_READ) { lines.push(OVERSIZED); end = start + got; }
+		else if (final && atEof && end < start + got) { lines.push(body.subarray(end - base).toString("utf8")); end = start + got; }
 		return { lines, end, size: st.size, inode: st.ino };
 	} finally { closeSync(fd); }
 }

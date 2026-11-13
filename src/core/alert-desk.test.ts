@@ -7,6 +7,7 @@ import {
 	type Cursor, type CrashPoint, type DeskConfig, type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
+const MIB = 1024 * 1024;
 
 const T0 = Date.parse("2026-11-13T15:00:00Z"); // 10:00 ET
 const min = (n: number) => T0 + n * 60_000;
@@ -404,6 +405,28 @@ describe("a drain pass", () => {
 			const retired = retire(r, line({ at: T0 - 1000, family: "fa", title: "a" }) + line({ at: T0 - 500, family: "fb", title: "b" }).trimEnd());
 			r.pass(T0);
 			expect(familiesOf(r)).toEqual(new Set(["fa", "fb"]));
+			expect(existsSync(retired)).toBe(false);
+		});
+		test("an event glued to the end of a line exactly one chunk long is part of that bad line, not an event", () => {
+			const r = rig(noCap);
+			writeFileSync(r.inbox, `${"x".repeat(4 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" })}${line({ at: T0 - 900, family: "fb", title: "b" })}`);
+			r.pass(T0);
+			r.pass(T0 + 1000);
+			r.pass(T0 + 2000);
+			expect(familiesOf(r)).toEqual(new Set(["fb"]));
+		});
+		test("a bad line longer than two chunks is skipped whole, and the event after it is read once", () => {
+			const r = rig(noCap);
+			writeFileSync(r.inbox, `${"x".repeat(9 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" })}${line({ at: T0 - 900, family: "fb", title: "b" })}`);
+			for (let i = 0; i < 5; i++) r.pass(T0 + i * 1000);
+			expect(familiesOf(r)).toEqual(new Set(["fb"]));
+		});
+		test("a retired file whose last line is the rest of a skipped line delivers nothing from it and is finished", () => {
+			const r = rig(noCap);
+			const retired = retire(r, `${"x".repeat(4 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" }).trimEnd()}`);
+			r.pass(T0);
+			r.pass(T0 + 1000);
+			expect(familiesOf(r)).toEqual(new Set());
 			expect(existsSync(retired)).toBe(false);
 		});
 		test("the live inbox with a first line bigger than a chunk skips that line and goes on to the next", () => {

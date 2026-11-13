@@ -121,7 +121,9 @@ const psFormat = (v: string) => formatOk(v, PS_FIELDS);
 
 // ---- the command shapes ------------------------------------------------------------------------------
 
-const PRIORITY = /^[a-z0-9.]{1,20}$/;
+/** A journald priority, a name or 0-7, or a range of two (`warning..emerg`). Anything else journalctl would refuse, so it is refused here. */
+const PRIO = "(?:emerg|alert|crit|err|warning|notice|info|debug|[0-7])";
+const PRIORITY = new RegExp(`^${PRIO}(?:\\.\\.${PRIO})?$`);
 const OUTPUT = /^(short|short-iso|short-precise|cat)$/;
 const journalctl: Spec = {
 	flags: { "--user": "bool", "--no-pager": "bool", "-r": "bool", "--reverse": "bool", "-u": UNIT, "--unit": UNIT, "-n": DIGITS, "--lines": DIGITS, "--since": TIME, "--until": TIME, "-p": PRIORITY, "--priority": PRIORITY, "-o": OUTPUT, "--output": OUTPUT },
@@ -143,7 +145,7 @@ function checkSimple(tokens: string[]): Verdict {
 			return isVerdict(r) ? r : ok;
 		}
 		case "systemctl": {
-			const r = parse(args, { flags: { "--user": "bool", "--no-pager": "bool", "-l": "bool", "--full": "bool", "-n": DIGITS, "--failed": "bool" }, positional: UNIT }, "systemctl");
+			const r = parse(args, { flags: { "--user": "bool", "--no-pager": "bool", "-l": "bool", "--full": "bool", "-n": DIGITS, "--lines": DIGITS, "--failed": "bool" }, same: { "--full": "-l", "--lines": "-n" }, positional: UNIT }, "systemctl");
 			if (isVerdict(r)) return r;
 			const [sub, ...units] = r.pos;
 			if (!sub || !["status", "is-active", "is-failed", "list-units"].includes(sub)) return no(`systemctl: only status, is-active, is-failed and list-units are allowed (not ${JSON.stringify(sub ?? "")}); cat and show print unit files and environments`);
@@ -260,6 +262,7 @@ export function checkPath(p: unknown): Verdict {
  * tools included, and so is a call with no tool name. The settings matcher must therefore cover every tool (see docs/alert-desk.md).
  */
 export const GATHERER = "example-gatherer";
+const GATHERER_FIELDS = new Set(["subagent_type", "description", "prompt", "run_in_background"]);
 export function checkTool(tool: unknown, input: Record<string, unknown> | undefined): Verdict {
 	const i = input ?? {};
 	if (typeof tool !== "string" || !tool) return no("no tool name");
@@ -272,8 +275,16 @@ export function checkTool(tool: unknown, input: Record<string, unknown> | undefi
 			if (typeof i.pattern === "string" && (i.pattern.startsWith("/") || i.pattern.split("/").includes(".."))) return no("a glob pattern must stay inside the directory it is given");
 			return checkPath(i.path);
 		case "Agent":
-		case "Task":
-			return i.subagent_type === GATHERER ? ok : no(`${tool}: the desk may start only a ${GATHERER} gatherer`);
+		case "Task": {
+			if (i.subagent_type !== GATHERER) return no(`${tool}: the desk may start only a ${GATHERER} gatherer`);
+			// Only the fields a plain gatherer needs. Anything else (isolation, a model, a name, a working directory, a team) is refused, so the
+			// exception cannot be widened into a checkout, a stronger model or a remote run.
+			const extra = Object.keys(i).find((k) => !GATHERER_FIELDS.has(k));
+			if (extra !== undefined) return no(`${tool}: the field ${JSON.stringify(extra.slice(0, 40))} is not allowed when starting a ${GATHERER} gatherer`);
+			if (typeof i.prompt !== "string" || (i.description !== undefined && typeof i.description !== "string")) return no(`${tool}: a ${GATHERER} gatherer needs a text prompt`);
+			if (i.run_in_background !== undefined && typeof i.run_in_background !== "boolean") return no(`${tool}: run_in_background must be true or false`);
+			return ok;
+		}
 		default:
 			return no(`${tool} is not an allowed tool: the desk reads, starts ${GATHERER} gatherers and files decisions, and does nothing else`);
 	}
