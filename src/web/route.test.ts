@@ -181,7 +181,7 @@ describe("fix round 1", () => {
 		expect(s.posts).toHaveLength(1);
 	});
 
-	test("M2: a direct delivery closes the item's hold, by its --item link or its ID in the text, and leaves other holds open", async () => {
+	test("M2: a direct delivery closes the item's hold by its item field only; an ID named in the text closes nothing", async () => {
 		const s = setup();
 		s.add(routed("Q-abcd"));
 		appendHeld(s.store, { thread: "Mobile app", what: "palette pick", taken: "kept working on tests", item: "Q-abcd" });
@@ -189,8 +189,8 @@ describe("fix round 1", () => {
 		appendHeld(s.store, { thread: "Mobile app", what: "deploy approval, queue item Q-abcde" });
 		await s.answer("Q-abcd", { choice: 0 });
 		expect(s.sends).toHaveLength(1);
-		expect(heldOpen(s.store).map((h) => h.what)).toEqual(["deploy approval, queue item Q-abcde"]);
-		expect(s.logs.find((l) => l.event === "held-closed-for-item")?.data).toEqual({ item: "Q-abcd", closed: 2 });
+		expect(heldOpen(s.store).map((h) => h.what)).toEqual(["palette pick, queue item Q-abcd", "deploy approval, queue item Q-abcde"]);
+		expect(s.logs.find((l) => l.event === "held-closed-for-item")?.data).toEqual({ item: "Q-abcd", closed: 1 });
 	});
 
 	test("M2: a failed relay leaves the hold open for the Steward to close on its wake", async () => {

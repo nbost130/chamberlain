@@ -8,7 +8,7 @@
  *   bun src/core/afk.ts enter "<their words>" [--return <ISO>] [--cap "<spend note>"] [--since <ISO>]
  *   bun src/core/afk.ts status
  *   bun src/core/afk.ts hold "<thread>" "<what waits for the operator>" ["<safe default taken>"] ["<threadId of an open card>"]
- *        [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>]
+ *        --item <Q-id> [--not-settled "<why>"] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>]
  *        [--thread <threadId> --server <name>]     (--server says which server the thread lives on; without it a missing thread is never "gone")
  *   bun src/core/afk.ts held                     (everything not closed, from any absence, with its notes)
  *   bun src/core/afk.ts note <id> "<what changed>"   (appended to the hold; never write a second hold about the same wait)
@@ -17,14 +17,22 @@
  *   bun src/core/afk.ts exit        (prints the brief, then ends the absence)
  *
  * A hold is a real wait on the operator: a decision, secret, deploy or approval only they can give. An FYI is never a
- * hold. The daemon closes holds on its own (src/core/hold-reconcile.ts): a hold tied to a queue item when that item is
- * answered on any path, and a hold with a structured ref when GitHub or the backend shows what it waits on is done.
- * It never reads the prose, so a hold with no --item and no ref closes only by `close`.
+ * hold. Whatever waits on the operator goes to the decision queue first (src/ask.ts, `"urgent": false` when it can wait),
+ * and is held only with --item <that Q-id>: a hold with no --item, with an item that is not on the queue, or with one
+ * already answered is refused. A hold that matches something already settled (answered questions, rulings, the decision
+ * log; src/core/settled.ts) is refused too; --not-settled "<why>" overrides it and records the reason, and a question
+ * asked with its own notSettled reason passes that reason on to its hold. The daemon's own holds (approval, secret and
+ * link cards) are written by code (src/core/card-hold.ts), each behind a question that points to its card.
+ * The daemon closes holds on its own (src/core/hold-reconcile.ts): a hold tied to a queue item when that item is answered
+ * on any path, and a hold with a structured ref when GitHub or the backend shows what it waits on is done. It never reads
+ * the prose: only the `item` field links a hold to an answer, so a hold with no item closes through its refs or by `close`.
  */
 import { createHash } from "node:crypto";
 import { REPO, principal, principalPoss } from "./config.ts";
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
+import { getQuestion } from "./questions.ts";
+import { findSettled, refusalLines } from "./settled.ts";
 import type { AwayRecord, Store } from "./store.ts";
 
 export type Afk = AwayRecord;
@@ -35,7 +43,7 @@ export type Afk = AwayRecord;
 export type HoldRef = { pr?: string; issue?: string; branch?: string; runId?: string; threadId?: string };
 export type HeldNote = { t: string; text: string };
 /** `item` is the decision-queue item the hold waits on, so an answer on any path can close it. `notes` are appended to it, never a second hold. */
-export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[] };
+export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[]; /** Why this was held although a settled record matched it. */ notSettled?: string };
 const ITEM_ID = /^Q-[a-z0-9]{4,16}$/;
 const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 /** The shapes a ref field may take. A field in any other shape is never acted on. */
@@ -68,7 +76,7 @@ export const readAfk = (store: Store): Afk | undefined => store.away.current();
 export function mandateLine(a: Afk): string {
 	const back = a.expectedReturn ? ` Expected back ${a.expectedReturn}.` : "";
 	const spend = a.spendNote ? ` Spend: ${a.spendNote}.` : "";
-	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else) and goes in the return brief via \`bun ${REPO}/src/core/afk.ts hold\` (a real wait on ${principal()} only, never an FYI; give it --item, --pr, --issue, --branch or --thread so the daemon can close it). Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
+	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else). Put it on ${principalPoss()} queue first with \`bun ${REPO}/src/ask.ts '<json>'\` (add \`"urgent": false\` when it can wait: it is listed below the urgent ones and sends no notification), then hold it for the return brief with \`bun ${REPO}/src/core/afk.ts hold ... --item <the Q-id>\`; a hold with no queue item is refused, and so is anything already settled (it prints the answer). Never an FYI. Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
 }
 
 /** A short stable handle for a held entry. */
@@ -123,13 +131,8 @@ export function noteHeld(store: Store, id: string, text: string, now = new Date(
 		return store.items.patch(HELD, id, { notes })!.payload as Held;
 	});
 }
-/** The item IDs a hold names: its `item` link, and any ID standing as a word in its text. Same match as heldForItem. */
-export function itemIdsOf(h: Held): string[] {
-	const ids = new Set<string>();
-	if (h.item && ITEM_ID.test(h.item)) ids.add(h.item);
-	for (const m of `${h.thread}\n${h.what}`.matchAll(/(?<![A-Za-z0-9-])(Q-[a-z0-9]{4,16})(?![A-Za-z0-9-])/g)) ids.add(m[1]!);
-	return [...ids];
-}
+/** The queue item a hold waits on: its structured `item` field and nothing else. The prose is never read. */
+export const itemIdOf = (h: Held): string | undefined => (h.item && ITEM_ID.test(h.item) ? h.item : undefined);
 /** A card or approval left its thread: close what was held against it. A hold with no card link is a decision, so it stays. */
 export const closeHeldForCard = (store: Store, threadId: string, requestId: string, how: string): number => closeWhere(store, (h) => h.requestId === requestId || h.threadId === threadId, how);
 /**
@@ -145,8 +148,8 @@ export function fyiReason(thread: string, what: string): string | undefined {
 	}
 	return undefined;
 }
-/** Pure: is this hold waiting on queue item `itemId`? By its `item` link, or by the item ID named as a word in its text. */
-export const heldForItem = (h: Held, itemId: string) => h.item === itemId || new RegExp(`(^|[^A-Za-z0-9-])${itemId}(?![A-Za-z0-9-])`).test(`${h.thread}\n${h.what}`);
+/** Pure: is this hold waiting on queue item `itemId`? Only by its `item` field: an ID named in its text means nothing. */
+export const heldForItem = (h: Held, itemId: string) => h.item === itemId;
 /**
  * A queue item's answer went straight to its thread, so no answer wake tells the Steward to close its hold: close
  * what was held against the item, as `afk.ts close` would. Returns how many closed; 0 when nothing was held.
@@ -199,13 +202,13 @@ function main() {
 		const beat = store.state.get("heartbeat");
 		console.log("heartbeat:", beat ? JSON.stringify(beat) : "none");
 	} else if (cmd === "hold") {
-		const HOLD_USAGE = 'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId> --server <name>]';
+		const HOLD_USAGE = 'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] --item <Q-id> [--not-settled "<why>"] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId> --server <name>]';
 		const flags: Record<string, string> = {};
 		const pos: string[] = [];
 		for (let k = 0; k < rest.length; k++) {
 			const a = rest[k]!;
 			if (!a.startsWith("--")) { pos.push(a); continue; }
-			if (!["--item", "--pr", "--issue", "--branch", "--run", "--thread", "--server"].includes(a) || rest[k + 1] === undefined) { console.error(HOLD_USAGE); process.exit(2); }
+			if (!["--item", "--not-settled", "--pr", "--issue", "--branch", "--run", "--thread", "--server"].includes(a) || rest[k + 1] === undefined) { console.error(HOLD_USAGE); process.exit(2); }
 			flags[a] = rest[++k]!;
 		}
 		const [thread, what, taken, threadId] = pos;
@@ -217,7 +220,21 @@ function main() {
 		const fyi = thread && what ? fyiReason(thread, what) : undefined;
 		if (fyi) { console.error(`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: bun ${new URL("./decided.ts", import.meta.url).pathname} "<thread>" "<what I decided>" "<ruling cited>"`); process.exit(2); }
 		if (!thread || !what || (item !== undefined && !ITEM_ID.test(item)) || Object.keys(ref ?? {}).length !== given.length || (server !== undefined && (!/^[A-Za-z0-9_.-]{1,40}$/.test(server) || (!raw.threadId && !threadId)))) { console.error(HOLD_USAGE); process.exit(2); }
-		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(server ? { server } : {}), ...(item ? { item } : {}), ...(ref ? { ref } : {}) });
+		if (!item) { console.error(`afk.ts hold: refused, a hold needs --item <Q-id>. Anything that waits on ${principal()} goes on the decision queue first: bun ${REPO}/src/ask.ts '<json>' (add "urgent": false if it can wait), then hold it with the item ID it prints.`); process.exit(2); }
+		const queued = getQuestion(store, item);
+		if (!queued) { console.error(`afk.ts hold: refused, ${item} is not on the decision queue. File the question with ask.ts first, then hold it with the item ID it prints.`); process.exit(2); }
+		// A hold on a question already answered waits on nothing: the answer is what the hold was for.
+		if (queued.status !== "open") { console.error(`afk.ts hold: refused, ${item} is already answered (${queued.answer ? `"${queued.answer.label}"` : "on its card"}). Act on the answer; nothing waits on ${principal()}.`); process.exit(2); }
+		const notSettled = flags["--not-settled"]?.trim() || undefined;
+		if (flags["--not-settled"] !== undefined && !notSettled) { console.error(HOLD_USAGE); process.exit(2); }
+		// A question asked with its own notSettled reason has been through the check already; the hold inherits the reason and records it.
+		const inherited = !notSettled ? queued.notSettled : undefined;
+		if (!notSettled && !inherited) {
+			const { matches, skipped } = findSettled(store, { title: what, context: taken, thread, item, run: raw.runId, pr: raw.pr, issue: raw.issue, branch: raw.branch });
+			for (const k of skipped) console.error(`afk.ts hold: the settled check could not read ${k}`);
+			if (matches.length) { console.error(refusalLines("afk.ts hold", matches, 'add --not-settled "<why this is a different question>"').join("\n")); process.exit(2); }
+		}
+		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(server ? { server } : {}), item, ...(notSettled || inherited ? { notSettled: notSettled ?? `inherited from ${item}: ${inherited}` } : {}), ...(ref ? { ref } : {}) });
 		console.log("held");
 	} else if (cmd === "held") {
 		for (const h of heldOpen(store)) {
