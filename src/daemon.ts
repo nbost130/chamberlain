@@ -10,17 +10,22 @@ import { createEngine } from "./core/engine.ts";
 import { maintain } from "./core/maintain.ts";
 import { makeLog } from "./core/log.ts";
 import { startup } from "./core/migrate.ts";
-import { holdRelayLock, networkFilesystem, RelayLockUnavailableError, RelayRunningError, type RelayLock } from "./core/singleton.ts";
+import { holdRelayLock, networkFilesystem, RelayDatabaseLinkedError, RelayLockUnavailableError, RelayRunningError, type RelayLock } from "./core/singleton.ts";
 import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
 
 const store = defaultStore();
 const log = makeLog(store);
-// The relay's flock on the database file, held for this process's life: the operating system lets one process hold it, and frees it when this one dies.
+// The relay's flock on the state directory, held for this process's life: the operating system lets one process hold it, and frees it when this one dies.
 let lock: RelayLock;
 try { lock = holdRelayLock(store.path); } catch (e) {
 	if (e instanceof RelayLockUnavailableError) {
 		console.error(`chamberlain: ${e.message}`);
 		log("relay-lock-unavailable", { error: e.message.slice(0, 200) });
+		process.exit(1);
+	}
+	if (e instanceof RelayDatabaseLinkedError) {
+		console.error(`chamberlain: ${e.message}`);
+		log("relay-database-linked", { db: e.db, links: e.links });
 		process.exit(1);
 	}
 	if (!(e instanceof RelayRunningError)) throw e;

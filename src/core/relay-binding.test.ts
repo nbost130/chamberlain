@@ -1,10 +1,10 @@
 /**
- * The relay's lock handle is bound to its database. A handle is not just "some lock was taken": it records the device and inode of the file it
- * locked, and `createRelay` refuses it unless that is the file the store opened. A reviewer's probe built a relay over `actual.db` on a lock
+ * The relay's lock handle is bound to its database. A handle is not just "some lock was taken": it records the device and inode of the
+ * directory it locked and of the database file in it, and `createRelay` refuses it unless that is the file the store opened. A reviewer's probe built a relay over `actual.db` on a lock
  * held on `unrelated.db`, with nothing locking `actual.db`: a second daemon could then have locked it and relayed beside the first.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, renameSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdtempSync, realpathSync, renameSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
@@ -23,13 +23,20 @@ const base = (store: Store, lock: RelayLock): RelayDeps => ({ store, lock, wake:
 
 describe("a relay lock is the lock on the relay's own database", () => {
 	test("a handle for another database is refused, with the real lock held and nothing locking the store's own file", () => {
-		const dir = scratch();
-		const store = open(`${dir}/actual.db`);
-		const unrelated = hold(`${dir}/unrelated.db`);
+		const store = open(`${scratch()}/actual.db`);
+		const unrelated = hold(`${scratch()}/unrelated.db`);
 		expect(unrelated.held()).toBe(true);
 		expect(() => createRelay(base(store, unrelated))).toThrow("not on this store's database");
-		// The store's own file was never locked by that handle: a daemon on it can still take the real lock.
+		// The store's own directory was never locked by that handle: a daemon on it can still take the real lock.
 		hold(store.path).release();
+	});
+
+	test("another database in the locked directory is not covered, and cannot take a lock of its own: the lock is the directory's", () => {
+		const dir = scratch();
+		const store = open(`${dir}/actual.db`);
+		const sibling = hold(`${dir}/sibling.db`);
+		expect(() => createRelay(base(store, sibling))).toThrow("not on this store's database");
+		expect(() => holdRelayLock(store.path)).toThrow(RelayRunningError);
 	});
 
 	test("the handle for the store's own file is accepted, and so is the same file by another path", () => {
@@ -37,7 +44,9 @@ describe("a relay lock is the lock on the relay's own database", () => {
 		const store = open(`${dir}/chamberlain.db`);
 		symlinkSync(store.path, `${dir}/alias.db`);
 		const lock = hold(`${dir}/alias.db`);
-		expect(lock.identity).toBe(`${statSync(store.path).dev}:${statSync(store.path).ino}`);
+		expect(lock.identity).toBe(`${statSync(dir).dev}:${statSync(dir).ino} ${statSync(store.path).dev}:${statSync(store.path).ino}`);
+		expect(lock.directory).toBe(realpathSync(dir));
+		expect(lock.path).toBe(realpathSync(store.path));
 		expect(() => createRelay(base(store, lock))).not.toThrow();
 		expect(() => holdRelayLock(store.path)).toThrow(RelayRunningError);
 	});
@@ -51,12 +60,15 @@ describe("a relay lock is the lock on the relay's own database", () => {
 		open(`${dir}/chamberlain.db`);
 		expect(lockCovers(lock, `${dir}/chamberlain.db`)).toBe(false);
 		expect(lockCovers(lock, `${dir}/no-such.db`)).toBe(false);
+		// The same file moved to another directory is out of the locked directory, and so out of the lock.
+		const elsewhere = scratch();
+		renameSync(`${dir}/moved.db`, `${elsewhere}/chamberlain.db`);
+		expect(lockCovers(lock, `${elsewhere}/chamberlain.db`)).toBe(false);
 	});
 
 	test("createEngine refuses a handle for another database, because it builds its relay over the store", () => {
-		const dir = scratch();
-		const store = open(`${dir}/actual.db`);
-		const unrelated = hold(`${dir}/unrelated.db`);
+		const store = open(`${scratch()}/actual.db`);
+		const unrelated = hold(`${scratch()}/unrelated.db`);
 		const root = scratch();
 		const adapter = { id: "fake", capabilities: [], watch: () => new Promise<void>(() => {}), wake: { ready: () => true, send: async () => ({ ok: true }) }, isBusy: () => "idle", post: async () => ({ ok: true }), serverLine: () => "" };
 		expect(() => createEngine({ conf: root, lock: unrelated, store, servers: [{ server: { name: "fake", adapter: "fake" }, adapter }], housekeeping: false, log: () => {} } as unknown as Parameters<typeof createEngine>[0])).toThrow("not on this store's database");

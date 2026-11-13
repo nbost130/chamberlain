@@ -49,6 +49,17 @@ describe("the documented delivery guarantee matches the behaviour", () => {
 		expect(text).toContain("hard links");
 	});
 
+	test("the singleton states the real macOS semantics: flock and SQLite's fcntl locks conflict there, so the lock is on the state directory", () => {
+		const singleton = norm(read("src/core/singleton.ts").slice(0, read("src/core/singleton.ts").indexOf("import { dlopen")).replace(/\n \* ?/g, " "));
+		const glossary = norm(read("docs/GLOSSARY.md"));
+		expect(text).toContain("on macOS, as on FreeBSD, `flock` and `fcntl` locks are kept on the same per-file lock list and **do conflict**");
+		expect(text).toContain("SQLite never locks a directory");
+		expect(singleton).toContain("on macOS, as on the BSDs, `flock` and `fcntl` locks on one file DO conflict");
+		for (const [where, t] of [["ARCHITECTURE", text], ["singleton.ts", singleton], ["GLOSSARY", glossary], ["README", norm(read("README.md"))]] as const) {
+			expect(t, where).not.toMatch(/on Linux and macOS,? (`flock` and `fcntl` locks )?are independent|on Linux and macOS it is independent/i);
+		}
+	});
+
 	test("nothing in the docs or the code promises pickup 'within a second or two' without condition", () => {
 		const hits = [...sources("docs"), ...sources("src"), "README.md", "CHANGELOG.md"].filter((p) => !p.endsWith(".test.ts") && /within a second or two/i.test(read(p)));
 		expect(hits.map((p) => relative(".", p))).toEqual([]);

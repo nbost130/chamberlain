@@ -281,7 +281,7 @@ describe("two real daemons on one state directory: exactly one relays", () => {
 		const w = await world("Q-two01");
 		const first = w.spawn(daemonArgs);
 		await w.until("the first daemon's relay", () => w.events().some((e) => e.event === "startup-recovered"));
-		// Another environment (a different runtime and temporary directory) does not make it another relay: the lock is the database file's.
+		// Another environment (a different runtime and temporary directory) does not make it another relay: the lock is the state directory's.
 		const second = w.spawn(daemonArgs, undefined, { XDG_RUNTIME_DIR: `${w.conf}/other-runtime`, TMPDIR: `${w.conf}/other-tmp` });
 		expect(await second.exited).toBe(5);
 		expect(await new Response(second.stderr).text()).toContain("another chamberlain daemon is already running on this database");

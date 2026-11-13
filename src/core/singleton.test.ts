@@ -1,17 +1,18 @@
 /**
- * The relay's singleton: one holder per DATABASE FILE, whatever the environment or the spelling of its path, released by the operating
- * system when the holder dies. The scenarios run with real processes (src/testing/hold-relay.ts), because an in-process test cannot tell
- * a lock that belongs to the process from one that belongs to the open file, or a lock on a path from one on the file.
+ * The relay's singleton: one holder per STATE DIRECTORY (the directory that holds the database), whatever the environment or the spelling of
+ * its path, released by the operating system when the holder dies, and never in the way of SQLite's own locks on the platform it runs on. The
+ * scenarios run with real processes (src/testing/hold-relay.ts), because an in-process test cannot tell a lock that belongs to the process
+ * from one that belongs to the open file, or a lock on a path from one on the directory.
  *
  * Every holder here is a real process that does what the reviewer's reproducer did to the old `fcntl` lock (flag `twice`): once it holds
- * the lock, it tries again in the same process and opens and closes other descriptors to the database. Under POSIX `fcntl` locks that
+ * the lock, it tries again in the same process and opens and closes other descriptors to the database and its directory. Under POSIX `fcntl` locks that
  * released the holder's lock; under `flock` it must not.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { holdRelayLock, libcCandidates, loadFlock, networkFilesystemIn, RelayLockUnavailableError, RelayRunningError } from "./singleton.ts";
+import { holdRelayLock, libcCandidates, loadFlock, networkFilesystemIn, RelayDatabaseLinkedError, RelayLockUnavailableError, RelayRunningError } from "./singleton.ts";
 import { openStore } from "./sqlite-store.ts";
 
 const HOLD = new URL("../testing/hold-relay.ts", import.meta.url).pathname;
@@ -40,7 +41,7 @@ async function holder(db: string, o: StartOpts = {}) {
 const refusedFor = async (db: string, o: StartOpts = {}) => await starter(db, 10, o).out();
 const kill = async (h: { p: ReturnType<typeof Bun.spawn> }) => { h.p.kill("SIGKILL"); await h.p.exited; };
 
-describe("one relay per database file", () => {
+describe("one relay per state directory", () => {
 	test("reviewer scenario 1: a refused second acquisition in the holder's own process does not release its lock; a child is still refused", async () => {
 		const dir = scratch();
 		const db = `${dir}/chamberlain.db`;
@@ -74,9 +75,10 @@ describe("one relay per database file", () => {
 			writeFileSync(`${db}-relay-lock`, "", { mode: 0o600 });
 			expect(await refusedFor(db)).toBe("refused");
 			unlinkSync(`${db}-relay-lock`);
-			// A hard link to the database is the same file.
+			// A hard link to the database in another directory: the lock is on the directory, so a database with another link is refused.
 			linkSync(db, `${root}/hardlink.db`);
-			expect(await refusedFor(`${root}/hardlink.db`)).toBe("refused");
+			expect(await refusedFor(`${root}/hardlink.db`)).toBe("linked");
+			expect(await refusedFor(db)).toBe("refused");
 			// The state directory renamed under the live holder, then reached as `moved`, `moved/`, through a symlink at the old name, and
 			// relative to a working directory.
 			renameSync(state, `${root}/moved`);
@@ -174,7 +176,7 @@ describe("one relay per database file", () => {
 		const db = `${dir}/chamberlain.db`;
 		const first = await holder(db);
 		try {
-			// The lock is on the database file itself: a flock probe on it from another process is refused...
+			// The lock is on the state directory: the relay's lock from another process is refused...
 			const probe = Bun.spawn([process.execPath, "-e", `import { holdRelayLock } from ${JSON.stringify(new URL("./singleton.ts", import.meta.url).pathname)}; try { holdRelayLock(${JSON.stringify(db)}); console.log("held"); } catch (e) { console.log(e.constructor.name); }`], { stdout: "pipe", stderr: "pipe" });
 			expect((await new Response(probe.stdout).text()).trim()).toBe("RelayRunningError");
 			// ...and yet SQLite's own (fcntl) locking is untouched: writers commit, in the store's normal busy handling, as the page does.
@@ -191,11 +193,12 @@ describe("one relay per database file", () => {
 		} finally { await kill(first); }
 	}, 30_000);
 
-	test("the lock is on the database file itself (created 0600 if missing), and the holder keeps it until it releases", () => {
+	test("the lock is on the database's directory (the database is created 0600 if missing, nothing else), and the holder keeps it until it releases", () => {
 		const dir = scratch();
 		const db = `${dir}/chamberlain.db`;
 		const lock = holdRelayLock(db);
-		expect(lock.path).toBe(db);
+		expect(lock.path).toBe(realpathSync(db));
+		expect(lock.directory).toBe(realpathSync(dir));
 		expect(statSync(db).mode & 0o777).toBe(0o600);
 		expect(readdirSync(dir)).toEqual(["chamberlain.db"]);
 		expect(() => holdRelayLock(db)).toThrow(RelayRunningError);
@@ -209,6 +212,67 @@ describe("one relay per database file", () => {
 		const a = holdRelayLock(`${scratch()}/chamberlain.db`);
 		const b = holdRelayLock(`${scratch()}/chamberlain.db`);
 		a.release(); b.release();
+	});
+});
+
+describe("the relay's lock never conflicts with SQLite's own locks on this platform", () => {
+	test("this platform's semantics, probed: a flock on a database SQLite has open conflicts with SQLite's fcntl locks on macOS, not on Linux", () => {
+		// On macOS and FreeBSD, flock(2) and fcntl(2) locks share one lock list per file and interact; on Linux they are independent. This is
+		// why the relay's lock is on the directory, which SQLite never locks. If this ever fails, the platform's semantics changed: re-read the
+		// singleton header before touching the lock.
+		const db = `${scratch()}/probe.db`;
+		const sql = new Database(db);
+		sql.exec("PRAGMA journal_mode=WAL; CREATE TABLE t(a); INSERT INTO t VALUES (1);");
+		sql.query("SELECT a FROM t").all(); // a WAL connection keeps a shared fcntl lock on the database file while it is open
+		const lib = loadFlock();
+		const fd = openSync(db, "r");
+		try {
+			const r = lib.flock(fd, 2 | 4);
+			if (process.platform === "darwin") {
+				expect(r).toBe(-1);
+				expect(lib.errno()).toBe(35); // EWOULDBLOCK: SQLite's own lock, in this very process, refuses a flock on its file
+			} else {
+				expect(r).toBe(0);
+				lib.flock(fd, 8);
+			}
+		} finally { sql.close(); closeSync(fd); }
+	});
+
+	test("the relay's lock is taken and kept while this process's SQLite connection holds its locks, and SQLite keeps writing under it", () => {
+		const dir = scratch();
+		const db = `${dir}/chamberlain.db`;
+		const store = openStore(db); // as the daemon: the database open through SQLite, in WAL mode, before the lock is taken
+		store.state.update<number>("n", (n) => (n ?? 0) + 1);
+		const lock = holdRelayLock(db);
+		try {
+			store.state.update<number>("n", (n) => (n ?? 0) + 1);
+			const other = new Database(db);
+			other.exec("PRAGMA busy_timeout = 2000; CREATE TABLE probe(a); INSERT INTO probe VALUES (1);");
+			other.close();
+			expect(store.state.get<number>("n")).toBe(2);
+			expect(lock.held()).toBe(true);
+			expect(() => holdRelayLock(db)).toThrow(RelayRunningError);
+		} finally { store.close(); }
+		// With no SQLite connection left in this process, a flock on the database FILE from a fresh open file description is granted while the
+		// relay still holds: the relay never locks a file SQLite locks.
+		const lib = loadFlock();
+		const fd = openSync(db, "r");
+		try { expect(lib.flock(fd, 2 | 4)).toBe(0); lib.flock(fd, 8); } finally { closeSync(fd); }
+		expect(lock.held()).toBe(true);
+		expect(() => holdRelayLock(db)).toThrow(RelayRunningError);
+		lock.release();
+	});
+
+	test("a database with another hard link is refused at start, and the refusal lets the directory go", () => {
+		const dir = scratch();
+		const db = `${dir}/chamberlain.db`;
+		openStore(db).close();
+		const other = scratch();
+		linkSync(db, `${other}/link.db`);
+		expect(() => holdRelayLock(db)).toThrow(RelayDatabaseLinkedError);
+		expect(() => holdRelayLock(`${other}/link.db`)).toThrow(RelayDatabaseLinkedError);
+		unlinkSync(`${other}/link.db`);
+		holdRelayLock(db).release();
 	});
 });
 

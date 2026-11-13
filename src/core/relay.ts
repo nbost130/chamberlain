@@ -2,7 +2,8 @@
  * The message relay of the transactional outbox: the ONLY code that calls a wake transport (`wake`, and `compact` through `relay.compact`),
  * and it runs in the daemon alone (one daemon per state directory, enforced by singleton.ts). It cannot be built without the held lock:
  * `createRelay` requires the handle `holdRelayLock` returned and refuses anything else, and refuses a handle that is not the lock on the
- * database file its store opened (the handle records the file's device and inode; `lockCovers`), and it sends nothing once that lock is released.
+ * database file its store opened, in the directory the lock is on (the handle records both devices and inodes; `lockCovers`), and it sends
+ * nothing once that lock is released.
  * Producers (the engine, the sweep, the page, `synthetic-wake.ts`) only insert rows (deliver.ts); `wakes.ts` only changes a row's status;
  * no other process talks to the webhook. src/architecture.test.ts fails if another module calls a transport or POSTs.
  *

@@ -1,18 +1,21 @@
 /**
  * A process that tries to take the relay's lock on a database, for tests of the singleton (src/core/singleton.test.ts).
  * Usage: bun hold-relay.ts <database> <hold-ms> [start-at-epoch-ms] [flags]
- * Prints one line: "held" (then keeps the lock for hold-ms), "refused", or the error. A start time lines up many starters.
+ * Prints one line: "held" (then keeps the lock for hold-ms), "refused", "linked" (the database has another hard link), or the error. A
+ * start time lines up many starters.
  * Flags, comma-separated:
  *   store       open the database through the Store first and keep it open, as the daemon does;
  *   twice       once held, try a second acquisition in this same process (it must be refused), and open and close another descriptor
- *               and a SQLite connection to the database (neither may release the lock); prints "held" only if the retry was refused;
+ *               to the database and to its directory, and a SQLite connection to the database (none may release the lock); prints "held"
+ *               only if the retry was refused;
  *   retry=<ms>  keep trying until held or until <ms> after the start time; once held, keep retrying locally every 20 ms while holding;
  *   spawn       once held, start two long-lived children (one by Bun.spawn, one by node:child_process) and print their pids after "held".
  */
 import { spawn as nodeSpawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, openSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { Database } from "bun:sqlite";
-import { holdRelayLock, RelayRunningError, type RelayLock } from "../core/singleton.ts";
+import { holdRelayLock, RelayDatabaseLinkedError, RelayRunningError, type RelayLock } from "../core/singleton.ts";
 import { openStore } from "../core/sqlite-store.ts";
 
 const [db, holdMs, startAt] = [process.argv[2]!, Number(process.argv[3] ?? 1000), Number(process.argv[4] ?? 0)];
@@ -37,6 +40,7 @@ try {
 	if (flags.has("twice")) {
 		if (!localRetryRefused()) { console.log("held, but a second acquisition in the same process was allowed"); process.exit(1); }
 		closeSync(openSync(db, "r"));
+		closeSync(openSync(dirname(realpathSync(resolve(db))), "r"));
 		new Database(db).close();
 		store?.state.update<number>("held-by-relay", (n) => (n ?? 0) + 1);
 	}
@@ -55,6 +59,6 @@ try {
 	}
 	lock.release();
 } catch (e) {
-	console.log(e instanceof RelayRunningError ? "refused" : `error: ${String(e)}`);
+	console.log(e instanceof RelayRunningError ? "refused" : e instanceof RelayDatabaseLinkedError ? "linked" : `error: ${String(e)}`);
 }
 store?.close();

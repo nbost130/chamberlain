@@ -1,12 +1,23 @@
 /**
- * One relay per database, enforced by the operating system and keyed on the database file itself: the daemon holds a `flock(2)` exclusive
- * lock (`LOCK_EX | LOCK_NB`) on `chamberlain.db` through one descriptor that it keeps open for its whole life. There is no lock file.
+ * One relay per state directory, enforced by the operating system and keyed on the directory that holds the database: the daemon opens that
+ * directory read-only and holds a `flock(2)` exclusive lock (`LOCK_EX | LOCK_NB`) on that descriptor for its whole life. There is no lock
+ * file, and nothing is ever created beside the database for it.
+ *
+ * Why the directory and not `chamberlain.db` itself: SQLite locks the database file with POSIX `fcntl` byte ranges, and on macOS, as on the
+ * BSDs, `flock` and `fcntl` locks on one file DO conflict. FreeBSD's flock(2): "If a file is locked by a process through flock(), any record
+ * within the file will be seen as locked from the viewpoint of another process using fcntl(2) or lockf(3), and vice versa"; Linux's
+ * flock(2): "on some systems, such as the modern BSDs, flock() and fcntl(2) locks do interact with one another". macOS's own flock(2) page
+ * is silent, so the behaviour was probed on macOS 26 (Darwin arm64): a `flock` on the database is refused (EWOULDBLOCK) while any SQLite
+ * connection holds a shared lock on it, the daemon's own connection in the same process included, and while a `flock` is held SQLite's
+ * writers get "database is locked". On Linux the two kinds are independent, which is why only the Mac showed it. SQLite never takes a lock on a directory, so a lock on the directory meets none of SQLite's on either system
+ * (src/core/singleton.test.ts checks this on the platform it runs on).
  *
  * Why `flock` and not POSIX `fcntl` record locks: a `flock` lock belongs to the OPEN FILE DESCRIPTION, not to the process. So
- *   - opening and closing some other descriptor to the database in the same process (SQLite does this, and so did a refused second
- *     acquisition under the old `fcntl` lock) does not release it, and a second `open` plus `flock` in the same process is refused;
- *   - it belongs to the file's inode, not to a path: `state`, `state/`, a symlink, a hard link, a relative or a very long path are one
- *     file and one lock, and no environment variable (`XDG_RUNTIME_DIR`, `TMPDIR`, a working directory) takes part in naming it;
+ *   - opening and closing some other descriptor to the directory or the database in the same process (SQLite does both) does not release
+ *     it, and a second `open` plus `flock` in the same process is refused;
+ *   - it belongs to the directory's inode, not to a path: `state`, `state/`, a symlink to the directory or to the database, a relative or a
+ *     very long path, and the directory renamed under a live holder are one lock, and no environment variable (`XDG_RUNTIME_DIR`, `TMPDIR`,
+ *     a working directory) takes part in naming it;
  *   - the kernel releases it when the last descriptor to that open file description closes, which is when the holder exits, however it
  *     exits (a kill, a crash): no clock, pid, boot id or host name decides anything, and nothing has to be cleaned up.
  *
@@ -16,26 +27,28 @@
  * lock, until it exited or closed it, so the lock could outlive the daemon. No production path forks without exec: the only foreign code
  * this process calls through `bun:ffi` is `flock` and `errno` (src/core/guarantee-docs.test.ts checks), and every child it starts is exec'd.
  *
- * It does not get in SQLite's way: SQLite's `unix` VFS (the default) locks with `fcntl` byte ranges, and on Linux and macOS `flock` and
- * `fcntl` locks are independent, so the page and the tools read and write the database while the relay holds it.
+ * The handle is bound to the directory's device and inode AND the database's (`identity`, `lockCovers`), so a relay built over a database
+ * that is not the one in the locked directory, or over a file that has replaced it, is refused. A database with more than one hard link is
+ * refused at start (RelayDatabaseLinkedError): a link in another directory would otherwise be the same database under another lock.
  *
  * `flock` is called through `bun:ffi` against the C library (`libc.so.6` on Linux, `libSystem.B.dylib` on macOS); no dependency is added.
  * Where it cannot be loaded, the relay refuses to start (RelayLockUnavailableError): there is no fallback.
  *
- * A descriptor to the database is never closed, not even after a release or a refusal, because closing ANY descriptor to a file drops
- * every POSIX `fcntl` lock this process holds on it, and those are SQLite's own locks (https://www.sqlite.org/howtocorrupt.html, 2.2).
- * One descriptor per database is opened, parked and reused. A module-level guard also refuses a second acquisition in this process
- * without opening anything.
+ * The directory descriptor is closed on release or refusal: SQLite holds no lock on a directory, so closing it costs SQLite nothing. A
+ * descriptor to the DATABASE is another matter: closing any descriptor to a file drops every POSIX `fcntl` lock this process holds on it,
+ * and those are SQLite's own (https://www.sqlite.org/howtocorrupt.html, 2.2). So this module opens the database only to create it when it
+ * does not exist yet, and never closes that descriptor. A module-level guard also refuses a second acquisition in this process without
+ * opening anything.
  *
  * Limits (also in ARCHITECTURE.md): the lock is per machine and per kernel, on a local filesystem. File locks on a network filesystem
  * (NFS, SMB) are not reliable, and Linux emulates `flock` there with `fcntl` locks, so a state directory on one is unsupported;
  * `networkFilesystem` lets the daemon say so at start. Replacing or deleting `chamberlain.db` while the daemon runs makes a different
- * database, with its own lock.
+ * database, and moving it to another directory puts it under that directory's lock.
  */
 import { dlopen, FFIType, read, type Pointer } from "bun:ffi";
 import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { FILE_MODE } from "./private.ts";
 import { requireTestEnv } from "./test-env.ts";
 
@@ -88,20 +101,32 @@ let loaded: Flock | undefined;
 
 export class RelayRunningError extends Error {
 	constructor(readonly lock: string) {
-		super(`another chamberlain daemon is already running on this database (it holds a lock on ${lock}); only one may relay wakes. Stop it first, or point CHAMBERLAIN_STATE elsewhere.`);
+		super(`another chamberlain daemon is already running on this database (it holds the lock on its state directory, ${lock}); only one may relay wakes. Stop it first, or point CHAMBERLAIN_STATE elsewhere.`);
+	}
+}
+
+/** The database has more than one hard link. The relay's lock is on the database's directory, so a link elsewhere would be a second lock. */
+export class RelayDatabaseLinkedError extends Error {
+	constructor(readonly db: string, readonly links: number) {
+		super(`${db} has ${links} hard links. The one-relay lock is on the directory that holds the database, so a link to it in another directory would let a second relay in. Refusing to start: remove the other links and start again.`);
+		this.name = "RelayDatabaseLinkedError";
 	}
 }
 
 /**
  * The handle of a held relay lock. It is what the code that sends wakes must be given: `createRelay` and `createEngine` take one, so a
- * relay cannot be built without having acquired the lock. It records the device and inode of the file it locked (`identity`), and
- * `createRelay` refuses it unless that is the database file the store opened (`lockCovers`): a lock on some other database authorizes nothing. The `acquired` brand is a unique symbol this module does not export, so no object
- * literal can satisfy the type (a cast can, and so `isRelayLock` also checks at run time that `holdRelayLock` made the value).
+ * relay cannot be built without having acquired the lock. It records the device and inode of the directory it locked and of the database
+ * file in it (`identity`), and `createRelay` refuses it unless that is the database file the store opened, in that directory (`lockCovers`):
+ * a lock on some other directory or database authorizes nothing. The `acquired` brand is a unique symbol this module does not export, so no
+ * object literal can satisfy the type (a cast can, and so `isRelayLock` also checks at run time that `holdRelayLock` made the value).
  */
 declare const acquired: unique symbol;
 export type RelayLock = {
+	/** The database file, symlinks resolved, when the lock was taken. */
 	readonly path: string;
-	/** The device and inode of the file this handle locked (`dev:ino`), recorded when it was taken: what `lockCovers` checks a store's database against. */
+	/** The directory the lock is held on (the database's own directory), symlinks resolved, when the lock was taken. */
+	readonly directory: string;
+	/** `<directory dev:ino> <database dev:ino>`, recorded when it was taken: what `lockCovers` checks a store's database against. */
 	readonly identity: string;
 	/** False once `release()` has run: the holder may no longer send. */
 	held(): boolean;
@@ -120,71 +145,88 @@ const fileKey = (st: { dev: number | bigint; ino: number | bigint }) => `${st.de
 /** What a test handle for an in-memory store is bound to: a store with no file has no inode, so only a test handle can cover it. */
 const MEMORY = "memory";
 
+/** Where the database at `db` really is: its directory and its path, symlinks resolved (the file need not exist yet; its directory must). */
+function locate(db: string): { dir: string; path: string } {
+	const abs = resolve(db);
+	try { const real = realpathSync(abs); return { dir: dirname(real), path: real }; } catch { /* not there yet */ }
+	const dir = realpathSync(dirname(abs));
+	return { dir, path: `${dir}/${basename(abs)}` };
+}
+
+/** The identity a lock on the database at `db` records: its directory's device and inode, then its own. Throws when either cannot be read. */
+function identityOf(db: string): string {
+	const { dir, path } = locate(db);
+	return `${fileKey(statSync(dir))} ${fileKey(statSync(path))}`;
+}
+
 /**
- * True when `lock` is the lock on the database file at `dbPath`: the device and inode the handle recorded when it locked its file are those of
- * the file at `dbPath` now (the path the store opened, so a symlink, a relative path or a hard link to the same file all match). A lock on any
- * other file covers nothing, and neither does a file that cannot be read. An in-memory store (`:memory:`, tests only) is covered by the memory
- * test handle alone, and a file store never is.
+ * True when `lock` is the lock on the database file at `dbPath`: the devices and inodes the handle recorded (the directory it locked and the
+ * database in it) are those of the file at `dbPath` now and of the directory that holds it (symlinks resolved, so a symlink or a relative
+ * path to the same file matches). A lock on any other directory or file covers nothing, and neither does a file that cannot be read. An
+ * in-memory store (`:memory:`, tests only) is covered by the memory test handle alone, and a file store never is.
  */
 export function lockCovers(lock: RelayLock, dbPath: string): boolean {
 	if (dbPath === ":memory:") return lock.identity === MEMORY;
-	try { return lock.identity === fileKey(statSync(dbPath)); } catch { return false; }
+	try { return lock.identity === identityOf(dbPath); } catch { return false; }
 }
-/** The database files this process holds the relay lock on. */
+/** The directories (`dev:ino`) this process holds the relay lock on. */
 const held = new Set<string>();
-/** One descriptor per database file this process has opened for the lock, kept open for the life of the process (see the header). */
-const parked = new Map<string, number>();
-/** Descriptors opened in a race and never used (see holdRelayLock): kept open, never closed, for the reason in the header. */
+/** Descriptors to a database this module created (holdRelayLock): kept open, never closed, for the reason in the header. */
 const strays: number[] = [];
 
-/** The database's path as SQLite opens it (symlinks resolved), for messages. */
-function realPath(db: string): string {
-	const abs = resolve(db);
-	try { return realpathSync(abs); } catch { /* not there yet */ }
-	try { return `${realpathSync(dirname(abs))}/${abs.slice(abs.lastIndexOf("/") + 1)}`; } catch { return abs; }
+/** `flock(fd, LOCK_EX | LOCK_NB)`, retried on EINTR: 0 when held, else the errno. */
+function tryLock(lib: Flock, fd: number): number {
+	let r = lib.flock(fd, LOCK_EX | LOCK_NB);
+	for (let i = 0; r !== 0 && i < 100 && lib.errno() === EINTR; i++) r = lib.flock(fd, LOCK_EX | LOCK_NB);
+	return r === 0 ? 0 : lib.errno();
 }
 
 /**
- * Takes the relay's lock on the database file at `db`, or throws RelayRunningError at once (it never waits). Synchronous. The file is
- * created (empty, mode 0600) if it does not exist yet. The lock is held until `release()` or until the process ends. Throws
- * RelayLockUnavailableError, having opened nothing, where `flock` cannot be loaded. `o.lib` is a seam for tests.
+ * Takes the relay's lock for the database at `db`, a `flock` on the directory that holds it, or throws RelayRunningError at once (it never
+ * waits). Synchronous. The directory must exist; the database is created (empty, mode 0600) if it does not exist yet. The lock is held
+ * until `release()` or until the process ends. Throws RelayLockUnavailableError, having opened nothing, where `flock` cannot be loaded, and
+ * RelayDatabaseLinkedError, having released the lock, when the database has more than one hard link. `o.lib` is a seam for tests.
  */
 export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayLock {
-	const path = realPath(db);
+	const { dir, path } = locate(db);
 	// Defense in depth: a second acquisition in this process is refused before anything is opened.
 	let before: string | undefined;
-	try { before = fileKey(statSync(db)); } catch { /* not there yet */ }
-	if (before && held.has(before)) throw new RelayRunningError(path);
+	try { before = fileKey(statSync(dir)); } catch { /* checked again on the descriptor */ }
+	if (before && held.has(before)) throw new RelayRunningError(dir);
 	const lib = o.lib ? o.lib() : (loaded ??= loadFlock());
-	let fd = before === undefined ? undefined : parked.get(before);
-	if (fd === undefined) {
-		fd = openSync(db, constants.O_RDONLY | constants.O_CREAT, FILE_MODE);
-		const key = fileKey(fstatSync(fd));
-		// The file appeared between the stat and the open, and it is one this process already has open: use that descriptor, keep this one.
-		const known = parked.get(key);
-		if (known === undefined) parked.set(key, fd);
-		else { strays.push(fd); fd = known; }
-	}
-	const key = fileKey(fstatSync(fd));
-	if (held.has(key)) throw new RelayRunningError(path);
-	let r = lib.flock(fd, LOCK_EX | LOCK_NB);
-	for (let i = 0; r !== 0 && i < 100 && lib.errno() === EINTR; i++) r = lib.flock(fd, LOCK_EX | LOCK_NB);
-	if (r !== 0) {
-		const errno = lib.errno();
-		if (errno === EWOULDBLOCK) throw new RelayRunningError(path);
-		throw new Error(`flock(${path}) failed with errno ${errno}; refusing to start the relay`);
-	}
+	const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY);
+	let key: string, dbKey: string;
+	try {
+		key = fileKey(fstatSync(fd));
+		if (held.has(key)) throw new RelayRunningError(dir);
+		const errno = tryLock(lib, fd);
+		if (errno === EWOULDBLOCK) throw new RelayRunningError(dir);
+		if (errno !== 0) throw new Error(`flock(${dir}) failed with errno ${errno}; refusing to start the relay`);
+		try {
+			// Under the lock: the database in this directory, created if it is not there yet (that descriptor is never closed: see the header).
+			let st;
+			try { st = statSync(path); } catch {
+				const created = openSync(path, constants.O_RDONLY | constants.O_CREAT, FILE_MODE);
+				strays.push(created);
+				st = fstatSync(created);
+			}
+			if (!st.isFile()) throw new Error(`${path} is not a regular file; refusing to start the relay`);
+			if (st.nlink > 1) throw new RelayDatabaseLinkedError(path, st.nlink);
+			dbKey = fileKey(st);
+		} catch (e) { lib.flock(fd, LOCK_UN); throw e; }
+	} catch (e) { closeSync(fd); throw e; }
 	held.add(key);
-	const lockedFd = fd;
 	let released = false;
 	const handle = {
 		path,
-		identity: key,
+		directory: dir,
+		identity: `${key} ${dbKey}`,
 		held: () => !released,
 		release() {
 			if (released) return;
 			released = true;
-			lib.flock(lockedFd, LOCK_UN);
+			lib.flock(fd, LOCK_UN);
+			closeSync(fd);
 			held.delete(key);
 		},
 	} as RelayLock;
@@ -194,15 +236,16 @@ export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayL
 
 /**
  * TEST ONLY (called by src/testing/lock.ts alone; src/architecture.test.ts checks, and it throws unless the process is a test run: test-env.ts).
- * A handle that is NOT a kernel lock, bound to `db` exactly as a real one is: to the file's device and inode, or to nothing but an in-memory
- * store for ":memory:". Hundreds of in-process tests cannot all contend for one real `flock`, and several relays over one scratch database
- * (a "restart") must be able to coexist. Everything that checks the handle (isRelayLock, held, lockCovers) treats it as a real one.
+ * A handle that is NOT a kernel lock, bound to `db` exactly as a real one is: to its directory's and its own device and inode, or to nothing
+ * but an in-memory store for ":memory:". Hundreds of in-process tests cannot all contend for one real `flock`, and several relays over one
+ * scratch database (a "restart") must be able to coexist. Everything that checks the handle (isRelayLock, held, lockCovers) treats it as a real one.
  */
 export function holdTestRelayLock(db: string): RelayLock {
 	requireTestEnv("holdTestRelayLock");
-	const identity = db === ":memory:" ? MEMORY : fileKey(statSync(db));
+	const memory = db === ":memory:";
+	const identity = memory ? MEMORY : identityOf(db);
 	let released = false;
-	const handle = { path: db, identity, held: () => !released, release() { released = true; } } as RelayLock;
+	const handle = { path: db, directory: memory ? "" : locate(db).dir, identity, held: () => !released, release() { released = true; } } as RelayLock;
 	issued.add(handle);
 	return handle;
 }
@@ -219,11 +262,13 @@ const sleepSync = (ms: number) => { Atomics.wait(new Int32Array(new SharedArrayB
 
 /**
  * Takes an exclusive `flock(2)` on `path`, a directory or a file that is NOT a database (it is opened read-only and closed on release; closing a
- * descriptor to a SQLite file would drop SQLite's own locks, which is why the relay's lock never closes its descriptor), waits up to
+ * descriptor to a SQLite file would drop SQLite's own locks, and on macOS a `flock` on a SQLite file conflicts with them: see the header), waits up to
  * `waitMs` for the holder, and throws FlockBusyError if it is still held. Synchronous: it polls `LOCK_NB` every 25 ms rather than blocking the
  * thread in the kernel, so the timeout is real. The kernel owns the lock: it belongs to this open file description and is gone when the holder
  * closes it or dies, however it dies, so nothing is ever broken, aged out or cleaned up, and no one can release another process's lock.
- * Throws RelayLockUnavailableError where `flock` cannot be called. `o.lib` is a seam for tests. Used by the config migration (migrate.ts).
+ * Throws RelayLockUnavailableError where `flock` cannot be called. `o.lib` is a seam for tests. Used by the config migration (migrate.ts, on the
+ * config directory) and the state move (state-dir.ts, on the state directory: the relay's own lock, so a move into the state directory of a
+ * running daemon waits for it and is refused).
  */
 export function holdFlock(path: string, o: { waitMs: number; lib?: () => Flock }): { release(): void } {
 	const lib = o.lib ? o.lib() : (loaded ??= loadFlock());
@@ -231,10 +276,8 @@ export function holdFlock(path: string, o: { waitMs: number; lib?: () => Flock }
 	const started = Date.now();
 	try {
 		for (;;) {
-			let r = lib.flock(fd, LOCK_EX | LOCK_NB);
-			for (let i = 0; r !== 0 && i < 100 && lib.errno() === EINTR; i++) r = lib.flock(fd, LOCK_EX | LOCK_NB);
-			if (r === 0) break;
-			const errno = lib.errno();
+			const errno = tryLock(lib, fd);
+			if (errno === 0) break;
 			if (errno !== EWOULDBLOCK) throw new Error(`flock(${path}) failed with errno ${errno}`);
 			const waited = Date.now() - started;
 			if (waited >= o.waitMs) throw new FlockBusyError(path, waited);

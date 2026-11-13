@@ -225,22 +225,34 @@ Three terms in that statement mean exactly this:
    A wake with no wake URL yet is written and kept (`wake-not-ready` alarm), using no attempt; only a dry run writes nothing.
 2. **One wake per item.** The page's claim is unique per item; the answer, the claim, any ruling and the wake's row are one transaction
    (crash steps `before-commit`, `committed`).
-3. **One relay.** The daemon holds a `flock(2)` exclusive lock (`LOCK_EX | LOCK_NB`) on the database file itself, `chamberlain.db`,
-   through one descriptor it keeps open for its whole life; there is no lock file. A second daemon on the same database file, on the same
+3. **One relay.** The daemon opens the state directory (the directory that holds `chamberlain.db`) read-only and holds a `flock(2)`
+   exclusive lock (`LOCK_EX | LOCK_NB`) on that descriptor for its whole life; there is no lock file. The lock is on the directory, not on
+   the database, because SQLite locks the database with `fcntl` byte ranges, and on macOS, as on FreeBSD, `flock` and `fcntl` locks are kept
+   on the same per-file lock list and **do conflict**. FreeBSD's [`flock(2)`](https://man.freebsd.org/cgi/man.cgi?query=flock&sektion=2):
+   "If a file is locked by a process through flock(), any record within the file will be seen as locked from the viewpoint of another
+   process using fcntl(2) or lockf(3), and vice versa"; Linux's [`flock(2)`](https://man7.org/linux/man-pages/man2/flock.2.html): "on
+   some systems, such as the modern BSDs, flock() and fcntl(2) locks do interact with one another". The macOS page is silent, so it was
+   probed on macOS 26: with the daemon's own SQLite connection open, `flock` on `chamberlain.db` fails with `EWOULDBLOCK`, and while it is
+   held SQLite's writers get "database is locked". On Linux they are independent. SQLite never locks a
+   directory, so the directory lock meets none of SQLite's on either system. A second daemon on the same state directory, on the same
    machine and a local filesystem, is refused at once and exits 5 with a message. A `flock` lock belongs to the open file description, not to
-   the process, so another descriptor to the same file opened and closed in the daemon (by SQLite, or by a refused second acquisition)
-   does not release it, and it belongs to the file's inode, not to a path: `state` and `state/`, a symlink, a hard link, a relative path
-   and a very long path are the same lock, and no environment variable (`XDG_RUNTIME_DIR`, `TMPDIR`) takes part. The kernel frees it the
-   moment its holder exits, however it exits, so there is no stale lock to detect or clean up, and no clock, pid, host name or boot id
-   decides anything. The descriptor is close-on-exec, so a child the daemon **execs** (every child it starts: `Bun.spawn`, `execFile`,
-   `spawn`) does not inherit it and cannot keep the lock alive; close-on-exec does nothing for a fork **without** an exec, whose child would
-   share the open file description and so hold the lock after the daemon died. No production path forks without exec (the daemon's only
-   foreign calls are `flock` and `errno`). SQLite locks with `fcntl` byte ranges, which on Linux
-   and macOS are independent of `flock`, so the page and the tools keep reading and writing the database while the daemon holds it. The
-   limit: this holds only on a local filesystem; on a network filesystem it is unsupported (below). Tested with real processes: a refused
-   second acquisition in the holder's own process, the state directory renamed and reached through a symlink or a hard link, different
-   environments, every spelling, a path longer than a socket path allows, twelve simultaneous starters, a `SIGKILL`ed holder, and other
-   processes committing writes while it is held.
+   the process, so another descriptor to the directory or the database opened and closed in the daemon (by SQLite, or by a refused second
+   acquisition) does not release it, and it belongs to the directory's inode, not to a path: `state` and `state/`, a symlink to the
+   directory or to the database, a relative path, a very long path and the directory renamed under the daemon are the same lock, and no
+   environment variable (`XDG_RUNTIME_DIR`, `TMPDIR`) takes part. The handle records the directory's and the database's device and inode,
+   and the relay refuses a handle whose pair is not the store's database in its directory, so a database replaced in the locked directory
+   authorizes nothing. A database with a second hard link is refused at start (exit 1), since a link in another directory would be the same
+   database under another directory's lock. The kernel frees the lock the moment its holder exits, however it exits, so there is no stale
+   lock to detect or clean up, and no clock, pid, host name or boot id decides anything. The descriptor is close-on-exec, so a child the
+   daemon **execs** (every child it starts: `Bun.spawn`, `execFile`, `spawn`) does not inherit it and cannot keep the lock alive;
+   close-on-exec does nothing for a fork **without** an exec, whose child would share the open file description and so hold the lock after
+   the daemon died. No production path forks without exec (the daemon's only foreign calls are `flock` and `errno`). The page and the tools
+   keep reading and writing the database while the daemon holds the lock. The limit: this holds only on a local filesystem; on a network
+   filesystem it is unsupported (below). Tested with real processes on Linux and macOS: a refused second acquisition in the holder's own
+   process, the state directory renamed and reached through a symlink, a hard link refused, different environments, every spelling, a path
+   longer than a socket path allows, twelve simultaneous starters, a `SIGKILL`ed holder, and other processes committing writes while it is
+   held; and in-process, that the lock is taken and kept while the holder's own SQLite connection holds its locks, on the platform the test
+   runs on.
 4. **A row is immutable once created, and an item is bound to one row, ever.** Its delivery id, text and members are frozen in the
    transaction that creates it; `outbox_members.delivery_id` is a primary key, so an item can belong to at most one row, and once that row is
    delivered or cancelled the id's permanent tombstone keeps it out even after retention deletes the row. Nothing deletes,
@@ -298,12 +310,16 @@ so a ceiling digest can come up to 20 minutes later), and the owed rows (window 
   and never a `pending` or `dead_letter` row. Deleting the row removes its member bindings, so each id it carried keeps a permanent
   tombstone (`wake_tombstones`): nothing that was delivered or cancelled is ever queued again. The tombstone is one small row per id, kept
   for the life of the database.
-- **The singleton** is one `flock` exclusive lock per **database file** (its inode), on this machine's local filesystem. It does not cover
+- **The singleton** is one `flock` exclusive lock per **state directory** (its inode), on this machine's local filesystem. It does not cover
   two machines on one database, and it is **not supported on a network filesystem** (NFS, SMB and the like: their file locks, and SQLite's
   own, are not reliable there, and Linux emulates `flock` on NFS with `fcntl` locks). The daemon reads the mount table at start and **warns** (stderr and a `state-on-network-filesystem` event) when the state
-  directory is on one; where it cannot tell, it says nothing. Two hard links to one database file are one inode and so one lock, but
-  **replacing or deleting `chamberlain.db` while the daemon runs** makes a different database with a lock of its own: a daemon started on
-  the new file is not refused. Neither case is a guarantee that holds. Where `flock` cannot be called (no `bun:ffi`, or a platform other
+  directory is on one; where it cannot tell, it says nothing. A database with two or more hard links is refused at start, but a link made
+  while the daemon runs is noticed only at the next start. **Replacing or deleting `chamberlain.db` while the daemon runs** makes a
+  different database (the running relay refuses to be bound to it), and **moving it to another directory while the daemon runs** puts it
+  under that directory's lock: a daemon started on the moved file is not refused. Neither case is a guarantee that holds. Because the
+  relay's lock is the state directory's, a database move into the state directory of a running daemon (`state-dir.ts`) waits for it and
+  is refused, and if `CHAMBERLAIN_CONF` and `CHAMBERLAIN_STATE` name the same directory, the config migration's lock is the relay's too:
+  a migration then waits for the running daemon and skips (readers accept the old files). Keep the two directories apart. Where `flock` cannot be called (no `bun:ffi`, or a platform other
   than Linux and macOS), the daemon refuses to start and exits 1; it never runs without the lock.
 
 **What is not a guarantee:** that the Steward reads or acts on a wake (an HTTP 2xx is all "delivered" means; the stall alarm covers a
@@ -321,7 +337,7 @@ Two directories, both private, laid out by the XDG Base Directory Specification.
 keep, **in one SQLite database, `chamberlain.db`**, plus the evidence files and the hand-off. It is state, not cache: the
 rulings and the decision log are in it, so nothing may delete it. (The cache directory, `~/.cache/chamberlain`, holds
 nothing today. A build that kept the database there moves it to the state directory on its first start; see the README.) The daemon and the page are separate processes that open the same database file; they never talk to each
-other, and they never lose each other's writes. Only the daemon sends wakes (its relay holds a `flock` on the database file).
+other, and they never lose each other's writes. Only the daemon sends wakes (its relay holds a `flock` on the state directory).
 
 The database is opened in WAL mode with a busy timeout, foreign keys on and `synchronous = FULL`. A change is made in a
 transaction (`Store.tx`, `BEGIN IMMEDIATE`, nestable as savepoints): it takes the write lock when it starts, so two
@@ -415,7 +431,7 @@ refuses the second one:
 | A question answered once, its one wake | `items` source `queue` and its `claims` row | the unique claim (first wins across processes) |
 | A card answered once (`card-answer`), as the operator saw it | `items` source `card-answer` and its `claims` row | the unique claim (`src/core/card-answers.ts`) |
 | A wake written, sent or given up | `outbox` and `outbox_members` | the member's primary key: an id is bound to one row, ever |
-| Who sends wakes | `chamberlain.db` (a `flock` on the file itself) | the kernel: one open file description holds an exclusive `flock` on the database file |
+| Who sends wakes | the state directory (a `flock` on the directory that holds `chamberlain.db`) | the kernel: one open file description holds an exclusive `flock` on the state directory |
 | An approval confirmed | `confirmation_challenges` | single use, expiry, binding |
 
 **How it is tested.** Two kinds of test, and the second is the one to trust:

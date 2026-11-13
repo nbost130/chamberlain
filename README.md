@@ -260,12 +260,14 @@ Chamberlain keeps no cache files today; `$XDG_CACHE_HOME/chamberlain` is reserve
 All state is one SQLite database, `chamberlain.db`, opened in WAL mode with a busy timeout and foreign keys on, mode 0600.
 The daemon, the page and the command-line tools open it at the same time and never lose each other's writes.
 
-**One daemon per database.** The daemon holds a `flock(2)` exclusive lock on `chamberlain.db` itself for as long as it runs;
-there is no lock file. A second daemon on the same file exits 5, whatever the environment or the spelling of the path. The
-kernel frees the lock when the daemon dies, however it dies. It does not block SQLite, so the page and the tools work as
-usual. It holds on a local filesystem only (a network filesystem is unsupported), and it follows the file: a database
-replaced or deleted under a running daemon is a different database. Where `flock` cannot be called through `bun:ffi`, the
-daemon refuses to start and exits 1.
+**One daemon per database.** The daemon holds a `flock(2)` exclusive lock on the state directory, the directory that holds
+`chamberlain.db`, for as long as it runs; there is no lock file. A second daemon on the same directory exits 5, whatever the
+environment or the spelling of the path. The kernel frees the lock when the daemon dies, however it dies. The lock is on the
+directory rather than the database because on macOS `flock` and SQLite's own `fcntl` locks conflict on the same file; SQLite never
+locks the directory, so the page and the tools work as usual on Linux and macOS. It holds on a local filesystem only (a network
+filesystem is unsupported). A database with a second hard link is refused at start, and a database replaced, deleted or moved to
+another directory under a running daemon is a different database. Where `flock` cannot be called through `bun:ffi`, the daemon
+refuses to start and exits 1.
 
 **Backup.** Back up `chamberlain.db` and `evidence/`, not the files loose and not the cache directory. Copy the database
 only after the processes have exited (so the `-wal` file is merged), or take a consistent copy while it runs with
