@@ -489,18 +489,18 @@ describe("a drain pass", () => {
 
 describe("the standing prompt is a template, filled from config", () => {
 	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
-	const vars = { principalName: "Ada", serverName: "box-1", repo: "/opt/chamberlain", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
+	const vars = { principalName: "Ada", serverName: "box-1", repo: "/opt/chamberlain", askPath: "/opt/chamberlain/src/ask.ts", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
 	test("the bundled prompt names nobody and no host: who it works for and where are placeholders", () => {
-		for (const v of ["{{principalName}}", "{{serverName}}", "{{repo}}", "{{morningSources}}"]) expect(template).toContain(v);
+		for (const v of ["{{principalName}}", "{{serverName}}", "{{repo}}", "{{askPath}}", "{{morningSources}}"]) expect(template).toContain(v);
 		expect(template).not.toMatch(/\.claude\//);
 	});
 	test("rendered, every placeholder is filled from the config, and the morning sources are listed", () => {
 		const out = renderDeskPrompt(template, vars);
-		expect(out).not.toMatch(/\{\{(principalName|serverName|repo|morningSources)\}\}/);
+		expect(out).not.toMatch(/\{\{(principalName|serverName|repo|askPath|morningSources)\}\}/);
 		expect(out).not.toContain("<!--");
 		expect(out).toContain("every alert Ada's systems raise");
 		expect(out).toContain('"server":"box-1"');
-		expect(out).toContain("cd /opt/chamberlain && bun src/ask.ts");
+		expect(out).toContain("bun /opt/chamberlain/src/ask.ts '{");
 		expect(out).toContain("   - `bun /opt/monitor/report.ts list --limit <N> --json`");
 		expect(out).toContain("   Skip source monitor.");
 		// docker's own {{.Field}} templates are left alone.

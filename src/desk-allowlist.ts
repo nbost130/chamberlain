@@ -16,7 +16,7 @@
  */
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { morningPattern, readMorning } from "./core/alert-desk.ts";
+import { deskAskPath, morningPattern, readMorning } from "./core/alert-desk.ts";
 import { CONF } from "./core/config.ts";
 
 export type Verdict = { ok: true } | { ok: false; reason: string };
@@ -214,7 +214,10 @@ function checkSimple(tokens: string[]): Verdict {
  * (`morningCommands` in alert-desk.json, each exactly as written with `<N>` for a number, `<N:a-b>` for one of a to b digits; read only from a file the operator owns
  * that no one else can write, `readMorning`). Nothing private is built in: with no morning sources, none is allowed.
  */
-const askPath = () => process.env.DESK_ASK_PATH ?? `${HOME}/Projects/chamberlain/src/ask.ts`;
+/** The one ask.ts the desk may run (DESK_ASK_PATH, else this checkout's): the same path the standing prompt is filled with. */
+const askPath = () => deskAskPath();
+/** Does a morning command have a `<N>` or `<N:a-b>` slot? Without one it is matched as the exact string. */
+const hasSlot = (m: string) => /<N(?::[^>]*)?>/.test(m);
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 let configured: string[] | undefined;
 /** The morning commands in the config directory, read once per process (the hook is one process per call). */
@@ -223,10 +226,13 @@ const morningCommands = () => (configured ??= readMorning(CONF, (m) => console.e
 /** Is this one shell command allowed? `o.morning` is a seam for tests: the morning commands, instead of alert-desk.json's. */
 export function checkCommand(cmd: unknown, o: { morning?: readonly string[] } = {}): Verdict {
 	if (typeof cmd !== "string" || !cmd.trim()) return no("no command");
-	const c = cmd.trim();
+	// Never trimmed or normalised: the command is matched as it was sent. Surrounding whitespace of any kind (a space, a tab, a newline, a
+	// no-break space, a byte-order mark) is not part of any allowed shape, so it is refused, as the predecessor's exact match refused it.
+	const c = cmd;
 	if (c.length > 9000) return no("the command is too long");
 	if (new RegExp(`^bun ${escRe(askPath())} '[^']{1,8000}'$`).test(c)) return ok;
-	if ((o.morning ?? morningCommands()).some((m) => morningPattern(m).test(c))) return ok;
+	// A morning command with no `<N>` slot is the exact string; one with a slot is its anchored full-string pattern, on the same untrimmed input.
+	if ((o.morning ?? morningCommands()).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c))) return ok;
 	const t = tokenize(c);
 	if ("error" in t) return no(t.error);
 	const [first, ...pipes] = t.parts;

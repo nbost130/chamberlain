@@ -76,6 +76,11 @@ The matcher must cover every tool, or the default deny never sees the tool it is
 { "hooks": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
 ```
 
+Filing a decision is allowed in one spelling only, `bun <ask path> '<json>'`, matched as the whole string. The ask path is `DESK_ASK_PATH` from the
+hook's environment, else that checkout's `src/ask.ts`; `bun src/brief.ts desk` fills the standing prompt with the same path (`{{askPath}}`), so set
+`DESK_ASK_PATH` for both or for neither. Each configured morning command is matched exactly as written (a `<N>` slot is a number), with nothing
+trimmed: a leading or trailing space, tab, newline, no-break space or byte-order mark is refused.
+
 ## Nothing changes until the desk is switched on
 
 The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing without it). The alert writers (your monitors' webhooks and heartbeats)

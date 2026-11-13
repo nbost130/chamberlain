@@ -4,13 +4,14 @@
  * brief fragments (`<config>/brief.d/*.md`) are appended last.
  *
  * `bun src/brief.ts desk` prints the Alert Desk's standing prompt (docs/alert-desk-prompt.md, or `alert-desk-prompt.md` in the config
- * directory when there is one), filled in from the config: `principalName`, the Steward's own server in servers.json, this checkout, and
+ * directory when there is one), filled in from the config: `principalName`, the Steward's own server in servers.json, this checkout, the
+ * ask.ts path the desk allowlist accepts (`deskAskPath`: DESK_ASK_PATH, else this checkout's), and
  * the morning sources in alert-desk.json (src/core/alert-desk.ts `renderDeskPrompt`).
  */
 import { readFileSync, existsSync } from "node:fs";
 import { defaultStore } from "./core/default-store.ts";
 import { readAfk } from "./core/afk.ts";
-import { readMorning, renderDeskPrompt } from "./core/alert-desk.ts";
+import { deskAskPath, readMorning, renderDeskPrompt } from "./core/alert-desk.ts";
 import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, principal, REPO } from "./core/config.ts";
 import { startup } from "./core/migrate.ts";
@@ -29,7 +30,7 @@ const servers = loadServers(CONF);
 if (argv[0] === "desk") {
 	const own = `${CONF}/alert-desk-prompt.md`;
 	const template = existsSync(own) ? text(own) : text(`${REPO}/docs/alert-desk-prompt.md`);
-	console.log(renderDeskPrompt(template, { principalName: principal(), serverName: homeServer(servers).name, repo: REPO, morning: readMorning(CONF, (m) => console.error(m)) }));
+	console.log(renderDeskPrompt(template, { principalName: principal(), serverName: homeServer(servers).name, repo: REPO, askPath: deskAskPath(), morning: readMorning(CONF, (m) => console.error(m)) }));
 	process.exit(0);
 }
 console.log(stewardBrief({
