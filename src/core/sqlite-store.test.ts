@@ -40,6 +40,27 @@ describe("opening the database", () => {
 		db.close();
 	});
 
+	test("a v0.1.1 database (migrations 1 to 7) upgrades in place: its wakes keep going to the Steward", () => {
+		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+		dirs.push(d);
+		const path = `${d}/v0.1.1.db`;
+		const db = raw(path);
+		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 7)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		db.exec(`INSERT INTO outbox (id, delivery_id, message, created_at) VALUES (1, 'w1', 'm', 1);
+			INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('w1', 1, 1);
+			INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h1', 'held', 2, 'turn');`);
+		db.close();
+		const s = openStore(path);
+		open.push(s);
+		const after = raw(path);
+		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(LATEST_MIGRATION);
+		after.close();
+		expect(s.wakes.rows("pending", null).map((r) => r.deliveryId)).toEqual(["w1"]);
+		expect(s.wakes.held(null).map((h) => h.deliveryId)).toEqual(["h1"]);
+		expect(s.wakes.rows("pending", "desk")).toEqual([]);
+	});
+
 	test("a database newer than this build is refused with a clear error", () => {
 		const { s, path } = file();
 		s.close();
