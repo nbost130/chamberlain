@@ -7,7 +7,9 @@
  */
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { appendHeld, closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
+import { closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
+import { cardWaitOf, closeCardQuestions, holdCard } from "./card-hold.ts";
+import type { Question } from "./questions.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem } from "./adapter.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal } from "./config.ts";
@@ -309,13 +311,17 @@ export function createEngine(d: EngineDeps) {
 				if (route === "skip-empty") { log("skip-empty-wait", { server: this.srv.name, threadId: live.id }); return; }
 				if (route === "hold") {
 					for (const i of items.filter((x) => !notified.has(`req:${x.requestId}`))) {
-						// The record that it was seen and the hold the operator will read are one transaction: a crash between them
-						// would leave the request marked seen with nothing held for their return.
+						// The record that it was seen, the question that points to the card and the hold the operator will read are one
+						// transaction: a crash between them would leave the request marked seen with nothing on the queue or held.
+						// Only the card's kind, request ID and label travel (card-hold.ts); its questions and any value never do.
+						let filed: Question | undefined;
 						store.tx(() => {
 							markNotified(`req:${i.requestId}`);
-							appendHeld(store, { thread: clip(live.title, 80), server: this.srv.name, requestId: i.requestId, what: `${i.type === "secret_request" ? "secret request" : i.type === "link_request" ? "approval to link two machines" : "command or permission approval"}${i.label ? `: ${clip(i.label, 100)}` : ""}`, taken: "left parked" });
+							filed = holdCard(store, cardWaitOf(i, { thread: live.title, server: this.srv.name, threadId: live.id })).question;
 						});
 						log("held-by-daemon", { server: this.srv.name, threadId: live.id, kind: i.type });
+						// A new pointer question is shown where the operator reads, like any other; a secret's never is. Best effort: it is on the queue page either way.
+						if (filed && !filed.secret && !DRY) await this.adapter.post(filed, {}).then((r) => { if (!r.ok) log("card-question-post-failed", { server: this.srv.name, threadId: live.id, detail: clip(r.detail, 200) }); }, (e) => log("card-question-post-failed", { server: this.srv.name, threadId: live.id, detail: String(e).slice(0, 200) }));
 					}
 					return;
 				}
@@ -374,6 +380,8 @@ export function createEngine(d: EngineDeps) {
 				try {
 					const closed = closeHeldForCard(store, next.id, prev.pendingRequestId, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
 					if (closed) log("held-closed", { server: this.srv.name, threadId: next.id, closed });
+					const questions = closeCardQuestions(store, this.srv.name, prev.pendingRequestId);
+					if (questions) log("card-question-closed", { server: this.srv.name, threadId: next.id, closed: questions });
 				} catch (e) { log("held-close-error", { server: this.srv.name, threadId: next.id, error: String(e) }); }
 			}
 			if (turnBegan(prev, next)) { this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id))); recovery?.moved(next.id); }
