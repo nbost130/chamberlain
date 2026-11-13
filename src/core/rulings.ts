@@ -20,8 +20,10 @@ export type RulingOpts = { expires?: string; until?: string; supersedes?: string
 /**
  * What recording returns: the ruling, flagged `duplicate` when it was already held (no new ruling was written), and on a repeat
  * the ids it named in `supersedes` that the held ruling did not yet replace (`supersedesAdded`): they were added to it.
+ * A proposal that repeats a ruling already in force changes nothing (`alreadyInForce`): the ids it named that the ruling does not
+ * replace are reported in `supersedesNotAdded`, because only the principal's word changes what is in force.
  */
-export type Recorded = Ruling & { duplicate?: true; supersedesAdded?: string[] };
+export type Recorded = Ruling & { duplicate?: true; supersedesAdded?: string[]; alreadyInForce?: true; supersedesNotAdded?: string[] };
 export type RulingChange = { t: string; what: string; from?: string };
 /** The time every function here reads, in epoch milliseconds. Tests pass their own; nothing else changes how time is read. */
 export type Clock = () => number;
@@ -205,7 +207,7 @@ function adopt(r: Ruling, o: RulingOpts, nowMs: number) {
  * and when it is in force they leave force now, in the caller's write. A proposal retires them when it is confirmed. The ids added.
  */
 function mergeSupersedes(list: Ruling[], held: Ruling, o: RulingOpts, nowMs: number): string[] {
-	const added = (o.supersedes ?? []).filter((id) => id !== held.id && !(held.supersedes ?? []).includes(id));
+	const added = newSupersedes(held, o);
 	if (!added.length) return [];
 	held.supersedes = [...(held.supersedes ?? []), ...added];
 	(held.history ??= []).push({ t: iso(nowMs), what: `supersedes ${added.join(", ")} added on a restatement` });
@@ -219,12 +221,52 @@ function checkSupersedes(list: Ruling[], o: RulingOpts) {
 	for (const id of o.supersedes ?? []) if (!list.some((x) => x.id === id)) throw Error(`supersedes ${id}: no such ruling`);
 }
 
+/**
+ * Pure: a cycle in the supersede graph, as the ids around it with the first repeated at the end (R1 → R2 → R1), or undefined.
+ * The edges are every live ruling's `supersedes` (proposed and in force: a proposal's edges take effect when it is confirmed), plus
+ * `adds` from `from` when given. A retired ruling's edges are spent, so they are not counted.
+ */
+export function supersedeCycle(list: Ruling[], from?: string, adds: string[] = []): string[] | undefined {
+	const edges = new Map<string, string[]>();
+	for (const r of list) if (r.status !== "retired") edges.set(r.id, [...(r.supersedes ?? [])]);
+	if (from) edges.set(from, [...(edges.get(from) ?? []), ...adds]);
+	const done = new Set<string>();
+	const walk = (id: string, path: string[]): string[] | undefined => {
+		const at = path.indexOf(id);
+		if (at >= 0) return [...path.slice(at), id];
+		if (done.has(id)) return undefined;
+		for (const next of edges.get(id) ?? []) {
+			const c = walk(next, [...path, id]);
+			if (c) return c;
+		}
+		done.add(id);
+		return undefined;
+	};
+	for (const id of from ? [from] : edges.keys()) {
+		const c = walk(id, []);
+		if (c) return c;
+	}
+	return undefined;
+}
+
+/** Throws, naming it, when `held` superseding `adds` too would supersede itself or close a cycle. Changes nothing. */
+function checkNoCycle(list: Ruling[], held: Ruling, adds: string[]) {
+	if (adds.includes(held.id)) throw Error(`supersedes ${held.id}: a ruling cannot supersede itself`);
+	const c = supersedeCycle(list, held.id, adds);
+	if (c) throw Error(`supersedes ${adds.join(", ")} on ${held.id} would make a supersede cycle: ${c.join(" → ")}`);
+}
+
+/** The ids `o` names that `held` does not yet supersede. */
+const newSupersedes = (held: Ruling, o: RulingOpts) => (o.supersedes ?? []).filter((id) => !(held.supersedes ?? []).includes(id));
+
 // ---- changes ------------------------------------------------------------------------------------
 
 /**
  * The Steward's ruling from a card answer or its own reading: a proposal, never in force until the principal confirms it.
  * Idempotent in the store: the same words and decision as a live ruling give that ruling back (flagged `duplicate`), never
- * a new id, whoever asks (ruling.ts or the page), because the check and the insert are one transaction.
+ * a new id, whoever asks (ruling.ts or the page), because the check and the insert are one transaction. A repeat of a held
+ * proposal adds what it names to it (it all waits for the confirm); a repeat of a ruling already in force changes nothing at all
+ * (`alreadyInForce`): a proposal is never the principal's word, so it can neither retire a ruling nor change one in force.
  */
 export function propose(store: Store, words: string, decides: string, item?: string, opts?: RulingOpts, clock: Clock = Date.now): Recorded {
 	const nowMs = clock();
@@ -232,7 +274,11 @@ export function propose(store: Store, words: string, decides: string, item?: str
 	return updateRulings(store, (list) => {
 		checkSupersedes(list, o);
 		const held = findHeld(list, words, decides, nowMs);
-		if (held) { adopt(held, o, nowMs); return repeated(held, mergeSupersedes(list, held, o, nowMs)); }
+		if (held?.status === "in-force") {
+			const notAdded = newSupersedes(held, o);
+			return { ...held, duplicate: true as const, alreadyInForce: true as const, ...(notAdded.length ? { supersedesNotAdded: notAdded } : {}) };
+		}
+		if (held) { checkNoCycle(list, held, newSupersedes(held, o)); adopt(held, o, nowMs); return repeated(held, mergeSupersedes(list, held, o, nowMs)); }
 		const r: Ruling = { id: nextId(list), date: today(nowMs), words, decides, source: "card", status: "proposed", confirmed: false, ...(item ? { item } : {}), ...o, history: [{ t: iso(nowMs), what: "proposed by the Steward" }] };
 		list.push(r);
 		return r;
@@ -256,6 +302,7 @@ export function recordInForce(list: Ruling[], words: string, decides: string, so
 	checkSupersedes(list, o);
 	const held = findHeld(list, words, decides, nowMs);
 	if (held) {
+		checkNoCycle(list, held, newSupersedes(held, o));
 		promote(list, held, `${how} (was not yet confirmed)`, nowMs);
 		adopt(held, o, nowMs);
 		return repeated(held, mergeSupersedes(list, held, o, nowMs));
@@ -296,7 +343,11 @@ export const confirmRuling = (store: Store, id: string, decides?: string, clock:
 	if (decides && decides.trim() && decides.trim() !== r.decides) { (r.history ??= []).push({ t, what: "wording edited on the page", from: r.decides }); r.decides = decides.trim(); }
 	(r.history ??= []).push({ t, what: r.status === "proposed" ? "confirmed on the page (was a proposal)" : "confirmed on the page" });
 	r.status = "in-force"; r.confirmed = true; r.confirmedAt = t;
-}, (list, r) => applySupersedes(list, r, clock()));
+}, (list, r) => {
+	const c = supersedeCycle(list);
+	if (c) throw Error(`confirming ${id} would put a supersede cycle in force: ${c.join(" → ")}`);
+	applySupersedes(list, r, clock());
+});
 
 /** New wording only. It changes nothing about whether the ruling is in force or confirmed. */
 export const editRuling = (store: Store, id: string, decides: string, clock: Clock = Date.now) => change(store, id, (r) => {

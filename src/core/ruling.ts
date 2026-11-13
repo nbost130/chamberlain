@@ -62,7 +62,8 @@ function main() {
 		} else {
 			const r = propose(store, a.words, a.decides, undefined, a.opts);
 			const added = r.supersedesAdded?.join(", ");
-			console.log(r.duplicate ? `already recorded as ${r.id} (${r.status}); ${added ? `it now also supersedes ${added}, ${r.status === "in-force" ? "retired as superseded now" : `retired when ${principal()} confirms it`}` : "nothing new added"}` : `proposed ${r.id}: not in force until ${principal()} confirms it on the rulings page${sup ? `; it retires ${sup} when they do` : ""}`);
+			if (r.alreadyInForce) console.log(`already recorded as ${r.id} (in force); nothing new added${r.supersedesNotAdded?.length ? `. It does not supersede ${r.supersedesNotAdded.join(", ")}: a proposal cannot change a ruling in force; ${principal()} retires or replaces it on the rulings page` : ""}`);
+			else console.log(r.duplicate ? `already recorded as ${r.id} (${r.status}); ${added ? `it now also supersedes ${added}, ${r.status === "in-force" ? "retired as superseded now" : `retired when ${principal()} confirms it`}` : "nothing new added"}` : `proposed ${r.id}: not in force until ${principal()} confirms it on the rulings page${sup ? `; it retires ${sup} when they do` : ""}`);
 		}
 	} catch (e) { console.error((e as Error).message); process.exit(1); }
 }

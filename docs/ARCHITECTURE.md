@@ -523,9 +523,16 @@ every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets t
   (2026-02-30, 2027-02-29T09:00:00Z, month 13, hour 24: parsed strictly and its fields read back, never rolled into the next day) or is
   already past is refused, by the CLI, `ask.ts` and the page alike; the importer keeps such a value and notes it, so the ruling counts as expired. An expired ruling cannot be confirmed.
 - **Supersession is one write.** A ruling's `supersedes` retires the named rulings in the same transaction that puts it in force (for a proposal:
-  the transaction that confirms it); a missing id is an error and changes nothing. A repeat that names `supersedes` adds the ids its held
-  ruling does not yet replace to that ruling, in the same transaction, and reports them (`supersedesAdded`): a held proposal retires them
-  when it is confirmed, a ruling already in force retires them at once.
+  the transaction that confirms it); a missing id is an error and changes nothing. Only the principal's word changes what is in force: a
+  repeat that names `supersedes` adds the ids its held ruling does not yet replace to that ruling, in the same transaction, and reports them
+  (`supersedesAdded`), so a held proposal retires them when it is confirmed, and the principal's own repeat (`addInForce`, `ruling.ts
+  --stated-in-chat`, the page) of a ruling already in force retires them at once. A *proposal* that repeats a ruling already in force
+  changes nothing at all, no `supersedes`, no expiry, no retirement, and says so (`alreadyInForce`, with the ids it did not add in
+  `supersedesNotAdded`): "already recorded as R1 (in force); nothing new added".
+- **The supersede graph has no cycle.** Its edges are every live ruling's `supersedes`, proposed and in force. A new edge that would close
+  a cycle (R1 → R2 → R1, or longer), or a ruling that would supersede itself, is refused inside the same `BEGIN IMMEDIATE` write, with the
+  cycle named, and nothing is written. Confirming a ruling re-checks the whole graph, so a cycle that came in another way (an imported
+  ledger) cannot be put in force.
 - **A ruling that leaves force keeps its record**: `retiredHow` (`retired`, `only this once`, `superseded`, `duplicate`, `expired`, `repeat`),
   `retiredWhy` and `supersededBy`. A replacing ruling must itself be live.
 
