@@ -62,6 +62,9 @@ describe("stewardBrief", () => {
 		expect(b).toContain("Never call `AskUserQuestion` in this thread");
 		expect(b).toContain("bun /opt/chamberlain/src/core/afk.ts held");
 		expect(b).toContain("afk.ts close");
+		expect(b).toContain("afk.ts note <id>");
+		expect(b).toContain("An FYI is never a hold");
+		expect(b).toContain("--pr <owner/repo#n>");
 		expect(b).toContain("You create no sweep task");
 		expect(b).toContain("bun /opt/chamberlain/src/core/decided.ts list 15");
 		expect(b).toContain("bun /opt/chamberlain/src/core/afk.ts status");

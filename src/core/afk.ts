@@ -7,11 +7,18 @@
  *
  *   bun src/core/afk.ts enter "<their words>" [--return <ISO>] [--cap "<spend note>"] [--since <ISO>]
  *   bun src/core/afk.ts status
- *   bun src/core/afk.ts hold "<thread>" "<what waits for the operator>" ["<safe default taken>"] ["<threadId of an open card>"] [--item <Q-id>]
- *   bun src/core/afk.ts held                     (everything not closed, from any absence)
+ *   bun src/core/afk.ts hold "<thread>" "<what waits for the operator>" ["<safe default taken>"] ["<threadId of an open card>"]
+ *        [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId>]
+ *   bun src/core/afk.ts held                     (everything not closed, from any absence, with its notes)
+ *   bun src/core/afk.ts note <id> "<what changed>"   (appended to the hold; never write a second hold about the same wait)
  *   bun src/core/afk.ts close <id> "<how it closed>"
  *   bun src/core/afk.ts brief
  *   bun src/core/afk.ts exit        (prints the brief, then ends the absence)
+ *
+ * A hold is a real wait on the operator: a decision, secret, deploy or approval only they can give. An FYI is never a
+ * hold. The daemon closes holds on its own (src/core/hold-reconcile.ts): a hold tied to a queue item when that item is
+ * answered on any path, and a hold with a structured ref when GitHub or the backend shows what it waits on is done.
+ * It never reads the prose, so a hold with no --item and no ref closes only by `close`.
  */
 import { createHash } from "node:crypto";
 import { REPO, principal, principalPoss } from "./config.ts";
@@ -20,9 +27,34 @@ import { startup } from "./migrate.ts";
 import type { AwayRecord, Store } from "./store.ts";
 
 export type Afk = AwayRecord;
-/** `item` is the decision-queue item the hold waits on, so an answer sent straight to its thread can close it. */
-export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string };
+/**
+ * What a hold waits on, in fields the daemon can check without reading prose: a PR or issue ("owner/repo#n"), a remote
+ * branch ("owner/repo:branch"), a run ID and the thread that holds its card. Every field is optional.
+ */
+export type HoldRef = { pr?: string; issue?: string; branch?: string; runId?: string; threadId?: string };
+export type HeldNote = { t: string; text: string };
+/** `item` is the decision-queue item the hold waits on, so an answer on any path can close it. `notes` are appended to it, never a second hold. */
+export type Held = { t: string; thread: string; what: string; taken?: string; server?: string; requestId?: string; threadId?: string; item?: string; ref?: HoldRef; notes?: HeldNote[] };
 const ITEM_ID = /^Q-[a-z0-9]{4,16}$/;
+const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
+/** The shapes a ref field may take. A field in any other shape is never acted on. */
+export const REF_SHAPES = {
+	pr: new RegExp(`^${SLUG}#[1-9][0-9]{0,8}$`),
+	issue: new RegExp(`^${SLUG}#[1-9][0-9]{0,8}$`),
+	branch: new RegExp(`^${SLUG}:[A-Za-z0-9_./-]{1,200}$`),
+	runId: /^[A-Za-z0-9_-]{4,80}$/,
+	threadId: /^[A-Za-z0-9_-]{4,80}$/,
+} as const;
+/** Pure: the fields of a ref that are well formed, or undefined when none is. */
+export function cleanRef(r: unknown): HoldRef | undefined {
+	if (!r || typeof r !== "object") return undefined;
+	const out: HoldRef = {};
+	for (const k of Object.keys(REF_SHAPES) as (keyof HoldRef)[]) {
+		const v = (r as Record<string, unknown>)[k];
+		if (typeof v === "string" && REF_SHAPES[k].test(v)) out[k] = v;
+	}
+	return Object.keys(out).length ? out : undefined;
+}
 export type Decision = { t: string; thread: string; decision: string; ruling: string };
 
 /** The item source and kind of what is held for the principal's return. */
@@ -35,7 +67,7 @@ export const readAfk = (store: Store): Afk | undefined => store.away.current();
 export function mandateLine(a: Afk): string {
 	const back = a.expectedReturn ? ` Expected back ${a.expectedReturn}.` : "";
 	const spend = a.spendNote ? ` Spend: ${a.spendNote}.` : "";
-	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else) and goes in the return brief via \`bun ${REPO}/src/core/afk.ts hold\`. Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
+	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else) and goes in the return brief via \`bun ${REPO}/src/core/afk.ts hold\` (a real wait on ${principal()} only, never an FYI; give it --item, --pr, --issue, --branch or --thread so the daemon can close it). Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
 }
 
 /** A short stable handle for a held entry. */
@@ -63,12 +95,39 @@ export function closeHeld(store: Store, id: string, how: string, now = new Date(
 	});
 }
 
-function closeWhere(store: Store, pick: (h: Held) => boolean, how: string, now = new Date()): number {
+/**
+ * Close every open hold the matcher gives a reason for, in one transaction. Resolving is idempotent and a closed hold is
+ * no longer open, so a second pass matches nothing. Returns how many closed.
+ */
+export function closeHeldWhere(store: Store, why: (h: Held) => string | undefined, now = new Date()): number {
 	return store.tx(() => {
-		const hit = heldOpen(store).filter(pick);
-		for (const h of hit) store.items.resolve(HELD, heldId(h), now.getTime(), { closedAt: now.toISOString(), how });
-		return hit.length;
+		let n = 0;
+		for (const h of heldOpen(store)) {
+			const how = why(h);
+			if (!how) continue;
+			store.items.resolve(HELD, heldId(h), now.getTime(), { closedAt: now.toISOString(), how });
+			n++;
+		}
+		return n;
 	});
+}
+const closeWhere = (store: Store, pick: (h: Held) => boolean, how: string, now = new Date()): number => closeHeldWhere(store, (h) => (pick(h) ? how : undefined), now);
+
+/** Adds a note to an open hold. The hold is never rewritten and no second entry is made. Throws when there is no open hold by that handle. */
+export function noteHeld(store: Store, id: string, text: string, now = new Date()): Held {
+	return store.tx(() => {
+		const i = store.items.get(HELD, id);
+		if (!i || i.status === "resolved") throw Error(`no open held item ${id}`);
+		const notes = [...(((i.payload as Held).notes) ?? []), { t: now.toISOString(), text }];
+		return store.items.patch(HELD, id, { notes })!.payload as Held;
+	});
+}
+/** The item IDs a hold names: its `item` link, and any ID standing as a word in its text. Same match as heldForItem. */
+export function itemIdsOf(h: Held): string[] {
+	const ids = new Set<string>();
+	if (h.item && ITEM_ID.test(h.item)) ids.add(h.item);
+	for (const m of `${h.thread}\n${h.what}`.matchAll(/(?<![A-Za-z0-9-])(Q-[a-z0-9]{4,16})(?![A-Za-z0-9-])/g)) ids.add(m[1]!);
+	return [...ids];
 }
 /** A card or approval left its thread: close what was held against it. A hold with no card link is a decision, so it stays. */
 export const closeHeldForCard = (store: Store, threadId: string, requestId: string, how: string): number => closeWhere(store, (h) => h.requestId === requestId || h.threadId === threadId, how);
@@ -94,7 +153,7 @@ export function briefMarkdown(a: Afk, decisions: Decision[], open: Held[], event
 		`Away since ${a.enteredAt}${a.expectedReturn ? ` (expected back ${a.expectedReturn})` : ""}. Their words: "${a.words}"`,
 		"",
 		`Waiting on ${principal()} (${hs.length}):`,
-		...(hs.length ? hs.map((h) => `- ${h.thread}: ${h.what}${h.taken ? ` — meanwhile: ${h.taken}` : ""}`) : ["- nothing"]),
+		...(hs.length ? hs.flatMap((h) => [`- ${h.thread}: ${h.what}${h.taken ? ` — meanwhile: ${h.taken}` : ""}`, ...(h.notes ?? []).map((n) => `  - note ${n.t.slice(5, 16)}: ${n.text}`)]) : ["- nothing"]),
 		"",
 		`Decided for ${principal()} (${ds.length}):`,
 		...(ds.length ? ds.map((d) => `- ${d.thread}: ${d.decision} (${d.ruling})`) : ["- nothing"]),
@@ -126,14 +185,32 @@ function main() {
 		const beat = store.state.get("heartbeat");
 		console.log("heartbeat:", beat ? JSON.stringify(beat) : "none");
 	} else if (cmd === "hold") {
-		const at = rest.indexOf("--item");
-		const item = at >= 0 ? rest[at + 1] : undefined;
-		const [thread, what, taken, threadId] = at >= 0 ? rest.filter((_, k) => k !== at && k !== at + 1) : rest;
-		if (!thread || !what || (at >= 0 && !ITEM_ID.test(item ?? ""))) { console.error('usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] [--item <Q-id>]'); process.exit(2); }
-		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(item ? { item } : {}) });
+		const HOLD_USAGE = 'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] [--item <Q-id>] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId>]';
+		const flags: Record<string, string> = {};
+		const pos: string[] = [];
+		for (let k = 0; k < rest.length; k++) {
+			const a = rest[k]!;
+			if (!a.startsWith("--")) { pos.push(a); continue; }
+			if (!["--item", "--pr", "--issue", "--branch", "--run", "--thread"].includes(a) || rest[k + 1] === undefined) { console.error(HOLD_USAGE); process.exit(2); }
+			flags[a] = rest[++k]!;
+		}
+		const [thread, what, taken, threadId] = pos;
+		const item = flags["--item"];
+		const raw = { pr: flags["--pr"], issue: flags["--issue"], branch: flags["--branch"], runId: flags["--run"], threadId: flags["--thread"] };
+		const ref = cleanRef(raw);
+		const given = Object.entries(raw).filter(([, v]) => v !== undefined);
+		if (!thread || !what || (item !== undefined && !ITEM_ID.test(item)) || Object.keys(ref ?? {}).length !== given.length) { console.error(HOLD_USAGE); process.exit(2); }
+		appendHeld(store, { thread, what, ...(taken ? { taken } : {}), ...(threadId ? { threadId } : {}), ...(item ? { item } : {}), ...(ref ? { ref } : {}) });
 		console.log("held");
 	} else if (cmd === "held") {
-		for (const h of heldOpen(store)) console.log(`${heldId(h)} | ${h.t.slice(5, 16)} | ${h.thread} | ${h.what}${h.taken ? ` | ${h.taken}` : ""}`);
+		for (const h of heldOpen(store)) {
+			console.log(`${heldId(h)} | ${h.t.slice(5, 16)} | ${h.thread} | ${h.what}${h.taken ? ` | ${h.taken}` : ""}`);
+			for (const n of h.notes ?? []) console.log(`    note ${n.t.slice(5, 16)}: ${n.text}`);
+		}
+	} else if (cmd === "note") {
+		const [id, text] = rest;
+		if (!id || !text) { console.error('usage: afk.ts note <id> "<what changed>"'); process.exit(2); }
+		try { console.log(`noted: ${noteHeld(store, id, text).thread}`); } catch (e) { console.error((e as Error).message); process.exit(1); }
 	} else if (cmd === "close") {
 		const [id, how] = rest;
 		if (!id || !how) { console.error('usage: afk.ts close <id> "<how it closed>"'); process.exit(2); }
@@ -148,7 +225,7 @@ function main() {
 		store.away.exit(new Date().toISOString());
 		console.log("\nreturned; the absence is ended and stays on record");
 	} else {
-		console.error("usage: afk.ts enter|status|hold|held|close|brief|exit");
+		console.error("usage: afk.ts enter|status|hold|held|note|close|brief|exit");
 		process.exit(2);
 	}
 }

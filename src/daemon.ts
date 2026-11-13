@@ -7,6 +7,7 @@
 import { CONF, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { createEngine } from "./core/engine.ts";
+import { ghRead } from "./core/gh.ts";
 import { maintain } from "./core/maintain.ts";
 import { makeLog } from "./core/log.ts";
 import { startup } from "./core/migrate.ts";
@@ -56,6 +57,8 @@ const engine = createEngine({
 	exclude: (process.env.CHAMBERLAIN_EXCLUDE ?? "").split(",").map((s) => s.trim()).filter(Boolean),
 	log,
 	sweepPromptFile: new URL("../docs/steward-sweep-prompt.md", import.meta.url).pathname,
+	// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).
+	gh: ghRead,
 	// The Steward-health hand-off question goes through ask.ts like any other.
 	ask: async (raw) => {
 		const child = Bun.spawn([process.execPath, new URL("./ask.ts", import.meta.url).pathname, JSON.stringify(raw)], { stdout: "ignore", stderr: "ignore" });
