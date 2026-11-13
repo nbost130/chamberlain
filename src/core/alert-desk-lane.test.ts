@@ -14,6 +14,7 @@ import { memStore } from "../testing/store.ts";
 import { openStore } from "./sqlite-store.ts";
 import { createEngine } from "./engine.ts";
 import { createRelay } from "./relay.ts";
+import { runWakesCli } from "./wakes-cli.ts";
 import type { Gate } from "./hold.ts";
 
 const transport = () => {
@@ -81,6 +82,53 @@ describe("one relay, two receivers, one store", () => {
 		expect(steward.sent).toEqual([]);
 		expect(s.wakes.rows("pending", "desk")).toHaveLength(1);
 		expect(logs.filter((e) => e === "deliver-no-receiver")).toHaveLength(1);
+	});
+	test("rows for a receiver removed from config raise an alarm naming it and the count, every audit; they are kept, listed and cancellable", async () => {
+		const s = memStore();
+		const steward = transport();
+		const alarms: { key: string; title: string; summary: string }[] = [];
+		const logs: { e: string; data?: Record<string, unknown> }[] = [];
+		s.wakes.enqueue(row("desk-1", { kind: "alert_desk", receiver: "desk" }));
+		s.wakes.enqueue(row("desk-2", { kind: "alert_desk", receiver: "desk" }));
+		s.wakes.hold(row("desk-held", { kind: "alert_desk", receiver: "desk" }));
+		s.wakes.enqueue(row("steward-wake", { kind: "needs_input" }));
+		// The desk was removed from config: this relay has the Steward's lane only.
+		const { relay } = testRelay(s, steward.t, { alarm: (key, title, summary) => alarms.push({ key, title, summary }), log: (e, data) => logs.push({ e, ...(data ? { data } : {}) }) });
+		await relay.pass();
+		relay.audit();
+		relay.audit();
+		expect(steward.sent.map((x) => x.deliveryId)).toEqual(["steward-wake"]);
+		const orphan = alarms.filter((a) => a.key === "desk:wake-unconfigured");
+		// Raised on every audit, like the stale and dead-letter alarms: the engine's alarm() applies the one repeat policy.
+		expect(orphan).toHaveLength(2);
+		expect(orphan[0]!.title).toContain("desk");
+		expect(orphan[0]!.summary).toContain("2 outbox rows and 1 held wake");
+		expect(orphan[0]!.summary).toContain("desk-1, desk-2");
+		expect(orphan[0]!.summary).toContain("bun src/wakes.ts cancel");
+		expect(logs.filter((l) => l.e === "deliver-receiver-unconfigured")).toEqual([{ e: "deliver-receiver-unconfigured", data: { receiver: "desk", rows: 2, held: 1 } }]);
+		// Not dropped and not delivered.
+		expect(s.wakes.rows("pending", "desk").map((r) => r.deliveryId)).toEqual(["desk-1", "desk-2"]);
+		expect(s.wakes.held("desk")).toHaveLength(1);
+		// The operator finds them, with their receiver, and cancels them.
+		const out: string[] = [];
+		expect(runWakesCli(s, ["list"], (l) => out.push(l))).toBe(0);
+		expect(out.find((l) => l.includes("desk-1"))).toContain("for desk");
+		expect(runWakesCli(s, ["cancel", "desk-1"], () => {})).toBe(0);
+		expect(runWakesCli(s, ["cancel", "desk-2"], () => {})).toBe(0);
+		alarms.length = 0;
+		relay.audit();
+		expect(alarms.filter((a) => a.key === "desk:wake-unconfigured")[0]!.summary).not.toContain("outbox row");
+	});
+	test("a dead-lettered row for an unconfigured receiver is reported too, and a configured receiver raises no such alarm", () => {
+		const s = memStore();
+		s.wakes.enqueue(row("gone-1", { receiver: "pager" }));
+		s.wakes.finish(s.wakes.find("gone-1")!.id, "dead_letter", Date.now());
+		s.wakes.enqueue(row("desk-ok", { receiver: "desk" }));
+		const keys: string[] = [];
+		const { relay } = both(s, transport().t, transport().t, { alarm: (k) => keys.push(k) });
+		relay.audit();
+		expect(keys).toContain("pager:wake-unconfigured");
+		expect(keys).not.toContain("desk:wake-unconfigured");
 	});
 	test("a busy desk holds only the desk's wakes: the Steward's go out, and the desk's go as ONE digest when it is idle", async () => {
 		const s = memStore();

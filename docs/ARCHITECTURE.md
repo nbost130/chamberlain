@@ -103,7 +103,11 @@ of the file it locked, and `createRelay` checks them against the file its store 
 queue** inside the relay, so no two requests are ever in flight (a compaction waits behind the wake being sent, and is not
 retried: it has no row). That holds across **receivers** too: the Alert Desk's wakes (rows whose `receiver` column, migration 8, is `desk`) go
 to the desk's own webhook, but through the same relay and the same queue, never a second relay. Each row's receiver picks its transport; each
-receiver keeps its own busy gate, per-receiver order, failure count, dead letters and alarm keys (`desk:wake-delivery` and so on). `createRelay`
+receiver keeps its own busy gate, per-receiver order, failure count, dead letters and alarm keys (`desk:wake-delivery` and so on). Rows
+(pending or dead-lettered) and held wakes for a receiver that is no longer configured, say the desk removed from config while its wakes
+still waited, are never dropped and never sent to another receiver: each audit raises that receiver's `<receiver>:wake-unconfigured`
+alarm, naming it and the count, on the same repeat policy as every alarm. `bun src/wakes.ts list` shows each row with its receiver, and
+`bun src/wakes.ts cancel <id>` gives one up; configuring the receiver again sends them. `createRelay`
 refuses a second relay on a lock that already has one, so with `holdRelayLock` refusing a second lock in a process there is one relay per
 store and per process (`src/architecture.test.ts` checks both the one call site and the run-time refusal). No other process opens a connection to a wake webhook: the page and every
 command-line tool reach the Steward only by writing to the database (inserting a row, or `wakes.ts` changing an existing row's status).

@@ -265,9 +265,30 @@ export function createRelay(d: RelayDeps) {
 		d.alarm(l.akey("wake-dead-letter"), l.desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "bun src/wakes.ts list" shows them, "bun src/wakes.ts retry <id>" sends one again (${max} more attempts at most) and "bun src/wakes.ts cancel <id>" gives it up.`);
 	}
 
-	/** Once a minute: keeps each receiver's busy stretch measured, and raises its stale and dead-letter alarms. */
+	/** Once a minute: keeps each receiver's busy stretch measured, and raises its stale and dead-letter alarms, and the orphan alarm. */
 	function audit() {
 		for (const l of lanes) auditLane(l);
+		auditOrphans();
+	}
+	/**
+	 * Rows (pending or dead-lettered) and held wakes whose receiver this relay has no transport for: a receiver removed from config while its
+	 * wakes were still waiting. They would wait forever, so each such receiver raises its own `<receiver>:wake-unconfigured` alarm, naming it
+	 * and the count, on the same repeat policy as every other alarm. They are never dropped and never sent elsewhere: the operator configures
+	 * the receiver again (they then go to it) or gives the rows up with `bun src/wakes.ts cancel <id>` (`list` shows each row's receiver).
+	 * Held wakes cannot be cancelled: they become a row only once their receiver is configured again.
+	 */
+	function auditOrphans() {
+		const known = new Set(lanes.map((l) => l.name));
+		const orphans = new Map<string, { rows: OutboxRow[]; held: number }>();
+		const of = (name: string) => orphans.get(name) ?? (orphans.set(name, { rows: [], held: 0 }), orphans.get(name)!);
+		for (const r of [...store.wakes.rows("pending"), ...store.wakes.rows("dead_letter")]) if (r.receiver && !known.has(r.receiver)) of(r.receiver).rows.push(r);
+		for (const h of store.wakes.held()) if (h.receiver && !known.has(h.receiver)) of(h.receiver).held++;
+		for (const [name, o] of orphans) {
+			const n = o.rows.length;
+			if (!reported.has(`orphan:${name}:${n}:${o.held}`)) { reported.add(`orphan:${name}:${n}:${o.held}`); d.log("deliver-receiver-unconfigured", { receiver: name, rows: n, held: o.held }); }
+			const what = [n ? `${n} outbox row${n === 1 ? "" : "s"}` : "", o.held ? `${o.held} held wake${o.held === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+			d.alarm(`${name}:wake-unconfigured`, `chamberlain has wakes for a receiver that is no longer configured: ${name}`, `${what} for the receiver "${name}" ${n + o.held === 1 ? "is" : "are"} waiting, but no "${name}" receiver is configured any more, so nothing will send ${n + o.held === 1 ? "it" : "them"}. Nothing is dropped and nothing goes to another receiver. Configure "${name}" again to send them${n ? `, or give the rows up: in the chamberlain checkout, "bun src/wakes.ts list" shows each row with its receiver and "bun src/wakes.ts cancel <id>" cancels one (${o.rows.slice(0, 5).map((r) => r.deliveryId).join(", ")}${n > 5 ? ", ..." : ""})` : ""}.${o.held ? " A held wake becomes a row only when its receiver is configured." : ""}`);
+		}
 	}
 	function auditLane(l: Lane) {
 		const now = clock();
