@@ -1,11 +1,12 @@
 /**
  * Prints the Steward's hand-off: `bun src/brief.ts steward [--predecessor <threadId>] [--mode test|live]`. The text is built by
- * src/core/brief.ts; the sentences about the backend come from the adapter that serves the Steward's own server.
+ * src/core/brief.ts; the sentences about the backend come from the adapter that serves the Steward's own server, and the operator's
+ * brief fragments (`<config>/brief.d/*.md`) are appended last.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { defaultStore } from "./core/default-store.ts";
 import { readAfk } from "./core/afk.ts";
-import { stewardBrief } from "./core/brief.ts";
+import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, REPO } from "./core/config.ts";
 import { startup } from "./core/migrate.ts";
 import { loadOperatingRules } from "./core/rules.ts";
@@ -30,4 +31,5 @@ console.log(stewardBrief({
 	environments: servers,
 	predecessor: flag("--predecessor"),
 	notes: adapterEntry(homeServer(servers).adapter).brief?.({ repo: REPO }),
+	fragments: loadBriefFragments(CONF),
 }));

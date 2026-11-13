@@ -45,12 +45,13 @@ A user who installs 0.1 gets a clock and no useful checks. Most of 0.2 moves wel
 2. **Host runner (S).** One way to run a command on a host named in `servers.json` (`sshHost`, `mayBeOffline`), where an ssh
    failure that is not an authentication error means *offline* (the host is asleep: no alarm) and anything else means *error*.
 3. **Operating-rules from several sources (S).** `operating-rules.json` takes more than one source file and a table-with-header
-   section form, so an excerpt can come from a shared file and a per-host file without a second copy to drift.
+   section form, so an excerpt can come from a shared file and a per-host file without a second copy to drift. Done: `sources` and the `table` selector (README, `operating-rules.json`).
 4. **Quiet hours for alerts (S).** `settings.json` `quietHours` applies to `alertCommand` only, never to the Steward's wakes; an
    alarm raised in quiet hours is queued and sent when they end. Document that the alert command should de-duplicate on
    `CHAMBERLAIN_ALARM_KEY`.
-5. **Brief fragments (S).** `brief.d/NN-name.md` in the config directory are appended, in order, to the Steward's hand-off (with
-   `{{principalName}}`), so project-specific procedure is configuration, and later features (gates, landing) can emit their own.
+5. **Brief fragments (S).** `brief.d/NN-name.md` in the config directory are appended, in order, to the Steward's hand-off,
+   so project-specific procedure is configuration, and later features (gates, landing) can emit their own. Done, verbatim
+   (no substitution) and in byte order of filename (README, `brief.d/`).
 6. **A tunnel template and a "moving to another host" guide (S).** One template unit `chamberlain-tunnel@.service` (and a
    launchd equivalent) driven by a per-server env file, whose important trick is idling quietly while a laptop sleeps; for
    tailnet users no unit is needed. State is one database file, so the guide is short.

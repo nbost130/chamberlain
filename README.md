@@ -174,7 +174,7 @@ Everything lives in two directories. Create the directory 0700 and its files 060
 | `judge.json` | optional | Which backend judges each trigger: `{"triggers": {"stalled-recovery": {"backend": "haiku"}}, "backends": {"haiku": {"command": [...]}, "custom": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. Default: `stalled-recovery` to Haiku through the inference tool, when it is installed. Only error text, scrubbed, is ever sent. |
 | `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`docs/steward-sweep-prompt.md`](docs/steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
 | `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See below. |
-| `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See [Brief fragments](#brief-fragments) below. |
+| `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See below. |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `src/adapters/t3/switch-steward.ts` during a hand-off; the old URL is kept for one-rename rollback. |
 | `*-token` files | optional | Any `tokenFile` or `operateTokenFile` a server or `web.json` names. |
 
@@ -204,6 +204,16 @@ is built, so there is no second copy to drift ([`examples/operating-rules.json`]
   headerless or not alone under its heading stops the excerpt. That source is then copied whole, with a warning on stderr,
   and the other sources are still excerpted.
 - The 0.1 form, `{ "source": path, "sections": [...] }`, still works: it is one source.
+
+**`brief.d/`** (brief fragments): procedure that belongs to your project, not to Chamberlain, goes in `brief.d/` in the config
+directory ([`examples/brief.d/`](examples/brief.d/)), and `bun src/brief.ts steward` appends it to the generic hand-off:
+
+- Only regular files whose names end in `.md` are used. A symlink, a directory or any other entry is ignored, with a
+  warning on stderr. No `brief.d/` is fine.
+- Fragments are sorted by filename in byte order (so `10-repo.md` before `20-landing.md`, and `B.md` before `a.md`), and
+  each is appended verbatim, its own headings kept as written, after the generic brief and before any
+  `## Open work at hand-over` section. Blank lines at a fragment's start and end are dropped, so fragments sit exactly one
+  blank line apart. Nothing is substituted in a fragment.
 
 **`settings.json`** (all keys optional; each has an environment override):
 

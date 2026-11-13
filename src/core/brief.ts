@@ -6,8 +6,11 @@
  *
  * Inputs: decision-rights.md (your standing rules, verbatim), the rulings in force (the rulings table), servers.json,
  * the away record, and your operating rules (src/core/rules.ts). `principalName` in settings.json names you in the text.
+ *
+ * Brief fragments: every regular file whose name ends in `.md` in `<config>/brief.d/` is appended verbatim after the generic
+ * hand-off, in byte order of filename, one blank line apart (loadBriefFragments, withFragments).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mandateLine, readAfk, type Afk } from "./afk.ts";
 import type { BriefNotes } from "./adapter.ts";
 import { CONF, REPO, STATE, Principal, principal, principalPoss } from "./config.ts";
@@ -33,7 +36,50 @@ export type BriefInput = {
 	predecessor: string | undefined;
 	/** The adapter's own sentences (src/core/adapter.ts, BriefNotes). None: neutral wording. */
 	notes?: BriefNotes;
+	/** The operator's brief fragments, in order (loadBriefFragments): appended verbatim after the generic hand-off. */
+	fragments?: string[];
 };
+
+/** The heading `/steward-handoff` adds at the end of a hand-off. Fragments always go before it. */
+export const OPEN_WORK_HEADING = "## Open work at hand-over";
+
+/** A fragment's text as written, without the blank lines at its start and end, so fragments sit exactly one blank line apart. */
+const fragmentText = (t: string) => t.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "");
+
+/**
+ * The brief fragments in `<conf>/brief.d/`, as their texts, sorted by filename in byte order. Only regular files whose names
+ * end in `.md` are used; a symlink, a directory or any other entry is ignored with a warning, and so is a fragment that cannot
+ * be read (the hand-off must still come out). No `brief.d/` is no fragments.
+ */
+export function loadBriefFragments(conf: string, warn: (msg: string) => void = (m) => console.error(m)): string[] {
+	const dir = `${conf}/brief.d`;
+	if (!existsSync(dir)) return [];
+	if (!statSync(dir).isDirectory()) { warn(`brief.ts: ignoring ${dir}: it is not a directory`); return []; }
+	const names = readdirSync(dir).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+	const out: string[] = [];
+	for (const name of names) {
+		const path = `${dir}/${name}`;
+		const st = lstatSync(path);
+		if (st.isSymbolicLink()) { warn(`brief.ts: ignoring brief fragment ${path}: a symlink is never followed`); continue; }
+		if (!st.isFile()) { warn(`brief.ts: ignoring ${path}: not a regular file`); continue; }
+		if (!name.endsWith(".md")) { warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`); continue; }
+		let text: string;
+		try { text = readFileSync(path, "utf8"); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
+		const body = fragmentText(text);
+		if (body.trim()) out.push(body);
+	}
+	return out;
+}
+
+/** Pure: `brief` with the fragments appended, one blank line apart, before its `## Open work at hand-over` section when it has one. */
+export function withFragments(brief: string, fragments: readonly string[]): string {
+	if (!fragments.length) return brief;
+	const lines = brief.split("\n");
+	const at = lines.indexOf(OPEN_WORK_HEADING);
+	const head = (at < 0 ? brief : lines.slice(0, at).join("\n")).replace(/\s+$/, "");
+	const tail = at < 0 ? "" : `\n\n${lines.slice(at).join("\n")}`;
+	return [head, ...fragments].join("\n\n") + tail;
+}
 
 const testMode = (who: string) => `## Mode: TEST
 
@@ -52,6 +98,10 @@ Every wake is real. You are the operator.`;
 
 /** Pure: the whole hand-off as markdown. */
 export function stewardBrief(i: BriefInput): string {
+	return withFragments(genericBrief(i), i.fragments ?? []);
+}
+
+function genericBrief(i: BriefInput): string {
 	const who = i.principal ?? principal();
 	const notes = i.notes ?? {};
 	const poss = i.principal ? `${i.principal}'s` : principalPoss();
