@@ -42,6 +42,14 @@ describe("readCards: per card item, never all or nothing; only a terminal status
 			expect([status, type, readCards([{ ...approval, type, status }], "th-1")]).toEqual([status, type, { ok: true, cards: [], resolved: ["a1"], ignored: [] }]);
 		}
 	});
+	test("a type that merely contains 'link' is not a card and can never resolve one (reviewer's hyperlink probe)", () => {
+		for (const type of ["hyperlink", "link_preview", "Link", "unlinked_request_note", "linkrequest"]) {
+			expect([type, readCards([{ type, id: "a1", threadId: "th-1", status: "completed" }], "th-1").resolved]).toEqual([type, []]);
+		}
+		for (const type of ["link_request", "machine_link_request", "environment_link_request"]) {
+			expect([type, readCards([{ type, id: "a1", threadId: "th-1", status: "completed" }], "th-1").resolved]).toEqual([type, ["a1"]]);
+		}
+	});
 	test("a non-terminal status is not resolved: waiting lists the card, the others list it nowhere", () => {
 		expect(readCards([approval], "th-1")).toEqual({ ok: true, cards: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }], resolved: [], ignored: [] });
 		for (const status of ["idle", "pending", "running"]) expect(readCards([{ ...approval, status }], "th-1")).toEqual({ ok: true, cards: [], resolved: [], ignored: [] });

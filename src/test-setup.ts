@@ -20,6 +20,7 @@ const cleanup = () => {
 	rmSync(root, { recursive: true, force: true });
 };
 afterAll(cleanup);
-// A run that is killed part-way (a timeout, ^C) still takes its root with it.
+// A run that is killed part-way (a timeout, ^C) still takes its root with it. A child process that outlives the runner
+// loses its temp dir here; that is deliberate: a test must stop every process it starts, and a survivor is a test bug.
 process.on("exit", cleanup);
 for (const [sig, code] of [["SIGHUP", 129], ["SIGINT", 130], ["SIGTERM", 143]] as const) process.on(sig, () => { cleanup(); process.exit(code); });

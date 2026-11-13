@@ -17,8 +17,17 @@ export function checkProjection(p: unknown): Projection {
 	return p as Projection;
 }
 
-/** The turn-item types the adapter treats as cards: a question, an approval, a secret, and a link request under any of T3's names. */
-export const isCardType = (type: string): boolean => ["user_input_request", "approval_request", "secret_request", "link_request"].includes(normalizeWaitKind(type));
+/**
+ * The turn-item types the adapter treats as cards: a question, an approval, a secret, and a link request under any of T3's
+ * names. This decides what can CLOSE a hold, so it is strict: an exact request type, or a link-request variant that is a
+ * whole `*_request` type name with `link` in it (`link_request`, `machine_link_request`). A type that merely contains
+ * "link" (`hyperlink`, `link_preview`) is not a card. `normalizeWaitKind` stays loose on purpose for waking, where
+ * matching too much only means an extra wake.
+ */
+const CARD_TYPES: ReadonlySet<string> = new Set(["user_input_request", "approval_request", "secret_request", "link_request"]);
+const LINK_REQUEST_TYPE = /^[a-z]+(?:_[a-z]+)*_request$/;
+export const isCardType = (type: string): boolean =>
+	CARD_TYPES.has(type) || (LINK_REQUEST_TYPE.test(type) && /(?:^|_)link(?:_|$)/.test(type) && normalizeWaitKind(type) === "link_request");
 
 /**
  * The turn-item statuses that mean a card is RESOLVED, in T3's own lifecycle (packages/contracts orchestrationV2.ts, the
