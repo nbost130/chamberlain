@@ -57,6 +57,8 @@ const fragmentText = (t: string) => t.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/
  *   - each fragment must be a regular file whose name ends in `.md`, owned by the effective uid, and not group- or world-writable
  *     (0600 and 0644 are fine). A symlink, a directory, any other entry, a fragment that fails the check or that cannot be read is
  *     skipped with a warning naming it and why. The rest are still used, and the hand-off always comes out.
+ *   - a `brief.d` that passes the check but cannot be listed (mode 0300: writable, not readable) gives no fragment, with one warning
+ *     naming it and the error; an entry that cannot be examined (a 0600 directory: listable, not searchable) is skipped the same way.
  * No `brief.d/` is no fragments. `o.euid` is a seam for tests.
  */
 export function loadBriefFragments(conf: string, warn: (msg: string) => void = (m) => console.error(m), o: { euid?: number } = {}): string[] {
@@ -66,11 +68,14 @@ export function loadBriefFragments(conf: string, warn: (msg: string) => void = (
 	try { dst = lstatSync(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; warn(`brief.ts: ignoring ${dir}: ${(e as Error).message}`); return []; }
 	const bad = authorityProblem(dst, "directory", euid);
 	if (bad) { warn(`brief.ts: ignoring every brief fragment: ${dir} is refused: ${bad}`); return []; }
-	const names = readdirSync(dir).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+	let listed: string[];
+	try { listed = readdirSync(dir); } catch (e) { warn(`brief.ts: ignoring every brief fragment: ${dir} cannot be read: ${(e as Error).message}`); return []; }
+	const names = listed.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 	const out: string[] = [];
 	for (const name of names) {
 		const path = `${dir}/${name}`;
-		const st = lstatSync(path);
+		let st;
+		try { st = lstatSync(path); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
 		if (st.isSymbolicLink()) { warn(`brief.ts: ignoring brief fragment ${path}: a symlink is never followed`); continue; }
 		if (!st.isFile()) { warn(`brief.ts: ignoring ${path}: not a regular file`); continue; }
 		if (!name.endsWith(".md")) { warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`); continue; }

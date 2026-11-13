@@ -202,6 +202,42 @@ describe("brief fragments", () => {
 			expect(authorityProblem(st({ mode: 0o40700, dir: true }), "file", me)).toContain("not a regular file");
 			expect(authorityProblem(st({ mode: 0o100600, file: true }), "directory", me)).toContain("not a directory");
 		});
+		test("a brief.d the operator can write but not read (0300) passes the check, gives no fragment, warns once, and the brief still builds", () => {
+			const d = conf();
+			put(d, "10.md", "x\n");
+			chmodSync(`${d}/brief.d`, 0o300);
+			const warned: string[] = [];
+			let fragments: string[] = ["unset"];
+			try { fragments = loadBriefFragments(d, (m) => warned.push(m)); } finally { chmodSync(`${d}/brief.d`, 0o755); }
+			expect(fragments).toEqual([]);
+			expect(warned).toHaveLength(1);
+			expect(warned[0]).toContain(`${d}/brief.d`);
+			expect(warned[0]).toContain("EACCES");
+			expect(stewardBrief({ ...base, fragments })).toBe(stewardBrief(base));
+		});
+		test("a brief.d that can be listed but not searched (0600) skips each fragment with a warning naming it", () => {
+			const d = conf();
+			put(d, "10.md", "x\n");
+			chmodSync(`${d}/brief.d`, 0o600);
+			const warned: string[] = [];
+			let fragments: string[] = ["unset"];
+			try { fragments = loadBriefFragments(d, (m) => warned.push(m)); } finally { chmodSync(`${d}/brief.d`, 0o755); }
+			expect(fragments).toEqual([]);
+			expect(warned).toHaveLength(1);
+			expect(warned[0]).toContain(`${d}/brief.d/10.md`);
+			expect(warned[0]).toContain("EACCES");
+		});
+		test("an unreadable fragment (0200) is skipped with a warning naming it and why; the others are used", () => {
+			const d = conf();
+			put(d, "10-locked.md", "locked\n");
+			put(d, "20-ok.md", "ok\n");
+			chmodSync(`${d}/brief.d/10-locked.md`, 0o200);
+			const warned: string[] = [];
+			expect(loadBriefFragments(d, (m) => warned.push(m))).toEqual(["ok"]);
+			expect(warned).toHaveLength(1);
+			expect(warned[0]).toContain(`${d}/brief.d/10-locked.md`);
+			expect(warned[0]).toContain("EACCES");
+		});
 		test("a brief.d at 0755 with a 0644 fragment (umask 022) is accepted with no warning", () => {
 			const d = conf();
 			put(d, "10.md", "ok\n");

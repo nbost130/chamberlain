@@ -218,7 +218,9 @@ directory ([`examples/brief.d/`](examples/brief.d/)), and `bun src/brief.ts stew
   directory (not a symlink), owned by you (the daemon's effective user), and not group- or world-writable; otherwise no
   fragment is read, with one warning. Each fragment must be owned by you and not group- or world-writable: `0600` and
   `0644` are fine, `0664` is not. A refused fragment is skipped with a warning naming it and why; the others are still
-  used, and the hand-off always comes out. With a umask of `002`, set the modes yourself:
+  used, and the hand-off always comes out. The same goes for one that cannot be read: a `brief.d/` you can write but not
+  read (`0300`) gives no fragment, and an unreadable fragment is skipped, each with a warning naming the path and the
+  error. With a umask of `002`, set the modes yourself:
   `chmod 755 brief.d && chmod 644 brief.d/*.md`.
 - Fragments are sorted by filename in byte order (so `10-repo.md` before `20-landing.md`, and `B.md` before `a.md`), and
   each is appended verbatim, its own headings kept as written, after the generic brief and before any
