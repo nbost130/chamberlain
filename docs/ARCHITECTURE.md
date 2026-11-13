@@ -526,8 +526,11 @@ every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets t
 - **A ruling that leaves force keeps its record**: `retiredHow` (`retired`, `only this once`, `superseded`, `duplicate`, `expired`, `repeat`),
   `retiredWhy` and `supersededBy`. A replacing ruling must itself be live.
 
-Migration 11 adds the columns (`expires`, `until_event`, `supersedes`, `superseded_by`, `retired_why`) and widens the `retired_how` check by
-rebuilding the table inside the migration's one transaction: every row is copied as it was and the new columns are NULL. A build that does not
+Migration 11 only adds: the columns (`expires`, `until_event`, `supersedes`, `superseded_by`, `retired_why`, `retired_reason`), NULL for every
+row already there, and two triggers. `retired_how` and its CHECK are left as they were, because SQLite cannot change a CHECK in place and a table
+rebuild would drop any index or trigger added to `rulings` and, with foreign keys on, delete the rows of a table that references it `ON DELETE
+CASCADE`. A housekeeping retirement is stored as `retired_how = 'retired'` with the reason in `retired_reason`, which the triggers hold to
+`superseded`, `duplicate`, `expired` or `repeat`; the store reads the pair back as one `retiredHow`. A build that does not
 know migration 11 refuses the database, like any newer one (`DatabaseTooNewError`). `legacy-import.ts` brings the same fields in from an old
 `rulings.jsonl`, leaves out and notes any that are malformed, and never carries the earlier system's own bookkeeping.
 

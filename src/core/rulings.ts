@@ -13,6 +13,8 @@ import type { Store } from "./store.ts";
 export type RulingStatus = "in-force" | "proposed" | "retired";
 export type RulingSource = "chat" | "card";
 export type RetiredHow = "retired" | "only this once" | "superseded" | "duplicate" | "expired" | "repeat";
+/** The housekeeping reasons a ruling can leave force for. The database keeps them apart from the page's two (retired_reason, migration 11). */
+export const HOUSEKEEPING: ReadonlySet<RetiredHow> = new Set<RetiredHow>(["superseded", "duplicate", "expired", "repeat"]);
 /** What a new ruling may carry beyond its words and what it decides. */
 export type RulingOpts = { expires?: string; until?: string; supersedes?: string[] };
 /** What recording returns: the ruling, flagged when it was already held (nothing new was written for it). */

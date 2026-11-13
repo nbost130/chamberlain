@@ -373,32 +373,25 @@ BEGIN SELECT RAISE(ABORT, 'an outbox row is immutable once created'); END;
 -- A ruling can now be time-bound and can replace others. expires: an ISO date (through the end of that day, UTC) or date-time, after which the ruling is no
 -- longer in force (it is read against a clock, never rewritten by a timer; the row stays). until_event: a time bound only a person can judge ("until the
 -- launch"), shown and never enforced. supersedes: the ids a ruling replaces (a JSON array). superseded_by and retired_why say, for a ruling that left force
--- for a housekeeping reason, which ruling took its place and why. retired_how gains four values (superseded, duplicate, expired, repeat); SQLite cannot
--- change a CHECK in place, so the table is rebuilt and every row copied as it is. Every new column is NULL for the rows already there.
-CREATE TABLE rulings_new (
-	id TEXT PRIMARY KEY,
-	seq INTEGER NOT NULL UNIQUE,
-	date TEXT NOT NULL,
-	words TEXT NOT NULL,
-	decides TEXT NOT NULL,
-	source TEXT NOT NULL CHECK (source IN ('chat', 'card')),
-	status TEXT NOT NULL CHECK (status IN ('in-force', 'proposed', 'retired')),
-	confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1)),
-	confirmed_at TEXT,
-	retired_at TEXT,
-	retired_how TEXT CHECK (retired_how IS NULL OR retired_how IN ('retired', 'only this once', 'superseded', 'duplicate', 'expired', 'repeat')),
-	retired_why TEXT,
-	superseded_by TEXT,
-	supersedes TEXT CHECK (supersedes IS NULL OR json_valid(supersedes)),
-	expires TEXT,
-	until_event TEXT,
-	item TEXT,
-	history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history))
-);
-INSERT INTO rulings_new (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history)
-	SELECT id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history FROM rulings;
-DROP TABLE rulings;
-ALTER TABLE rulings_new RENAME TO rulings;
+-- for a housekeeping reason, which ruling took its place and why.
+-- The housekeeping reason itself (superseded, duplicate, expired, repeat) goes in retired_reason, on a row whose retired_how is 'retired'. retired_how and its
+-- CHECK are left exactly as they are: SQLite cannot change a CHECK in place, and rebuilding the table would drop any index or trigger added to it and, with
+-- foreign keys on, delete the rows of any table that references it ON DELETE CASCADE. So this migration only adds: columns (NULL for every row already
+-- there) and two triggers that hold retired_reason to its four values, which a plain CREATE TRIGGER can add.
+-- Unreleased, and edited in place while its branch was open: a development database that ran an earlier draft of 11 (the table rebuild) is not
+-- upgraded again and must be rebuilt (delete chamberlain.db and its -wal and -shm files, then start again or run legacy-import.ts).
+ALTER TABLE rulings ADD COLUMN retired_reason TEXT;
+ALTER TABLE rulings ADD COLUMN retired_why TEXT;
+ALTER TABLE rulings ADD COLUMN superseded_by TEXT;
+ALTER TABLE rulings ADD COLUMN supersedes TEXT CHECK (supersedes IS NULL OR json_valid(supersedes));
+ALTER TABLE rulings ADD COLUMN expires TEXT;
+ALTER TABLE rulings ADD COLUMN until_event TEXT;
+CREATE TRIGGER rulings_retired_reason_insert BEFORE INSERT ON rulings
+	WHEN NEW.retired_reason IS NOT NULL AND (NEW.retired_reason NOT IN ('superseded', 'duplicate', 'expired', 'repeat') OR NEW.retired_how IS NOT 'retired')
+BEGIN SELECT RAISE(ABORT, 'retired_reason must be superseded, duplicate, expired or repeat, on a retired row'); END;
+CREATE TRIGGER rulings_retired_reason_update BEFORE UPDATE OF retired_reason, retired_how ON rulings
+	WHEN NEW.retired_reason IS NOT NULL AND (NEW.retired_reason NOT IN ('superseded', 'duplicate', 'expired', 'repeat') OR NEW.retired_how IS NOT 'retired')
+BEGIN SELECT RAISE(ABORT, 'retired_reason must be superseded, duplicate, expired or repeat, on a retired row'); END;
 `,
 	},
 ];
