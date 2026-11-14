@@ -192,12 +192,13 @@ describe("a log call never throws and never waits", () => {
 			path,
 			host: HOST,
 			complain: (m) => complaints.push(m),
-			mirror: (line, key) => store.events.append(line, key),
+			mirror: (lines) => store.events.tryAppendMany(lines),
 		});
 		const log = makeLogger(obs, {});
 		expect(() => log("fire", { server: "mac", kind: "failed" })).not.toThrow();
 		expect(obs.handle).toBeUndefined();
 		expect(complaints.join(" ")).toContain("ObsTooNewError");
+		obs.flushMirror();
 		expect(store.events.query().map((e) => e.event)).toEqual(["fire"]);
 		expect(obs.counters.dropped).toBe(1);
 		store.close();
@@ -323,7 +324,7 @@ describe("the old call, read through the registry", () => {
 		store.close();
 	});
 
-	test("CHAMBERLAIN_VERBOSE still prints the old line as JSON", () => {
+	test("CHAMBERLAIN_VERBOSE still prints the old line as JSON", async () => {
 		const store = memStore();
 		const lines: string[] = [];
 		const was = console.log;
@@ -331,6 +332,7 @@ describe("the old call, read through the registry", () => {
 		console.log = (s: string) => lines.push(s);
 		try {
 			logFor(store)("start", { dry: false });
+			await Promise.resolve();
 		} finally {
 			console.log = was;
 			delete process.env.CHAMBERLAIN_VERBOSE;
@@ -441,27 +443,56 @@ describe("nothing here reads the developer's home", () => {
 	});
 });
 
-describe("the dual write waits for no one", () => {
-	test("a ledger another process holds locked does not stall a log call: obs.db is written, the old table catches up in order", async () => {
+describe("the dual write is off the caller's path", () => {
+	test("a log call only queues its old-table line: nothing is written until the call has returned, and then in one transaction", async () => {
+		const dir = scratch();
+		const store = openStore(`${dir}/chamberlain.db`);
+		const writes: number[] = [];
+		const real = store.events.tryAppendMany.bind(store.events);
+		store.events.tryAppendMany = (lines) => {
+			writes.push(lines.length);
+			return real(lines);
+		};
+		const log = logFor(store);
+		for (let i = 0; i < 50; i++) log("fire", { kind: "failed", n: i });
+		expect(writes).toEqual([]);
+		await Promise.resolve();
+		expect(writes).toEqual([50]);
+		const raw = new Database(`${dir}/chamberlain.db`, { readonly: true });
+		expect((raw.query("SELECT COUNT(*) AS n FROM events WHERE event = 'fire'").get() as { n: number }).n).toBe(50);
+		raw.close();
+		store.close();
+	});
+
+	test("a process reads its own lines at once, without waiting for the microtask", () => {
+		const store = memStore();
+		logFor(store)("start", { dry: false });
+		expect(store.events.count()).toBe(1);
+		expect(store.events.query().map((e) => e.event)).toEqual(["start"]);
+		store.close();
+	});
+
+	test("a ledger another process holds locked does not stall a log call; the old table catches up in order, and the queue's overflow is counted", async () => {
 		const dir = scratch();
 		const store = openStore(`${dir}/chamberlain.db`);
 		const obs = obsFor(store);
 		const log = logFor(store);
 		log("start", { dry: false });
+		await Promise.resolve();
 		const other = new Database(`${dir}/chamberlain.db`);
 		other.exec("PRAGMA busy_timeout = 0");
 		other.exec("BEGIN IMMEDIATE");
 		const started = performance.now();
-		for (let i = 0; i < 200; i++) log("fire", { kind: "failed", n: i });
+		for (let i = 0; i < 600; i++) log("fire", { kind: "failed", n: i });
+		await Promise.resolve();
 		expect(performance.now() - started).toBeLessThan(500);
-		expect(eventRows(obs).filter((r) => r.event === "fire")).toHaveLength(200);
+		expect(eventRows(obs).filter((r) => r.event === "fire")).toHaveLength(600);
 		expect(store.events.query().filter((e) => e.event === "fire")).toHaveLength(0);
+		expect(obs.counters.dropped).toBe(100);
 		other.exec("ROLLBACK");
 		other.close();
-		await Bun.sleep(300);
-		log("fire", { kind: "failed", n: 200 });
 		const old = store.events.query().filter((e) => e.event === "fire");
-		expect(old.map((e) => e.n)).toEqual(Array.from({ length: 201 }, (_, i) => i));
+		expect(old.map((e) => e.n)).toEqual(Array.from({ length: 500 }, (_, i) => i + 100));
 		store.close();
 	});
 
@@ -474,10 +505,9 @@ describe("the dual write waits for no one", () => {
 		log("fire", { kind: "failed", n: 1 });
 		other.exec("ROLLBACK");
 		other.close();
-		store.events.append({ t: "2026-11-01T00:00:00.000Z", event: "marker" });
 		store.close();
 		const check = openStore(`${dir}/chamberlain.db`);
-		expect(check.events.query().map((e) => e.event)).toEqual(["marker", "fire"]);
+		expect(check.events.query().map((e) => e.event)).toEqual(["fire"]);
 		check.close();
 	});
 

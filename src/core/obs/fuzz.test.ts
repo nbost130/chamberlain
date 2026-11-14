@@ -197,6 +197,17 @@ describe("every column, not only `data`", () => {
 		expect(everything(obs).toLowerCase()).not.toContain(MARK.toLowerCase());
 	});
 
+	test("a host shaped like a credential is replaced and counted", () => {
+		const obs = memObs({ host: "sk-abcdefghi" });
+		makeLogger(obs, { mod: "relay" }).info("wake.delivered", { http: 202 });
+		expect(eventRows(obs)[0]?.host).toBe("local");
+		expect(obs.counters.redacted).toBe(1);
+		expect(everything(obs)).not.toContain("sk-abcdefghi");
+		const named = memObs({ host: "mac" });
+		expect(named.host).toBe("mac");
+		expect(named.counters.redacted).toBe(0);
+	});
+
 	test("a time the caller supplies is used only when it is a timestamp", () => {
 		const obs = memObs();
 		obs.record("info", "decision.logged", { cited: 1 }, { mod: "ledger" }, { t: "2026-11-01T00:00:00.000Z" });

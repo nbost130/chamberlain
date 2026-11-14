@@ -1086,9 +1086,13 @@ const makeEvents = (c: Db): Store["events"] => ({
 	append: (e, importKey) => {
 		appendEvent(c, e, importKey);
 	},
-	tryAppend(e, importKey) {
+	tryAppendMany(lines) {
 		try {
-			c.nowait(() => appendEvent(c, e, importKey));
+			c.nowait(() =>
+				c.tx(() => {
+					for (const [e, key] of lines) appendEvent(c, e, key);
+				}),
+			);
 			return true;
 		} catch (err) {
 			if (BUSY.test(String(err))) return false;

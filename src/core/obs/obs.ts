@@ -22,7 +22,7 @@ import { type Columns, type Ctx, columnsOf, projectLegacy, projectTyped } from "
 import { hit, RULES, type Rule, scrub } from "./scrub.ts";
 
 /** Writes a line to the old table. `false` means the database was busy and nothing was written: the line waits in memory for a retry. */
-type Mirror = (line: LogEvent, key?: string) => unknown;
+type Mirror = (lines: readonly (readonly [LogEvent, string | undefined])[]) => unknown;
 export type ObsOptions = {
 	/** `obs.db`'s path, or `:memory:`. */
 	path: string;
@@ -107,7 +107,7 @@ export class Obs {
 	private readonly flushed: Counters = { rejected: 0, redacted: 0, failed: 0, dropped: 0 };
 	private lastFlush = 0;
 	private lastRetry = 0;
-	private lastMirrorRetry = 0;
+	private mirrorScheduled = false;
 	private readonly pendingMirror: [LogEvent, string | undefined][] = [];
 	private lastComplaint = -COMPLAIN_MS;
 	private readonly registry: Readonly<Record<string, EventSpec>>;
@@ -115,10 +115,14 @@ export class Obs {
 	private readonly now: () => number;
 
 	constructor(private readonly o: ObsOptions) {
-		this.host = o.host !== undefined && LABEL.test(o.host) ? o.host : hostName();
+		this.rules = o.rules ?? RULES;
+		const wanted = o.host !== undefined && LABEL.test(o.host) ? o.host : hostName();
+		// The host is a column like any other: a name shaped like a credential is not stored (the rows say `local`), and it is counted.
+		const bad = hit("host", wanted, this.rules) !== undefined;
+		if (bad) this.counters.redacted++;
+		this.host = bad ? "local" : wanted;
 		this.run = o.run !== undefined && RUN.test(o.run) ? o.run : randomBytes(6).toString("hex");
 		this.registry = o.registry ?? EVENTS;
-		this.rules = o.rules ?? RULES;
 		this.now = o.now ?? Date.now;
 		try {
 			this.db = openObsDb(o.path, o.open);
@@ -312,31 +316,40 @@ export class Obs {
 	}
 
 	/**
-	 * The dual write never waits on another process: a busy ledger leaves the line in a 500-line buffer, tried again (in order) on a later call and at close.
-	 * The old table can therefore trail by moments under contention, and loses the buffer in a crash; `obs.db` is the record that matters.
+	 * The dual write is off the caller's path: the call only queues the line, and one microtask later the queue is written to the old table in a single
+	 * transaction that never waits on another process (`tryAppendMany`). A busy ledger leaves the lines queued (500 at most; the oldest is dropped and counted)
+	 * and a timer tries again. `flushMirror` writes what is queued now: the store's own readers call it first, so a process always reads its own lines.
+	 * The old table can trail by moments under contention and loses its queue in a crash; `obs.db` is the record.
 	 */
 	private mirrorLine(line: LogEvent, key?: string): void {
-		const mirror = this.o.mirror;
-		if (!mirror) return;
-		try {
-			this.drainMirror(mirror);
-			if (this.pendingMirror.length === 0 && mirror(line, key) !== false) return;
-		} catch (e) {
-			this.complain(`could not write the event log: ${String(e).slice(0, 160)}`);
-			return;
-		}
+		if (!this.o.mirror) return;
 		if (this.pendingMirror.length >= BUFFER) {
 			this.pendingMirror.shift();
 			this.counters.dropped++;
 		}
 		this.pendingMirror.push([line, key]);
+		if (this.mirrorScheduled) return;
+		this.mirrorScheduled = true;
+		queueMicrotask(() => this.flushMirror());
 	}
 
-	private drainMirror(mirror: Mirror, force = false): void {
-		const t = this.now();
-		if (this.pendingMirror.length === 0 || (!force && t - this.lastMirrorRetry < RETRY_MS)) return;
-		this.lastMirrorRetry = t;
-		while (this.pendingMirror[0] && mirror(...this.pendingMirror[0]) !== false) this.pendingMirror.shift();
+	flushMirror(): void {
+		this.mirrorScheduled = false;
+		const mirror = this.o.mirror;
+		if (!mirror || this.pendingMirror.length === 0) return;
+		try {
+			if (mirror(this.pendingMirror) === false) this.retryMirrorLater();
+			else this.pendingMirror.length = 0;
+		} catch (e) {
+			this.pendingMirror.length = 0;
+			this.complain(`could not write the event log: ${String(e).slice(0, 160)}`);
+		}
+	}
+
+	private retryMirrorLater(): void {
+		if (this.mirrorScheduled) return;
+		this.mirrorScheduled = true;
+		setTimeout(() => this.flushMirror(), RETRY_MS).unref();
 	}
 
 	// ---- the database --------------------------------------------------------------------------------
@@ -458,11 +471,7 @@ export class Obs {
 	close(): void {
 		this.lastRetry = Number.NEGATIVE_INFINITY;
 		this.retry();
-		try {
-			if (this.o.mirror) this.drainMirror(this.o.mirror, true);
-		} catch {
-			/* the old table is unavailable: what waits is lost with the process */
-		}
+		this.flushMirror();
 		this.flush();
 		this.checkpoint();
 		this.insert = undefined;

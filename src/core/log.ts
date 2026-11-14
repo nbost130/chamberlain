@@ -22,20 +22,31 @@ export function obsFor(store: Store): Obs {
 	if (known) return known;
 	const obs = new Obs({
 		path: store.path === ":memory:" ? ":memory:" : obsPath(dirname(store.path)),
-		mirror: (line, key) => {
-			try {
-				return store.events.tryAppend(line, key);
-			} finally {
-				if (process.env.CHAMBERLAIN_VERBOSE) console.log(JSON.stringify(line));
-			}
+		mirror: (lines) => {
+			const done = store.events.tryAppendMany(lines);
+			if (done && process.env.CHAMBERLAIN_VERBOSE) for (const [line] of lines) console.log(JSON.stringify(line));
+			return done;
 		},
 	});
+	readYourWrites(store, obs);
 	obses.set(store, obs);
 	store.onClose(() => {
 		obs.close();
 		obses.delete(store);
 	});
 	return obs;
+}
+
+/** The old table's readers in this process see its own queued lines: each flushes the queue first. */
+function readYourWrites(store: Store, obs: Obs): void {
+	const events = store.events;
+	for (const name of ["query", "count", "prune"] as const) {
+		const original = events[name].bind(events) as (...a: never[]) => unknown;
+		(events as unknown as Record<string, unknown>)[name] = (...a: never[]) => {
+			obs.flushMirror();
+			return original(...a);
+		};
+	}
 }
 
 /** A logger for `store`. `base` adds fields to every old line, such as `{ src: "queue-web" }`, and names the module (`src`) of the new rows. */
