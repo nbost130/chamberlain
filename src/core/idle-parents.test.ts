@@ -10,19 +10,21 @@ import {
 	excerptOf,
 	IDLE_PARENTS_DEFAULTS,
 	type IdleClassification,
-	type IdleSelection,
-	type IdleThread,
-	type IdleThreadSource,
 	idleKey,
-	idleParentCandidate,
 	idleParentFindings,
 	idleParentsSource,
 	idlePrior,
 	idleText,
-	messageHash,
 	parseIdleParents,
-	selectIdleThreads,
 } from "./idle-parents.ts";
+import {
+	type IdleSelection,
+	type IdleThread,
+	type IdleThreadSource,
+	idleParentCandidate,
+	messageHash,
+	selectIdleThreads,
+} from "./idle-select.ts";
 import { runSource } from "./source.ts";
 import { parseSweepConfig } from "./sweep.ts";
 

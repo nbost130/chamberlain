@@ -22,7 +22,8 @@ import { FAKE, legacyFiles, tokensFor, writeLegacyConf } from "../testing/legacy
 import { loadConfig } from "../web/config.ts";
 import { readConfig } from "./alert-desk.ts";
 import { getValue, reappearedLine, showLines } from "./config-cmd.ts";
-import { migrateLayout, revertLayout, setThread, startupLayout } from "./config-migrate.ts";
+import { migrateLayout, setThread, startupLayout } from "./config-migrate.ts";
+import { revertLayout } from "./config-revert.ts";
 import {
 	cfg,
 	readConfigFile,
@@ -591,10 +592,13 @@ describe("the last five (a final check of the move)", () => {
 	test("2. two crashed migrations and a clean one: the journal keeps the union, so every secret is in migrated.files and revert moves it back", () => {
 		const conf = fresh();
 		writeLegacyConf(conf);
+		// Each run crashes after the first secret it moves. Which secret that is depends on the order the directory lists them in (the
+		// filesystem's), so the test names no secret: the second run finds the first one's secret already moved and crashes on another.
+		const crashOnFirstSecret = (step: string) => {
+			if (step.startsWith("secret:")) throw Error("crash");
+		};
 		for (let run = 0; run < 2; run++)
-			expect(() =>
-				migrateLayout(conf, { afterStep: crashAt(run === 0 ? "secret:wake-url" : "secret:compact-url") }),
-			).toThrow("crash");
+			expect(() => migrateLayout(conf, { afterStep: crashOnFirstSecret })).toThrow("crash");
 		migrateLayout(conf);
 		const files = (readConfigFile(conf)!.migrated as { files: string[] }).files;
 		for (const n of SECRET_NAMES) expect(files, n).toContain(n);

@@ -21,7 +21,8 @@ import type { Log } from "../log.ts";
 import type { DispositionAction, DispositionKey, Store } from "../store.ts";
 import { type Bank, combine, type Decision } from "./bank.ts";
 import { type ClassifierConfig, loadBank, SENDS_TEXT } from "./config.ts";
-import { haikuProvider, jevProvider, type Provider, ProviderError, rulesProvider } from "./providers.ts";
+import { haikuProvider } from "./provider-haiku.ts";
+import { jevProvider, type Provider, ProviderError, rulesProvider } from "./providers.ts";
 import { buildState, type HookRunner, runRedactHook, type SentState, sentChars, type ThreadText } from "./state.ts";
 
 /** One idle thread as the classifier needs it: where it is, which message, how long idle, and the text it may read. */

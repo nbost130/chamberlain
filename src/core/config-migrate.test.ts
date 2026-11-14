@@ -35,15 +35,10 @@ import { loadConfig } from "../web/config.ts";
 import { readConfig, readOperator } from "./alert-desk.ts";
 import { readSettings } from "./config.ts";
 import { planLines, showLines } from "./config-cmd.ts";
-import {
-	envValue,
-	migrateLayout,
-	parseEnvFile,
-	planMigration,
-	revertLayout,
-	setThread,
-	startupLayout,
-} from "./config-migrate.ts";
+import { envValue, parseEnvFile } from "./config-fold.ts";
+import { migrateLayout, setThread, startupLayout } from "./config-migrate.ts";
+import { planMigration } from "./config-plan.ts";
+import { revertLayout } from "./config-revert.ts";
 import {
 	attachDeprecationLog,
 	cfg,

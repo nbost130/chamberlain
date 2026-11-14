@@ -2203,7 +2203,10 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		expect(h.events.filter((e) => e.event === "alarm" && e.key === "card-unverified:fake:a1")).toHaveLength(1);
 		expect(h.open()).toEqual({ holds: 1, questions: 1 });
 		// The hand close: hold and question together; the alarm ends and is not raised again.
-		expect(closeCardByHand(h.store, "fake", "a1", "the thread was deleted")).toEqual({ questions: 1, holds: 1 });
+		expect(closeCardByHand(h.store, { server: "fake", requestId: "a1" }, "the thread was deleted")).toEqual({
+			questions: 1,
+			holds: 1,
+		});
 		expect(h.store.items.get("alarm", "card-unverified:fake:a1")?.status).toBe("resolved");
 		const before = h.events.filter((e) => e.event === "card-unverified").length;
 		await h.engine.tick();

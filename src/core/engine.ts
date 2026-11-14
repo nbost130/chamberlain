@@ -20,20 +20,16 @@ import {
 } from "./adapter.ts";
 import { closeHeldForCard, readAfk } from "./afk.ts";
 import { DESK_RECEIVER, drainAlertDesk, inboxPath } from "./alert-desk.ts";
-import {
-	type CardThreadRead,
-	cardWaitOf,
-	holdCard,
-	reconcileCardHolds,
-	trackUnverified,
-	unverifiedAlarm,
-} from "./card-hold.ts";
+import { cardWaitOf, holdCard } from "./card-hold.ts";
+import { type CardThreadRead, reconcileCardHolds, trackUnverified, unverifiedAlarm } from "./card-reconcile.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal, selfCommand } from "./config.ts";
 import { createOutbox } from "./deliver.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createStewardCheck } from "./engine-steward.ts";
 import { createSweep } from "./engine-sweep.ts";
-import { type GhRead, reconcileItemHolds, reconcileRefHolds, takeSnapshots } from "./hold-reconcile.ts";
+import type { GhRead } from "./hold-lookup.ts";
+import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
+import { takeSnapshots } from "./hold-threads.ts";
 import { type AlarmText, alarms, awayModeLine, threadHappened, threadWakeHead } from "./messages.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import type { Question } from "./questions.ts";
@@ -75,7 +71,7 @@ import {
 import { createIdleParents } from "./engine-idle.ts";
 import { failedRead, type InstructionRead, skipEvent } from "./history.ts";
 import type { Gate } from "./hold.ts";
-import type { IdleThreadSource } from "./idle-parents.ts";
+import type { IdleThreadSource } from "./idle-select.ts";
 import { createJudge, type Judge, judgeOff, readJudgeConfig } from "./judge.ts";
 import { readNamed, setting } from "./layout.ts";
 import { type Log, makeLog } from "./log.ts";
@@ -1100,15 +1096,14 @@ class Core {
 			!o.full && sent && sent.steward === id && sent.session === o.session && epochOf(sent) === epoch
 				? sent
 				: undefined;
-		return rightsFor(
-			held,
-			id,
+		return rightsFor(held, {
+			stewardId: id,
 			rules,
 			mandate,
-			id ? this.probe()?.contextTokens : undefined,
-			new Date().toISOString(),
+			used: id ? this.probe()?.contextTokens : undefined,
+			now: new Date().toISOString(),
 			epoch,
-		);
+		});
 	}
 
 	/** The decision rights and the in-force rulings, as one text, or undefined when either cannot be read. */

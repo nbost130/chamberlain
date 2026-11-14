@@ -10,7 +10,9 @@
  */
 import { readdirSync } from "node:fs";
 import { CONF } from "./config.ts";
-import { migrateLayout, type Plan, revertLayout } from "./config-migrate.ts";
+import { migrateLayout } from "./config-migrate.ts";
+import type { Plan } from "./config-plan.ts";
+import { revertLayout } from "./config-revert.ts";
 import {
 	CONFIG_FILE,
 	cfg,
@@ -189,7 +191,10 @@ function threadLines(doc: Record<string, unknown> | undefined): string[] {
 }
 
 /** One directory's secrets for `config show`, each named once and flagged when its mode is wrong. A directory that is not there lists none. */
-function listSecrets(out: string[], named: Set<string>, dir: string, label: string, only: (n: string) => boolean) {
+/** One place secrets are listed from: its directory, how it is labelled, and which of its files count. */
+type SecretPlace = { dir: string; label: string; only: (n: string) => boolean };
+
+function listSecrets(out: string[], named: Set<string>, { dir, label, only }: SecretPlace) {
 	try {
 		for (const e of readdirSync(dir, { withFileTypes: true })) {
 			if (!e.isFile() || /\.tmp-\d+$/.test(e.name) || !only(e.name) || named.has(e.name)) continue;
@@ -206,14 +211,12 @@ function listSecrets(out: string[], named: Set<string>, dir: string, label: stri
 function secretLines(conf: string): string[] {
 	const out: string[] = [];
 	const named = new Set<string>();
-	listSecrets(out, named, `${conf}/${SECRETS_DIR}`, `${SECRETS_DIR}/`, () => true);
-	listSecrets(
-		out,
-		named,
-		conf,
-		"config directory (old place, deprecated)",
-		(n) => SECRET_FILE.test(n) && oldFileState(conf, n, true) === "usable",
-	);
+	listSecrets(out, named, { dir: `${conf}/${SECRETS_DIR}`, label: `${SECRETS_DIR}/`, only: () => true });
+	listSecrets(out, named, {
+		dir: conf,
+		label: "config directory (old place, deprecated)",
+		only: (n) => SECRET_FILE.test(n) && oldFileState(conf, n, true) === "usable",
+	});
 	if (!named.size) out.push("  (none)");
 	return out;
 }

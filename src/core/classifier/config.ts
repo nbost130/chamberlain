@@ -63,7 +63,9 @@ const bool = (o: Obj, k: string, where: string, d: boolean): boolean => {
 	if (typeof o[k] !== "boolean") throw Error(`${where}: ${k} must be true or false`);
 	return o[k] as boolean;
 };
-const num = (o: Obj, k: string, where: string, d: number, whole: boolean, zeroOk = false): number => {
+/** How a number setting is read: its default, whether it must be whole, and whether zero is allowed. */
+type NumSpec = { d: number; whole: boolean; zeroOk?: boolean };
+const num = (o: Obj, k: string, where: string, { d, whole, zeroOk = false }: NumSpec): number => {
 	const v = o[k];
 	if (v === undefined) return d;
 	if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || (!zeroOk && v === 0) || (whole && !Number.isInteger(v)))
@@ -130,8 +132,8 @@ function parseSend(o: Obj, d: Defaults): SendConfig {
 	const sendW = `${W}.send`;
 	const so = o.send === undefined ? {} : object(o.send, sendW, ["lastChars", "previousChars", "title"]);
 	return {
-		lastChars: num(so, "lastChars", sendW, d.send.lastChars, true),
-		previousChars: num(so, "previousChars", sendW, d.send.previousChars, true, true),
+		lastChars: num(so, "lastChars", sendW, { d: d.send.lastChars, whole: true }),
+		previousChars: num(so, "previousChars", sendW, { d: d.send.previousChars, whole: true, zeroOk: true }),
 		title: bool(so, "title", sendW, d.send.title),
 	};
 }
@@ -152,9 +154,9 @@ function parseBudget(o: Obj, d: Defaults): ClassifierConfig["budget"] {
 	const budW = `${W}.budget`;
 	const bo = o.budget === undefined ? {} : object(o.budget, budW, ["maxPerRun", "maxCallsPerDay", "maxUsdPerDay"]);
 	return {
-		maxPerRun: num(bo, "maxPerRun", budW, d.budget.maxPerRun, true),
-		maxCallsPerDay: num(bo, "maxCallsPerDay", budW, d.budget.maxCallsPerDay, true),
-		maxUsdPerDay: num(bo, "maxUsdPerDay", budW, d.budget.maxUsdPerDay, false),
+		maxPerRun: num(bo, "maxPerRun", budW, { d: d.budget.maxPerRun, whole: true }),
+		maxCallsPerDay: num(bo, "maxCallsPerDay", budW, { d: d.budget.maxCallsPerDay, whole: true }),
+		maxUsdPerDay: num(bo, "maxUsdPerDay", budW, { d: d.budget.maxUsdPerDay, whole: false }),
 	};
 }
 
@@ -167,7 +169,7 @@ function parseJev(o: Obj, d: Defaults): ClassifierConfig["jev"] {
 	return {
 		model: str(jo, "model", jevW, d.jev.model),
 		keyFile,
-		timeoutMs: num(jo, "timeoutMs", jevW, d.jev.timeoutMs, true),
+		timeoutMs: num(jo, "timeoutMs", jevW, { d: d.jev.timeoutMs, whole: true }),
 	};
 }
 
@@ -177,7 +179,7 @@ function parseHaiku(o: Obj, d: Defaults): ClassifierConfig["haiku"] {
 	return {
 		command: str(ho, "command", hW, d.haiku.command),
 		model: str(ho, "model", hW, d.haiku.model),
-		timeoutMs: num(ho, "timeoutMs", hW, d.haiku.timeoutMs, true),
+		timeoutMs: num(ho, "timeoutMs", hW, { d: d.haiku.timeoutMs, whole: true }),
 	};
 }
 
@@ -205,7 +207,7 @@ export function parseClassifier(raw: unknown): ClassifierConfig {
 		send,
 		redact,
 		budget,
-		armedGraceMinutes: num(o, "armedGraceMinutes", W, d.armedGraceMinutes, false, true),
+		armedGraceMinutes: num(o, "armedGraceMinutes", W, { d: d.armedGraceMinutes, whole: false, zeroOk: true }),
 		autoNudge: false,
 		autoSettle: false,
 		jev,

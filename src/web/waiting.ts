@@ -189,7 +189,7 @@ async function sendReserved(
 		d.log("mirror-answer-error", { id: card.id, server: card.server, error });
 		return { status: 502, body: { error: `could not reach ${card.server}: ${error}` } };
 	} finally {
-		if (settled) settleCardAnswer(d.store, card.id, sig, { outcome: settled });
+		if (settled) settleCardAnswer(d.store, card.id, sig, { patch: { outcome: settled } });
 		else releaseCardAnswer(d.store, card.id, sig);
 	}
 }

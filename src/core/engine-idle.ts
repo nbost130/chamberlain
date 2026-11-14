@@ -7,13 +7,8 @@
  */
 import { type ClassifyDeps, classifyIdle } from "./classifier/classify.ts";
 import type { Outbox } from "./deliver.ts";
-import {
-	DIGEST_PREFIX,
-	type IdleThreadSource,
-	idleParentsSource,
-	idlePrior,
-	selectIdleThreads,
-} from "./idle-parents.ts";
+import { DIGEST_PREFIX, idleParentsSource, idlePrior } from "./idle-parents.ts";
+import { type IdleThreadSource, selectIdleThreads } from "./idle-select.ts";
 import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
 import { evaluateSource, recordEvaluation } from "./source.ts";

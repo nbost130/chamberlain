@@ -49,8 +49,7 @@ export class InsecureModeError extends Error {
 		readonly path: string,
 		readonly found: number,
 		readonly wanted: number,
-		what: string,
-		cause?: string,
+		{ what, cause }: { what: string; cause?: string },
 	) {
 		super(
 			`${what} ${path} has mode ${modeText(found)}, not ${modeText(wanted)}${cause ? `, and changing it failed (${cause})` : ""}. Refusing to start: fix it with \`chmod ${(wanted & 0o777).toString(8)} ${path}\`.`,
@@ -78,7 +77,7 @@ export function enforceMode(
 		}
 	}
 	const found = statSync(path).mode & 0o777;
-	if (found !== wanted) throw new InsecureModeError(path, found, wanted, what, cause);
+	if (found !== wanted) throw new InsecureModeError(path, found, wanted, { what, cause });
 }
 
 /** An existing config or state directory must be a directory with mode exactly 0700. A missing one is not an error here. */
@@ -91,7 +90,7 @@ export function assertPrivateDir(path: string, what: string): void {
 		throw e;
 	}
 	if (!st.isDirectory()) throw Error(`${what} ${path} is not a directory`);
-	if ((st.mode & 0o777) !== DIR_MODE) throw new InsecureModeError(path, st.mode, DIR_MODE, what);
+	if ((st.mode & 0o777) !== DIR_MODE) throw new InsecureModeError(path, st.mode, DIR_MODE, { what });
 }
 
 /**

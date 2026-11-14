@@ -130,14 +130,16 @@ describe("citations by ID", () => {
 		expect(citedIds("R3, R7 + R9: both")).toEqual(["R3", "R7", "R9"]);
 		expect(citedIds("Ada: 'merge conflicts are yours'")).toEqual([]);
 		expect(citedIds("Round R2 of fixes")).toEqual([]);
-		expect(decisionRecord("t", "d", "Ada said so", undefined).rulingIds).toBeUndefined();
-		expect(decisionRecord("t", "d", "R4: release PRs", "ref").rulingIds).toEqual(["R4"]);
+		expect(decisionRecord({ thread: "t", decision: "d", ruling: "Ada said so" }).rulingIds).toBeUndefined();
+		expect(decisionRecord({ thread: "t", decision: "d", ruling: "R4: release PRs", ref: "ref" }).rulingIds).toEqual([
+			"R4",
+		]);
 	});
 	test("counts citations per ruling, newest first", () => {
 		const c = citations([
-			decisionRecord("a", "first", "R1", undefined, "2026-11-01T00:00:00Z"),
-			decisionRecord("b", "second", "R1, R2", undefined, "2026-11-02T00:00:00Z"),
-			decisionRecord("c", "free", "just text", undefined, "2026-11-03T00:00:00Z"),
+			decisionRecord({ thread: "a", decision: "first", ruling: "R1" }, "2026-11-01T00:00:00Z"),
+			decisionRecord({ thread: "b", decision: "second", ruling: "R1, R2" }, "2026-11-02T00:00:00Z"),
+			decisionRecord({ thread: "c", decision: "free", ruling: "just text" }, "2026-11-03T00:00:00Z"),
 		]);
 		expect(c.get("R1")!.map((x) => x.decision)).toEqual(["second", "first"]);
 		expect(c.get("R2")).toHaveLength(1);

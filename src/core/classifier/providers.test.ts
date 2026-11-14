@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DATA_PREAMBLE, DEFAULT_BANK } from "./bank.ts";
+import { type CliRunner, haikuArgv, haikuProvider } from "./provider-haiku.ts";
 import {
-	type CliRunner,
 	type FetchLike,
-	haikuArgv,
-	haikuProvider,
 	JEV_URL,
 	jevBody,
 	jevProvider,

@@ -56,8 +56,7 @@ export function settleCardAnswer(
 	store: Store,
 	cardId: string,
 	sig: string,
-	patch: Record<string, unknown> = {},
-	now = Date.now(),
+	{ patch = {}, now = Date.now() }: { patch?: Record<string, unknown>; now?: number } = {},
 ) {
 	store.items.resolve(CARD_ANSWER, cardAnswerKey(cardId, sig), now, patch);
 }

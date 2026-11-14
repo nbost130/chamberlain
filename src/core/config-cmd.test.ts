@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { getValue, main, planLines, showLines } from "./config-cmd.ts";
-import type { Plan } from "./config-migrate.ts";
+import type { Plan } from "./config-plan.ts";
 import { resetLayout } from "./layout.ts";
 
 const dirs: string[] = [];

@@ -471,7 +471,7 @@ const closeCommand: Command = (store, rest) => {
 		const h = store.items.get(HELD, id);
 		const card = h && h.status !== "resolved" ? cardOfHold(h.payload as Held) : undefined;
 		if (card) {
-			const n = closeCardByHand(store, card.server, card.requestId, how);
+			const n = closeCardByHand(store, card, how);
 			console.log(`closed card ${card.server} ${card.requestId}: ${n.holds} hold(s), ${n.questions} question(s)`);
 		} else console.log(`closed: ${closeHeld(store, id, how).thread}`);
 	} catch (e) {
@@ -483,7 +483,7 @@ const closeCardCommand: Command = (store, rest) => {
 	const [server, requestId, how] = rest;
 	if (!server || !requestId || !how) usageExit('usage: afk.ts close-card <server> <request id> "<how it closed>"');
 	try {
-		const n = closeCardByHand(store, server, requestId, how);
+		const n = closeCardByHand(store, { server, requestId }, how);
 		console.log(`closed card ${server} ${requestId}: ${n.holds} hold(s), ${n.questions} question(s)`);
 	} catch (e) {
 		failExit(e);
