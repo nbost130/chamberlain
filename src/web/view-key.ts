@@ -1,8 +1,8 @@
 /**
  * What the VIEW key may do (`secrets/view-key`, the one key a Decisions post carries: a post is copied into the thread). One explicit
- * allowlist, named here and nowhere derived: three reads, a plain answer, and the three ways to settle or put off a question that the
- * pinned Decisions view offers in place (snooze, direction, dismiss). Every other route refuses the view key, whatever its Origin:
- * un-snooze, not-now, batch accept, every ruling action, the question-card and approval routes, one item's own read, evidence, pages.
+ * allowlist, named here and nowhere derived: three reads, a plain answer, and the four ways to settle, put off or bring back a question that
+ * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss). Every other route refuses the view key, whatever its
+ * Origin: not-now, batch accept, every ruling action, the question-card and approval routes, one item's own read, evidence, pages.
  *
  * Three things use it, and nothing else decides what the view key may do:
  *   - `viewKeyVerdict`: the request's route and method against the list (the origin gate and the key gate in ./app.ts);
@@ -17,7 +17,7 @@ import type { KeyUsed } from "../core/questions.ts";
 /** The reads the view key may make. */
 export const VIEW_KEY_READS: ReadonlySet<string> = new Set(["/api/queue", "/api/recent", "/api/rulings"]);
 /** The writes the view key may make, each on one queue item: `POST /api/items/<id>/<action>`. */
-export const VIEW_KEY_WRITES = ["answer", "snooze", "direction", "dismiss"] as const;
+export const VIEW_KEY_WRITES = ["answer", "snooze", "unsnooze", "direction", "dismiss"] as const;
 export type ViewKeyWrite = (typeof VIEW_KEY_WRITES)[number];
 
 /** The one field a view-key answer may carry: the option chosen. Not a note (a note is a Direction, or written on the full page), not a ruling field. */

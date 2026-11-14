@@ -1,9 +1,9 @@
 // The decision queue for T3's inline chat frames. The Steward renders only a two-line shell that loads this file, so
 // showing the queue costs it almost nothing; questions come live from /api/queue. Theme comes from T3's CSS variables.
 // This view holds only the VIEW key, and the SERVER enforces what that may do (src/web/view-key.ts): it may GET /api/queue, /api/recent and
-// /api/rulings, and POST an item's answer (a choice, never a note), snooze, direction and dismiss, and nothing else. The buttons along each card's
-// bottom edge do those four in place: one tap is one request, no confirmation, no page change. It never answers a card or an approval, never
-// saves a ruling, never un-snoozes and never reads one item on its own: those are done on the full queue page, which the links open.
+// /api/rulings, and POST an item's answer (a choice, never a note), snooze, un-snooze, direction and dismiss, and nothing else. The pill buttons along
+// each card's bottom edge, and on each row of the Snoozed tab, do those in place: one tap is one request, no confirmation, no page change. It never
+// answers a card or an approval, never saves a ruling and never reads one item on its own: those are done on the full queue page, which the links open.
 (() => {
 	const SRC = new URL(document.currentScript.src);
 	// A phone lays out a page with no viewport tag at desktop width and shrinks it to fit, so the view reads tiny.
@@ -31,13 +31,14 @@
 	const ITEM = /^Q-[a-z0-9]{4,16}$/.test(SRC.searchParams.get("item") ?? "") ? SRC.searchParams.get("item") : null;
 	// ?view=decisions is the pinned Decisions thread: Waiting, Rulings and Recent tabs that keep themselves current.
 	const DASH = SRC.searchParams.get("view") === "decisions";
+	const MIN_HEIGHT = "700px";
 	const KIND = { "only-you": "ONLY YOU", product: "PRODUCT REVIEW", ruling: "SETS A RULING", idea: "IDEA", thread: "FROM A THREAD", approval: "APPROVAL", goal: "GOAL PROPOSAL", secret: "SECRET · IN ITS THREAD", link: "LINK · IN ITS THREAD" };
 	// A card waiting in another thread, shaped like a queue item. It is shown here and answered on the full page.
 	const fromCard = (c) => ({ id: c.id, kind: c.type === "question" ? "thread" : c.type, title: c.header || "Question", context: c.question, options: c.options, recommended: c.recommended, mirrored: c });
 	const css = `*{box-sizing:border-box}body{font-family:var(--font-sans);margin:0}
 .dq{display:flex;flex-direction:column;gap:12px}.dq-head{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
 .dq-count{font-family:var(--font-mono);font-size:12px;padding:2px 8px;border-radius:999px;background:var(--secondary);color:var(--secondary-foreground);font-weight:500}
-.dq-reload{margin-left:auto;font:inherit;font-size:13px;font-weight:500;background:none;border:1px solid var(--border);color:var(--foreground);border-radius:var(--radius);padding:8px 12px;min-height:40px}
+.dq-reload{margin-left:auto}
 .dq-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;gap:10px}
 .dq-kind{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--muted-foreground)}
 .dq-kind.only-you{color:var(--destructive)}.dq-kind.product{color:var(--chart-4)}.dq-kind.ruling{color:var(--warning)}.dq-kind.idea{color:var(--success)}.dq-kind.thread{color:var(--info)}.dq-kind.approval,.dq-kind.secret,.dq-kind.link{color:var(--warning)}.dq-kind.goal{color:var(--primary)}
@@ -49,16 +50,17 @@
 .dq-opt input{margin-top:3px;accent-color:var(--primary);width:18px;height:18px}
 .dq-l{font-weight:600;font-size:14px}.dq-d{font-size:12px;color:var(--muted-foreground)}.dq-rec{font-family:var(--font-mono);font-size:10px;color:var(--primary);margin-left:6px}
 .dq textarea{width:100%;font:inherit;font-size:14px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:var(--radius);padding:10px;resize:vertical;min-height:44px}
-.dq-go{font:inherit;font-weight:600;font-size:15px;border:0;border-radius:var(--radius);padding:12px 16px;min-height:48px;background:var(--primary);color:var(--primary-foreground)}
-.dq-tabs{display:flex;gap:6px}.dq-tab{font:inherit;font-size:13px;font-weight:600;background:none;border:1px solid var(--border);color:var(--muted-foreground);border-radius:999px;padding:8px 14px;min-height:40px}
+.dq-tabs{display:flex;flex-wrap:wrap;gap:6px}.dq-tab{font:inherit;font-size:13px;font-weight:600;background:none;border:1px solid var(--border);color:var(--muted-foreground);border-radius:999px;padding:8px 14px;min-height:40px;cursor:pointer}.dq-tab-n{margin-left:6px;font-family:var(--font-mono);font-size:11px;font-weight:500}
 .dq-tab.on{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-focus{outline:2px solid var(--primary);outline-offset:2px}
 .dq-row{border-bottom:1px solid var(--border);padding:10px 0;display:flex;flex-direction:column;gap:4px}.dq-row:last-child{border-bottom:0}
 .dq-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground)}
-.dq-link{display:inline-flex;align-items:center;align-self:flex-start;min-height:40px;padding:0 2px;font-size:13px;color:var(--primary);text-decoration:underline;text-underline-offset:3px}
-.dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:0 14px;border-top:1px solid var(--border);margin-top:2px;padding-top:2px}.dq-actions .dq-link{font-size:12px;color:var(--muted-foreground);text-decoration:none;min-height:36px}.dq-actions .dq-link:hover{color:var(--foreground)}
-.dq-snoozed{border:1px solid var(--border);border-radius:var(--radius);font-size:13px}.dq-snoozed>summary{cursor:pointer;list-style:none;padding:10px 12px;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--muted-foreground)}.dq-snoozed>summary::-webkit-details-marker{display:none}.dq-snoozed>summary::after{content:"›";float:right;transition:transform .15s}.dq-snoozed[open]>summary::after{transform:rotate(90deg)}.dq-snoozed .dq-row{padding:10px 12px}
-.dq-btns{gap:8px;padding-top:10px}.dq-btn{font:inherit;font-size:13px;font-weight:500;background:none;border:1px solid var(--border);color:var(--foreground);border-radius:var(--radius);padding:8px 12px;min-height:40px}.dq-btn.rec{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn:disabled,.dq-btn:disabled.rec{opacity:.5}.dq-dir{display:flex;flex-direction:column;gap:8px}
-.dq-go:disabled{opacity:.5}.dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
+.dq-pill,.dq-btn,.dq-reload,.dq-go{font:inherit;font-size:13px;font-weight:500;line-height:1.2;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 18px;border-radius:999px;border:1px solid color-mix(in srgb,var(--foreground) 35%,transparent);background:color-mix(in srgb,var(--foreground) 6%,transparent);color:var(--foreground);text-decoration:none;cursor:pointer}
+.dq-pill:hover,.dq-btn:hover:not(:disabled),.dq-reload:hover{background:color-mix(in srgb,var(--foreground) 13%,transparent)}.dq-pill:focus-visible,.dq-btn:focus-visible,.dq-reload:focus-visible,.dq-go:focus-visible,.dq-tab:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.dq-btn.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
+.dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
+.dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--border);margin-top:2px;padding-top:12px}
+.dq-dir{display:flex;flex-direction:column;gap:8px}
+.dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
 	const healthCss = `.dq-health{padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;--health-tone:var(--success)}
 .dq-health-summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:6px 10px}.dq-health-summary::-webkit-details-marker{display:none}.dq-health-summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:10px}.dq-health-chevron{font-size:14px;color:var(--muted-foreground);transition:transform .15s}.dq-health[open]>.dq-health-summary .dq-health-chevron{transform:rotate(90deg)}.dq-health[open]>.dq-health-summary{border-bottom:1px solid var(--border)}
 .dq-health-mini{display:flex;align-items:center;justify-content:flex-end;gap:8px;font-family:var(--font-mono);font-size:11px;white-space:nowrap}.dq-health-mini-track{width:54px;height:4px;background:var(--muted);border-radius:9px;overflow:hidden}.dq-health-mini-fill{height:100%;background:var(--health-tone)}.dq-health-brief{grid-column:1/-1;display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;font-size:11px;color:var(--muted-foreground)}.dq-health-brief .dq-health-age{margin-left:auto}.dq-health>:not(summary){margin-left:12px;margin-right:12px}.dq-health>.dq-health-evidence{margin-bottom:10px}@media(max-width:380px){.dq-health-mini-track{display:none}.dq-health-summary{gap:6px}.dq-health-brief{gap:4px 8px}}
@@ -115,6 +117,9 @@
 	}
 	const style = el("style"); style.textContent = css + healthCss; document.head.append(style);
 	const root = document.getElementById("dq") || document.body.appendChild(el("div"));
+	// The Decisions view is a tall pane. The shell that loads this script gives its root a minimum height, but a shell written by hand may not,
+	// and a frame with no height reads as a thin strip. So the view sets it on its own root and on the body when it mounts, whatever the shell said.
+	if (DASH) { root.style.minHeight = MIN_HEIGHT; try { document.body.style.minHeight = MIN_HEIGHT; } catch { /* a page with no body keeps the root's height */ } }
 	const wrap = el("div", "dq");
 	const head = el("div", "dq-head", "Decisions ");
 	const count = el("span", "dq-count", "…");
@@ -150,7 +155,7 @@ count.textContent = `${items.length} waiting`;
 			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 			const it = (q.items || []).find((x) => x.id === ITEM);
 			if (it) { count.textContent = "open"; list.replaceChildren(card(it)); return; }
-			// A snoozed question is not answered and not on the active list: say when it returns. It is un-snoozed on the full queue page (the view key cannot).
+			// A snoozed question is not answered and not on the active list: say when it returns. The Decisions view's Snoozed tab brings it back in place; this one-question view links to the full page.
 			const later = (q.snoozed || []).find((x) => x.id === ITEM);
 			if (later) {
 				count.textContent = "snoozed";
@@ -195,7 +200,7 @@ count.textContent = `${items.length} waiting`;
 	// A link out of this view: one of the page's own addresses. T3 Code's web and desktop clients show this view in a sandboxed frame that
 	// opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets. None carries a key: the frame holds only the
 	// weak view key (never the page key), which cannot sign a browser in, so a link opens signed in only where the browser already holds the page's cookie.
-	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}`; a.target = "_blank"; a.rel = "noopener"; return a; };
+	const linkOut = (text, path) => { const a = el("a", "dq-pill", text); a.href = `${BASE}${path}`; a.target = "_blank"; a.rel = "noopener"; return a; };
 	// T3 Code's phone app shows this view as the top document of its own web view, not in a frame, and hands any link that is not http(s)
 	// to the phone's OS, which opens the app's own link (t3code://threads/…) in the app itself: the thread opens in place, no browser.
 	// So the top document links straight to the app link the server made; a frame (T3's web and desktop clients) uses /open.
@@ -206,7 +211,7 @@ count.textContent = `${items.length} waiting`;
 	// The thread's own link: the app link in T3's phone app; else the page's /open route, which sends the device on (src/web/thread-links.ts).
 	// No target: an app link is a navigation the app's web view hands to the OS, and a new window would drop it.
 	const threadLink = (x) => {
-		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", "dq-meta dq-link", "Open the thread"); a.href = x.app; return a; }
+		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", "dq-pill", "Open the thread"); a.href = x.app; return a; }
 		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open) : null;
 	};
 
@@ -219,6 +224,15 @@ count.textContent = `${items.length} waiting`;
 		return row;
 	};
 
+	// The one POST this view makes: one of the view key's writes on one item (src/web/view-key.ts). Its reply is { ok, status, b } with b the JSON body, or {}.
+	async function postItem(id, action, body) {
+		const r = await authFetch(`${BASE}/api/items/${encodeURIComponent(id)}/${action}`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) });
+		let b = {};
+		// EMPTY_CATCH_OK: the body only adds detail; r.ok and r.status already say whether it was recorded.
+		try { b = await r.json(); } catch { b = {}; }
+		return { ok: r.ok, status: r.status, b };
+	}
+
 	// One tap on Snooze puts the question off for this long. It comes back by itself and is shown again if urgent. The full page offers the others.
 	const SNOOZE_TAP_MS = 3600000;
 	const btn = (text, cls, onTap) => { const b = el("button", `dq-btn${cls ? ` ${cls}` : ""}`, text); b.type = "button"; b.addEventListener("click", onTap); return b; };
@@ -229,7 +243,7 @@ count.textContent = `${items.length} waiting`;
 	// (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
 	function panel(it, c, settles) {
 		const msg = el("div", "dq-msg");
-		const row = el("div", "dq-actions dq-btns");
+		const row = el("div", "dq-actions");
 		const dir = el("div", "dq-dir"); dir.style.display = "none";
 		const note = el("textarea"); note.placeholder = "Direction for the thread (no option chosen)"; note.rows = 2; note.setAttribute("aria-label", "Direction for the thread");
 		const sendDir = el("button", "dq-go", "Send direction"); sendDir.type = "button";
@@ -238,8 +252,9 @@ count.textContent = `${items.length} waiting`;
 		let sending = false;
 		const lock = (on) => { sending = on; note.disabled = on; sendDir.disabled = on; for (const b of taps) b.disabled = on; };
 		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
-		function done(text, extra) {
-			c.dataset.answered = "1"; dir.remove();
+		function done(text, extra, action) {
+			// A snoozed card stays on screen saying so, but is replaced by a live one if the question comes back (see waiting()).
+			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove();
 			const own = threadLink(it);
 			row.replaceChildren(...(own ? [own] : []), ...extra);
 			tell("dq-ok", text);
@@ -251,12 +266,9 @@ count.textContent = `${items.length} waiting`;
 			if (sending) return;
 			lock(true); tell("", "Sending…");
 			try {
-				const r = await authFetch(`${BASE}/api/items/${encodeURIComponent(it.id)}/${action}`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) });
-				let b = {};
-				// EMPTY_CATCH_OK: the body only adds detail; r.ok and r.status already say whether it was recorded.
-				try { b = await r.json(); } catch { b = {}; }
-				if (r.ok) done(said(b), action === "snooze" ? [linkOut("Un-snooze", `/item/${encodeURIComponent(it.id)}`)] : []);
-				else { tell("dq-bad", b.error || `HTTP ${r.status}`); lock(false); }
+				const r = await postItem(it.id, action, body);
+				if (r.ok) done(said(r.b), action === "snooze" ? [linkOut("Un-snooze", `/item/${encodeURIComponent(it.id)}`)] : [], action);
+				else { tell("dq-bad", r.b.error || `HTTP ${r.status}`); lock(false); }
 			} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); lock(false); }
 		}
 		const answered = (o) => (r) => `Answered: ${r.choice || o.label}. ${r.to === "thread" ? "Sent to its thread." : "Recorded; the wake to the Steward is queued."}`;
@@ -327,38 +339,60 @@ count.textContent = `${items.length} waiting`;
 		const health = el("details", "dq-health");
 		wrap.insertBefore(health, list);
 		const tabs = el("div", "dq-tabs");
-		const names = ["Waiting", "Rulings", "Recent"];
+		// Snoozed sits right after Waiting, with a count as Waiting has, so what is put off is one tap from what is waiting.
+		const names = ["Waiting", "Snoozed", "Rulings", "Recent"];
 		let tab = "Waiting";
-		const btns = names.map((n) => { const b = el("button", "dq-tab", n); b.type = "button"; b.addEventListener("click", () => { tab = n; paint(); show(); }); tabs.append(b); return b; });
+		const btns = names.map((n) => {
+			const b = el("button", "dq-tab", n); b.type = "button";
+			if (n === "Waiting" || n === "Snoozed") b.append(el("span", "dq-tab-n", "…"));
+			b.addEventListener("click", () => { tab = n; paint(); show(); }); tabs.append(b); return b;
+		});
+		const tabCount = (n, v) => { const b = btns[names.indexOf(n)]; b.querySelector(".dq-tab-n").textContent = String(v); b.setAttribute("aria-label", `${n}, ${v}`); };
 		wrap.insertBefore(tabs, list);
-		const panes = { Waiting: el("div"), Rulings: el("div"), Recent: el("div") };
+		const panes = { Waiting: el("div"), Snoozed: el("div"), Rulings: el("div"), Recent: el("div") };
 		panes.Waiting.style.cssText = "display:flex;flex-direction:column;gap:12px";
-		list.replaceChildren(panes.Waiting, panes.Rulings, panes.Recent);
+		panes.Snoozed.style.cssText = "display:flex;flex-direction:column;gap:12px";
+		list.replaceChildren(panes.Waiting, panes.Snoozed, panes.Rulings, panes.Recent);
 		const paint = () => { btns.forEach((b, i) => b.classList.toggle("on", names[i] === tab)); for (const n of names) panes[n].style.display = n === tab ? "" : "none"; };
 		// One line per machine the queue can't reach (a sleeping laptop), so "clear" never claims more than it can see.
 		const away = el("div", "dq-msg dq-away");
 		panes.Waiting.append(away);
-		// The Snoozed section: collapsed until opened, and it stays as the reader left it across refreshes. Un-snoozing is done on the full queue page.
-		const later = el("details", "dq-snoozed");
-		later.style.display = "none";
 		const cards = new Map(); // item ID -> its card; kept while he is choosing, so a refresh never resets his pick
 		let lastHealth, lastHealthLimits;
 		let focused = false;
 		const bad = (pane, e) => pane.replaceChildren(el("div", "dq-msg dq-bad", `Could not reach the queue: ${e?.message ?? e}`));
+		// One card per snoozed question: when it returns, and the two one-press actions. Bring back now puts it on the waiting list at once; Dismiss closes it.
+		// Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again and the row follows.
+		function snoozedCard(it) {
+			const c = el("div", "dq-card");
+			const msg = el("div", "dq-msg");
+			const row = el("div", "dq-actions");
+			const taps = [];
+			let sending = false;
+			const lock = (on) => { sending = on; for (const b of taps) b.disabled = on; };
+			async function act(action, said) {
+				if (sending) return;
+				lock(true); msg.className = "dq-msg"; msg.textContent = "Sending…";
+				try {
+					const r = await postItem(it.id, action, {});
+					if (r.ok) { msg.className = "dq-msg dq-ok"; msg.textContent = said; refresh(); return; }
+					msg.className = "dq-msg dq-bad"; msg.textContent = r.b.error || `HTTP ${r.status}`;
+				} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; }
+				lock(false);
+			}
+			taps.push(btn("Bring back now", "rec", () => act("unsnooze", "Back on the waiting list.")));
+			taps.push(btn("Dismiss", "", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
+			const own = threadLink(it);
+			row.append(...taps, ...(own ? [own] : []));
+			c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), el("div", "dq-title", it.title), el("div", "dq-meta", `${it.thread} · returns ${returnsAt(it.snooze.until)}`));
+			if (it.context) c.append(context(it.context));
+			c.append(msg, row);
+			return c;
+		}
 		function paintSnoozed(rows) {
-			later.style.display = rows.length ? "" : "none";
-			if (!rows.length) return;
-			const body = rows.map((it) => {
-				const row = el("div", "dq-row");
-				const links = el("div", "dq-actions");
-				const own = threadLink(it);
-				if (own) links.append(own);
-				links.append(linkOut("Un-snooze", `/item/${encodeURIComponent(it.id)}`));
-				row.append(el("div", "dq-l", it.title), el("div", "dq-meta", `${it.thread} · returns ${returnsAt(it.snooze.until)}`), links);
-				return row;
-			});
-			later.replaceChildren(el("summary", "", `SNOOZED · ${rows.length}`), ...body);
-			panes.Waiting.append(later);
+			tabCount("Snoozed", rows.length);
+			const soonest = [...rows].sort((a, b) => String(a.snooze.until).localeCompare(String(b.snooze.until)));
+			panes.Snoozed.replaceChildren(...(soonest.length ? soonest.map(snoozedCard) : [el("div", "dq-empty", "Nothing snoozed.")]));
 		}
 		async function waiting() {
 			try {
@@ -373,13 +407,16 @@ count.textContent = `${items.length} waiting`;
 				const items = [...(q.items || []), ...(q.cards || []).map(fromCard)];
 				remaining = items.length;
 count.textContent = items.length ? `${items.length} waiting` : "clear";
+				tabCount("Waiting", items.length);
 				const ids = new Set(items.map((i) => i.id));
 				for (const [id, c] of cards) if (!ids.has(id) && !c.dataset.answered) { c.remove(); cards.delete(id); }
 				for (const it of items) {
 					const old = cards.get(it.id);
 					// A mirrored card that changed under the same ID (a new command, reordered options) is redrawn, so he
 					// sees and answers the live version, never the stale one. One he just answered here stays as it is.
-					if (old && (old.dataset.answered || !it.mirrored || old.dataset.sig === it.mirrored.sig)) continue;
+					// A card he snoozed here is a note that it was put off; when the question is back on the list (its time passed, or it was brought back) that note is replaced by the live card.
+					const back = old?.dataset.answered === "snoozed";
+					if (old && !back && (old.dataset.answered || !it.mirrored || old.dataset.sig === it.mirrored.sig)) continue;
 					const c = card(it);
 					if (it.mirrored) c.dataset.sig = it.mirrored.sig;
 					cards.set(it.id, c);
@@ -421,13 +458,13 @@ count.textContent = items.length ? `${items.length} waiting` : "clear";
 				}));
 			} catch (e) { bad(panes.Recent, e); }
 		}
-		const show = () => (tab === "Waiting" ? waiting() : tab === "Rulings" ? rulings() : recent());
-// A tap that settled a card re-reads the queue, so the Snoozed section and the count follow at once.
+		const show = () => (tab === "Waiting" || tab === "Snoozed" ? waiting() : tab === "Rulings" ? rulings() : recent());
+// A tap that settled a card re-reads the queue, so the Snoozed tab and the counts follow at once.
 refresh = waiting;
 		reload.addEventListener("click", show);
 		paint();
 		waiting();
 		// Keep the count and the open tab current while he is looking; a hidden frame does no work.
-		setInterval(() => { if (document.visibilityState !== "hidden") { waiting(); if (tab !== "Waiting") show(); } }, 20000);
+		setInterval(() => { if (document.visibilityState !== "hidden") { waiting(); if (tab !== "Waiting" && tab !== "Snoozed") show(); } }, 20000);
 	}
 })();

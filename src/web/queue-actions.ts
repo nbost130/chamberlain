@@ -1,7 +1,7 @@
 /**
  * What the principal can do to an open question besides answer it with an option: snooze it until later, un-snooze it, give a
  * direction (a note, no option) or dismiss it. Kept out of the app's closure so each step is small enough to read and test on its own;
- * the app wires it to its serial queue and clock (./app.ts). The full page does all four; the Decisions view's key does snooze, direction and dismiss
+ * the app wires it to its serial queue and clock (./app.ts). The full page does all four, and so does the Decisions view's key
  * (`mayDo` in ./view-key.ts). Each change is recorded with the key it was made with.
  */
 import { closeHeldForItem } from "../core/afk-held.ts";

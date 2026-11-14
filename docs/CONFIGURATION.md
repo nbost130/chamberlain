@@ -38,7 +38,7 @@ One file per secret, in the T3 adapter's names. A `tokenFile` or `operateTokenFi
 | `compact-url` | optional | Webhook whose task prompt is `/compact`. Without it the daemon only alarms that the Steward is over its size. |
 | `desk-wake-url` | Alert Desk | The webhook bound to the Alert Desk thread. Without it the desk is off. |
 | `web-token` | the page: made on its first start | The page's capability token: 32 random bytes. Every request to the page must hold it. `chamberlain web link` prints the page link that carries it (it is never put in a Decisions post), `chamberlain web rotate-token` replaces it. See [web-access.md](web-access.md). |
-| `view-key` | the page: made on its first start | The view key: 32 random bytes, the only key a Decisions post carries. It is accepted only for its allowlist (three reads, an answer that is a choice only, and snooze, direction and dismiss on a queue item: `src/web/view-key.ts`) and never for a cookie, a page load, evidence, a card, a ruling or un-snooze. A start or `web rotate-token` never replaces it. See [web-access.md](web-access.md). |
+| `view-key` | the page: made on its first start | The view key: 32 random bytes, the only key a Decisions post carries. It is accepted only for its allowlist (three reads, an answer that is a choice only, and snooze, un-snooze, direction and dismiss on a queue item: `src/web/view-key.ts`) and never for a cookie, a page load, evidence, a card or a ruling. A start or `web rotate-token` never replaces it. See [web-access.md](web-access.md). |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `chamberlain switch-steward` during a hand-off; the old URL is kept for one-rename rollback. |
 
 After a migration a secret is read only from `secrets/`: a file written at the old path is never read (the daemon logs `config-legacy-reappeared`). Only a secret the migration never moved is still read from the config directory, with one `config-deprecated` line in the events log.
@@ -173,8 +173,8 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 sit with the crumbs), Snooze, Direction and Dismiss. A secret and a card pointer, which are settled in their own thread, get only the thread link and Snooze.
 
 - **Snooze** offers 1 hour, later today, tomorrow morning, next week and a time of your own, as T3's thread snooze does. The page works each out in the browser's own
-  time zone and sends an absolute time (within a year). A snoozed question leaves the active list for a **Snoozed** section, collapsed until you open it, with when each
-  one returns and an Un-snooze button, and it comes back by itself at that time, even if Chamberlain was restarted in between. An urgent question is shown again in the Decisions thread when
+  time zone and sends an absolute time (within a year). A snoozed question leaves the active list for the **Snoozed** tab (beside Waiting in the Decisions view, with a count), with when each
+  one returns and two pill buttons, Bring back now and Dismiss (the full page keeps a collapsed Snoozed section with Un-snooze), and it comes back by itself at that time, even if Chamberlain was restarted in between. An urgent question is shown again in the Decisions thread when
   it returns (the daemon does that on its once-a-minute tick; a question with `"urgent": false` returns silently). It is not answered, so its afk hold stays open, with a note of the return time.
 - **Direction** sends the note box's text and picks no option. It counts as an answer: the Steward gets a `[chamberlain] answer:` wake that says "direction, no option chosen" and carries
   the note, the question leaves the queue and its hold closes. It always goes to the Steward, never straight to the thread. The note is required.

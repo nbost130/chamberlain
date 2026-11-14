@@ -42,13 +42,13 @@ describe("the buttons along an item's bottom edge", () => {
 			expect(p.calls).toEqual([]);
 		}
 	});
-	test("a quiet stylesheet: small text, no fill, and a bigger touch target only on a phone", () => {
+	test("a pill stylesheet: fully rounded, a visible border and fill, and a 40px touch target at every width", () => {
 		const css = readFileSync(new URL("./static/app.css", import.meta.url), "utf8");
 		const rule = css.match(/\.mini \{([^}]*)\}/)![1]!;
-		expect(rule).toContain("font-size: 12px");
-		expect(rule).toContain("background: transparent");
-		expect(rule).toContain("border: 1px solid transparent");
-		expect(css).toMatch(/@media \(max-width: 760px\) \{[^@]*\.mini \{[^}]*min-height: 36px/);
+		expect(rule).toContain("border-radius: 999px");
+		expect(rule).toContain("min-height: 40px");
+		expect(rule).toMatch(/border: 1px solid var\(--edge\)/);
+		expect(rule).toMatch(/background: var\(--raise\)/);
 	});
 });
 

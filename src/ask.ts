@@ -132,7 +132,7 @@ function viewKeyOrNotice(): string | undefined {
 }
 
 /** The queue page's address and key for the card's inline view, each undefined unless the page answers now and has a key. */
-async function inlineView(): Promise<{ queueUrl: string | undefined; capability: string | undefined }> {
+export async function inlineView(): Promise<{ queueUrl: string | undefined; capability: string | undefined }> {
 	const base = queueBase();
 	const up = base !== undefined && (await queueUp(base));
 	// The view's script address carries the VIEW key, never the page's key (a post is copied into the thread). The page makes it when it

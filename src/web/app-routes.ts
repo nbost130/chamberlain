@@ -182,8 +182,8 @@ function notNowRoute(ctx: Ctx, id: string, key: KeyUsed): Promise<Response> {
 }
 
 /**
- * Snooze, un-snooze, direction and dismiss change state. The full page does all four; the view key does snooze, direction and dismiss and not
- * un-snooze; any other key from a frame or with no Origin none (`mayDo`). The origin and key gates refuse the rest first, and this is the second
+ * Snooze, un-snooze, direction and dismiss change state. The full page does all four, and so does the view key (the Snoozed tab's Bring back now
+ * is an un-snooze); any other key from a frame or with no Origin none (`mayDo`). The origin and key gates refuse the rest first, and this is the second
  * lock on the same door. The change is recorded with the key it was made with.
  */
 function itemActionRoute(ctx: Ctx, id: string, action: string, { body, authority }: Pick<Call, "body" | "authority">) {
