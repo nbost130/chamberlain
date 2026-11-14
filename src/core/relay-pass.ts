@@ -77,23 +77,3 @@ export function pass(r: Ctx): Promise<string[]> {
 	run.chain = p;
 	return p;
 }
-
-/** A receiver's dead letters raise its `wake-dead-letter` alarm until the operator retries or cancels them. */
-export function flagDead(r: Ctx, l: Lane) {
-	const dead = r.store.wakes.rows("dead_letter", l.name);
-	if (!dead.length) return;
-	for (const w of dead)
-		if (!r.reported.has(w.deliveryId)) {
-			r.reported.add(w.deliveryId);
-			r.d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts });
-		}
-	raise(
-		r,
-		l.akey("wake-dead-letter"),
-		alarms.wakeDeadLetters(
-			l.desk,
-			dead.map((w) => w.deliveryId),
-			r.max,
-		),
-	);
-}

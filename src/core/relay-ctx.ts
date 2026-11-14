@@ -1,5 +1,5 @@
 /** What the relay runs on: its dependencies and one lane of the outbox, and the context every step is given. */
-import type { WakeTransport } from "./deliver.ts";
+import type { WakeResult, WakeTransport } from "./deliver.ts";
 import type { Gate } from "./hold.ts";
 import type { AlarmText } from "./messages.ts";
 import type { RightsState } from "./rights-sent.ts";
@@ -93,6 +93,8 @@ export type Ctx = {
 	waitingOn: Set<string>;
 	/** Alerts and notices already raised or logged once, by key. */
 	reported: Set<string>;
+	/** The one POST of a row to its lane's transport. It lives in relay.ts, the only module that calls a transport; the steps that send a row reach it through here. */
+	post: (l: Lane, row: OutboxRow) => Promise<WakeResult>;
 	run: {
 		lockLost: boolean;
 		/** The serial queue's tail: each POST job starts when the one before has settled. */

@@ -13,7 +13,8 @@ import { has } from "./core/adapter-conformance.ts";
 import { CONF, compactTokens, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { setting } from "./core/layout.ts";
-import { HEALTH_CONFIG, liveHealth } from "./core/steward-health.ts";
+import { liveHealth } from "./core/steward-health.ts";
+import { HEALTH_CONFIG } from "./core/steward-health-config.ts";
 import { usageReport } from "./core/steward-report.ts";
 import { backfill, findStewardTranscripts, parseBackfillArgs, transcriptDir } from "./core/steward-tokens.ts";
 

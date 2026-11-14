@@ -1,5 +1,6 @@
 /** Reading the Steward's transcript for its health: replies, thread reads and tool uses, line by line. */
-import { HEALTH_CONFIG, type MeasureOptions } from "./steward-health.ts";
+import type { MeasureOptions } from "./steward-health.ts";
+import { HEALTH_CONFIG } from "./steward-health-config.ts";
 
 /** One canonical transcript row, as far as the health check reads it. Rows come from JSON, so every field may be missing or odd. */
 type Row = {

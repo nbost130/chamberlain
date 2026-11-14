@@ -83,6 +83,7 @@ function relayContext(d: RelayDeps): Ctx {
 		pause: d.retryAfterMs ?? retryAfterMs,
 		ceiling: d.ceilingMs ?? HOLD_CEILING_MS,
 		clock: () => d.now?.() ?? Date.now(),
+		post,
 		owed: new Map(),
 		notBefore: new Map(),
 		unrouted: new Set(),
@@ -125,7 +126,7 @@ export function createRelay(d: RelayDeps) {
 }
 
 /** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its message. */
-export async function post(l: Lane, row: OutboxRow): Promise<WakeResult> {
+async function post(l: Lane, row: OutboxRow): Promise<WakeResult> {
 	try {
 		return await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId));
 	} catch (e) {

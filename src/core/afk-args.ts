@@ -1,6 +1,6 @@
 /** The arguments of `afk.ts hold`: reading them, and the checks that refuse a hold on a settled question. */
 
-import { usageExit } from "./afk.ts";
+import { usageExit } from "./afk-exit.ts";
 import { cleanRef, type Held, type HoldRef, ITEM_ID } from "./afk-held.ts";
 import { principal, selfCommand } from "./config.ts";
 import { getQuestion } from "./questions.ts";

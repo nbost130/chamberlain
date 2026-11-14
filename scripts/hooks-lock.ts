@@ -1,7 +1,7 @@
 /** The one lock all worktrees of a clone share for the heavy hook work: taking it, reclaiming one a dead process left, releasing it. */
 import { linkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOCK_TIMEOUT_MS, readLines, stateDir } from "./hooks.ts";
+import { LOCK_TIMEOUT_MS, readLines, stateDir } from "./hooks-base.ts";
 
 function alive(pid: number): boolean {
 	try {

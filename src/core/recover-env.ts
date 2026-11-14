@@ -2,7 +2,6 @@
 import type { ThreadState } from "./adapter.ts";
 import type { RunLook } from "./adapter-inspect.ts";
 import { type FailureKind, neverRetryThread, type RecoverTiming, type ThreadContext } from "./recover-classify.ts";
-import { attempt } from "./recover-run.ts";
 import type { RecoverDeps, RecoverState, RecoverStore, ThreadRecord } from "./recover-state.ts";
 
 /** What one recovery holds: its dependencies, clock, timing, persisted state, and the cancel handle of each armed retry timer. */
@@ -14,6 +13,8 @@ export type Env = {
 	store: RecoverStore;
 	st: RecoverState;
 	timers: Map<string, () => void>;
+	/** Sends one pending retry (recover-run.ts); given here so the timer that arms it needs no import of the module that arms it. */
+	attempt: (rc: Env, threadId: string) => Promise<void>;
 };
 export type Pending = NonNullable<ThreadRecord["pending"]>;
 /** A thread's counters as they were before an attempt. */
@@ -88,7 +89,7 @@ export function arm(rc: Env, id: string, ms: number) {
 		id,
 		rc.timer(ms, () => {
 			rc.timers.delete(id);
-			attempt(rc, id).catch((e) => rc.d.log("recover-error", { threadId: id, error: String(e).slice(0, 200) }));
+			rc.attempt(rc, id).catch((e) => rc.d.log("recover-error", { threadId: id, error: String(e).slice(0, 200) }));
 		}),
 	);
 }

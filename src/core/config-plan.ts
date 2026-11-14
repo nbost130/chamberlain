@@ -9,8 +9,8 @@ import {
 	noteUnreadSettings,
 	type PlanCtx,
 } from "./config-fold.ts";
-import { readConfigFile } from "./layout.ts";
 import { NON_SECRET_HOME, oldFileState, readJournal, reappearedFiles, SECRET_FILE } from "./layout-legacy.ts";
+import { readConfigFile } from "./layout-read.ts";
 import { SECRETS_DIR } from "./layout-schema.ts";
 import { isPrivateFile, modeText } from "./private.ts";
 

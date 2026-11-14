@@ -63,13 +63,6 @@ export type SettledRecord = {
 	item?: string;
 };
 
-export const oneLine = (s: string, n = 110) => {
-	const t = s.replace(/\s+/g, " ").trim();
-	return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-};
-
-/* ---------- refs ---------- */
-
 type PrRef = { repo?: string; n: number };
 type Refs = { prs: PrRef[]; shas: string[]; items: string[]; runs: string[]; branches: string[] };
 

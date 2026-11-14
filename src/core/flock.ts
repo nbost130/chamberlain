@@ -2,13 +2,12 @@
 import { dlopen, FFIType, type Pointer, read } from "bun:ffi";
 import { execFileSync } from "node:child_process";
 import { closeSync, constants, openSync, readFileSync, realpathSync } from "node:fs";
-import { tryLock } from "./singleton.ts";
 
 /** flock(2) operations, the same on Linux and macOS (<sys/file.h>). */
-export const LOCK_EX = 2,
-	LOCK_NB = 4,
-	LOCK_UN = 8;
-export const EINTR = 4;
+const LOCK_EX = 2;
+const LOCK_NB = 4;
+export const LOCK_UN = 8;
+const EINTR = 4;
 /** EWOULDBLOCK, which is EAGAIN on both: 11 on Linux (glibc and musl), 35 on macOS (<sys/errno.h>). */
 export const EWOULDBLOCK = process.platform === "darwin" ? 35 : 11;
 
@@ -166,4 +165,11 @@ export function networkFilesystem(dir: string): string | undefined {
 		/* unknown: say nothing */
 	}
 	return undefined;
+}
+
+/** `flock(fd, LOCK_EX | LOCK_NB)`, retried on EINTR: 0 when held, else the errno. */
+export function tryLock(lib: Flock, fd: number): number {
+	let r = lib.flock(fd, LOCK_EX | LOCK_NB);
+	for (let i = 0; r !== 0 && i < 100 && lib.errno() === EINTR; i++) r = lib.flock(fd, LOCK_EX | LOCK_NB);
+	return r === 0 ? 0 : lib.errno();
 }

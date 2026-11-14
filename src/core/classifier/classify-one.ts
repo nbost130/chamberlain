@@ -1,7 +1,8 @@
 /** Classifying one thread: asking the provider, and recording a failure as an unknown. */
 
-import { type ClassifyThread, decide, decided, dispositionKey, keyOf, type Run, short, unknownOf } from "./classify.ts";
+import type { ClassifyThread, Run } from "./classify.ts";
 import { countUsage } from "./classify-budget.ts";
+import { decide, decided, dispositionKey, keyOf, short, unknownOf } from "./classify-shared.ts";
 import { ProviderError } from "./providers.ts";
 import { buildState, runRedactHook, type SentState, sentChars } from "./state.ts";
 

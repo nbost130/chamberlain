@@ -29,7 +29,7 @@
 import type { ThreadState } from "./adapter.ts";
 import { DEFAULT_RECOVER_TIMING, type FailureKind, MIN, type RecoverTiming } from "./recover-classify.ts";
 import { arm, clearPending, clockTimer, type Env, save, tripped } from "./recover-env.ts";
-import { onFailure } from "./recover-run.ts";
+import { attempt, onFailure } from "./recover-run.ts";
 import { freshState, type Handling, memoryRecoverStore, type RecoverDeps } from "./recover-state.ts";
 
 export function createRecovery(d: RecoverDeps) {
@@ -42,6 +42,7 @@ export function createRecovery(d: RecoverDeps) {
 		store,
 		st: store.load() ?? freshState(),
 		timers: new Map<string, () => void>(),
+		attempt,
 	};
 	return {
 		onFailure: (thread: ThreadState) => onFailure(rc, thread),

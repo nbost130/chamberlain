@@ -1,7 +1,7 @@
 import { inlineScriptSrc, pageLink, readToken, readViewKey, rotateToken } from "../core/capability.ts";
 import { CONF } from "../core/config.ts";
 import { startup } from "../core/migrate.ts";
-import { acceptedHosts, hostPortOf, loadConfigOrExit } from "./server.ts";
+import { acceptedHosts, hostPortOf, loadConfigOrExit } from "./server-config.ts";
 
 /**
  * The addresses the page answers on, as links: the one `publicBase` names (an https address from `tailscale serve`), the bind address, and every

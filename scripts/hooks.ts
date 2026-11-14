@@ -22,38 +22,17 @@
 // <git-common-dir>/chamberlain-hooks/bypass.log. Git has no hook after a `git push --no-verify`, and
 // LEFTHOOK=0 or excluding every job stops lefthook before any code of ours runs; CI runs the same
 // checks on every PR and is what catches those.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { git, readLines, stateDir } from "./hooks-base.ts";
 import { withLock } from "./hooks-lock.ts";
 import { inSnapshot, run, runTests, snapshotCommit, snapshotIndex } from "./hooks-run.ts";
 
 const DROPPING_VARS = ["LEFTHOOK_EXCLUDE", "LEFTHOOK_ONLY"];
-export const LOCK_TIMEOUT_MS = 600_000;
 const MAX_VERIFIED = 500;
 const NO_SHA = /^0+$/;
 /** Reflog actions whose commits git makes without running pre-commit: not a bypass. */
 const REPLAY_ACTIONS = ["cherry-pick", "revert", "rebase", "merge", "pull", "am"];
-
-/**
- * Runs git. The hook's own git calls keep the environment git gave the hook (GIT_DIR, GIT_INDEX_FILE: they name the repository
- * being pushed or committed to); a caller that works on some other repository, as the tests do, passes a sealed `env`.
- */
-export function git(
-	args: string[],
-	cwd?: string,
-	env: Record<string, string | undefined> = process.env,
-): { ok: boolean; out: string } {
-	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", env, ...(cwd ? { cwd } : {}) });
-	return { ok: proc.exitCode === 0, out: proc.stdout.toString().trim() };
-}
-
-export function stateDir(): string {
-	const common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-	if (!common.ok) throw new Error("not a git repository");
-	const dir = join(common.out, "chamberlain-hooks");
-	mkdirSync(dir, { recursive: true });
-	return dir;
-}
 
 /** The environment variables that make lefthook skip jobs, one message each. */
 export function droppedJobs(env: Record<string, string | undefined>): string[] {
@@ -67,10 +46,6 @@ export function isBypass(commit: { parents: number; action: string; tree: string
 	if (commit.parents > 1) return false;
 	if (REPLAY_ACTIONS.some((action) => commit.action.startsWith(action))) return false;
 	return !verified.includes(commit.tree);
-}
-
-export function readLines(file: string): string[] {
-	return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
 }
 
 function guard(): number {

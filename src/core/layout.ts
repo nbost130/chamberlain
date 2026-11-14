@@ -24,29 +24,17 @@
  *
  * This module imports nothing from config.ts (which imports it), so it takes the config directory as an argument and defaults it the same way.
  */
-import {
-	closeSync,
-	existsSync,
-	fsyncSync,
-	lstatSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	renameSync,
-	statSync,
-	writeSync,
-} from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { deprecated, type Legacy, legacyThread, legacyValue, readable, readLegacyText } from "./layout-legacy.ts";
+import { readConfigFile } from "./layout-read.ts";
 import {
 	CONFIG_FILE,
 	CONFIG_SCHEMA_VERSION,
-	ConfigFileError,
 	DEFAULT_CONF,
 	envName,
 	isObject,
 	LEGACY_THREAD_FILES,
-	parseConfigDoc,
 	SCALARS,
 	type ScalarKey,
 	type ScalarKind,
@@ -54,27 +42,7 @@ import {
 	SECRETS_DIR,
 	type ThreadKey,
 } from "./layout-schema.ts";
-import { authorityProblem, isPrivateFile, readPrivate } from "./private.ts";
-
-/** The parsed config.json, or undefined when there is none. The file must be the operator's alone to write (not group- or world-writable). */
-export function readConfigFile(conf = DEFAULT_CONF): Record<string, unknown> | undefined {
-	const p = `${conf}/${CONFIG_FILE}`;
-	let text: string;
-	try {
-		const bad = authorityProblem(lstatSync(p), "file");
-		if (bad) throw new ConfigFileError(`${p}: ${bad}. It names commands the daemon runs: chmod 600 it first.`);
-		text = readFileSync(p, "utf8");
-	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw e;
-	}
-	try {
-		return parseConfigDoc(JSON.parse(text));
-	} catch (e) {
-		if (e instanceof SyntaxError) throw new ConfigFileError(`${p} is not valid JSON: ${e.message}`);
-		throw e;
-	}
-}
+import { isPrivateFile, readPrivate } from "./private.ts";
 
 /** Flushes a directory's entries (a rename, a new file) to disk, so a power loss cannot keep a later step and lose an earlier one. Best effort where a filesystem refuses. */
 export function syncDir(dir: string): void {

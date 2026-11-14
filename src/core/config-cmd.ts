@@ -13,8 +13,9 @@ import { CONF } from "./config.ts";
 import { migrateLayout } from "./config-migrate.ts";
 import type { Plan } from "./config-plan.ts";
 import { revertLayout } from "./config-revert.ts";
-import { cfg, configValue, isPrivateSecret, readConfigFile, setting, settingSource, thread } from "./layout.ts";
+import { cfg, configValue, isPrivateSecret, setting, settingSource, thread } from "./layout.ts";
 import { homeOfOld, oldFileState, reappearedFiles, SECRET_FILE } from "./layout-legacy.ts";
+import { readConfigFile } from "./layout-read.ts";
 import {
 	CONFIG_FILE,
 	envName,

@@ -21,8 +21,8 @@ import { constants, copyFileSync, existsSync, readFileSync, renameSync, statSync
 import { CONF, STATE } from "./config.ts";
 import { startupLayout } from "./config-migrate.ts";
 import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./flock.ts";
-import { readConfigFile } from "./layout.ts";
 import { attachDeprecationLog } from "./layout-legacy.ts";
+import { readConfigFile } from "./layout-read.ts";
 import { ConfigFileError, SECRETS_DIR } from "./layout-schema.ts";
 import { type Entry, entries, upgradeData, versionOfData } from "./migrate-steps.ts";
 import { assertPrivateDir, InsecureModeError, isPrivateFile } from "./private.ts";

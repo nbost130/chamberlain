@@ -1,6 +1,6 @@
 /** The old config directory (a file per setting): reading its values, what a migration moved, and the notices about old files still in use. */
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { readConfigFile } from "./layout.ts";
+import { readConfigFile } from "./layout-read.ts";
 import { isObject, LEGACY_THREAD_FILES, SECRETS_DIR, type ThreadKey } from "./layout-schema.ts";
 import { authorityProblem, isPrivateFile, modeText, privateFile } from "./private.ts";
 import { checkVersion } from "./schema.ts";

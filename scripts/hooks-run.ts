@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scratchGitHome, sealedGitEnv, testRunEnv } from "./git-env.ts";
-import { git } from "./hooks.ts";
+import { git } from "./hooks-base.ts";
 
 /** Writes every file of the index (what the next commit will contain) under `dir`. */
 export function snapshotIndex(

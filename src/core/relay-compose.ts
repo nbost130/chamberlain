@@ -1,8 +1,8 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "./crash.ts";
 import { composeWake, observe } from "./hold.ts";
-import type { Ctx, Lane, RelayDeps, RightsNow } from "./relay-ctx.ts";
-import { flagDead } from "./relay-pass.ts";
+import { alarms } from "./messages.ts";
+import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "./rights-sent.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "./store-wakes.ts";
 
@@ -126,4 +126,24 @@ export async function readRightsNow(
 		r.d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
 		return undefined;
 	}
+}
+
+/** A receiver's dead letters raise its `wake-dead-letter` alarm until the operator retries or cancels them. */
+export function flagDead(r: Ctx, l: Lane) {
+	const dead = r.store.wakes.rows("dead_letter", l.name);
+	if (!dead.length) return;
+	for (const w of dead)
+		if (!r.reported.has(w.deliveryId)) {
+			r.reported.add(w.deliveryId);
+			r.d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts });
+		}
+	raise(
+		r,
+		l.akey("wake-dead-letter"),
+		alarms.wakeDeadLetters(
+			l.desk,
+			dead.map((w) => w.deliveryId),
+			r.max,
+		),
+	);
 }

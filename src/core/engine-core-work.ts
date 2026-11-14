@@ -12,7 +12,8 @@ import { clip, closeCardCommand } from "./engine-support.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
 import { alarms } from "./messages.ts";
 import { announceReturns } from "./snooze.ts";
-import { HEALTH_CONFIG, type Health, handoffDeliveryId, handoffWakeMessage, liveHealth } from "./steward-health.ts";
+import { type Health, handoffDeliveryId, handoffWakeMessage, liveHealth } from "./steward-health.ts";
+import { HEALTH_CONFIG } from "./steward-health-config.ts";
 import { healthTicker } from "./steward-health-ticker.ts";
 import { usageTicker } from "./steward-tokens.ts";
 

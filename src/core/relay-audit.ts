@@ -2,8 +2,8 @@
 import { STALE_AFTER_MS } from "./deliver.ts";
 import { observe } from "./hold.ts";
 import { alarms } from "./messages.ts";
+import { flagDead } from "./relay-compose.ts";
 import { type Ctx, type Lane, raise } from "./relay-ctx.ts";
-import { flagDead } from "./relay-pass.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
 /** Once a minute: keeps each receiver's busy stretch measured, and raises its stale and dead-letter alarms, and the orphan alarm. */

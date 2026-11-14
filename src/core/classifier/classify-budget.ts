@@ -1,6 +1,7 @@
 /** The classifier's daily budget: how many calls and dollars it has spent today and what is left. */
 
-import { DAY_MS, type Run, short } from "./classify.ts";
+import type { Run } from "./classify.ts";
+import { DAY_MS, short } from "./classify-shared.ts";
 import { SENDS_TEXT } from "./config.ts";
 
 /** The state-table key of the day's attempt count: every call to a provider that sends text, and what they cost. */

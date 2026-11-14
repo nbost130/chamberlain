@@ -1,5 +1,5 @@
 /** The Alert Desk's command allowlist: parsing a command's flags and arguments against its spec. */
-import { no, type Verdict } from "./desk-verdict.ts";
+import { no, ok, type Verdict } from "./desk-verdict.ts";
 
 export type Flag = "bool" | RegExp | ((value: string) => boolean);
 export type Spec = {
@@ -70,3 +70,8 @@ function takeFlag(
 	flag[key] = value;
 	return undefined;
 }
+
+export const isVerdict = (x: Parsed | Verdict): x is Verdict => "ok" in x;
+export const verdictOf = (r: Parsed | Verdict): Verdict => (isVerdict(r) ? r : ok);
+
+export const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

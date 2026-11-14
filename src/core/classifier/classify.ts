@@ -19,10 +19,11 @@ import { createHash } from "node:crypto";
 import { readSecret } from "../layout.ts";
 import type { Log } from "../log.ts";
 import type { Store } from "../store.ts";
-import type { DispositionAction, DispositionKey } from "../store-records.ts";
-import { type Bank, combine, type Decision } from "./bank.ts";
+import type { DispositionAction } from "../store-records.ts";
+import type { Bank } from "./bank.ts";
 import { budgetLeft, readDailyUsage, utcDayStart } from "./classify-budget.ts";
 import { classifyOne } from "./classify-one.ts";
+import { decide, decided, dispositionKey, keyOf, short, unknownOf } from "./classify-shared.ts";
 import { type ClassifierConfig, loadBank, SENDS_TEXT } from "./config.ts";
 import { haikuProvider } from "./provider-haiku.ts";
 import { jevProvider, type Provider, rulesProvider } from "./providers.ts";
@@ -51,7 +52,6 @@ export type ClassifyDeps = {
 
 /** How many classification calls run at once. */
 const CONCURRENCY = 4;
-export const DAY_MS = 24 * 3600_000;
 
 /** The real provider a config names. `none` has none. */
 export function buildProvider(c: ClassifierConfig, conf: string): Provider {
@@ -88,13 +88,6 @@ export function bankVersion(bank: Bank, c: ClassifierConfig, model: string): str
 	return createHash("sha256").update(v).digest("hex").slice(0, 16);
 }
 
-export const short = (e: unknown) =>
-	String(e instanceof Error ? e.message : e)
-		.slice(0, 200)
-		.toWellFormed();
-export const unknownOf = (error: string): Classified => ({ action: "unknown", reasons: [], error });
-export const decided = (d: Decision): Classified => ({ action: d.action, reasons: d.reasons });
-
 /** Everything one `classifyIdle` run shares: what it was given, what it has answered, and the budget it has used. */
 export type Run = {
 	c: ClassifierConfig;
@@ -113,22 +106,6 @@ export type Run = {
 	dailySpent: boolean;
 	budgetNote: string | undefined;
 };
-
-export const keyOf = (t: ClassifyThread) => `${t.server}:${t.threadId}:${t.lastMessageHash}`;
-export const dispositionKey = (t: ClassifyThread, version: string): DispositionKey => ({
-	server: t.server,
-	threadId: t.threadId,
-	messageHash: t.lastMessageHash,
-	bankVersion: version,
-});
-
-export const decide = (run: Run, t: ClassifyThread, answers: Record<string, number>) =>
-	combine(
-		run.bank,
-		answers,
-		{ humanAsked: t.previous.from === "human", idleMinutes: t.idleMinutes },
-		{ thresholds: run.c.thresholds, armedGraceMinutes: run.c.armedGraceMinutes },
-	);
 
 /** The bank and the provider. When they cannot be made, every thread is answered `unknown` and this returns undefined. */
 function start(

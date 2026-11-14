@@ -47,7 +47,7 @@
  */
 import { closeSync, constants, fstatSync, openSync, realpathSync, type Stats, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import { EINTR, EWOULDBLOCK, type Flock, flockLib, LOCK_EX, LOCK_NB, LOCK_UN } from "./flock.ts";
+import { EWOULDBLOCK, type Flock, flockLib, LOCK_UN, tryLock } from "./flock.ts";
 import { FILE_MODE } from "./private.ts";
 import { requireTestEnv } from "./test-env.ts";
 
@@ -141,13 +141,6 @@ export function lockCovers(lock: RelayLock, dbPath: string): boolean {
 const held = new Set<string>();
 /** Descriptors to a database this module created (holdRelayLock): kept open, never closed, for the reason in the header. */
 const strays: number[] = [];
-
-/** `flock(fd, LOCK_EX | LOCK_NB)`, retried on EINTR: 0 when held, else the errno. */
-export function tryLock(lib: Flock, fd: number): number {
-	let r = lib.flock(fd, LOCK_EX | LOCK_NB);
-	for (let i = 0; r !== 0 && i < 100 && lib.errno() === EINTR; i++) r = lib.flock(fd, LOCK_EX | LOCK_NB);
-	return r === 0 ? 0 : lib.errno();
-}
 
 /**
  * Takes the relay's lock for the database at `db`, a `flock` on the directory that holds it, or throws RelayRunningError at once (it never

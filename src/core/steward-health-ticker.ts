@@ -1,6 +1,7 @@
 /** The Steward health ticker: the hand-off wake it sends and the tick that measures and publishes the health. */
 
-import { formatHealth, HEALTH_CONFIG, HEALTH_KEY, type Health, readHealth } from "./steward-health.ts";
+import { formatHealth, HEALTH_KEY, type Health, readHealth } from "./steward-health.ts";
+import { HEALTH_CONFIG } from "./steward-health-config.ts";
 import type { Store } from "./store.ts";
 
 type HealthTickerDeps = {

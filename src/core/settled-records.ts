@@ -2,7 +2,8 @@
 import { type QuestionState, questionStates } from "./questions.ts";
 import { readRulings } from "./rulings.ts";
 import { isExpired } from "./rulings-expiry.ts";
-import { oneLine, type SettledRecord } from "./settled.ts";
+import type { SettledRecord } from "./settled.ts";
+import { oneLine } from "./settled-text.ts";
 import type { Store } from "./store.ts";
 
 /** What a settled question's answer says on one line: its option or direction, its note and any ruling it saved. */

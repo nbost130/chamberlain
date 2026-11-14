@@ -4,8 +4,9 @@ import { isObject } from "./config-fold.ts";
 import type { AfterStep } from "./config-migrate.ts";
 import { movedBeforeCrash } from "./config-plan.ts";
 import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./flock.ts";
-import { readConfigFile, syncDir, writeFileDurable } from "./layout.ts";
+import { syncDir, writeFileDurable } from "./layout.ts";
 import { JOURNAL, MIGRATED_SUFFIX, NON_SECRET_HOME } from "./layout-legacy.ts";
+import { readConfigFile } from "./layout-read.ts";
 import { CONFIG_FILE, LEGACY_THREAD_FILES, SECRETS_DIR } from "./layout-schema.ts";
 
 export type RevertReport = {

@@ -1,10 +1,8 @@
 /** The Alert Desk's command allowlist: the checks for journalctl, systemctl, docker and the simple commands. */
 import { GENERIC_SHAPES, type ShapeSet } from "./core/desk-shapes.ts";
-import { checkShape } from "./desk-allowlist.ts";
-import { DIGITS, type Parsed, parse, type Spec, TIME, UNIT } from "./desk-parse.ts";
+import { DIGITS, isVerdict, parse, type Spec, TIME, UNIT, verdictOf } from "./desk-parse.ts";
+import { checkShape } from "./desk-shape.ts";
 import { no, ok, type Verdict } from "./desk-verdict.ts";
-
-const isVerdict = (x: Parsed | Verdict): x is Verdict => "ok" in x;
 
 /** `docker inspect --format` and `docker ps --format`: literal text and `{{.Field}}` for these fields only. No `json`, no `range`, no object that holds the environment. */
 const INSPECT_FIELDS = [
@@ -56,8 +54,6 @@ const journalctl: Spec = {
 	same: { "--reverse": "-r", "--unit": "-u", "--lines": "-n", "--priority": "-p", "--output": "-o" },
 };
 const CONTAINER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
-
-export const verdictOf = (r: Parsed | Verdict): Verdict => (isVerdict(r) ? r : ok);
 
 const SYSTEMCTL: Spec = {
 	flags: {

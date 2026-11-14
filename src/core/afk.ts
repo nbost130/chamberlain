@@ -28,7 +28,6 @@
  * on any path, and a hold with a structured ref when GitHub or the backend shows what it waits on is done. It never reads
  * the prose: only the `item` field links a hold to an answer, so a hold with no item closes through its refs or by `close`.
  */
-
 import {
 	HOLD_USAGE,
 	heldFrom,
@@ -38,6 +37,7 @@ import {
 	refuseIfSettled,
 	requireItem,
 } from "./afk-args.ts";
+import { failExit, usageExit } from "./afk-exit.ts";
 import {
 	type Afk,
 	appendHeld,
@@ -95,18 +95,6 @@ export function brief(store: Store, a: Afk): string {
 			events: ["fire", "skip-empty-wait", "held-by-daemon", "deliver-stale", "alarm"],
 		}),
 	);
-}
-
-/** Prints a usage or refusal line and exits 2. */
-export function usageExit(message: string): never {
-	console.error(message);
-	process.exit(2);
-}
-
-/** Prints the error of a command that failed and exits 1. */
-function failExit(e: unknown): never {
-	console.error((e as Error).message);
-	process.exit(1);
 }
 
 type Command = (store: Store, rest: string[]) => void;
