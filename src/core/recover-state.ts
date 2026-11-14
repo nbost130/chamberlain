@@ -52,7 +52,7 @@ export type RecoverDeps = {
 	timing?: Partial<RecoverTiming>;
 };
 
-export type Failed = { runId: string; at: number; kind: FailureKind };
+type Failed = { runId: string; at: number; kind: FailureKind };
 export type ThreadRecord = {
 	/** The failures of this thread in its current unhealthy stretch, within the horizon. */
 	failures: Failed[];

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { parseAsk } from "../ask.ts";
+import { parseAsk } from "../ask-parse.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
 import { createOutbox } from "./deliver.ts";
@@ -10,10 +10,10 @@ import {
 	type Health,
 	handoffDeliveryId,
 	handoffWakeMessage,
-	healthTicker,
 	measure as measureWith,
 	readHealth,
 } from "./steward-health.ts";
+import { healthTicker } from "./steward-health-ticker.ts";
 
 // The format signal reads a prompt hook that grades each reply; this is its pattern, as an operator would configure it.
 const formatPattern = /FORMAT CONTRACT[^\n]*Last response (broke:|was clean)/;

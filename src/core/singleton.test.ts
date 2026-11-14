@@ -28,15 +28,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-	holdRelayLock,
-	libcCandidates,
-	loadFlock,
-	networkFilesystemIn,
-	RelayDatabaseLinkedError,
-	RelayLockUnavailableError,
-	RelayRunningError,
-} from "./singleton.ts";
+import { libcCandidates, loadFlock, networkFilesystemIn, RelayLockUnavailableError } from "./flock.ts";
+import { holdRelayLock, RelayDatabaseLinkedError, RelayRunningError } from "./singleton.ts";
 import { openStore } from "./sqlite-store.ts";
 
 const HOLD = new URL("../testing/hold-relay.ts", import.meta.url).pathname;

@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseAsk } from "../ask.ts";
+import { parseAsk } from "../ask-parse.ts";
 import { appendHeld, heldOpen } from "../core/afk-held.ts";
 import { type Answer, askQuestion, getQuestion, type Question } from "../core/questions.ts";
 import { claimWake, pageClaim, readRelay, startRelay } from "../core/questions-claim.ts";

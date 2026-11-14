@@ -24,7 +24,7 @@ import {
 import type { Store } from "./store.ts";
 
 type RulingStatus = "in-force" | "proposed" | "retired";
-export type RulingSource = "chat" | "card";
+type RulingSource = "chat" | "card";
 export type RetiredHow = "retired" | "only this once" | "superseded" | "duplicate" | "expired" | "repeat";
 /** The housekeeping reasons a ruling can leave force for. The database keeps them apart from the page's two (retired_reason, migration 11). */
 export const HOUSEKEEPING: ReadonlySet<RetiredHow> = new Set<RetiredHow>([

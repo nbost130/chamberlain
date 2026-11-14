@@ -30,10 +30,10 @@ import {
 import { dirname } from "node:path";
 import { isObject } from "./config-fold.ts";
 import { movedBeforeCrash, type Plan, planMigration } from "./config-plan.ts";
+import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./flock.ts";
 import { ensureSecretsDir, readConfigFile, syncDir, writeConfigFile, writeFileDurable } from "./layout.ts";
 import { attachDeprecationLog, JOURNAL, MIGRATED_SUFFIX, reappeared } from "./layout-legacy.ts";
 import { CONFIG_FILE, parseConfigDoc, SECRETS_DIR, type ThreadKey } from "./layout-schema.ts";
-import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 /** Leftover temporary files of a run that crashed: `secrets/*.tmp-<pid>` and the flushed-write temporaries beside config.json. Safe to remove under the lock. */
 function removeStaleTemporaries(conf: string): void {

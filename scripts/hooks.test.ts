@@ -2,7 +2,8 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { droppedJobs, isBypass, pushedShas, releaseLock, snapshotCommit, snapshotIndex, takeLock } from "./hooks.ts";
+import { droppedJobs, isBypass, pushedShas, snapshotCommit, snapshotIndex } from "./hooks.ts";
+import { releaseLock, takeLock } from "./hooks-lock.ts";
 
 const made: string[] = [];
 /** A fresh temporary directory, removed when the file's tests are done. */

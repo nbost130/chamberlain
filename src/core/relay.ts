@@ -146,7 +146,7 @@ export type Posted = { l: Lane; row: OutboxRow; n: number; res: WakeResult; befo
  * has already landed (and is dropped by the bump), or lands later from `owed` under the old epoch (and writes nothing). Every full stamp
  * composed after the bump carries the new epoch and is POSTed in a later job, after the compaction. If the bump fails, nothing is sent.
  */
-export function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
+function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
 	const { d, store } = r;
 	// Queued behind any wake in flight, and checked when it is its turn: the lock may have been released while it waited.
 	return serially(r, async () => {
@@ -158,3 +158,6 @@ export function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
 		return d.compact.send(deliveryId, "");
 	});
 }
+
+/** The relay as `createRelay` returns it. */
+export type Relay = ReturnType<typeof createRelay>;

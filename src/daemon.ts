@@ -10,19 +10,13 @@ import { postQuestion } from "./ask.ts";
 import { CONF, STATE, selfArgv } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { createEngine } from "./core/engine.ts";
+import { networkFilesystem, RelayLockUnavailableError } from "./core/flock.ts";
 import { ghRead } from "./core/gh.ts";
 import { setting } from "./core/layout.ts";
 import { makeLog } from "./core/log.ts";
 import { maintain } from "./core/maintain.ts";
 import { startup } from "./core/migrate.ts";
-import {
-	holdRelayLock,
-	networkFilesystem,
-	RelayDatabaseLinkedError,
-	type RelayLock,
-	RelayLockUnavailableError,
-	RelayRunningError,
-} from "./core/singleton.ts";
+import { holdRelayLock, RelayDatabaseLinkedError, type RelayLock, RelayRunningError } from "./core/singleton.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 
 /** Runs the daemon until it is stopped. It takes no arguments: its settings are the environment and the config directory. */

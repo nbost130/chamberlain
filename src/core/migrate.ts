@@ -20,13 +20,13 @@
 import { constants, copyFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { CONF, STATE } from "./config.ts";
 import { startupLayout } from "./config-migrate.ts";
+import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./flock.ts";
 import { readConfigFile } from "./layout.ts";
 import { attachDeprecationLog } from "./layout-legacy.ts";
 import { ConfigFileError, SECRETS_DIR } from "./layout-schema.ts";
 import { type Entry, entries, upgradeData, versionOfData } from "./migrate-steps.ts";
 import { assertPrivateDir, InsecureModeError, isPrivateFile } from "./private.ts";
 import { checkVersion, SCHEMA_VERSION, SchemaTooNewError } from "./schema.ts";
-import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 /** The raw records of a file: a list for jsonl (a torn line is `undefined`), one value otherwise, or `undefined` if it isn't JSON. */
 function parse(e: Entry): unknown[] {

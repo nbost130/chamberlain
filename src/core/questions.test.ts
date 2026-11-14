@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseAsk, stageEvidence } from "../ask.ts";
+import { stageEvidence } from "../ask.ts";
+import { parseAsk } from "../ask-parse.ts";
 import { memStore } from "../testing/store.ts";
 import { type Answer, askQuestion, getQuestion, notNow, QUEUE, type Question, questionStates } from "./questions.ts";
 import {

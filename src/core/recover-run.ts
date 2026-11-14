@@ -103,7 +103,7 @@ export async function attempt(rc: Env, threadId: string) {
 }
 
 /** The backend's record of a thread's newest failure; one that cannot be read is logged and comes back undefined. */
-export function readFailure(rc: Env, threadId: string): Promise<RunFailure | undefined> {
+function readFailure(rc: Env, threadId: string): Promise<RunFailure | undefined> {
 	return rc.d.readFailure(threadId).catch((e) => {
 		rc.d.log("recover-read-failed", { threadId, error: String(e).slice(0, 160) });
 		return undefined;

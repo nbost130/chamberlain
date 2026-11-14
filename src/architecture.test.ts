@@ -301,6 +301,7 @@ export const SEND_IS_NOT_A_WAKE: Record<string, string> = {
 	"core/classifier/config.ts":
 		"the idle-thread classifier's `send` settings (how much text a provider gets), a config section, not a transport",
 	"core/classifier/classify.ts": "reads the classifier config's `send` settings; it never sends a wake",
+	"core/classifier/classify-one.ts": "reads the classifier config's `send` settings; it never sends a wake",
 };
 /** The only files that may POST over HTTP, with the reason. */
 export const MAY_POST: Record<string, string> = {

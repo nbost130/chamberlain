@@ -8,7 +8,7 @@ export type Afk = AwayRecord;
  * branch ("owner/repo:branch"), a run ID and the thread that holds its card. Every field is optional.
  */
 export type HoldRef = { pr?: string; issue?: string; branch?: string; runId?: string; threadId?: string };
-export type HeldNote = { t: string; text: string };
+type HeldNote = { t: string; text: string };
 /** `item` is the decision-queue item the hold waits on, so an answer on any path can close it. `notes` are appended to it, never a second hold. */
 /**
  * The card a daemon's card hold waits on, persisted on the hold so closing it needs nothing in memory: after a restart the

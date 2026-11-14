@@ -18,24 +18,22 @@
 // <git-common-dir>/chamberlain-hooks/bypass.log. Git has no hook after a `git push --no-verify`, and
 // LEFTHOOK=0 or excluding every job stops lefthook before any code of ours runs; CI runs the same
 // checks on every PR and is what catches those.
-
 import {
 	appendFileSync,
 	existsSync,
-	linkSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withLock } from "./hooks-lock.ts";
 
 const DROPPING_VARS = ["LEFTHOOK_EXCLUDE", "LEFTHOOK_ONLY"];
-const LOCK_TIMEOUT_MS = 600_000;
+export const LOCK_TIMEOUT_MS = 600_000;
 const MAX_VERIFIED = 500;
 const NO_SHA = /^0+$/;
 /** Reflog actions whose commits git makes without running pre-commit: not a bypass. */
@@ -46,7 +44,7 @@ function git(args: string[], cwd?: string): { ok: boolean; out: string } {
 	return { ok: proc.exitCode === 0, out: proc.stdout.toString().trim() };
 }
 
-function stateDir(): string {
+export function stateDir(): string {
 	const common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
 	if (!common.ok) throw new Error("not a git repository");
 	const dir = join(common.out, "chamberlain-hooks");
@@ -68,7 +66,7 @@ export function isBypass(commit: { parents: number; action: string; tree: string
 	return !verified.includes(commit.tree);
 }
 
-function readLines(file: string): string[] {
+export function readLines(file: string): string[] {
 	return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
 }
 
@@ -147,7 +145,7 @@ function listed(args: string[], root: string): string[] | undefined {
 	return out.ok ? out.out.split("\n").filter((file) => LINTED.test(file)) : undefined;
 }
 
-async function run(cmd: string[], cwd: string): Promise<number> {
+export async function run(cmd: string[], cwd: string): Promise<number> {
 	return await Bun.spawn(cmd, { cwd, stdio: ["inherit", "inherit", "inherit"] }).exited;
 }
 
@@ -248,84 +246,6 @@ async function prePush(): Promise<number> {
 }
 
 // ---- the heavy-work lock ------------------------------------------------------------------------------------------------
-
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function ownerOf(path: string): number {
-	return Number(readLines(path)[0]) || 0;
-}
-
-/**
- * Takes the lock: a file holding our pid, put in place with link(2), which fails if it exists and leaves no moment when
- * the file exists empty. A lock whose owner is gone is moved aside (rename is atomic, so one waiter wins it) and the
- * attempt is made again by the caller's loop.
- */
-export function takeLock(path: string): boolean {
-	const mine = `${path}.${process.pid}.${Date.now()}`;
-	writeFileSync(mine, String(process.pid));
-	try {
-		linkSync(mine, path);
-		return true;
-	} catch {
-		reclaimIfDead(path);
-		return false;
-	} finally {
-		rmSync(mine, { force: true });
-	}
-}
-
-function reclaimIfDead(path: string): void {
-	const owner = ownerOf(path);
-	if (owner && alive(owner)) return;
-	const aside = `${path}.stale.${process.pid}.${Date.now()}`;
-	try {
-		renameSync(path, aside);
-	} catch {
-		return; // another waiter moved it first
-	}
-	// If a live lock was swapped in between our read and the rename, put it back.
-	if (ownerOf(aside) !== owner) {
-		try {
-			linkSync(aside, path);
-		} catch {
-			// a newer lock is already in place: nothing to restore
-		}
-	}
-	rmSync(aside, { force: true });
-}
-
-/** Removes the lock only when it is ours. */
-export function releaseLock(path: string): void {
-	if (ownerOf(path) === process.pid) rmSync(path, { force: true });
-}
-
-async function withLock(cmd: string[], cwd: string): Promise<number> {
-	const path = join(stateDir(), "heavy.lock");
-	const deadline = Date.now() + LOCK_TIMEOUT_MS;
-	while (!takeLock(path)) {
-		if (Date.now() > deadline) {
-			console.error(`hooks: timed out waiting for ${path}. Another worktree is running the checks; wait for it.`);
-			return 1;
-		}
-		await Bun.sleep(1000);
-	}
-	process.on("SIGINT", () => {
-		releaseLock(path);
-		process.exit(130);
-	});
-	try {
-		return await run(cmd, cwd);
-	} finally {
-		releaseLock(path);
-	}
-}
 
 async function install(): Promise<number> {
 	if (process.env.CI) return 0;

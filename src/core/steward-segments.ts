@@ -102,7 +102,7 @@ function promptText(r: Row): string | undefined {
 	return text || (blocks.some((b) => b?.type === "image") ? "[image]" : undefined);
 }
 
-export const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
 const ms = (t: unknown): number | undefined => {
 	const v = typeof t === "string" ? Date.parse(t) : Number.NaN;
 	return Number.isFinite(v) ? v : undefined;

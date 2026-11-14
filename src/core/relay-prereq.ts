@@ -151,11 +151,7 @@ function prerequisiteBlocked(r: Ctx, row: OutboxRow, first: OutboxRow, id: strin
  * A prerequisite sent on its own (its row went, was cancelled, or is behind it in the pass) only while it is still for the state there is now:
  * one for an older state would put older rights after newer ones, so it is cancelled instead (`rights-first-obsolete`). True: send it.
  */
-export async function current(
-	r: Ctx,
-	row: OutboxRow,
-	rightsNow: NonNullable<RelayDeps["rightsNow"]>,
-): Promise<boolean> {
+async function current(r: Ctx, row: OutboxRow, rightsNow: NonNullable<RelayDeps["rightsNow"]>): Promise<boolean> {
 	const { d, store } = r;
 	if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
 	const now = await readRightsNow(r, row, rightsNow);
