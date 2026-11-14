@@ -454,7 +454,7 @@ describe("the hook's decision per tool", () => {
 			"TodoWrite",
 			"mcp__t3-code__t3_thread_send",
 			"mcp__t3-code__t3_thread_read",
-			"mcp__example__example_service_status",
+			"mcp__ops__service_status",
 			"mcp__playwright__playwright_navigate",
 			"SomeToolThatDoesNotExistYet",
 			"bash",
