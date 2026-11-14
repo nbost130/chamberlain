@@ -234,8 +234,9 @@ export function morningPattern(command: string): RegExp {
 	for (const m of command.matchAll(SLOT)) {
 		const lo = m[1] === undefined ? 1 : Number(m[1]);
 		const hi = m[1] === undefined ? MAX_SLOT_DIGITS : m[2] === undefined ? lo : Number(m[2]);
+		if (m.index === undefined) throw Error("morningPattern: a matchAll result carries no index");
 		out += `${esc(command.slice(at, m.index))}\\d{${lo},${hi}}`;
-		at = m.index! + m[0].length;
+		at = m.index + m[0].length;
 	}
 	return new RegExp(`^${out}${esc(command.slice(at))}$`);
 }

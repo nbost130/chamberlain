@@ -299,7 +299,7 @@ export type Transcript = {
 	session: string;
 	thread: string;
 	/** Names a tool call that reads another thread by the thread it reads (see MeasureOptions in steward-health.ts). */
-	threadReadKey?: (tool: string, input: Record<string, any>) => string | undefined;
+	threadReadKey?: (tool: string, input: Record<string, unknown>) => string | undefined;
 };
 
 // ---- the adapter ---------------------------------------------------------------------------------

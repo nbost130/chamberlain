@@ -492,4 +492,6 @@ CREATE INDEX steward_wake_usage_started ON steward_wake_usage (started_at);
 	},
 ];
 
-export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
+const lastMigration = MIGRATIONS.at(-1);
+if (!lastMigration) throw Error("MIGRATIONS lists no migration");
+export const LATEST_MIGRATION = lastMigration.version;
