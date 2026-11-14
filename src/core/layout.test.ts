@@ -88,7 +88,7 @@ describe("parseConfigDoc", () => {
 
 describe("a scalar from the environment", () => {
 	const conf = () => mkdtempSync(`${tmpdir()}/layout-env-`);
-	const get = (key: keyof typeof SCALARS, raw: string | undefined, c = conf()) =>
+	const get = (key: keyof typeof SCALARS, raw: string | undefined, c = conf()): unknown =>
 		setting(
 			key,
 			c,
