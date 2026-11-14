@@ -39,8 +39,11 @@ events have no `corr` and are marked `corr = NULL`, never guessed.
 **Mutable ledger rows.** A row that is edited later (`thread_dispositions` gets its label from `dispositions mark`) is a fact, not an
 event. The reconciler upserts it into `obs.db` as `disposition`, keyed `(server, thread, message_hash, bank_version)`, holding only typed
 fields (`provider`, `ModelName`, `mode`, `action`, reason ids as an `Enum`, `idle_minutes`, `sent_chars`, `redactions`, `input_tokens`,
-`cost_usd_micro`, `latency_ms`, `error_class`, `feedback`, `corrected_action`) and a `rev` that changes with a label. The `error` text is mapped
-to `errClass` and dropped. `mark` writes the ledger, then reconciles that one key, so a read right after is current.
+`cost_usd_micro`, `latency_ms`, `error_class`, `feedback`, `corrected_action`), plus `classified_at` and `answers` (a map of bank question id, validated
+as an `Enum`, to a permille `Int`). `rev` is a hash of every projected field, because a retry (`put`) and `redecide()` change action, reasons and cost as well as labels. The
+ledger has no revision of its own, so every reconcile re-reads the row and the next pass corrects a stale write; one in-process lock serializes them. `mark` writes the
+ledger, then reconciles that key; if that fails, the hourly pass converges it and the report prints the fact's age. The `error` text is mapped to `errClass` and
+dropped. The ledger holds only per-action labels, so agreement is **per action**; per-question accuracy needs question-level labels that do not exist yet (#19's "per question" is out of reach until they do).
 
 | Table | One row per | Key columns | Keep |
 | --- | --- | --- | --- |
@@ -57,6 +60,10 @@ Tokens are stored, never dollars. `prices.json` ships with the release, with `ef
 report prices each turn at the price in force on its date, shows a model with no price as **unpriced** (not zero, and out of the
 headline), and shows every report's `price_version`. A price change never silently moves history. Classifier rows carry their own recorded `cost_usd`;
 it is shown at face value and labeled `recorded`.
+
+**Plans are config, never code.** `plans.claude = "max-20x"` and `plans.codex = "pro"` (Nathan, Q-hlc5v582c) are labels the report prints; each plan's monthly price is `planPriceUsd.claude` / `planPriceUsd.codex`, empty by
+default, and no price appears in code or in `prices.json`. **Share of plan** comes from the `plan_usage` window percentages (mean and peak of each window, time at or above 90%) and needs no price. Dollars are
+always API list price, labeled. Only when a price is set does the report add "list-price value per plan dollar". Codex has no list-price row today, so its spend shows as tokens and share of plan, not dollars.
 
 **Correlation, stated precisely.** `corr` is a 12-hex digest (`corrOf()`) of an *id the code already has*; there is no single id
 from sighting to answer, because the engine creates a delivery id after deciding and composition makes a new one.
@@ -112,7 +119,7 @@ worktree branch → PR head branch; the rest is **unattributed**, and both share
 | --- | --- | --- |
 | Building | builder tokens, wall time | merged PRs by kind from the conventional-commit prefix of the title |
 | Assurance | reviewer and gate tokens | blockers from a one-line trailer in each review comment (`<!-- review: verdict=hold blockers=6 -->`); fix rounds = groups of pushes after a trailer or a `CHANGES_REQUESTED` review, from the PR timeline; regressions = a `fix` PR merged within 7 days whose body or branch names an earlier PR of the same repo (a proxy, labeled), reverts = revert PRs and commits |
-| Coordination | Steward, desk, Decisions tokens, per wake kind, plus the classifier's recorded `cost_usd` | an *empty wake* = a turn with no `decision.logged`, relay or post inside its window |
+| Coordination | Steward, desk, Decisions tokens, per wake kind, plus the classifier's billed cost, summed from one inline `classifier.attempt` event per billed call (the ledger keeps only the last attempt's `cost_usd`, so it would undercount); rows with unknown cost are counted and shown | an *empty wake* = a turn with no `decision.logged`, relay or post inside its window |
 | Nathan's attention | not dollars: questions, time to answer, recommended-picked rate, already-settled rate, interruptions | `question.asked` and `question.answered`; *already settled* = the existing settled matcher (`settled.ts`) finds an in-force ruling at answer time; *interruption* = a `message` turn in the Steward thread, a **proxy that also counts builder reports** until B3 can split by sender |
 
 **Headline.** `outcome points ÷ API-list-price spend`, weekly, with a 4-week median, always printed with raw counts, priced coverage
@@ -129,13 +136,13 @@ week prints no ratio. Splitting work to farm points shows up in the raw counts b
 | Reverts and regressions within 7 days ÷ merges | assurance | strengthen the gate for that kind |
 | Empty-wake share | coordination | put code or the classifier (#14) in front of the wake |
 | Classifier agreement with labels, per action and provider (`feedback`; needs the ~100 labels #19 collects) | coordination | promote shadow to live where it agrees; drop a provider that does not |
-| Classifier net: wakes its non-`escalate` verdicts would have prevented (in shadow, "would have") × the measured cost of an empty wake, minus its own `cost_usd` | coordination | keep `jev`, `haiku` or `rules` only; turn it off if the net is negative |
+| Classifier net, from the live rules (`idle-parents.ts`: `escalate`, `nudge`, `unknown` still report, `settle` folds into the day's digest line, `ignore` is dropped): `ignore` count × the measured cost of an empty wake, plus a smaller credit for `settle`, minus the classifier's billed cost. In shadow it is labeled **estimated** | coordination | keep `jev`, `haiku` or `rules` only; turn it off if the net is negative |
 | Coordination share of spend (start alert at 30%, tune after 4 weeks; 14 d report: orchestration 40%) | coordination | hand off or shrink standing threads |
 | Steward context at wake, wakes left before compaction | coordination | hand off earlier |
 | Questions answered with the recommended option | attention | turn that question class into a ruling |
 | Already-settled questions | attention | fix the settled check |
 | Median time to answer, questions per merged PR | attention | batch, or lower the tier that asks |
-| Time at or above 90% of a plan window (sampled estimate) | cap | shift load to idle days or another plan |
+| Share of plan (mean and peak window utilization) and time at or above 90% (sampled estimates) | cap | shift load to idle days or another plan |
 | Unattributed, unclassified and unpriced shares (target under 10%) | data quality | tag at source |
 | Anomaly: the 3 costliest threads of the week with no merged outcome, linked | all | look at those three |
 
@@ -157,21 +164,23 @@ under `Nice=19`, idle IO and a 10% CPU quota (launchd: `Nice`, `LowPriorityIO`).
 
 1. **Read.** Claude Code transcripts (honoring `CLAUDE_CONFIG_DIR`, including `subagents/`, as `role=subagent`) and Codex rollouts. Claude de-dupes by request id; Codex rollouts carry cumulative counters, so the reader takes deltas. Per request it keeps model and the cache-write TTL split before summing into a turn.
 2. **Resume correctly.** A late duplicate row or a queued prompt can change an earlier turn (the cause of #12's review blockers 3 and 5), so the cursor is the start of the previous two turns, a bounded replay, and an incomplete last line waits for its newline. Rows carry a monotonic `rev`; ingest keeps the higher one. A changed inode or head hash re-reads the file. The cursor advances only after the spool row is fsynced.
-3. **Spool.** NDJSON per day under `spool/`, written by temp-file plus rename. A day file is deleted only on `collect --ack <name>:<sha256>` (it checks the hash); unacknowledged files are kept up to 90 days. One lock file per host stops overlapping runs.
+3. **Spool.** Each run that produced rows seals one immutable gzipped NDJSON chunk under `spool/` (at most 4 MB and 50k rows; a larger run splits), named `<host>-<utc>-<seq>` with a `.meta` of its length and sha256, written by temp-file plus rename. A chunk is never appended to. It is deleted only by `collect --ack <name>:<sha256>`, which checks the hash. One lock file per host stops overlapping runs. Cap: 20 MB per host and 90 days; past either, the oldest unacknowledged chunks are dropped and one durable `spool.lost` row (count, bytes, time range) goes into the next chunk.
 4. **Plan utilization** (#16): one row per account, window and 15-minute slot. The source is recorded (`endpoint`, or a stale cache/rollout read); a stale read is stored but excluded from "time at or above 90%", and a missing slot is unknown, never carried forward. The account id is the provider's own account id, hashed, so hosts sharing an account de-duplicate.
 
 **Pull, over the ssh Mithrandir already has** (no new key, no push). Config `collectHosts`: `omar` as `ssh omar`, and the Mac as `nbost@nathans-macbook-air`, each with the
 absolute path of its `chamberlain` binary (a non-interactive ssh shell does not have it on `PATH`). On its own 15-minute tick Mithrandir collects its own spool, then for
-each host runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <host> <bin> collect --emit` (at most 20 MB a pull; the rest next tick), validates every row against the
-table schema as untrusted input, ingests idempotently by `(host, session, turn_key, rev)`, and only then runs `--ack`. An unreachable host is one `log.change`
-transition, never an error loop. Timers on the Mac and Omar are user-level units. Outcomes (PRs, issues, releases, reviews, reverts) come from
+each host runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <host> <bin> collect --manifest` (chunk name, length, sha256) and then `collect --emit <name>` for at most 5 chunks, all under
+one `timeout 60` that kills the process. The receiver accepts only a name matching `^[a-z0-9._-]{1,80}$` that the manifest listed, reads exactly `length` bytes, and
+rejects a chunk over its limits, with a hash mismatch, or holding a row whose `host` is not the configured name or that fails the table schema (the remote is untrusted).
+A good chunk is ingested in one transaction by `(host, session, turn_key, rev)`, then `--ack <name>:<sha256>`. A short stream, a timeout or a rejection gets no ack and
+the chunk stays; a crash between commit and ack re-pulls the chunk and ingest ignores it. An unreachable host is one `log.change` transition, never an error loop. Timers on the Mac and Omar are user-level units. Outcomes (PRs, issues, releases, reviews, reverts) come from
 GitHub through the daemon's existing `gh` setting, hourly, from Mithrandir only.
 
 | Failure | What happens |
 | --- | --- |
 | Mac or Omar off or unreachable | no spend there; Mithrandir pulls at the first tick after it is back; the report prints "mac: data through <t>" and never zero-fills |
 | Timer or binary broken on a host | the report flags any host silent for over an hour that has reported before; the collector also logs its own `collect.run` (CPU ms, bytes read) |
-| Mithrandir offline, or a pull or ack fails | the host keeps every unacknowledged file; past 90 days the oldest is dropped and `spool.lost` is written to the spool, so it is counted and shown when the next pull lands; a failed ack means a re-pull, which ingest ignores |
+| Mithrandir offline, or a pull, hash check or ack fails | the host keeps every unacknowledged chunk until the byte or age cap, then `spool.lost` records the loss durably and the next pull shows it; no ack follows a failure |
 | Transcript pruned before collect | a gap; recorded as a gap when the oldest remaining file starts after the last cursor |
 
 ## 7. Migration and the reshape of #12, #15, #16
@@ -190,7 +199,7 @@ GitHub through the daemon's existing `gh` setting, hourly, from Mithrandir only.
 **#12**: #14 now holds migration 13 and #12 is moving to 14, so merge it as it is (reviewed, additive, off by default) instead of holding it
 for `obs.db`; its source is the transcripts, so merging early or late loses nothing. B3 reuses its reader and segmenter, adds model, cache-write TTL,
 sidechains and the bounded replay, and writes `usage_turn`. `steward_wake_usage` and the daemon pass become legacy; B8 drops them (one more
-`chamberlain.db` migration, accepted). Until then `steward-health tokens` reads its own table and the report reads `usage_turn`.
+`chamberlain.db` migration, accepted). B3 moves `steward-health tokens` onto `usage_turn` with a parity check against the old table on real transcripts; B8 drops the table only after that passes.
 **#14 and #19**: the table stays a ledger in `chamberlain.db`. `dispositions list` and the evaluation summary read the `disposition` fact through the
 same `obs` query API as `report`; only `mark` writes the ledger. No change to #14 is required; recording output tokens would be a useful one. **#16**: `plan_usage` and the fields above, in `collect`, no JSONL.
 **#15**: shrink to the metric views and `report`; its bucket tagging is now B3 and B5; its surface is `/report`, not the Decisions page.
@@ -201,7 +210,7 @@ same `obs` query API as `report`; only `mark` writes the ledger. No change to #1
 | --- | --- | --- |
 | Log write | one prepared INSERT; 1.9k rows a day today, about 1.0k after the noise fix | p99 under 1 ms in a CI benchmark; write errors never reach the caller |
 | Collector CPU | stat plus appended bytes plus a two-turn replay; 96 runs a day | CPU seconds per run (not elapsed) logged and budgeted at 2 s; over 10 s is a `warn` |
-| Disk | events about 165 KB a day after the fix, about 12 MB at 90 days; `usage_turn` volume unmeasured (Steward alone made 12,003 requests in 7 d) | `obs.db` under 60 MB with indexes and WAL, `spool` under 20 MB a host (its size is bounded by the 90-day cap, not by a successful pull); the retention job shortens raw retention (floor 14 d) when over, an alarm alone is not enforcement |
+| Disk | events about 165 KB a day after the fix, about 12 MB at 90 days; `usage_turn` volume unmeasured (Steward alone made 12,003 requests in 7 d) | `obs.db` under 60 MB with indexes and WAL, `spool` under 20 MB a host ; the retention job shortens raw retention (floor 14 d) when over, an alarm alone is not enforcement |
 | Tokens | zero in logging, collection, metrics and report | the weekly wake (section 5): one wake, about 540k total tokens (PR #12's `answer` median, mostly cache reads), about $0.20 at the report's blended Opus rate |
 
 ## 9. Build pieces, and what only Nathan can decide
@@ -224,26 +233,15 @@ same `obs` query API as `report`; only `mark` writes the ledger. No change to #1
 | --- | --- |
 | (a) outcome weights | the proposal, as a config default (`outcomeWeights`) printed beside every weighted number; reversible |
 | (b) Mac and Omar | pull over the existing ssh; user-level timers; no new key, no push (section 6) |
-| (c) plan tier and price | still asked of Nathan (Q-hlc5v582c); until a price is set in config the report shows API list-price dollars, labeled as such, and never "% of plan" |
+| (c) plan tier and price | answered (Q-hlc5v582c): Claude Max 20x, Codex Pro, no prices. Tiers are `plans.*` config; prices are `planPriceUsd.*`, empty, never hard-coded; the report shows share of plan from window percentages and API list-price dollars, labeled (section 2) |
 | (d) weekly wake | yes, one a week: top 3 changes plus the link (section 5) |
 | (e) `bucket:` line and review trailer | yes; the Steward uses them once the parsers land (B3 for the line, B5 for the trailer) |
 
 ## 10. Review log (Sol, reasoningEffort high: hold, 12 findings, all folded)
 
-| # | Finding | Change |
-| --- | --- | --- |
-| 1 | `note` and short secrets defeat redaction | no free text; typed ids; schema at write, spool and ingest; 0700 dirs (§3) |
-| 2 | no atomic ledger to telemetry handoff | `source_key` plus reconciler replaces "emit on write" (§2) |
-| 3 | one `corr` cannot span the lifecycle | explicit link table; digest cost counted once (§2) |
-| 4 | offsets alone break replay state | bounded replay, `rev`, ack, fsync, locks (§6) |
-| 5 | pricing facts lost before aggregation | per-model rows, TTL split, subagents, versioned prices, unpriced shown (§2, §6) |
-| 6 | stale files are not history | source, freshness, one row per slot, unknown gaps (§6) |
-| 7 | 15-minute loss bound was false | quota not skip, failure table, loss counted (§6) |
-| 8 | metrics without a source | each defined or labeled a proxy; unsupported ones disclaimed; `usage_week` keeps thread and PR (§2, §4) |
-| 9 | headline gameable, hides gaps | dedupe, provisional and partial weeks, raw counts, regressions (§4) |
-| 10 | attention data understated | inventory corrected; reconciler backfills it (§1, §2) |
-| 11 | migration ownership and order | telemetry migrations only in `obs.db`; B6 needs B4; consumers named (§2, §7, §9) |
-| 12 | overhead unsubstantiated | CPU not elapsed, 12 MB corrected, enforcement, wake moved to a decision (§8) |
+Folded: free text and short secrets in redaction; ledger-to-event atomicity (`source_key`, reconciler); correlation across fold and answer; replay and cursor state; per-model pricing facts; stale
+plan reads; the false loss bound; metrics without a source; the gameable headline; understated attention data; migration ownership and order; unmeasured overhead.
 
-Addendum, 2026-11-14 09:10 (#14 merged, #12 renumbered, #19 filed): sections 1, 2, 4, 7 and 9 gained the dispositions source. This addendum was not re-reviewed by Sol.
-Second addendum, 2026-11-14 09:20: the Steward decided the five open items (section 9); collection is now pull-based (section 6), the weekly wake is in section 5.
+Addenda, 2026-11-14: #14, #12 and #19 added to sections 1, 2, 4, 7, 9; the Steward's decisions applied (sections 4, 5, 6, 9). The plan tiers Nathan answered are in section 2. A Sol delta check on those (high) held with 1 blocker and 6
+should-fix findings, now folded: chunked, hash-framed pull and ack; receiver limits and deadline; a byte cap on the spool; a full-field `rev` for mutable facts; live-rule classifier savings from
+per-attempt cost events; the `steward-health tokens` cutover. Not re-checked by Sol.
