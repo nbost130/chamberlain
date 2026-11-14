@@ -230,96 +230,80 @@ const journalctl: Spec = {
 };
 const CONTAINER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
 
+const verdictOf = (r: Parsed | Verdict): Verdict => (isVerdict(r) ? r : ok);
+
+const SYSTEMCTL: Spec = {
+	flags: {
+		"--user": "bool",
+		"--no-pager": "bool",
+		"-l": "bool",
+		"--full": "bool",
+		"-n": DIGITS,
+		"--lines": DIGITS,
+		"--failed": "bool",
+	},
+	same: { "--full": "-l", "--lines": "-n" },
+	positional: UNIT,
+};
+const SYSTEMCTL_VERBS = ["status", "is-active", "is-failed", "list-units"];
+
+function checkSystemctl(args: string[]): Verdict {
+	const r = parse(args, SYSTEMCTL, "systemctl");
+	if (isVerdict(r)) return r;
+	const [sub, ...units] = r.pos;
+	if (!sub || !SYSTEMCTL_VERBS.includes(sub))
+		return no(
+			`systemctl: only status, is-active, is-failed and list-units are allowed (not ${JSON.stringify(sub ?? "")}); cat and show print unit files and environments`,
+		);
+	if (sub === "list-units" && units.length) return no("systemctl list-units takes no unit");
+	if (sub !== "list-units" && units.length === 0) return no(`systemctl ${sub} needs a unit`);
+	return ok;
+}
+
+const DOCKER_PS: Spec = {
+	flags: { "-a": "bool", "--all": "bool", "--no-trunc": "bool", "--format": psFormat },
+	same: { "--all": "-a" },
+	max: 0,
+};
+const DOCKER_LOGS: Spec = {
+	flags: { "--tail": DIGITS, "--since": TIME, "--until": TIME, "-t": "bool", "--timestamps": "bool" },
+	same: { "--timestamps": "-t" },
+	positional: CONTAINER,
+	max: 1,
+	min: 1,
+};
+// One --format, in one spelling, and it is checked as it is parsed: `--format A --format B` and `-f A --format=B` are both refused.
+const DOCKER_INSPECT: Spec = {
+	flags: { "--format": inspectFormat, "-f": inspectFormat },
+	same: { "--format": "-f" },
+	positional: CONTAINER,
+	min: 1,
+	max: 6,
+};
+
+function checkDocker(args: string[]): Verdict {
+	const [sub, ...rest] = args;
+	if (sub === "ps") return verdictOf(parse(rest, DOCKER_PS, "docker ps"));
+	if (sub === "logs") return verdictOf(parse(rest, DOCKER_LOGS, "docker logs"));
+	if (sub === "inspect") {
+		const r = parse(rest, DOCKER_INSPECT, "docker inspect");
+		if (isVerdict(r)) return r;
+		return "-f" in r.flag
+			? ok
+			: no("docker inspect: a --format is required, because the full document holds the container's environment");
+	}
+	return no("docker: only ps, logs and inspect are allowed");
+}
+
 function checkSimple(tokens: string[], shapes: ShapeSet): Verdict {
 	const [name, ...args] = tokens;
 	if (!name || name.includes("/") || name.includes("="))
 		return no("the command must be a bare name from the allowlist");
-	switch (name) {
-		case "journalctl": {
-			const r = parse(args, journalctl, "journalctl");
-			return isVerdict(r) ? r : ok;
-		}
-		case "systemctl": {
-			const r = parse(
-				args,
-				{
-					flags: {
-						"--user": "bool",
-						"--no-pager": "bool",
-						"-l": "bool",
-						"--full": "bool",
-						"-n": DIGITS,
-						"--lines": DIGITS,
-						"--failed": "bool",
-					},
-					same: { "--full": "-l", "--lines": "-n" },
-					positional: UNIT,
-				},
-				"systemctl",
-			);
-			if (isVerdict(r)) return r;
-			const [sub, ...units] = r.pos;
-			if (!sub || !["status", "is-active", "is-failed", "list-units"].includes(sub))
-				return no(
-					`systemctl: only status, is-active, is-failed and list-units are allowed (not ${JSON.stringify(sub ?? "")}); cat and show print unit files and environments`,
-				);
-			if (sub === "list-units" && units.length) return no("systemctl list-units takes no unit");
-			if (sub !== "list-units" && units.length === 0) return no(`systemctl ${sub} needs a unit`);
-			return ok;
-		}
-		case "docker": {
-			const [sub, ...rest] = args;
-			if (sub === "ps") {
-				const r = parse(
-					rest,
-					{
-						flags: { "-a": "bool", "--all": "bool", "--no-trunc": "bool", "--format": psFormat },
-						same: { "--all": "-a" },
-						max: 0,
-					},
-					"docker ps",
-				);
-				return isVerdict(r) ? r : ok;
-			}
-			if (sub === "logs") {
-				const r = parse(
-					rest,
-					{
-						flags: { "--tail": DIGITS, "--since": TIME, "--until": TIME, "-t": "bool", "--timestamps": "bool" },
-						same: { "--timestamps": "-t" },
-						positional: CONTAINER,
-						max: 1,
-						min: 1,
-					},
-					"docker logs",
-				);
-				return isVerdict(r) ? r : ok;
-			}
-			if (sub === "inspect") {
-				// One --format, in one spelling, and it is checked as it is parsed: `--format A --format B` and `-f A --format=B` are both refused.
-				const r = parse(
-					rest,
-					{
-						flags: { "--format": inspectFormat, "-f": inspectFormat },
-						same: { "--format": "-f" },
-						positional: CONTAINER,
-						min: 1,
-						max: 6,
-					},
-					"docker inspect",
-				);
-				if (isVerdict(r)) return r;
-				return "-f" in r.flag
-					? ok
-					: no("docker inspect: a --format is required, because the full document holds the container's environment");
-			}
-			return no("docker: only ps, logs and inspect are allowed");
-		}
-		default: {
-			const shape = GENERIC_SHAPES[name] ?? shapes[name];
-			return shape ? checkShape(name, args, shape) : no(`${JSON.stringify(name.slice(0, 40))} is not on the allowlist`);
-		}
-	}
+	if (name === "journalctl") return verdictOf(parse(args, journalctl, "journalctl"));
+	if (name === "systemctl") return checkSystemctl(args);
+	if (name === "docker") return checkDocker(args);
+	const shape = GENERIC_SHAPES[name] ?? shapes[name];
+	return shape ? checkShape(name, args, shape) : no(`${JSON.stringify(name.slice(0, 40))} is not on the allowlist`);
 }
 
 const KINDS: Record<ValueKind, RegExp> = { digits: DIGITS, word: WORD, unit: UNIT, time: TIME, repo: REPO, ref: REF };
@@ -344,6 +328,21 @@ function specOf(b: ShapeBody): Spec {
 	};
 }
 
+/** The subcommand of `subs` that `args` begins with (a longer name wins over a shorter one), with its body, or undefined when none does. */
+function subcommandOf(subs: Record<string, ShapeBody>, args: string[]): { sub: string; body: ShapeBody } | undefined {
+	const longestFirst = Object.entries(subs).sort(([x], [y]) => y.split(" ").length - x.split(" ").length);
+	const found = longestFirst.find(([k]) => k.split(" ").every((w, i) => args[i] === w));
+	return found && { sub: found[0], body: found[1] };
+}
+
+/** The refusal for a subcommand that is not one of the shape's. */
+function noSuchSubcommand(name: string, subs: string[], bare: boolean | undefined): Verdict {
+	return no(`${name}: only ${subs.map((k) => `\`${k}\``).join(", ")} ${bare ? "(or nothing) " : ""}are allowed`);
+}
+
+const SAFE_PATH = /^[A-Za-z0-9._/-]{1,200}$/;
+const unsafePath = (p: string) => !SAFE_PATH.test(p) || p.startsWith("/") || p.split("/").includes("..");
+
 /** A command that is a data shape (gh, git, and the operator's own): its subcommand is one of the shape's, and the rest fits that subcommand's body. */
 function checkShape(name: string, args: string[], shape: Shape): Verdict {
 	let body: ShapeBody = shape,
@@ -351,29 +350,20 @@ function checkShape(name: string, args: string[], shape: Shape): Verdict {
 		what = name;
 	if (shape.subcommands) {
 		if (args.length === 0 && shape.bare) return ok;
-		const sub = Object.keys(shape.subcommands)
-			.sort((x, y) => y.split(" ").length - x.split(" ").length)
-			.find((k) => k.split(" ").every((w, i) => args[i] === w));
-		if (sub === undefined)
-			return no(
-				`${name}: only ${Object.keys(shape.subcommands)
-					.map((k) => `\`${k}\``)
-					.join(", ")} ${shape.bare ? "(or nothing) " : ""}are allowed`,
-			);
-		body = shape.subcommands[sub]!;
-		rest = args.slice(sub.split(" ").length);
-		what = `${name} ${sub}`;
+		const found = subcommandOf(shape.subcommands, args);
+		if (found === undefined) return noSuchSubcommand(name, Object.keys(shape.subcommands), shape.bare);
+		body = found.body;
+		rest = args.slice(found.sub.split(" ").length);
+		what = `${name} ${found.sub}`;
 	}
 	if (body.paths) {
 		// A `--` ends the flags; what follows is relative paths inside the checkout, never `..` or an absolute path.
 		const dd = rest.indexOf("--");
 		const paths = dd < 0 ? [] : rest.slice(dd + 1);
 		if (dd >= 0) rest = rest.slice(0, dd);
-		if (paths.some((p) => !/^[A-Za-z0-9._/-]{1,200}$/.test(p) || p.startsWith("/") || p.split("/").includes("..")))
-			return no(`${what}: a path after -- must be relative, inside the repo`);
+		if (paths.some(unsafePath)) return no(`${what}: a path after -- must be relative, inside the repo`);
 	}
-	const r = parse(rest, specOf(body), what);
-	return isVerdict(r) ? r : ok;
+	return verdictOf(parse(rest, specOf(body), what));
 }
 
 /**
@@ -405,14 +395,21 @@ export function checkCommand(cmd: unknown, o: { morning?: readonly string[]; sha
 	const t = tokenize(c);
 	if ("error" in t) return no(t.error);
 	const [first, ...pipes] = t.parts;
-	if (pipes.length > 1) return no("at most one pipe, into head, tail or wc");
-	if (pipes.length === 1) {
-		const [p, ...a] = pipes[0]!;
-		const tail = a.join(" ");
-		if (!((p === "head" || p === "tail") && /^-n \d{1,5}$/.test(tail)) && !(p === "wc" && tail === "-l"))
-			return no("a pipe may only go into `head -n N`, `tail -n N` or `wc -l`");
-	}
-	return checkSimple(first!, o.shapes ?? operator().shapes);
+	if (first === undefined) return no("an empty command around a pipe");
+	const pipeFault = pipeRefusal(pipes);
+	if (pipeFault !== undefined) return no(pipeFault);
+	return checkSimple(first, o.shapes ?? operator().shapes);
+}
+
+/** Why the pipes after the command are refused, or undefined when there are none or the one is a final `head -n N`, `tail -n N` or `wc -l`. */
+function pipeRefusal(pipes: string[][]): string | undefined {
+	if (pipes.length > 1) return "at most one pipe, into head, tail or wc";
+	const pipe = pipes[0];
+	if (pipe === undefined) return undefined;
+	const [p, ...a] = pipe;
+	const tail = a.join(" ");
+	const allowed = ((p === "head" || p === "tail") && /^-n \d{1,5}$/.test(tail)) || (p === "wc" && tail === "-l");
+	return allowed ? undefined : "a pipe may only go into `head -n N`, `tail -n N` or `wc -l`";
 }
 
 // ---- file reads --------------------------------------------------------------------------------------
@@ -472,36 +469,44 @@ export function checkTool(
 		case "Grep":
 			return checkPath(i.path);
 		case "Glob":
-			// A glob pattern that is itself absolute, or climbs, would leave the directory the path check approved.
-			if (typeof i.pattern === "string" && (i.pattern.startsWith("/") || i.pattern.split("/").includes("..")))
-				return no("a glob pattern must stay inside the directory it is given");
-			return checkPath(i.path);
+			return checkGlob(i);
 		case "Agent":
-		case "Task": {
-			const gatherer = "gatherer" in o ? o.gatherer : operator().gatherer;
-			if (!gatherer)
-				return no(
-					`${tool}: no gatherer agent is configured (\`gatherer\` in alert-desk.json), so the desk starts no agent`,
-				);
-			if (i.subagent_type !== gatherer) return no(`${tool}: the desk may start only a ${gatherer} gatherer`);
-			// Only the fields a plain gatherer needs. Anything else (isolation, a model, a name, a working directory, a team) is refused, so the
-			// exception cannot be widened into a checkout, a stronger model or a remote run.
-			const extra = Object.keys(i).find((k) => !GATHERER_FIELDS.has(k));
-			if (extra !== undefined)
-				return no(
-					`${tool}: the field ${JSON.stringify(extra.slice(0, 40))} is not allowed when starting a ${gatherer} gatherer`,
-				);
-			if (typeof i.prompt !== "string" || (i.description !== undefined && typeof i.description !== "string"))
-				return no(`${tool}: a ${gatherer} gatherer needs a text prompt`);
-			if (i.run_in_background !== undefined && typeof i.run_in_background !== "boolean")
-				return no(`${tool}: run_in_background must be true or false`);
-			return ok;
-		}
+		case "Task":
+			return checkAgent(tool, i, o);
 		default:
 			return no(
 				`${tool} is not an allowed tool: the desk reads, starts its gatherer agent and files decisions, and does nothing else`,
 			);
 	}
+}
+
+/** A glob pattern that is itself absolute, or climbs, would leave the directory the path check approved. */
+function checkGlob(i: Record<string, unknown>): Verdict {
+	if (typeof i.pattern === "string" && (i.pattern.startsWith("/") || i.pattern.split("/").includes("..")))
+		return no("a glob pattern must stay inside the directory it is given");
+	return checkPath(i.path);
+}
+
+/** The Agent (or Task) tool: allowed only to start the operator's gatherer, with only the fields a plain gatherer needs. */
+function checkAgent(tool: string, i: Record<string, unknown>, o: { gatherer?: string }): Verdict {
+	const gatherer = "gatherer" in o ? o.gatherer : operator().gatherer;
+	if (!gatherer)
+		return no(
+			`${tool}: no gatherer agent is configured (\`gatherer\` in alert-desk.json), so the desk starts no agent`,
+		);
+	if (i.subagent_type !== gatherer) return no(`${tool}: the desk may start only a ${gatherer} gatherer`);
+	// Only the fields a plain gatherer needs. Anything else (isolation, a model, a name, a working directory, a team) is refused, so the
+	// exception cannot be widened into a checkout, a stronger model or a remote run.
+	const extra = Object.keys(i).find((k) => !GATHERER_FIELDS.has(k));
+	if (extra !== undefined)
+		return no(
+			`${tool}: the field ${JSON.stringify(extra.slice(0, 40))} is not allowed when starting a ${gatherer} gatherer`,
+		);
+	if (typeof i.prompt !== "string" || (i.description !== undefined && typeof i.description !== "string"))
+		return no(`${tool}: a ${gatherer} gatherer needs a text prompt`);
+	if (i.run_in_background !== undefined && typeof i.run_in_background !== "boolean")
+		return no(`${tool}: run_in_background must be true or false`);
+	return ok;
 }
 
 export async function main(argv: string[] = process.argv.slice(2)) {
