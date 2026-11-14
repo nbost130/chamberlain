@@ -86,6 +86,7 @@ optional ones it has in `capabilities`. The core and the page degrade cleanly wh
 | `stewardProbe` | optional | The Steward's context size, stall and whether a compaction may go. | no stall alarm, no size tracking, no compaction |
 | `handoffInstruction` | optional | How the Steward starts its own hand-off on this backend; the health check's HAND OFF verdict queues that wake. | the operator is asked to hand off instead |
 | `compact` | optional | How a compaction request reaches the Steward. | the daemon only alarms that the Steward is over its size |
+| `threadLinks` | optional | Links to one thread: the backend's own reference (`ref`) and the link its app opens from a device (`app`). | a card links to its thread only where the config names a prefix for its server |
 
 Thread states use one vocabulary whatever the backend says (`running`, `queued`, `starting`, `preparing`, `waiting`,
 `completed`, `idle`, `interrupted`, `failed`), and `ThreadState` carries optional fields for data some backends have

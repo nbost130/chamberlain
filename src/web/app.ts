@@ -50,7 +50,9 @@ import {
 	type Clock,
 } from "../core/rulings.ts";
 import type { Store } from "../core/store.ts";
+import type { WaitingCard } from "../core/adapter.ts";
 import { resolveEvidence } from "./evidence.ts";
+import { openPage, type Linker } from "./thread-links.ts";
 import { checkCard, needsConfirmation, type SendToThread } from "./waiting.ts";
 
 export type AppDeps = {
@@ -68,7 +70,8 @@ export type AppDeps = {
 	 * no way to leave it out: a page without one would answer anything that reaches its port.
 	 */
 	capability: Capability;
-	threadLinks?: Record<string, string>;
+	/** Each card's thread link, and where `/open/<server>/<threadId>` sends a device (./thread-links.ts). Without it no card links to its thread. */
+	links?: Linker;
 	/** Cards waiting in other threads (src/web/waiting.ts). */
 	mirror?: Pick<import("./waiting.ts").Waiting, "list" | "answer"> &
 		Partial<Pick<import("./waiting.ts").Waiting, "unreachable">>;
@@ -158,9 +161,18 @@ export function createApp(d: AppDeps) {
 	const rulings = () => readRulings(d.store);
 	const decisions = () => d.store.decisions.list();
 
-	const threadLink = (i: QuestionState) =>
-		i.threadId && d.threadLinks?.[i.server] ? d.threadLinks[i.server] + encodeURIComponent(i.threadId) : undefined;
-	const view = (i: QuestionState) => ({ ...i, link: threadLink(i), batchable: batchable(i) });
+	const linkOf = (server: string, threadId: string | undefined) => {
+		if (!threadId || !d.links) return {};
+		const link = d.links.link(server, threadId);
+		const open = d.links.openPath(server, threadId);
+		return { ...(link ? { link } : {}), ...(open ? { open } : {}) };
+	};
+	const view = (i: QuestionState) => ({ ...i, ...linkOf(i.server, i.threadId), batchable: batchable(i) });
+	/** A card read from a thread keeps the link its adapter gave; the page adds the path that opens it from a frame. */
+	const cardView = (c: WaitingCard) => {
+		const open = d.links?.openPath(c.server, c.threadId);
+		return open ? { ...c, open } : c;
+	};
 
 	/**
 	 * A claim whose wake is not yet an outbox row: a thread-routed answer goes straight to its thread, once, and only if that fails is the
@@ -472,7 +484,7 @@ export function createApp(d: AppDeps) {
 			const list = rulings();
 			return json({
 				items: open,
-				cards: d.mirror?.list() ?? [],
+				cards: (d.mirror?.list() ?? []).map(cardView),
 				unreachable: d.mirror?.unreachable?.() ?? [],
 				health: readHealth(d.store) ?? null,
 				healthLimits: HEALTH_CONFIG,
@@ -653,6 +665,8 @@ export function createApp(d: AppDeps) {
 		return inlineReply ? inlineCors(r) : r;
 	};
 	const isShell = (p: string) => p === "/" || p === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(p);
+	/** `/open/<server>/<threadId>`: sends a device on to the thread's link (./thread-links.ts). A link, like a page: `?k=` signs it in. */
+	const isOpen = (p: string) => /^\/open\/[^/]+\/[^/]+$/.test(p);
 
 	async function fetch(req: Request): Promise<Response> {
 		const url = new URL(req.url);
@@ -692,7 +706,9 @@ export function createApp(d: AppDeps) {
 		const cookieOk = !url.pathname.startsWith("/evidence/") || fetchSite === "same-origin" || fetchSite === "none";
 		const byCookie = !inline && cookieOk && d.capability.acceptsCookie(req.headers.get("cookie"));
 		const linkable =
-			req.method === "GET" && !inline && (isShell(url.pathname) || url.pathname.startsWith("/evidence/"));
+			req.method === "GET" &&
+			!inline &&
+			(isShell(url.pathname) || isOpen(url.pathname) || url.pathname.startsWith("/evidence/"));
 		const linkKey = url.searchParams.get(TOKEN_PARAM);
 		const byLink = linkable && linkKey !== null && d.capability.accepts(linkKey);
 		if (!byHeader && !byCookie && !byLink) {
@@ -706,7 +722,7 @@ export function createApp(d: AppDeps) {
 				);
 			return locked(allowed);
 		}
-		if (byLink && isShell(url.pathname)) {
+		if (byLink && (isShell(url.pathname) || isOpen(url.pathname))) {
 			// A link: set the long-lived cookie and go to the same page without the key, so it is not left in the address bar or history.
 			const clean = new URL(url);
 			clean.searchParams.delete(TOKEN_PARAM);
@@ -737,6 +753,7 @@ export function createApp(d: AppDeps) {
 		}
 		if (req.method !== "GET") return withSecurity(fail(404, "not found"));
 		if (url.pathname.startsWith("/evidence/")) return withSecurity(evidence(url));
+		if (isOpen(url.pathname)) return withSecurity(openThread(url.pathname));
 		if (isShell(url.pathname))
 			return withSecurity(
 				new Response(Bun.file(staticPath("/index.html")), {
@@ -744,6 +761,25 @@ export function createApp(d: AppDeps) {
 				}),
 			);
 		return withSecurity(fail(404, "not found"));
+	}
+
+	/** The `/open` page: the target is made from the server name and thread id in the path, never taken from the request. */
+	function openThread(pathname: string): Response {
+		const [, , rawServer, rawThread] = pathname.split("/");
+		let server = "";
+		let threadId = "";
+		try {
+			server = decodeURIComponent(rawServer ?? "");
+			threadId = decodeURIComponent(rawThread ?? "");
+		} catch {
+			return fail(400, "bad thread address");
+		}
+		const target = d.links?.target(server, threadId);
+		if (!target) return fail(404, "no link for this thread");
+		const title = d.mirror?.list().find((c) => c.server === server && c.threadId === threadId)?.threadTitle;
+		return new Response(openPage(target, title ? `“${title}”` : "the thread"), {
+			headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+		});
 	}
 
 	/** How many questions wait on the principal: the count the Decisions thread title shows. */

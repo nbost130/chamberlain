@@ -48,6 +48,7 @@ export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
 	"snapshot",
 	"alertDesk",
 	"handoffInstruction",
+	"threadLinks",
 ];
 
 /**
@@ -288,6 +289,14 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 				}
 			: {}),
 		...(caps.has("handoffInstruction") ? { handoffInstruction: () => "Run the hand-off now." } : {}),
+		...(caps.has("threadLinks")
+			? {
+					threadLinks: (threadId: string) => ({
+						ref: `fake-thread://${encodeURIComponent(threadId)}`,
+						app: `fake-app://threads/${encodeURIComponent(threadId)}`,
+					}),
+				}
+			: {}),
 		...(caps.has("compact")
 			? {
 					compact: {

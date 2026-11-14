@@ -148,6 +148,8 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `tokenFile` | T3 adapter: file in `secrets/` with an `orchestration:read` token. |
 | `operateTokenFile` | Ignored by the page (answer rights come only from the `web` section); read by `chamberlain debug t3x`. File in `secrets/`. |
 | `environmentId` | Set for a server other than the Steward's own: the Steward passes it to the `t3_*` tools. The one without it is "this server". |
+| `linkEnvironmentId` | T3 adapter, optional: the environment id this server's thread links name. Default: `environmentId`, else the id the server reports at `/.well-known/t3/environment` (read in the background, never on the listing's path, and again every 6 hours; until the first read answers, its cards have no thread link). Set it on the Steward's own server only to skip that read: it does not make the server "linked". |
+| `appScheme` | T3 adapter, optional: the URL scheme of the T3 Code app a thread's app link opens (`<appScheme>://threads/<environmentId>/<threadId>`). Default `t3code` (the App Store build); `t3code-preview` or `t3code-dev` for those builds. |
 | `mayBeOffline` | A laptop that sleeps: no alarm when its socket stays down. |
 | `sshHost` | `user@host` reachable by key-based ssh, so `git` can be asked about a worktree path on that machine. |
 
@@ -158,11 +160,21 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `host` | **Required.** The one address to bind: `127.0.0.1`, `::1`, an address in Tailscale's `100.64.0.0/10` or `fd7a:115c:a1e0::/48`. Any other address, any host name and every wildcard is refused. |
 | `port` | Default `3790`. |
 | `allowedHosts` | Extra `Host` header names to accept, such as the machine's MagicDNS name. |
-| `threadLinks` | Server name to the T3 web URL prefix a thread id is appended to, for "Open thread" links. |
-| `mirrorLinks` | Server name to the link base used for mirrored cards (`t3-thread://v2/<environmentId>/`). |
+| `threadLinks` | Optional override. Server name to a prefix the URL-encoded thread id is appended to, for the thread link of a question asked with `chamberlain ask`. Without it a card's link is the server adapter's own (T3: `t3-thread://v2/<environmentId>/<threadId>`). An `http(s)` prefix (a T3 web URL) is also where "Open the thread" sends a device. |
+| `mirrorLinks` | Optional override. Server name to a prefix the thread id is appended to, for a card read from a thread (`t3-thread://v2/<environmentId>/`). Without it the adapter's own link is used, as for `threadLinks`. |
 | `decisionsServer` | `{ "origin": "...", "operateTokenFile": "..." }` (the token file is in `secrets/`): the T3 server hosting the Decisions thread, with an `orchestration:operate` token. Enables the "Decisions · N waiting" title and settling cards. |
 | `answerTokens` | Server name to an operate-token file in `secrets/`: cards on that server become answerable from the page. Without one a server is read-only. |
 | `publicBase` | An `https://` base (for example from `tailscale serve`) used in inline views when T3 is loaded over https. |
+
+**Thread links.** Every card that comes from a thread links to it. The link is the adapter's (`threadLinks` and `mirrorLinks` above
+override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the
+adapter does not issue (T3: a UUID, `mcp:<uuid>`, `mcp:launch:<64 hex>`, `thread:<kind>:...`, `import:<instance>:<session>`), get no
+link rather than a wrong one. A page or view does not
+put that link in front of a device as it is: T3 Code's inline frame opens only `http(s)` links, and no browser or phone opens
+`t3-thread://`. "Open the thread" goes to the page's own `/open/<server>/<threadId>` (signed in with `?k=` like any page link),
+which sends the device on to the thread's app link (T3: `t3code://threads/<environmentId>/<threadId>`, opened by the T3 Code app)
+or to an `http(s)` override. Nothing to configure for the usual layout: the Steward's server reports its own environment, and
+every other server's entry already names it.
 
 **`sweep`** lists your own routine checks, run every two hours:
 
