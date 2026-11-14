@@ -4,109 +4,16 @@
  */
 
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { parseAsk } from "../ask-parse.ts";
+import { describe, expect, test } from "bun:test";
 import { appendHeld, heldOpen } from "../core/afk-held.ts";
-import { type Answer, askQuestion, getQuestion, type Question } from "../core/questions.ts";
+import { type Answer, getQuestion } from "../core/questions.ts";
 import { claimWake, pageClaim, readRelay, startRelay } from "../core/questions-claim.ts";
 import { answerRoute } from "../core/questions-wake.ts";
-import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
-import { openCapability } from "../testing/capability.ts";
-import { testRelay } from "../testing/relay.ts";
 import { fetchWake } from "../testing/wake.ts";
-import { createApp } from "./app.ts";
-import type { SendToThread } from "./waiting.ts";
+import { useWebRouteFixtures } from "../testing/web-route-fixtures.ts";
 
-const HOST = "127.0.0.1:3790";
-const dirs: string[] = [];
-afterEach(() => {
-	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
-
-const routed = (id: string, over: Partial<Question> = {}): Question => ({
-	id,
-	kind: "product",
-	title: `Question ${id}`,
-	context: "ctx",
-	options: [
-		{ label: "Ship the blue one", route: "thread", relay: "Use the blue palette and open the PR." },
-		{ label: "Hold", detail: "re-plan first" },
-	],
-	recommended: 0,
-	thread: "Mobile app",
-	server: "main",
-	threadId: "thread-1",
-	createdAt: "2026-11-09T10:00:00.000Z",
-	...over,
-});
-
-type Sent = { server: string; threadId: string; text: string; seed: string };
-function setup(
-	opts: { send?: (n: number) => { ok: boolean; detail: string } | Error; root?: string; noSender?: boolean } = {},
-) {
-	const root = opts.root ?? mkdtempSync(`${tmpdir()}/chamberlain-route-`);
-	const state = `${root}/state`;
-	const store = openStore(dbPath(state));
-	if (!opts.root) dirs.push(root);
-	const posts: { deliveryId: string; message: string }[] = [];
-	const sends: Sent[] = [];
-	const logs: { event: string; data?: Record<string, unknown> }[] = [];
-	const { drain } = testRelay(
-		store,
-		fetchWake(() => "http://webhook.test/wake", (async (_u: string, init: RequestInit) => {
-			posts.push(JSON.parse(String(init.body)));
-			return new Response(null, { status: 202 });
-		}) as unknown as typeof fetch),
-	);
-	const sendToThread: SendToThread = async (server, threadId, text, seed) => {
-		sends.push({ server, threadId, text, seed });
-		const r = opts.send ? opts.send(sends.length) : { ok: true, detail: `sent to ${server}:${threadId}` };
-		if (r instanceof Error) throw r;
-		return r;
-	};
-	const page = createApp({
-		capability: openCapability(),
-		store,
-		state,
-		log: (event, data) => logs.push({ event, data }),
-		hosts: [HOST],
-		staticDir: `${root}/static`,
-		...(opts.noSender ? {} : { sendToThread }),
-	});
-	const app = {
-		...page,
-		idle: async () => {
-			await page.idle();
-			await drain();
-		},
-	};
-	const tick = async () => {
-		await page.recover();
-		await drain();
-	};
-	const post = (path: string, body: unknown) =>
-		app.fetch(
-			new Request(`http://${HOST}${path}`, {
-				method: "POST",
-				headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" },
-				body: JSON.stringify(body),
-			}),
-		);
-	const add = (i: Question) => askQuestion(store, i);
-	const answer = async (id: string, body: unknown) => {
-		const r = await post(`/api/items/${id}/answer`, body);
-		await app.idle();
-		return r;
-	};
-	return { root, store, state, app, add, answer, posts, sends, logs, tick };
-}
-/** The direct sends on record: one relays row per item that took its one send, with how it ended. */
-const relays = (s: { store: ReturnType<typeof openStore> }) =>
-	[...s.store.claims.listRelays("queue")].map(([item, r]) => ({ item, ...r }));
+const { routed, setup, relays } = useWebRouteFixtures(fetchWake);
 
 describe("a thread-routed option picked with no note", () => {
 	test("goes straight to its thread as one message, and the Steward gets only the ledger and log lines", async () => {
@@ -360,47 +267,5 @@ describe("answers that stay with the Steward", () => {
 		const c = pageClaim(i, a({ label: "Other: make it teal" }));
 		expect(c.relay).toBeUndefined();
 		expect(c.message).toContain("(custom answer)");
-	});
-});
-
-describe("ask.ts validates routing", () => {
-	const base = { kind: "product", title: "T", context: "C", thread: "th", server: "main", threadId: "thread-1" };
-	test("keeps a thread route with its relay text, and drops relay text from a steward option", () => {
-		const i = parseAsk(
-			{
-				...base,
-				options: [
-					{ label: "Go", route: "thread", relay: "  Do it.  " },
-					{ label: "Hold", route: "steward", relay: "ignored" },
-					"Later",
-				],
-			},
-			"Q-abcd1",
-		);
-		expect(i.options).toEqual([
-			{ label: "Go", route: "thread", relay: "Do it." },
-			{ label: "Hold" },
-			{ label: "Later" },
-		]);
-	});
-	test("rejects a thread route with no relay text, one with no threadId, and an unknown route", () => {
-		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "thread" }, "Hold"] }, "Q-x")).toThrow(/relay/);
-		expect(() =>
-			parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: "   " }, "Hold"] }, "Q-x"),
-		).toThrow(/relay/);
-		expect(() =>
-			parseAsk(
-				{ ...base, threadId: undefined, options: [{ label: "Go", route: "thread", relay: "Do it." }, "Hold"] },
-				"Q-x",
-			),
-		).toThrow(/threadId/);
-		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "elsewhere" }, "Hold"] }, "Q-x")).toThrow(/route/);
-		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: 5 }, "Hold"] }, "Q-x")).toThrow(
-			/relay/,
-		);
-	});
-	test("an item with no routes parses as it always has", () => {
-		const i = parseAsk({ ...base, threadId: undefined, options: ["A", "B"] }, "Q-abcd1");
-		expect(i.options).toEqual([{ label: "A" }, { label: "B" }]);
 	});
 });

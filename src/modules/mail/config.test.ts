@@ -1,39 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { EXAMPLE } from "../../testing/modules-mail-config-fixtures.ts";
 import { mailEnabled, parseMail } from "./config.ts";
 import { MAIL_DEFAULTS, UNATTENDED_FLOORS } from "./defaults.ts";
 import { parseRoutes } from "./routes.ts";
-import { daysOf, parseSchedule } from "./schedule.ts";
-
-/** The design's example (docs/EMAIL-TRIAGE.md section 2), as written there. */
-const EXAMPLE = {
-	provider: "gog",
-	mode: "shadow",
-	allowMailToLeaveMachine: true,
-	gog: { command: "gog", account: "me@example.com", timeoutMs: 60000 },
-	scope: { query: "in:inbox", lookbackDays: 7, maxMessagesPerRun: 200 },
-	schedule: { times: ["07:30", "16:30"], days: "mon-fri", tz: "America/New_York", maxRunsPerDay: 4 },
-	labels: { prefix: "Chamberlain" },
-	models: { command: "claude", driver: "haiku", escalate: "sonnet", top: "opus" },
-	budget: {
-		driverCallsPerRun: 10,
-		escalateCallsPerRun: 8,
-		newsletterCallsPerRun: 3,
-		topCallsPerRun: 0,
-		inputTokensPerDay: 600000,
-	},
-	important: { senders: ["@school.example"], words: ["invoice", "due", "contract", "tax", "court", "overdue"] },
-	newsletters: [{ name: "Unsupervised Learning", match: { listId: "<the newsletter's List-Id>" }, maxHighlights: 5 }],
-	interests: ["AI security", "agents", "personal knowledge tools"],
-	routes: [
-		{ id: "steward", label: "Task for the Steward", kind: "steward" },
-		{ id: "reader", label: "Readwise Reader", kind: "command", command: ["/path/to/save-to-reader"] },
-		{ id: "obsidian", label: "Obsidian Reading list", kind: "file", file: "~/notes/Reading list.md" },
-	],
-	defaultRoute: "obsidian",
-	cleanup: {
-		unattended: { minApproval: 0.95, shadowDays: 14, minBatches: 10, sampleRate: 0.25, sampleWindow: 8 },
-	},
-};
 
 describe("mail: off by default", () => {
 	test("absent, empty, or provider none is off; Chamberlain behaves as it does without the module", () => {
@@ -310,31 +279,5 @@ describe("mail.routes", () => {
 		const { defaultRoute: _left, ...withoutDefault } = EXAMPLE;
 		expect(parseMail(withoutDefault).defaultRoute).toBe("obsidian");
 		expect(c.defaultRoute).toBe("obsidian");
-	});
-});
-
-describe("mail.schedule", () => {
-	const D = MAIL_DEFAULTS.schedule;
-	test("days are daily, a range or a list, Monday first", () => {
-		expect(daysOf("daily")).toEqual([0, 1, 2, 3, 4, 5, 6]);
-		expect(daysOf("mon-fri")).toEqual([0, 1, 2, 3, 4]);
-		expect(daysOf("mon,wed,sat-sun")).toEqual([0, 2, 5, 6]);
-		for (const bad of ["", "weekdays", "fri-mon", "mon-tue-wed", "mon,", "Mon"])
-			expect(daysOf(bad), bad).toBeUndefined();
-	});
-	test("times are 24 hour HH:MM and may be empty (only the Steward runs it)", () => {
-		expect(parseSchedule({ times: ["16:30", "07:30"] }, "s", D).times).toEqual(["07:30", "16:30"]);
-		expect(parseSchedule({ times: [] }, "s", D).times).toEqual([]);
-		expect(() => parseSchedule({ times: ["07:30", "07:30"] }, "s", D)).toThrow("each time must be different");
-		for (const times of [["7:30"], ["24:00"], ["07:60"], "07:30", [730]])
-			expect(() => parseSchedule({ times }, "s", D), JSON.stringify(times)).toThrow("times must be");
-	});
-	test("a time zone is local or a real IANA name", () => {
-		expect(parseSchedule({ tz: "Europe/London" }, "s", D).tz).toBe("Europe/London");
-		expect(parseSchedule({ tz: "local" }, "s", D).tz).toBe("local");
-		expect(() => parseSchedule({ tz: "Mars/Olympus" }, "s", D)).toThrow("IANA time zone");
-		expect(() => parseSchedule({ days: "weekdays" }, "s", D)).toThrow("days must be");
-		expect(() => parseSchedule({ maxRunsPerDay: 0 }, "s", D)).toThrow("maxRunsPerDay must be a positive whole number");
-		expect(() => parseSchedule({ every: "3h" }, "s", D)).toThrow('unknown key "every"');
 	});
 });

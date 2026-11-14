@@ -266,3 +266,5 @@ export function createEngine(d: EngineDeps) {
 		notified: () => new Set(core.store.items.list({ source: NOTIFICATION_LOG }).map((i) => i.dedupKey)),
 	};
 }
+
+export type Engine = ReturnType<typeof createEngine>;
