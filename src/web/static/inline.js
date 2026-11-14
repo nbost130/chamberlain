@@ -53,6 +53,7 @@
 .dq-tab.on{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-focus{outline:2px solid var(--primary);outline-offset:2px}
 .dq-row{border-bottom:1px solid var(--border);padding:10px 0;display:flex;flex-direction:column;gap:4px}.dq-row:last-child{border-bottom:0}
 .dq-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground)}
+.dq-link{display:inline-flex;align-items:center;align-self:flex-start;min-height:40px;padding:0 2px;font-size:13px;color:var(--primary);text-decoration:underline;text-underline-offset:3px}
 .dq-go:disabled{opacity:.5}.dq-msg{font-size:13px}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
 	const healthCss = `.dq-health{padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;--health-tone:var(--success)}
 .dq-health-summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:6px 10px}.dq-health-summary::-webkit-details-marker{display:none}.dq-health-summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:10px}.dq-health-chevron{font-size:14px;color:var(--muted-foreground);transition:transform .15s}.dq-health[open]>.dq-health-summary .dq-health-chevron{transform:rotate(90deg)}.dq-health[open]>.dq-health-summary{border-bottom:1px solid var(--border)}
@@ -172,6 +173,12 @@
 		return box;
 	}
 
+	// A link out of this view. T3 Code's frame opens only an http(s) link (it hands it to the app's browser or the phone's), never a
+	// custom scheme such as t3-thread:// or t3code://, so every link here is one of the page's own addresses. None carries a key: the frame holds only the weak view key (never the page key), which cannot sign a browser in, so a link opens signed in only where the browser already holds the page's cookie.
+	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}`; a.target = "_blank"; a.rel = "noopener"; return a; };
+	// The thread's own link goes through the page's /open route, which sends the device on to the app (src/web/thread-links.ts).
+	const threadLink = (open) => (typeof open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(open) ? linkOut("Open the thread", open) : null);
+
 	function card(it) {
 		const c = el("div", "dq-card");
 		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
@@ -182,8 +189,9 @@
 			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; i.onerror = () => i.replaceWith(el("div", "dq-meta", "Image evidence shows on the full queue page.")); ev.append(i); }
 			c.append(ev);
 		}
-		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); return c; }
-		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); return c; }
+		const own = threadLink(it.open);
+		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); if (own) c.append(own); return c; }
+		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); if (own) c.append(own); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
@@ -192,8 +200,9 @@
 			if ((m.type === "approval" || m.type === "goal") && m.command) c.append(el("pre", "dq-cmd", m.command));
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
 			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
-			const full = el("a", "dq-meta", "Open the queue page"); full.href = `${BASE}/`; full.target = "_blank"; full.rel = "noopener"; c.append(full);
-			if (m.link) { const a = el("a", "dq-meta", "Open the thread"); a.href = m.link; a.target = "_blank"; a.rel = "noopener"; c.append(a); }
+			c.append(linkOut("Open the queue page", "/"));
+			const t = threadLink(m.open);
+			if (t) c.append(t);
 			return c;
 		}
 		let choice = Number.isInteger(it.recommended) ? it.recommended : -1;
@@ -225,6 +234,7 @@
 			} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; go.disabled = false; }
 		});
 		c.append(note, go, msg);
+		if (own) c.append(own);
 		return c;
 	}
 	if (DASH) { dash(); return; }

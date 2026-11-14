@@ -17,7 +17,12 @@ export const T3_TESTED = {
 	orchestrationProtocol: 2,
 } as const;
 
-export type ServerEnvironment = { serverVersion?: unknown; orchestrationProtocolVersion?: unknown };
+/** What T3 reports at `/.well-known/t3/environment`: its version, its protocol, and which environment it is (the id its thread links name). */
+export type ServerEnvironment = {
+	serverVersion?: unknown;
+	orchestrationProtocolVersion?: unknown;
+	environmentId?: unknown;
+};
 
 /** Pure: why a server is outside the tested range, or undefined when it is inside. Unknown values are reported, never assumed fine. */
 export function compatWarning(env: ServerEnvironment | undefined, tested = T3_TESTED): string | undefined {

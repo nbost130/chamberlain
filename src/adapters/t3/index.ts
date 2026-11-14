@@ -9,6 +9,7 @@ import type { Gate } from "../../core/hold.ts";
 import { setting } from "../../core/layout.ts";
 import type { ServerEntry } from "../../core/servers.ts";
 import { t3Brief } from "./brief.ts";
+import { t3Linker } from "./links.ts";
 import { postCard } from "./post.ts";
 import { queueGate, readStewardQueue } from "./queue.ts";
 import { t3Server } from "./server.ts";
@@ -37,7 +38,8 @@ export const defaultT3Server = (): ServerEntry => ({
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
 	const link = new T3Link(env, srv);
-	const waiting = createT3Waiting({ server: srv, conf: env.conf, log: env.log });
+	const linker = t3Linker(srv);
+	const waiting = createT3Waiting({ server: srv, conf: env.conf, log: env.log, linker });
 	const wake = webhookWake(() => env.readPrivate("wake-url"));
 	const compactWake = webhookWake(() => env.readPrivate("compact-url"));
 	const isBusy = (): Gate => {
@@ -56,6 +58,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		"snapshot",
 		"alertDesk",
 		"handoffInstruction",
+		"threadLinks",
 	];
 	return {
 		id: "t3",
@@ -91,6 +94,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 				return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
 			},
 		},
+		threadLinks: (threadId) => linker.links(threadId),
 		serverLine: () => t3ServerLine(srv),
 		approvalHint: "The t3_pending_request tool cannot answer it.",
 	};

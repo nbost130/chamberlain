@@ -35,6 +35,7 @@ import { loadServers, makeAdapter } from "../adapters/index.ts";
 import type { Adapter } from "../core/adapter.ts";
 import { createApp } from "./app.ts";
 import { loadConfig } from "./config.ts";
+import { createLinker } from "./thread-links.ts";
 import { titleKeeper } from "./title.ts";
 import { createWaiting, threadSender, withAnswerRights, type ServerAdapter } from "./waiting.ts";
 
@@ -236,7 +237,8 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 		// A thread-routed answer goes to its thread through its server's adapter (`send`), where it has the rights; test mode sends nothing.
 		sendToThread: TEST ? undefined : threadSender(servers),
 		hosts: acceptedHosts(cfg),
-		threadLinks: cfg.threadLinks,
+		// Each card's thread link: the config's prefix for its server when it names one, else the server adapter's own.
+		links: createLinker({ servers, threadLinks: cfg.threadLinks, mirrorLinks: cfg.mirrorLinks }),
 		staticFiles: STATIC_FILES,
 		testMode: TEST,
 		mirror,
