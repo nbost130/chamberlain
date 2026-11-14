@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
+import { decisionRecord } from "./decided.ts";
 import {
 	addInForce,
 	citations,
@@ -15,7 +16,6 @@ import {
 	rulingsText,
 	updateRulings,
 } from "./rulings.ts";
-import { decisionRecord } from "./decided.ts";
 
 /** A store holding eight rulings, as a long-running install would. */
 const seeded = () => {

@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { repeatAtIntervals, NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
+import { NOTIFY_ONCE, repeatAtIntervals, repeatEvery } from "./notification.ts";
 import { DatabaseTooNewError, openStore } from "./sqlite-store.ts";
 import type { Challenge, Store } from "./store.ts";
 

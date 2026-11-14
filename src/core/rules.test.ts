@@ -208,6 +208,29 @@ describe("operating-rules.json", () => {
 		expect(() => parseRulesConfig({ sources: [{ path: "x", sections: ["S"] }] })).toThrow("must be");
 		expect(() => parseRulesConfig({ intro: 3, sources: [{ path: "x", sections: [["A", "whole"]] }] })).toThrow("intro");
 	});
+	test("names the selector form and the heading that is wrong", () => {
+		const bad = (sections: unknown[]) => () => parseRulesConfig({ sources: [{ path: "x", sections }] });
+		expect(bad([["", "whole"]])).toThrow("source 1 section 1 needs a heading");
+		expect(
+			bad([
+				["A", "whole"],
+				[3, "whole"],
+			]),
+		).toThrow("source 1 section 2 needs a heading");
+		expect(bad([{ table: "", rows: "whole" }])).toThrow('section 1: "table" must be the heading the table sits under');
+		expect(bad([{ table: "T", rows: [] }])).toThrow('table "T" needs "rows": "whole" or a list of row prefixes');
+		expect(bad([{ section: "", lines: "whole" }])).toThrow('section 1: "section" must be a heading');
+		expect(bad([{ section: "S", lines: [""] }])).toThrow(
+			'section "S" needs "lines": "whole" or a list of line prefixes',
+		);
+		expect(
+			bad([
+				{ section: "S", lines: "whole" },
+				{ section: "S", as: 3 },
+			]),
+		).toThrow('section 2: "as" must be a heading');
+		expect(bad([null])).toThrow("section 1 must be [heading");
+	});
 	test("refuses a malformed or newer config", () => {
 		expect(() => parseRulesConfig({ source: "x" })).toThrow("sections");
 		expect(() => parseRulesConfig({ source: "x", sections: [["A", []]] })).toThrow('needs "whole"');

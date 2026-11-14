@@ -3,22 +3,21 @@
  * tabbed view (the page, inline) and never a question card, so nothing in that thread blocks. With the page down it
  * is a one-line notice. The queue item is already recorded, so a failed post leaves the question on the page.
  */
-import { TOKEN_FILE, holdsToken, inlineScriptSrc, withoutToken } from "../../core/capability.ts";
-import { readFileSync } from "node:fs";
-import { thread as configThread } from "../../core/layout.ts";
-import { CONF, PrincipalPoss } from "../../core/config.ts";
-import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
-import { cardTag, type Question } from "../../core/questions.ts";
-import { pingViaCli, t3Cli } from "./ping.ts";
 
-export { t3Cli };
+import { readFileSync } from "node:fs";
+import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
+import { holdsToken, inlineScriptSrc, TOKEN_FILE, withoutToken } from "../../core/capability.ts";
+import { CONF, PrincipalPoss } from "../../core/config.ts";
+import { thread as configThread } from "../../core/layout.ts";
+import { cardTag, type Question } from "../../core/questions.ts";
+import { pingViaCli } from "./ping.ts";
 
 /**
  * Pure: the shell the Decisions thread renders: the tabbed view (Waiting, Rulings, Recent), opened on this item. The script address carries the
  * view key (`k=`): the inline frame sends it with every call, and the page refuses a frame that does not. It is the VIEW key, never the page's
  * key: a post is copied into the thread's messages, its tool input and its provider transcript (see VIEW_KEY_FILE in core/capability.ts).
  */
-export const dashShell = (base: string, id: string, viewKey: string) =>
+const dashShell = (base: string, id: string, viewKey: string) =>
 	`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="dq" style="min-height:700px"></div><script src="${inlineScriptSrc(base, viewKey, id).replaceAll("&", "&amp;")}"></script></body></html>`;
 
 /**

@@ -47,10 +47,10 @@ export type ClassifyDeps = {
 
 /** The state-table key of the day's attempt count: every call to a provider that sends text, and what they cost. */
 export const USAGE_KEY = "classifier-usage";
-export type DailyUsage = { day: string; calls: number; usd: number };
+type DailyUsage = { day: string; calls: number; usd: number };
 
 /** How many classification calls run at once. */
-export const CONCURRENCY = 4;
+const CONCURRENCY = 4;
 const DAY_MS = 24 * 3600_000;
 
 /** The real provider a config names. `none` has none. */
@@ -98,6 +98,249 @@ const short = (e: unknown) =>
 const unknownOf = (error: string): Classified => ({ action: "unknown", reasons: [], error });
 const decided = (d: Decision): Classified => ({ action: d.action, reasons: d.reasons });
 
+/** Everything one `classifyIdle` run shares: what it was given, what it has answered, and the budget it has used. */
+type Run = {
+	c: ClassifierConfig;
+	d: ClassifyDeps;
+	out: Map<string, Classified>;
+	bank: Bank;
+	provider: Provider;
+	version: string;
+	/** Whether the provider sends message text off the machine, so the budget counts it. */
+	sends: boolean;
+	day: string;
+	used: { calls: number; usd: number };
+	started: number;
+	spent: number;
+	cached: number;
+	dailySpent: boolean;
+	budgetNote: string | undefined;
+};
+
+const keyOf = (t: ClassifyThread) => `${t.server}:${t.threadId}:${t.lastMessageHash}`;
+const dispositionKey = (t: ClassifyThread, version: string): DispositionKey => ({
+	server: t.server,
+	threadId: t.threadId,
+	messageHash: t.lastMessageHash,
+	bankVersion: version,
+});
+
+const decide = (run: Run, t: ClassifyThread, answers: Record<string, number>) =>
+	combine(
+		run.bank,
+		answers,
+		{ humanAsked: t.previous.from === "human", idleMinutes: t.idleMinutes },
+		{ thresholds: run.c.thresholds, armedGraceMinutes: run.c.armedGraceMinutes },
+	);
+
+/** The bank and the provider. When they cannot be made, every thread is answered `unknown` and this returns undefined. */
+function start(
+	threads: readonly ClassifyThread[],
+	c: ClassifierConfig,
+	d: ClassifyDeps,
+	out: Map<string, Classified>,
+): { bank: Bank; provider: Provider } | undefined {
+	try {
+		return { bank: loadBank(d.conf, c), provider: (d.provider ?? buildProvider)(c, d.conf) };
+	} catch (e) {
+		d.log("classifier-error", { error: short(e) });
+		for (const t of threads) out.set(keyOf(t), unknownOf(`the classifier could not start: ${short(e)}`));
+		return undefined;
+	}
+}
+
+/**
+ * Answers `t` from the cache when it holds a classified row for this exact message and bank, deciding its action again from the stored
+ * answers. True when `t` is settled (answered, or the cache could not be read and it is `unknown`); false when it needs a call.
+ */
+function answeredFromCache(run: Run, t: ClassifyThread): boolean {
+	const k = dispositionKey(t, run.version);
+	try {
+		const row = run.d.store.dispositions.get(k);
+		if (!row || row.action === "unknown") return false;
+		const now = decide(run, t, row.answers);
+		const ids = now.reasons.map((r) => r.id);
+		if (now.action !== row.action || ids.join(",") !== row.reasons.join(",") || row.mode !== run.c.mode)
+			run.d.store.dispositions.redecide(k, {
+				action: now.action as Exclude<DispositionAction, "unknown">,
+				reasons: ids,
+				idleMinutes: t.idleMinutes,
+				mode: run.c.mode,
+			});
+		run.out.set(keyOf(t), decided(now));
+		run.cached++;
+		return true;
+	} catch (e) {
+		run.out.set(keyOf(t), unknownOf(`the disposition cache could not be read: ${short(e)}`));
+		return true;
+	}
+}
+
+/**
+ * The day's usage so far, for a provider that sends text. Every attempt is counted in the state table as it is made (a retry of a failed
+ * call counts again, though it replaces its one disposition row), and the count is never taken as less than the dispositions' own sum for the day.
+ */
+function readDailyUsage(run: Run): { calls: number; usd: number } {
+	try {
+		if (!run.sends) return { calls: 0, usd: 0 };
+		const rows = run.d.store.dispositions.usage(utcDayStart(run.d.now), SENDS_TEXT);
+		const counted = run.d.store.state.get<DailyUsage>(USAGE_KEY);
+		const today = counted?.day === run.day ? counted : { calls: 0, usd: 0 };
+		return { calls: Math.max(rows.calls, today.calls), usd: Math.max(rows.usd, today.usd) };
+	} catch (e) {
+		run.d.log("classifier-error", { error: `the day's usage could not be read: ${short(e)}` });
+		return { calls: Number.POSITIVE_INFINITY, usd: 0 };
+	}
+}
+
+/** Adds calls and spend to the day's count in the state table. Only a provider that sends text is counted; a failure is logged, not thrown. */
+function countUsage(run: Run, calls: number, usd: number) {
+	if (!run.sends || (!calls && !usd)) return;
+	try {
+		run.d.store.state.update<DailyUsage>(USAGE_KEY, (prior) => {
+			const p = prior?.day === run.day ? prior : { day: run.day, calls: 0, usd: 0 };
+			return { day: run.day, calls: p.calls + calls, usd: p.usd + usd };
+		});
+	} catch (e) {
+		run.d.log("classifier-error", { error: `the day's usage could not be counted: ${short(e)}` });
+	}
+}
+
+/** Why no more calls may start, or undefined while the budget holds. */
+function budgetLeft(run: Run): string | undefined {
+	const { budget } = run.c;
+	if (run.started >= budget.maxPerRun) return "budget: maxPerRun reached this run; classified on a later run";
+	if (run.sends && run.used.calls + run.started >= budget.maxCallsPerDay)
+		return "budget: maxCallsPerDay spent until the next UTC day";
+	if (run.sends && run.used.usd + run.spent >= budget.maxUsdPerDay)
+		return "budget: maxUsdPerDay spent until the next UTC day";
+	return undefined;
+}
+
+/** What went out of the machine for one attempt, filled in as it goes so a failure can still report it. */
+type Attempt = { sent: number; redactions: number };
+
+/** One provider call for `t`: the state it may see (redacted when text leaves the machine), the call, and its cost counted. */
+async function ask(run: Run, t: ClassifyThread, attempt: Attempt) {
+	const { c, d } = run;
+	let state: SentState;
+	if (run.sends) {
+		const built = buildState(t, c.send, c.redact.builtin);
+		state = built.state;
+		attempt.redactions = built.redactions;
+		// The hook fails closed: when it throws, nothing has been sent.
+		if (c.redact.command) state = await runRedactHook(c.redact.command, state, d.hook);
+		attempt.sent = sentChars(state);
+	} else state = buildState(t, c.send, false).state;
+	countUsage(run, 1, 0);
+	const r = await run.provider.classify(state, run.bank);
+	if (r.costUsd) {
+		run.spent += r.costUsd;
+		countUsage(run, 0, r.costUsd);
+	}
+	return r;
+}
+
+const baseOf = (run: Run, t: ClassifyThread) => ({
+	...dispositionKey(t, run.version),
+	classifiedAt: run.d.now,
+	provider: run.provider.name,
+	mode: run.c.mode,
+	idleMinutes: t.idleMinutes,
+});
+
+/** A call that failed: `t` is `unknown`, a cost it still incurred is counted, and the failed attempt is written as its disposition. */
+function recordFailure(run: Run, t: ClassifyThread, attempt: Attempt, e: unknown) {
+	const error = short(e);
+	run.out.set(keyOf(t), unknownOf(error));
+	// A call that failed after it was billed still reports its cost.
+	const usage = e instanceof ProviderError ? e.usage : {};
+	if (usage.costUsd) {
+		run.spent += usage.costUsd;
+		countUsage(run, 0, usage.costUsd);
+	}
+	try {
+		run.d.store.dispositions.put({
+			...baseOf(run, t),
+			model: null,
+			action: "unknown",
+			reasons: [],
+			answers: {},
+			sentChars: attempt.sent,
+			redactions: attempt.redactions,
+			inputTokens: usage.inputTokens ?? null,
+			costUsd: usage.costUsd ?? null,
+			latencyMs: null,
+			error,
+		});
+	} catch (w) {
+		run.d.log("classifier-error", { error: `a disposition could not be written: ${short(w)}` });
+	}
+}
+
+/** Classifies one thread with the provider and writes the disposition; a failure becomes `unknown`. */
+async function classifyOne(run: Run, t: ClassifyThread) {
+	const attempt: Attempt = { sent: 0, redactions: 0 };
+	try {
+		const r = await ask(run, t, attempt);
+		const decision = decide(run, t, r.answers);
+		run.d.store.dispositions.put({
+			...baseOf(run, t),
+			model: r.model,
+			action: decision.action,
+			reasons: decision.reasons.map((x) => x.id),
+			answers: r.answers,
+			sentChars: attempt.sent,
+			redactions: attempt.redactions,
+			inputTokens: r.inputTokens ?? null,
+			costUsd: r.costUsd ?? null,
+			latencyMs: r.latencyMs,
+			error: null,
+		});
+		run.out.set(keyOf(t), decided(decision));
+	} catch (e) {
+		recordFailure(run, t, attempt, e);
+	}
+}
+
+/** The next miss: answered `unknown` when the budget is spent, else counted as started and classified. */
+async function classifyWithinBudget(run: Run, t: ClassifyThread) {
+	const over = budgetLeft(run);
+	if (over) {
+		run.budgetNote ??= over;
+		if (over.includes("UTC day")) run.dailySpent = true;
+		run.out.set(keyOf(t), unknownOf(over));
+		return;
+	}
+	run.started++;
+	await classifyOne(run, t);
+}
+
+/** In the selection's order, whatever order the calls finished in. Every thread has an answer by now. */
+function inSelectionOrder(threads: readonly ClassifyThread[], out: Map<string, Classified>): Map<string, Classified> {
+	return new Map(
+		threads.map((t) => {
+			const answer = out.get(keyOf(t));
+			if (!answer) throw Error(`classifyIdle: no answer was recorded for ${keyOf(t)}`);
+			return [keyOf(t), answer] as const;
+		}),
+	);
+}
+
+function logRun(run: Run, ordered: Map<string, Classified>) {
+	const counts: Record<string, number> = {};
+	for (const v of ordered.values()) counts[v.action] = (counts[v.action] ?? 0) + 1;
+	run.d.log("classifier", {
+		provider: run.provider.name,
+		mode: run.c.mode,
+		calls: run.started,
+		cached: run.cached,
+		...counts,
+		...(run.budgetNote ? { budget: run.budgetNote } : {}),
+		...(run.dailySpent ? { dailyBudgetSpent: true } : {}),
+	});
+}
+
 /**
  * The dispositions of `threads`, keyed by `${server}:${threadId}:${lastMessageHash}` (the idle-parents item key). An empty map when the
  * classifier is off. Threads are taken in the order given, so the budget goes to the selection's first threads.
@@ -109,192 +352,33 @@ export async function classifyIdle(
 ): Promise<Map<string, Classified>> {
 	const out = new Map<string, Classified>();
 	if (c.provider === "none" || !threads.length) return out;
-	const keyOf = (t: ClassifyThread) => `${t.server}:${t.threadId}:${t.lastMessageHash}`;
-	let bank: Bank, provider: Provider;
-	try {
-		bank = loadBank(d.conf, c);
-		provider = (d.provider ?? buildProvider)(c, d.conf);
-	} catch (e) {
-		d.log("classifier-error", { error: short(e) });
-		for (const t of threads) out.set(keyOf(t), unknownOf(`the classifier could not start: ${short(e)}`));
-		return out;
-	}
-	const version = bankVersion(bank, c, provider.model);
-	const factsOf = (t: ClassifyThread) => ({ humanAsked: t.previous.from === "human", idleMinutes: t.idleMinutes });
-	const decide = (t: ClassifyThread, answers: Record<string, number>) =>
-		combine(bank, answers, factsOf(t), { thresholds: c.thresholds, armedGraceMinutes: c.armedGraceMinutes });
-	const sends = SENDS_TEXT.includes(c.provider);
-
-	let cached = 0;
-	const misses: ClassifyThread[] = [];
-	for (const t of threads) {
-		const k: DispositionKey = {
-			server: t.server,
-			threadId: t.threadId,
-			messageHash: t.lastMessageHash,
-			bankVersion: version,
-		};
-		try {
-			const row = d.store.dispositions.get(k);
-			if (row && row.action !== "unknown") {
-				const now = decide(t, row.answers);
-				const ids = now.reasons.map((r) => r.id);
-				if (now.action !== row.action || ids.join(",") !== row.reasons.join(",") || row.mode !== c.mode)
-					d.store.dispositions.redecide(k, {
-						action: now.action as Exclude<DispositionAction, "unknown">,
-						reasons: ids,
-						idleMinutes: t.idleMinutes,
-						mode: c.mode,
-					});
-				out.set(keyOf(t), decided(now));
-				cached++;
-				continue;
-			}
-		} catch (e) {
-			out.set(keyOf(t), unknownOf(`the disposition cache could not be read: ${short(e)}`));
-			continue;
-		}
-		misses.push(t);
-	}
-
-	// The budget: this run's calls, and (for a provider that sends text) the UTC day's calls and spend. Every attempt is counted in the
-	// state table as it is made (a retry of a failed call counts again, though it replaces its one disposition row), and the count is never
-	// taken as less than the dispositions' own sum for the day.
-	const day = new Date(utcDayStart(d.now)).toISOString().slice(0, 10);
-	let used = { calls: 0, usd: 0 };
-	try {
-		if (sends) {
-			const rows = d.store.dispositions.usage(utcDayStart(d.now), SENDS_TEXT);
-			const counted = d.store.state.get<DailyUsage>(USAGE_KEY);
-			const today = counted?.day === day ? counted : { calls: 0, usd: 0 };
-			used = { calls: Math.max(rows.calls, today.calls), usd: Math.max(rows.usd, today.usd) };
-		}
-	} catch (e) {
-		used = { calls: Number.POSITIVE_INFINITY, usd: 0 };
-		d.log("classifier-error", { error: `the day's usage could not be read: ${short(e)}` });
-	}
-	const count = (calls: number, usd: number) => {
-		if (!sends || (!calls && !usd)) return;
-		try {
-			d.store.state.update<DailyUsage>(USAGE_KEY, (prior) => {
-				const p = prior?.day === day ? prior : { day, calls: 0, usd: 0 };
-				return { day, calls: p.calls + calls, usd: p.usd + usd };
-			});
-		} catch (e) {
-			d.log("classifier-error", { error: `the day's usage could not be counted: ${short(e)}` });
-		}
+	const started = start(threads, c, d, out);
+	if (!started) return out;
+	const run: Run = {
+		c,
+		d,
+		out,
+		...started,
+		version: bankVersion(started.bank, c, started.provider.model),
+		sends: SENDS_TEXT.includes(c.provider),
+		day: new Date(utcDayStart(d.now)).toISOString().slice(0, 10),
+		used: { calls: 0, usd: 0 },
+		started: 0,
+		spent: 0,
+		cached: 0,
+		dailySpent: false,
+		budgetNote: undefined,
 	};
-	let started = 0;
-	let spent = 0;
-	let dailySpent = false;
-	const budgetLeft = (): string | undefined => {
-		if (started >= c.budget.maxPerRun) return "budget: maxPerRun reached this run; classified on a later run";
-		if (sends && used.calls + started >= c.budget.maxCallsPerDay)
-			return "budget: maxCallsPerDay spent until the next UTC day";
-		if (sends && used.usd + spent >= c.budget.maxUsdPerDay) return "budget: maxUsdPerDay spent until the next UTC day";
-		return undefined;
-	};
-
-	const one = async (t: ClassifyThread) => {
-		const k: DispositionKey = {
-			server: t.server,
-			threadId: t.threadId,
-			messageHash: t.lastMessageHash,
-			bankVersion: version,
-		};
-		let sent = 0;
-		let redactions = 0;
-		const base = { ...k, classifiedAt: d.now, provider: provider.name, mode: c.mode, idleMinutes: t.idleMinutes };
-		try {
-			let state: SentState;
-			if (sends) {
-				const built = buildState(t, c.send, c.redact.builtin);
-				state = built.state;
-				redactions = built.redactions;
-				// The hook fails closed: when it throws, nothing has been sent.
-				if (c.redact.command) state = await runRedactHook(c.redact.command, state, d.hook);
-				sent = sentChars(state);
-			} else state = buildState(t, c.send, false).state;
-			count(1, 0);
-			const r = await provider.classify(state, bank);
-			if (r.costUsd) {
-				spent += r.costUsd;
-				count(0, r.costUsd);
-			}
-			const decision = decide(t, r.answers);
-			d.store.dispositions.put({
-				...base,
-				model: r.model,
-				action: decision.action,
-				reasons: decision.reasons.map((x) => x.id),
-				answers: r.answers,
-				sentChars: sent,
-				redactions,
-				inputTokens: r.inputTokens ?? null,
-				costUsd: r.costUsd ?? null,
-				latencyMs: r.latencyMs,
-				error: null,
-			});
-			out.set(keyOf(t), decided(decision));
-		} catch (e) {
-			const error = short(e);
-			out.set(keyOf(t), unknownOf(error));
-			// A call that failed after it was billed still reports its cost.
-			const usage = e instanceof ProviderError ? e.usage : {};
-			if (usage.costUsd) {
-				spent += usage.costUsd;
-				count(0, usage.costUsd);
-			}
-			try {
-				d.store.dispositions.put({
-					...base,
-					model: null,
-					action: "unknown",
-					reasons: [],
-					answers: {},
-					sentChars: sent,
-					redactions,
-					inputTokens: usage.inputTokens ?? null,
-					costUsd: usage.costUsd ?? null,
-					latencyMs: null,
-					error,
-				});
-			} catch (w) {
-				d.log("classifier-error", { error: `a disposition could not be written: ${short(w)}` });
-			}
-		}
-	};
-
-	let budgetNote: string | undefined;
-	let next = 0;
+	const misses = threads.filter((t) => !answeredFromCache(run, t));
+	// The budget: this run's calls, and (for a provider that sends text) the UTC day's calls and spend.
+	run.used = readDailyUsage(run);
+	// The workers share one iterator, so each miss is taken once, in order.
+	const queue = misses.values();
 	const worker = async () => {
-		while (next < misses.length) {
-			const t = misses[next++]!;
-			const over = budgetLeft();
-			if (over) {
-				budgetNote ??= over;
-				if (over.includes("UTC day")) dailySpent = true;
-				out.set(keyOf(t), unknownOf(over));
-				continue;
-			}
-			started++;
-			await one(t);
-		}
+		for (const t of queue) await classifyWithinBudget(run, t);
 	};
 	await Promise.all(Array.from({ length: Math.min(CONCURRENCY, misses.length) }, worker));
-
-	// In the selection's order, whatever order the calls finished in.
-	const ordered = new Map(threads.map((t) => [keyOf(t), out.get(keyOf(t))!] as const));
-	const counts: Record<string, number> = {};
-	for (const v of ordered.values()) counts[v.action] = (counts[v.action] ?? 0) + 1;
-	d.log("classifier", {
-		provider: provider.name,
-		mode: c.mode,
-		calls: started,
-		cached,
-		...counts,
-		...(budgetNote ? { budget: budgetNote } : {}),
-		...(dailySpent ? { dailyBudgetSpent: true } : {}),
-	});
+	const ordered = inSelectionOrder(threads, out);
+	logRun(run, ordered);
 	return ordered;
 }

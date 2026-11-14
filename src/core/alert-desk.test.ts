@@ -13,10 +13,14 @@ import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
 	ALERT_DESK,
+	type CrashPoint,
 	CURSOR_KEY,
+	type Cursor,
 	DAY_MS,
 	DEFAULTS,
 	DESK_RECEIVER,
+	type DeskConfig,
+	type DeskEvent,
 	drainAlertDesk,
 	inboxPath,
 	localDay,
@@ -33,12 +37,9 @@ import {
 	severityOf,
 	signature,
 	systemTimezone,
-	type Cursor,
-	type CrashPoint,
-	type DeskConfig,
-	type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
+
 const MIB = 1024 * 1024;
 
 const T0 = Date.parse("2026-11-13T15:00:00Z"); // 10:00 ET
@@ -253,7 +254,7 @@ describe("a 24 hour repeat the cap held back is never dropped", () => {
 		expect(alertReasons(r)).toEqual(["new", "new"]);
 		const pending = r.store.items.get(ALERT_DESK, "A#pending");
 		expect(pending?.status).toBe("triggered");
-		expect((pending?.payload as { reason?: string }).reason).toBe("repeat");
+		expect((pending?.payload as { reason?: string } | undefined)?.reason).toBe("repeat");
 		return r;
 	}
 	test("a later pass with the cap still full leaves it pending", () => {
@@ -312,7 +313,7 @@ describe("the inbox file", () => {
 	test("reads only what is new, and leaves a torn last line for the next pass", () => {
 		const r = rig();
 		const cur = fresh();
-		writeFileSync(r.inbox, line({ at: min(0) }) + line({ at: min(1), family: "g" }) + '{"v":1,"fam');
+		writeFileSync(r.inbox, `${line({ at: min(0) }) + line({ at: min(1), family: "g" })}{"v":1,"fam`);
 		expect(readInbox(cur, r.inbox, min(2), cfg).events).toHaveLength(2);
 		expect(readInbox(cur, r.inbox, min(2), cfg).events).toHaveLength(0);
 		appendFileSync(r.inbox, `ily":"h","title":"x","ts":"${new Date(min(2)).toISOString()}"}\n`);

@@ -49,15 +49,14 @@ class El {
 		};
 	}
 	get classList() {
-		const self = this;
 		return {
 			add: (c: string) => {
-				self.className += ` ${c}`;
+				this.className += ` ${c}`;
 			},
 			toggle: (c: string, on: boolean) => {
-				const set = new Set(self.className.split(" ").filter(Boolean));
+				const set = new Set(this.className.split(" ").filter(Boolean));
 				on ? set.add(c) : set.delete(c);
-				self.className = [...set].join(" ");
+				this.className = [...set].join(" ");
 			},
 		};
 	}
@@ -94,7 +93,9 @@ class El {
 		this.attrs[k] = v;
 	}
 	addEventListener(ev: string, fn: () => unknown) {
-		(this.listeners[ev] ??= []).push(fn);
+		const list = this.listeners[ev] ?? [];
+		this.listeners[ev] = list;
+		list.push(fn);
 	}
 	all(pred: (e: El) => boolean): El[] {
 		return [...(pred(this) ? [this] : []), ...this.children.flatMap((c) => c.all(pred))];

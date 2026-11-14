@@ -256,12 +256,12 @@ describe("one item system", () => {
 		expect(itemViolations("core/x.ts", "SELECT alert_count FROM items")).toHaveLength(1);
 		expect(itemViolations("core/x.ts", 'item.status === "woken"')).toHaveLength(1);
 		expect(itemViolations("core/x.ts", "const kind = BLIND;")).toHaveLength(1);
-		expect(itemViolations("core/x.ts", 'writeFileSync(`${cache}/fired.json`, "[]")')).toHaveLength(1);
+		expect(itemViolations("core/x.ts", `writeFileSync(\`\${cache}/fired.json\`, "[]")`)).toHaveLength(1);
 		expect(itemViolations("core/x.ts", 'db.run("UPDATE items SET notification_count = 0")')).toHaveLength(2);
 		expect(itemViolations("core/x.ts", 'run("INSERT INTO items (source) VALUES (?)")')).toHaveLength(1);
 		expect(itemViolations("core/x.ts", "item.notificationCount += 1;")).toHaveLength(1);
 		expect(itemViolations("core/x.ts", "if (now >= item.nextNotificationAt) send();")).toHaveLength(1);
-		expect(itemViolations("core/engine.ts", "readFileSync(`${d}/fired.json`)")).toHaveLength(1);
+		expect(itemViolations("core/engine.ts", `readFileSync(\`\${d}/fired.json\`)`)).toHaveLength(1);
 		// What is allowed: the owners, comments, tests of a read, and the words in prose.
 		expect(itemViolations("core/sqlite-store.ts", 'run("UPDATE items SET notification_count = ?")')).toEqual([]);
 		expect(itemViolations("core/notification.ts", "const due = s.nextNotificationAt; if (now >= due) {}")).toEqual([]);
@@ -528,9 +528,9 @@ describe("one relay: the only code that calls a wake transport", () => {
 		expect(senderViolations("adapters/t3/x.ts", 'await fetch(url, { method: "POST", body })')).toHaveLength(1);
 		expect(senderViolations("web/x.ts", "await fetch(u, { method: 'post' })")).toHaveLength(1);
 		expect(
-			senderViolations("adapters/t3/x.ts", 'const url = readFileSync(`${CONF}/wake-url.steward`, "utf8")'),
+			senderViolations("adapters/t3/x.ts", `const url = readFileSync(\`\${CONF}/wake-url.steward\`, "utf8")`),
 		).toHaveLength(1);
-		expect(senderViolations("adapters/t3/x.ts", "readFileSync(`${CONF}/compact-url`)")).toHaveLength(1);
+		expect(senderViolations("adapters/t3/x.ts", `readFileSync(\`\${CONF}/compact-url\`)`)).toHaveLength(1);
 		expect(senderViolations("web/x.ts", "await homeAdapter.wake.send(id, text)")).toHaveLength(2);
 		expect(senderViolations("core/x.ts", "await compact.send(id, '')")).toHaveLength(1);
 		expect(senderViolations("core/x.ts", "const { wake } = adapter; await wake.send(id, m);")).toHaveLength(2);
@@ -611,7 +611,7 @@ describe("one relay: the only code that calls a wake transport", () => {
 		// Dynamic imports: only a plain string literal is allowed in production code.
 		expect(dynamicImportViolations("cli/x.ts", "await import(name);")).toHaveLength(1);
 		expect(dynamicImportViolations("cli/x.ts", 'await import("../a/" + n + ".ts");')).toHaveLength(1);
-		expect(dynamicImportViolations("cli/x.ts", "await import(`../a/${n}.ts`);")).toHaveLength(1);
+		expect(dynamicImportViolations("cli/x.ts", `await import(\`../a/\${n}.ts\`);`)).toHaveLength(1);
 		expect(dynamicImportViolations("cli/x.ts", "await import(`../a/b.ts`);")).toHaveLength(1);
 		expect(dynamicImportViolations("cli/x.ts", "const r = require(path);")).toHaveLength(1);
 		expect(

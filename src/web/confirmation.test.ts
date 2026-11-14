@@ -8,11 +8,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { WaitingCard } from "../core/adapter.ts";
 import { CHALLENGE_TTL_MS } from "../core/challenge.ts";
+import { openCapability } from "../testing/capability.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";
 import { createWaiting } from "./waiting.ts";
-import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";

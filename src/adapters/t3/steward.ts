@@ -8,7 +8,7 @@ import type { StewardProbe } from "../../core/adapter.ts";
 import { compactBlocked, queueStalled, readStewardQueue, stallAlarm } from "./queue.ts";
 
 /** The Steward's context from T3's own record, read-only. Undefined when there is no Steward here or no turn yet. */
-export function stewardTokens(dbPath: string, threadId: string): number | undefined {
+function stewardTokens(dbPath: string, threadId: string): number | undefined {
 	if (!existsSync(dbPath)) return undefined;
 	let db: Database;
 	try {

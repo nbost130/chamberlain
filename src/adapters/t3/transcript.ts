@@ -4,7 +4,6 @@
  * Steward has such a transcript: any other provider is reported as unavailable, never as healthy.
  */
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
 import type { Transcript } from "../../core/adapter.ts";
 import { thread as stewardThread } from "../../core/layout.ts";
 
@@ -36,7 +35,7 @@ export function resolveSteward(dbPath: string, conf: string): { thread: string; 
 }
 
 /** The Steward's reads of a thread in T3: its `t3_thread_read` tool, and `peek.ts` run from a shell. */
-export function threadReadKey(tool: string, input: Record<string, any>): string | undefined {
+export function threadReadKey(tool: string, input: Record<string, unknown>): string | undefined {
 	if (tool.endsWith("t3_thread_read") && typeof input.threadId === "string")
 		return `${input.environmentId ?? "local"}:${input.threadId}`;
 	if (tool === "Bash") {

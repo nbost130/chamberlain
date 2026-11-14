@@ -5,21 +5,17 @@ import {
 	linkSync,
 	mkdirSync,
 	mkdtempSync,
-	readFileSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { migrateLayout, revertLayout } from "./config-migrate.ts";
 import {
 	COOKIE_MAX_AGE_S,
 	COOKIE_NAME,
-	TOKEN_BYTES,
-	TOKEN_FILE,
-	VIEW_KEY_FILE,
 	ensureToken,
 	ensureViewKey,
 	fileCapability,
@@ -32,8 +28,12 @@ import {
 	readViewKey,
 	rotateToken,
 	sameSecret,
+	TOKEN_BYTES,
+	TOKEN_FILE,
+	VIEW_KEY_FILE,
 	withoutToken,
 } from "./capability.ts";
+import { migrateLayout, revertLayout } from "./config-migrate.ts";
 
 const dirs: string[] = [];
 const conf = () => {

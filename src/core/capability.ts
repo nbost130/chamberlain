@@ -18,8 +18,8 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { SECRETS_DIR, ensureSecretsDir, readSecret } from "./layout.ts";
-import { RelayLockUnavailableError, holdFlock } from "./singleton.ts";
+import { ensureSecretsDir, readSecret, SECRETS_DIR } from "./layout.ts";
+import { holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 /** The secret's name in `secrets/`. */
 export const TOKEN_FILE = "web-token";
@@ -62,6 +62,19 @@ const cookieKey = (token: string) => createHmac("sha256", token).update("chamber
 const sign = (token: string, exp: number) =>
 	createHmac("sha256", cookieKey(token)).update(`${COOKIE_NAME}.v1.${exp}`).digest("hex");
 
+/** Is this one `name=value` part of a Cookie header an unexpired `dq_cap` cookie signed by `token`? */
+function cookiePartValid(part: string, token: string, nowMs: number): boolean {
+	const [k, ...v] = part.trim().split("=");
+	if (k !== COOKIE_NAME) return false;
+	const m = /^v1\.(\d{1,12})\.([0-9a-f]{64})$/.exec(v.join("="));
+	if (!m) return false;
+	const [, expText, mac] = m;
+	if (expText === undefined || mac === undefined) throw Error("the cookie pattern matched without its two groups");
+	const exp = Number(expText);
+	if (exp * 1000 <= nowMs) return false;
+	return sameSecret(mac, sign(token, exp));
+}
+
 /** A capability over a token that `read` supplies on each call (the file may be rotated under a running page). `now` is the clock. */
 export function makeCapability(
 	read: () => string | undefined,
@@ -82,16 +95,7 @@ export function makeCapability(
 		acceptsCookie(header) {
 			const token = read();
 			if (!token) return false;
-			for (const part of (header ?? "").split(";")) {
-				const [k, ...v] = part.trim().split("=");
-				if (k !== COOKIE_NAME) continue;
-				const m = /^v1\.(\d{1,12})\.([0-9a-f]{64})$/.exec(v.join("="));
-				if (!m) continue;
-				const exp = Number(m[1]);
-				if (exp * 1000 <= now()) continue;
-				if (sameSecret(m[2]!, sign(token, exp))) return true;
-			}
-			return false;
+			return (header ?? "").split(";").some((part) => cookiePartValid(part, token, now()));
 		},
 		grant(secure) {
 			const token = read();

@@ -1,0 +1,21 @@
+# Git hooks, installed by `bun install` (the `prepare` script). Same checks as CI (.github/workflows/ci.yml),
+# run on less: staged files at commit, changed files plus the full test suite at push.
+#
+# Each hook is one job: scripts/hooks.ts runs its steps in order and stops at the first failure. The checks run on a
+# snapshot of the staged index (pre-commit) or of each pushed commit (pre-push, which gets them on stdin).
+# Not skippable: the steps refuse LEFTHOOK_EXCLUDE and LEFTHOOK_ONLY. `git commit --no-verify` skips
+# pre-commit, but post-commit still runs and `audit` logs the commit to
+# <git-common-dir>/chamberlain-hooks/bypass.log (scripts/hooks.ts says what git cannot see).
+pre-commit:
+  jobs:
+    - name: checks
+      run: bun scripts/hooks.ts pre-commit
+post-commit:
+  jobs:
+    - name: audit
+      run: bun scripts/hooks.ts audit
+pre-push:
+  jobs:
+    - name: checks
+      use_stdin: true
+      run: bun scripts/hooks.ts pre-push

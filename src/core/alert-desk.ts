@@ -27,31 +27,30 @@
 import { createHash } from "node:crypto";
 import {
 	closeSync,
-	constants,
 	existsSync,
 	fstatSync,
 	openSync,
 	readdirSync,
-	readFileSync,
 	readSync,
 	renameSync,
+	type Stats,
 	statSync,
 	unlinkSync,
 } from "node:fs";
 import { basename, dirname } from "node:path";
 import { selfCommand } from "./config.ts";
-import { type ShapeSet, describeShape, parseGatherer, parseShapes } from "./desk-shapes.ts";
 import type { Outbox, WakeDraft } from "./deliver.ts";
-import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
+import { describeShape, parseGatherer, parseShapes, type ShapeSet } from "./desk-shapes.ts";
 import { CONFIG_FILE, cfg, configValue } from "./layout.ts";
+import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import type { Item, Store } from "./store.ts";
 
 export const ALERT_DESK = "alert-desk";
 export const DESK_RECEIVER = "desk";
-export const DESK_KIND = "alert_desk";
+const DESK_KIND = "alert_desk";
 export const DAY_MS = 24 * 3600_000;
 
-export const SEVERITIES = ["critical", "warning", "info"] as const;
+const SEVERITIES = ["critical", "warning", "info"] as const;
 export type Severity = (typeof SEVERITIES)[number];
 export type DeskEvent = { source: string; family: string; title: string; body: string; ts: string; severity: Severity };
 
@@ -96,7 +95,6 @@ export function systemTimezone(): string {
 	}
 }
 
-export const configPath = (conf: string) => `${conf}/alert-desk.json`;
 export const inboxPath = (env: Record<string, string | undefined>, home: string) =>
 	env.ALERT_DESK_INBOX || `${home}/.cache/alert-desk/inbox.jsonl`;
 
@@ -134,10 +132,8 @@ export function readConfig(conf: string): DeskConfig {
  * the desk may run: they are read only from an alert-desk.json the operator owns that no group or other user can write (`authorityProblem`).
  */
 export type MorningSources = { commands: string[]; notes?: string };
-/** In a morning command, the place for a number (`--limit <N>`, `time >= <N>`): one to twelve digits. */
-export const NUMBER_SLOT = "<N>";
 /** The widest number a slot may take, in digits, whatever width it gives. */
-export const MAX_SLOT_DIGITS = 12;
+const MAX_SLOT_DIGITS = 12;
 /**
  * A number slot: `<N>` (1 to 12 digits), `<N:a-b>` (a to b digits, `<N:1-5>`) or `<N:a>` (exactly a digits), with 1 <= a <= b <= 12.
  * Anything else that starts `<N:` is a malformed slot, and the command holding it is left out (`slotProblem`).
@@ -145,7 +141,7 @@ export const MAX_SLOT_DIGITS = 12;
 const SLOT = /<N(?::(\d{1,2})(?:-(\d{1,2}))?)?>/g;
 
 /** Pure: why a morning command's number slots are malformed, or undefined when every slot is well formed. */
-export function slotProblem(command: string): string | undefined {
+function slotProblem(command: string): string | undefined {
 	for (const m of command.matchAll(SLOT)) {
 		if (m[1] === undefined) continue;
 		const lo = Number(m[1]),
@@ -236,8 +232,9 @@ export function morningPattern(command: string): RegExp {
 	for (const m of command.matchAll(SLOT)) {
 		const lo = m[1] === undefined ? 1 : Number(m[1]);
 		const hi = m[1] === undefined ? MAX_SLOT_DIGITS : m[2] === undefined ? lo : Number(m[2]);
+		if (m.index === undefined) throw Error("morningPattern: a matchAll result carries no index");
 		out += `${esc(command.slice(at, m.index))}\\d{${lo},${hi}}`;
-		at = m.index! + m[0].length;
+		at = m.index + m[0].length;
 	}
 	return new RegExp(`^${out}${esc(command.slice(at))}$`);
 }
@@ -266,7 +263,7 @@ export const deskAskCommand = (
 ) => (env.DESK_ASK_PATH ? `bun ${env.DESK_ASK_PATH}` : selfCommand("ask", o));
 
 /** Pure: the morning sources as the prompt lists them. */
-export function morningSourcesText(m: MorningSources): string {
+function morningSourcesText(m: MorningSources): string {
 	if (!m.commands.length)
 		return "   No morning sources are configured (`morningCommands` in alert-desk.json). Report what the morning wake carries, and say that no other source was read.";
 	const code = (c: string) => (c.includes("`") ? `\`\` ${c} \`\`` : `\`${c}\``);
@@ -299,21 +296,21 @@ export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
 }
 
 /** Pure: the evidence-gathering step, which names the operator's gatherer agent when there is one. */
-export function gatherStepText(gatherer?: string): string {
+function gatherStepText(gatherer?: string): string {
 	return gatherer
 		? `Fan out at most 4 \`${gatherer}\` subagents for the family (Agent tool, \`subagent_type: "${gatherer}"\`). Brief each one with one narrow question and one read-only command or file, and nothing else. Do not read the logs yourself; you decide, they read.`
 		: "No gatherer agent is configured, so read the evidence yourself: one narrow question at a time, each with one read-only command or file from the list below.";
 }
 
 /** Pure: the tools the desk has, which include the Agent tool only for the operator's gatherer. */
-export function toolListText(gatherer?: string): string {
+function toolListText(gatherer?: string): string {
 	return gatherer
 		? `Bash (in these shapes), Read, Grep, Glob and the Agent tool for \`${gatherer}\` gatherers`
 		: "Bash (in these shapes), Read, Grep and Glob";
 }
 
 /** Pure: the operator's own command shapes as bullets for the list of what may run (empty when there are none). */
-export function operatorCommandsText(shapes: ShapeSet): string {
+function operatorCommandsText(shapes: ShapeSet): string {
 	return Object.entries(shapes)
 		.map(([name, shape]) => `\n- ${describeShape(name, shape).join(", ")}.`)
 		.join("");
@@ -360,7 +357,7 @@ const blank = (s: string) =>
 		.replace(/\s+/g, " ")
 		.trim();
 /** How much of the body takes part: the opening says what failed, the tail is usually a log excerpt that differs every time. */
-export const SIGNATURE_BODY_CHARS = 300;
+const SIGNATURE_BODY_CHARS = 300;
 export function signature(e: Pick<DeskEvent, "severity" | "title" | "body">): string {
 	return createHash("sha1")
 		.update([e.severity, blank(e.title), blank(e.body.slice(0, SIGNATURE_BODY_CHARS))].join("\n"))
@@ -370,13 +367,13 @@ export function signature(e: Pick<DeskEvent, "severity" | "title" | "body">): st
 
 // ---- wake text --------------------------------------------------------------------------------------
 
-export type Reason = "new" | "changed" | "repeat";
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
+type Reason = "new" | "changed" | "repeat";
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const wakeId = (family: string, sig: string, ts: string) =>
 	`desk:${createHash("sha1").update(`${family}\n${sig}\n${ts}`).digest("hex").slice(0, 16)}`;
 
 /** Pure: the text the desk is woken with. The alert text is data; the standing prompt says what to do with it. */
-export function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, windowMin: number): string {
+function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, windowMin: number): string {
 	return [
 		`[alert-desk] ${e.severity.toUpperCase()} alert family ${e.family} (${reason})`,
 		`From ${e.source} at ${e.ts}.${absorbed ? ` ${absorbed} more event${absorbed === 1 ? "" : "s"} for this family ${absorbed === 1 ? "was" : "were"} folded since its last wake (window ${windowMin} min).` : ""}`,
@@ -388,7 +385,7 @@ export function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, win
 	].join("\n");
 }
 
-export function capMessage(cfg: DeskConfig, deferred: string[]): string {
+function capMessage(cfg: DeskConfig, deferred: string[]): string {
 	return [
 		`[alert-desk] daily cap reached: ${cfg.dailyCap} alert wakes in the last 24 h`,
 		`${deferred.length} famil${deferred.length === 1 ? "y is" : "ies are"} waiting and will wake as older wakes leave the 24 h window: ${deferred.slice(0, 8).join(", ")}${deferred.length > 8 ? ", …" : ""}.`,
@@ -414,7 +411,7 @@ export function localDay(now: number, tz: string): { day: string; hour: number }
 }
 
 /** Pure: the morning wake's text. It carries what the desk already handled, so the sweep reads only the sources the inbox lacks. */
-export function morningMessage(
+function morningMessage(
 	day: string,
 	handled: { family: string; wakes: number; severity: string; title: string }[],
 	waiting: string[],
@@ -437,6 +434,51 @@ export function morningMessage(
 const MAX_READ = 4 * 1024 * 1024;
 /** What an oversized chunk (4 MiB with no newline in it) becomes: a line that is never an event, so it is counted as bad and skipped. */
 const OVERSIZED = "\u0000oversized";
+/** Up to `len` bytes of `fd` from `start`, fewer if the file ends first. */
+function readChunk(fd: number, start: number, len: number): Buffer {
+	const buf = Buffer.alloc(len);
+	let got = 0;
+	while (got < len) {
+		const n = readSync(fd, buf, got, len - got, start + got);
+		if (n <= 0) break;
+		got += n;
+	}
+	return buf.subarray(0, got);
+}
+
+/** True when the byte before `start` is not a newline: the cursor sits inside a line that was already counted as bad. */
+function startsMidLine(fd: number, start: number, got: number): boolean {
+	if (start <= 0 || got <= 0) return false;
+	const prev = Buffer.alloc(1);
+	return readSync(fd, prev, 0, 1, start - 1) === 1 && prev[0] !== 10;
+}
+
+/** The whole lines of `body` (which begins at file offset `base`) and the offset after the last one consumed; see readLines for the two tails. */
+function wholeLines(
+	body: Buffer,
+	base: number,
+	o: { start: number; got: number; skip: number; final: boolean; atEof: boolean },
+): { lines: string[]; end: number } {
+	const cut = body.lastIndexOf(10);
+	let end = base + (cut < 0 ? 0 : cut + 1);
+	const lines =
+		cut < 0
+			? []
+			: body
+					.subarray(0, cut + 1)
+					.toString("utf8")
+					.split("\n")
+					.filter(Boolean);
+	if (cut < 0 && o.skip === 0 && o.got >= MAX_READ) {
+		lines.push(OVERSIZED);
+		end = o.start + o.got;
+	} else if (o.final && o.atEof && end < o.start + o.got) {
+		lines.push(body.subarray(end - base).toString("utf8"));
+		end = o.start + o.got;
+	}
+	return { lines, end };
+}
+
 /**
  * Reads whole lines of `path` from `from`, at most MAX_READ bytes. `end` is the offset after the last byte consumed, so a caller that saves
  * `end` has recorded exactly what it read. A torn tail is left for the next pass, unless `final` (a retired file no writer holds any more) and
@@ -458,55 +500,27 @@ function readLines(
 	try {
 		const st = fstatSync(fd);
 		const start = st.size < from ? 0 : from;
-		const len = Math.min(MAX_READ, st.size - start);
-		const buf = Buffer.alloc(len);
-		let got = 0;
-		while (got < len) {
-			const n = readSync(fd, buf, got, len - got, start + got);
-			if (n <= 0) break;
-			got += n;
-		}
-		const chunk = buf.subarray(0, got);
+		const chunk = readChunk(fd, start, Math.min(MAX_READ, st.size - start));
+		const got = chunk.length;
 		const atEof = start + got >= st.size;
 		let skip = 0;
-		if (start > 0 && got > 0) {
-			const prev = Buffer.alloc(1);
-			if (readSync(fd, prev, 0, 1, start - 1) === 1 && prev[0] !== 10) {
-				const nl = chunk.indexOf(10);
-				if (nl < 0) {
-					// Still inside the skipped line: a full chunk (or a retired file's last bytes) is consumed; a partial one waits for its newline.
-					const consumed = got >= MAX_READ || (final && atEof);
-					return { lines: [], end: consumed ? start + got : start, size: st.size, inode: st.ino };
-				}
-				skip = nl + 1;
+		if (startsMidLine(fd, start, got)) {
+			const nl = chunk.indexOf(10);
+			if (nl < 0) {
+				// Still inside the skipped line: a full chunk (or a retired file's last bytes) is consumed; a partial one waits for its newline.
+				const consumed = got >= MAX_READ || (final && atEof);
+				return { lines: [], end: consumed ? start + got : start, size: st.size, inode: st.ino };
 			}
+			skip = nl + 1;
 		}
-		const body = chunk.subarray(skip);
-		const base = start + skip;
-		const cut = body.lastIndexOf(10);
-		let end = base + (cut < 0 ? 0 : cut + 1);
-		const lines =
-			cut < 0
-				? []
-				: body
-						.subarray(0, cut + 1)
-						.toString("utf8")
-						.split("\n")
-						.filter(Boolean);
-		if (cut < 0 && skip === 0 && got >= MAX_READ) {
-			lines.push(OVERSIZED);
-			end = start + got;
-		} else if (final && atEof && end < start + got) {
-			lines.push(body.subarray(end - base).toString("utf8"));
-			end = start + got;
-		}
+		const { lines, end } = wholeLines(chunk.subarray(skip), start + skip, { start, got, skip, final, atEof });
 		return { lines, end, size: st.size, inode: st.ino };
 	} finally {
 		closeSync(fd);
 	}
 }
 
-export type Retired = { path: string; offset: number; after: number };
+type Retired = { path: string; offset: number; after: number };
 export type Cursor = {
 	offset: number;
 	inode: number;
@@ -521,7 +535,7 @@ const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
  * The cursor of a desk with none stored. "end": the inbox's current end, so nothing already in it wakes the desk (a line still being written
  * at that moment is skipped whole, as the reader skips any line it starts inside). No inbox yet, or "beginning": its start.
  */
-export function firstCursor(inbox: string, startAt: DeskConfig["startAt"]): Cursor {
+function firstCursor(inbox: string, startAt: DeskConfig["startAt"]): Cursor {
 	if (startAt === "beginning") return freshCursor();
 	try {
 		const st = statSync(inbox);
@@ -551,7 +565,7 @@ export type CrashPoint =
  * cursor restarts at the new inbox; if it does not, nothing was renamed and the intent is dropped. Either way nothing unread is lost, because a
  * rotation only starts when everything up to `from` is already committed.
  */
-export function recoverRotation(cur: Cursor, now: number): boolean {
+function recoverRotation(cur: Cursor, now: number): boolean {
 	const r = cur.rotating;
 	if (!r) return false;
 	if (existsSync(r.path)) {
@@ -567,7 +581,7 @@ export function recoverRotation(cur: Cursor, now: number): boolean {
  * Renames a big inbox away, but only once everything in it is committed (the saved cursor is at its end). The intent is saved BEFORE the
  * rename, and the retired file is in a saved cursor BEFORE anything reads or deletes it, so no crash between the steps loses a line.
  */
-export function rotateIfDue(
+function rotateIfDue(
 	cur: Cursor,
 	inbox: string,
 	now: number,
@@ -575,7 +589,7 @@ export function rotateIfDue(
 	save: () => void,
 	crash: (p: CrashPoint) => void = () => {},
 ): boolean {
-	let stat;
+	let stat: Stats;
 	try {
 		stat = statSync(inbox);
 	} catch {
@@ -601,7 +615,7 @@ export function rotateIfDue(
 }
 
 /** Deletes a retired file a crash left behind after its cursor was saved (named `<inbox>.<ms>`, in no list, and old enough that no pass can still own it). */
-export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
+function sweepStrays(cur: Cursor, inbox: string, now: number): void {
 	const dir = dirname(inbox),
 		base = `${basename(inbox)}.`;
 	let names: string[];
@@ -627,12 +641,8 @@ export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
 	}
 }
 
-/**
- * Reads what is new in the inbox, and the next chunk of every retired file that is due, advancing `cur` and the retired offsets in memory.
- * Nothing is renamed or deleted here: the caller saves the cursor first. Events are oldest first.
- */
-export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConfig): Read {
-	const lines: string[] = [];
+/** Reads the next chunk of every retired file that is due into `lines`; returns the ones now read to their end (or gone). */
+function readRetiredFiles(cur: Cursor, now: number, lines: string[]): Retired[] {
 	const retiredRead: Retired[] = [];
 	for (const r of cur.retired) {
 		if (now < r.after) continue;
@@ -647,14 +657,26 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 		r.offset = got.end;
 		if (got.end >= got.size) retiredRead.push(r);
 	}
+	return retiredRead;
+}
+
+/** Reads what is new in the inbox itself into `lines`, advancing the cursor. */
+function readLiveInbox(cur: Cursor, inbox: string, lines: string[]): void {
 	const main = readLines(inbox, cur.inode === 0 ? 0 : cur.offset);
-	if (main) {
-		// A different file at the same path (rotated by hand, or recreated): its start is new to us.
-		const fresh = cur.inode !== 0 && cur.inode !== main.inode ? (readLines(inbox, 0) ?? main) : main;
-		lines.push(...fresh.lines);
-		cur.offset = fresh.end;
-		cur.inode = fresh.inode;
-	}
+	if (!main) return;
+	// A different file at the same path (rotated by hand, or recreated): its start is new to us.
+	const fresh = cur.inode !== 0 && cur.inode !== main.inode ? (readLines(inbox, 0) ?? main) : main;
+	lines.push(...fresh.lines);
+	cur.offset = fresh.end;
+	cur.inode = fresh.inode;
+}
+
+/** The events in `lines`, oldest first, and how many lines were not events or were older than `maxAgeMs`. */
+function parseEvents(
+	lines: string[],
+	now: number,
+	maxAgeMs: number,
+): { events: DeskEvent[]; bad: number; stale: number } {
 	let bad = 0,
 		stale = 0;
 	const events: DeskEvent[] = [];
@@ -664,14 +686,25 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 			bad++;
 			continue;
 		}
-		if (now - Date.parse(e.ts) > cfg.maxAgeMs) {
+		if (now - Date.parse(e.ts) > maxAgeMs) {
 			stale++;
 			continue;
 		}
 		events.push(e);
 	}
 	events.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-	return { events, bad, stale, retiredRead };
+	return { events, bad, stale };
+}
+
+/**
+ * Reads what is new in the inbox, and the next chunk of every retired file that is due, advancing `cur` and the retired offsets in memory.
+ * Nothing is renamed or deleted here: the caller saves the cursor first. Events are oldest first.
+ */
+export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConfig): Read {
+	const lines: string[] = [];
+	const retiredRead = readRetiredFiles(cur, now, lines);
+	readLiveInbox(cur, inbox, lines);
+	return { ...parseEvents(lines, now, cfg.maxAgeMs), retiredRead };
 }
 
 // ---- the decision, in the item system ---------------------------------------------------------------
@@ -699,18 +732,234 @@ export type DrainDeps = {
 	crash?: (point: CrashPoint) => void;
 };
 
-/** One pass: read what is new, decide each event through the item system, queue the wakes, then (and only then) keep the cursor. */
-export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skipped?: "off" | "no-desk" } {
-	const { store, outbox, now } = d;
-	const cfg = readConfig(d.conf);
-	if (!cfg.enabled) return { read: 0, woke: 0, skipped: "off" };
-	if (!d.canDeliver) return { read: 0, woke: 0, skipped: "no-desk" };
-	const crash = d.crash ?? (() => {});
-	const stored = store.state.get<Cursor>(CURSOR_KEY);
+/** What one pass works on: the stores, the clock, the config, and the wakes it has queued and the families the daily cap held back so far. */
+type Pass = { store: Store; outbox: Outbox; now: number; cfg: DeskConfig; woke: string[]; deferred: Set<string> };
+
+/** Alert wakes of the rolling 24 h: the desk's own outbox rows and held wakes. Morning and cap notes are not alerts and do not count. */
+function capFull(c: Pass): boolean {
+	if (c.cfg.dailyCap <= 0) return false;
+	const members = [
+		...c.store.wakes.rows("all", DESK_RECEIVER).flatMap((row) => row.members),
+		...c.store.wakes.held(DESK_RECEIVER),
+	];
+	return (
+		members.filter((m) => m.deliveryId.startsWith("desk:") && c.now - m.queuedAt < DAY_MS).length >= c.cfg.dailyCap
+	);
+}
+
+const parkPending = (c: Pass, e: DeskEvent, sig: string, at: number, reason: Reason) =>
+	c.store.items.observe({
+		source: ALERT_DESK,
+		kind: "pending",
+		dedupKey: pendingKey(e.family),
+		mode: "silenced",
+		payload: { event: e, sig, reason } satisfies PendingPayload,
+		now: at,
+	});
+
+function dropPending(c: Pass, family: string, at: number, opts: { keepRepeat?: boolean } = {}) {
+	const p = c.store.items.get(ALERT_DESK, pendingKey(family));
+	if (p?.status !== "triggered") return;
+	// A change that was undone is cancelled; a 24 h repeat the cap held back is not a change and stays until it is delivered.
+	if (opts.keepRepeat && (p.payload as PendingPayload).reason === "repeat") return;
+	c.store.items.resolve(ALERT_DESK, pendingKey(family), at);
+}
+
+function absorb(c: Pass, family: string, at: number) {
+	const a = c.store.items.get(ALERT_DESK, family);
+	if (a) c.store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at });
+}
+
+/** Queues the wake for an event the gates let through, with every item change, in one transaction. `consumed`: the 24 h repeat already notified. */
+function emit(c: Pass, e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): void {
+	const { store, cfg } = c;
+	const out = c.outbox.commit((): WakeDraft | undefined => {
+		const before = store.items.get(ALERT_DESK, e.family);
+		const absorbed = Number(before?.payload.absorbed ?? 0);
+		const wakes = Number(before?.payload.wakes ?? 0) + 1;
+		const payload = {
+			sig,
+			title: clip(e.title, 140),
+			severity: e.severity,
+			source: e.source,
+			absorbed: 0,
+			wakes,
+			lastEventAt: at,
+		};
+		if (consumed) store.items.patch(ALERT_DESK, e.family, payload);
+		else {
+			// A change is a new occurrence: resolve the open item so the next observation reopens it and notifies.
+			if (before && before.status !== "resolved") store.items.resolve(ALERT_DESK, e.family, at);
+			const o = store.items.observe({
+				source: ALERT_DESK,
+				kind: "alert",
+				dedupKey: e.family,
+				repeat: repeatEvery(cfg.repeatMs),
+				payload,
+				now: at,
+			});
+			if (!o.notify) return undefined;
+		}
+		dropPending(c, e.family, at);
+		const id = wakeId(e.family, sig, e.ts);
+		return {
+			deliveryId: id,
+			message: alertMessage(e, reason, absorbed, Math.round(cfg.windowMs / 60_000)),
+			meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+		};
+	});
+	if (out === "queued") c.woke.push(`${e.family}:${reason}`);
+}
+
+/** The gates a wake-worthy event passes: the daily cap, then the family's window. Returns whether it was emitted. */
+function release(c: Pass, e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): boolean {
+	const { store, cfg } = c;
+	if (capFull(c)) {
+		c.deferred.add(e.family);
+		store.tx(() => parkPending(c, e, sig, at, reason));
+		return false;
+	}
+	const gate = store.items.observe({
+		source: ALERT_DESK,
+		kind: "window",
+		dedupKey: windowKey(e.family),
+		repeat: repeatEvery(cfg.windowMs),
+		now: at,
+	});
+	if (!gate.notify) {
+		store.tx(() => {
+			parkPending(c, e, sig, at, reason);
+			absorb(c, e.family, at);
+		});
+		return false;
+	}
+	emit(c, e, sig, reason, at, consumed);
+	return true;
+}
+
+/** The same alert again. The item's own 24 h repeat says whether it is a recurrence; otherwise it is folded, and a change that was
+ * waiting for its window is cancelled (the alert is back to what the desk was last told). */
+function repeatOrFold(c: Pass, e: DeskEvent, sig: string, at: number): void {
+	const o = c.store.items.observe({
+		source: ALERT_DESK,
+		kind: "alert",
+		dedupKey: e.family,
+		repeat: repeatEvery(c.cfg.repeatMs),
+		now: at,
+	});
+	if (o.notify) {
+		if (!release(c, e, sig, "repeat", at, true)) {
+			/* parked */
+		}
+	} else {
+		absorb(c, e.family, at);
+		dropPending(c, e.family, at, { keepRepeat: true });
+	}
+}
+
+/** One event through the item system: a new alert, a changed one, or the same one again. */
+function decide(c: Pass, e: DeskEvent): void {
+	const at = Math.min(c.now, Date.parse(e.ts));
+	const sig = signature(e);
+	const a = c.store.items.get(ALERT_DESK, e.family);
+	if (!a || a.status === "resolved") {
+		release(c, e, sig, "new", at, false);
+		return;
+	}
+	if (a.payload.sig !== sig) {
+		release(c, e, sig, "changed", at, false);
+		return;
+	}
+	c.store.tx(() => repeatOrFold(c, e, sig, at));
+}
+
+/** A change that waited for its window to close, or a wake the cap deferred. */
+function releasePending(c: Pass): void {
+	for (const p of c.store.items.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })) {
+		const { event, sig, reason } = p.payload as PendingPayload;
+		const a = c.store.items.get(ALERT_DESK, event.family);
+		const open = a !== undefined && a.status !== "resolved";
+		// A change that was undone before its window closed is cancelled; a parked 24 h repeat is not a change and still goes.
+		if (reason !== "repeat" && open && a.payload.sig === sig) {
+			c.store.items.resolve(ALERT_DESK, p.dedupKey, c.now);
+			continue;
+		}
+		release(c, event, sig, reason === "repeat" ? "repeat" : open ? "changed" : "new", c.now, reason === "repeat");
+	}
+}
+
+/** Once a day, if the cap held anything back, the desk is told so. */
+function noteCap(c: Pass): void {
+	if (!c.deferred.size) return;
+	c.outbox.commit(() => {
+		if (
+			!c.store.items.observe({
+				source: ALERT_DESK,
+				kind: "cap-note",
+				dedupKey: "cap",
+				repeat: repeatEvery(DAY_MS),
+				now: c.now,
+			}).notify
+		)
+			return undefined;
+		c.woke.push("cap");
+		return {
+			deliveryId: `desk-cap:${Math.floor(c.now / DAY_MS)}`,
+			message: capMessage(c.cfg, [...c.deferred]),
+			meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+		};
+	});
+}
+
+/** The first pass of each local day from the morning hour sends the morning wake. */
+function sendMorning(c: Pass): void {
+	const { store, now } = c;
+	const { day, hour } = localDay(now, c.cfg.timezone);
+	if (hour < c.cfg.morningHour) return;
+	c.outbox.commit(() => {
+		if (!store.items.observe({ source: ALERT_DESK, kind: "morning", dedupKey: day, repeat: NOTIFY_ONCE, now }).notify)
+			return undefined;
+		const live = (i: Item) =>
+			now - Number(i.payload.lastEventAt ?? i.lastSeen) < DAY_MS && Number(i.payload.wakes ?? 0) > 0;
+		const handled = store.items
+			.list({ source: ALERT_DESK, kind: "alert" })
+			.filter(live)
+			.map((i) => ({
+				family: i.dedupKey,
+				wakes: Number(i.payload.wakes),
+				severity: String(i.payload.severity),
+				title: String(i.payload.title),
+			}));
+		const waiting = store.items
+			.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })
+			.map((i) => (i.payload as PendingPayload).event.family);
+		c.woke.push("morning");
+		return {
+			deliveryId: `desk-morning:${day}`,
+			message: morningMessage(day, handled, waiting),
+			meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+		};
+	});
+}
+
+/** Families nobody has reported for three days are resolved: a later event is a new occurrence. */
+function forgetQuietFamilies(c: Pass): void {
+	const { store, now } = c;
+	store.tx(() => {
+		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" }))
+			if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS)
+				store.items.resolve(ALERT_DESK, i.dedupKey, now);
+		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" }))
+			if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
+	});
+}
+
+/** The stored cursor, or the first one (kept before anything is read, so a crash later in the pass never decides it again). */
+function openCursor(d: DrainDeps, cfg: DeskConfig): { cur: Cursor; save: () => void } {
+	const stored = d.store.state.get<Cursor>(CURSOR_KEY);
 	const cur = structuredClone(stored ?? firstCursor(d.inbox, cfg.startAt));
-	const save = () => store.state.set(CURSOR_KEY, cur);
+	const save = () => d.store.state.set(CURSOR_KEY, cur);
 	if (!stored) {
-		// The first start is decided once: the cursor is kept before anything is read, so a crash later in this pass never decides it again.
 		save();
 		d.log("alert-desk-start", {
 			startAt: cfg.startAt,
@@ -719,224 +968,52 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 			...(cfg.startAt === "end" && cur.offset ? { skippedBytes: cur.offset } : {}),
 		});
 	}
-	if (recoverRotation(cur, now)) save();
-	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
-	sweepStrays(cur, d.inbox, now);
-	const r = readInbox(cur, d.inbox, now, cfg);
-	const woke: string[] = [];
-	const deferred = new Set<string>();
+	return { cur, save };
+}
 
-	/** Alert wakes of the rolling 24 h: the desk's own outbox rows and held wakes. Morning and cap notes are not alerts and do not count. */
-	function capFull(): boolean {
-		if (cfg.dailyCap <= 0) return false;
-		const members = [
-			...store.wakes.rows("all", DESK_RECEIVER).flatMap((row) => row.members),
-			...store.wakes.held(DESK_RECEIVER),
-		];
-		return members.filter((m) => m.deliveryId.startsWith("desk:") && now - m.queuedAt < DAY_MS).length >= cfg.dailyCap;
-	}
-	const parkPending = (e: DeskEvent, sig: string, at: number, reason: Reason) =>
-		store.items.observe({
-			source: ALERT_DESK,
-			kind: "pending",
-			dedupKey: pendingKey(e.family),
-			mode: "silenced",
-			payload: { event: e, sig, reason } satisfies PendingPayload,
-			now: at,
-		});
-	const dropPending = (family: string, at: number, opts: { keepRepeat?: boolean } = {}) => {
-		const p = store.items.get(ALERT_DESK, pendingKey(family));
-		if (p?.status !== "triggered") return;
-		// A change that was undone is cancelled; a 24 h repeat the cap held back is not a change and stays until it is delivered.
-		if (opts.keepRepeat && (p.payload as PendingPayload).reason === "repeat") return;
-		store.items.resolve(ALERT_DESK, pendingKey(family), at);
-	};
-	const absorb = (family: string, at: number) => {
-		const a = store.items.get(ALERT_DESK, family);
-		if (a) store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at });
-	};
-
-	/** Queues the wake for an event the gates let through, with every item change, in one transaction. `consumed`: the 24 h repeat already notified. */
-	function emit(e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): void {
-		const out = outbox.commit((): WakeDraft | undefined => {
-			const before = store.items.get(ALERT_DESK, e.family);
-			const absorbed = Number(before?.payload.absorbed ?? 0);
-			const wakes = Number(before?.payload.wakes ?? 0) + 1;
-			const payload = {
-				sig,
-				title: clip(e.title, 140),
-				severity: e.severity,
-				source: e.source,
-				absorbed: 0,
-				wakes,
-				lastEventAt: at,
-			};
-			if (consumed) store.items.patch(ALERT_DESK, e.family, payload);
-			else {
-				// A change is a new occurrence: resolve the open item so the next observation reopens it and notifies.
-				if (before && before.status !== "resolved") store.items.resolve(ALERT_DESK, e.family, at);
-				const o = store.items.observe({
-					source: ALERT_DESK,
-					kind: "alert",
-					dedupKey: e.family,
-					repeat: repeatEvery(cfg.repeatMs),
-					payload,
-					now: at,
-				});
-				if (!o.notify) return undefined;
-			}
-			dropPending(e.family, at);
-			const id = wakeId(e.family, sig, e.ts);
-			return {
-				deliveryId: id,
-				message: alertMessage(e, reason, absorbed, Math.round(cfg.windowMs / 60_000)),
-				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
-			};
-		});
-		if (out === "queued") woke.push(`${e.family}:${reason}`);
-	}
-
-	/** The gates a wake-worthy event passes: the daily cap, then the family's window. Returns whether it was emitted. */
-	function release(e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): boolean {
-		if (capFull()) {
-			deferred.add(e.family);
-			store.tx(() => parkPending(e, sig, at, reason));
-			return false;
-		}
-		const gate = store.items.observe({
-			source: ALERT_DESK,
-			kind: "window",
-			dedupKey: windowKey(e.family),
-			repeat: repeatEvery(cfg.windowMs),
-			now: at,
-		});
-		if (!gate.notify) {
-			store.tx(() => {
-				parkPending(e, sig, at, reason);
-				absorb(e.family, at);
-			});
-			return false;
-		}
-		emit(e, sig, reason, at, consumed);
-		return true;
-	}
-
-	for (const e of r.events) {
-		const at = Math.min(now, Date.parse(e.ts));
-		const sig = signature(e);
-		const a = store.items.get(ALERT_DESK, e.family);
-		if (!a || a.status === "resolved") {
-			release(e, sig, "new", at, false);
-			continue;
-		}
-		if (a.payload.sig !== sig) {
-			release(e, sig, "changed", at, false);
-			continue;
-		}
-		// The same alert again. The item's own 24 h repeat says whether it is a recurrence; otherwise it is folded, and a change that was
-		// waiting for its window is cancelled (the alert is back to what the desk was last told).
-		store.tx(() => {
-			const o = store.items.observe({
-				source: ALERT_DESK,
-				kind: "alert",
-				dedupKey: e.family,
-				repeat: repeatEvery(cfg.repeatMs),
-				now: at,
-			});
-			if (o.notify) {
-				if (!release(e, sig, "repeat", at, true)) {
-					/* parked */
-				}
-			} else {
-				absorb(e.family, at);
-				dropPending(e.family, at, { keepRepeat: true });
-			}
-		});
-	}
-
-	// A change that waited for its window to close, or a wake the cap deferred.
-	for (const p of store.items.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })) {
-		const { event, sig, reason } = p.payload as PendingPayload;
-		const a = store.items.get(ALERT_DESK, event.family);
-		const open = a !== undefined && a.status !== "resolved";
-		// A change that was undone before its window closed is cancelled; a parked 24 h repeat is not a change and still goes.
-		if (reason !== "repeat" && open && a.payload.sig === sig) {
-			store.items.resolve(ALERT_DESK, p.dedupKey, now);
-			continue;
-		}
-		release(event, sig, reason === "repeat" ? "repeat" : open ? "changed" : "new", now, reason === "repeat");
-	}
-
-	// Once a day, the cap says so; and the first pass of the day from the morning hour sends the morning wake.
-	if (deferred.size) {
-		outbox.commit(() => {
-			if (
-				!store.items.observe({
-					source: ALERT_DESK,
-					kind: "cap-note",
-					dedupKey: "cap",
-					repeat: repeatEvery(DAY_MS),
-					now,
-				}).notify
-			)
-				return undefined;
-			woke.push("cap");
-			return {
-				deliveryId: `desk-cap:${Math.floor(now / DAY_MS)}`,
-				message: capMessage(cfg, [...deferred]),
-				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
-			};
-		});
-	}
-	const { day, hour } = localDay(now, cfg.timezone);
-	if (hour >= cfg.morningHour) {
-		outbox.commit(() => {
-			if (!store.items.observe({ source: ALERT_DESK, kind: "morning", dedupKey: day, repeat: NOTIFY_ONCE, now }).notify)
-				return undefined;
-			const live = (i: Item) =>
-				now - Number(i.payload.lastEventAt ?? i.lastSeen) < DAY_MS && Number(i.payload.wakes ?? 0) > 0;
-			const handled = store.items
-				.list({ source: ALERT_DESK, kind: "alert" })
-				.filter(live)
-				.map((i) => ({
-					family: i.dedupKey,
-					wakes: Number(i.payload.wakes),
-					severity: String(i.payload.severity),
-					title: String(i.payload.title),
-				}));
-			const waiting = store.items
-				.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })
-				.map((i) => (i.payload as PendingPayload).event.family);
-			woke.push("morning");
-			return {
-				deliveryId: `desk-morning:${day}`,
-				message: morningMessage(day, handled, waiting),
-				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
-			};
-		});
-	}
-
-	// Families nobody has reported for three days are resolved: a later event is a new occurrence.
-	store.tx(() => {
-		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" }))
-			if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS)
-				store.items.resolve(ALERT_DESK, i.dedupKey, now);
-		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" }))
-			if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
-	});
-	crash("delivered");
-	if (r.retiredRead.length) crash("retired-read");
-	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
-	save();
-	if (r.retiredRead.length) crash("retired-saved");
-	for (const x of r.retiredRead) {
+/** After the wakes are queued and the cursor is saved: the retired files that were read to their end are deleted. */
+function deleteRetired(read: Retired[]): void {
+	for (const x of read) {
 		try {
 			unlinkSync(x.path);
 		} catch {
 			/* already gone */
 		}
 	}
-	if (r.events.length || r.bad || r.stale || woke.length)
-		d.log("alert-desk", { events: r.events.length, bad: r.bad, stale: r.stale, woke, deferred: deferred.size });
-	return { read: r.events.length, woke: woke.length };
+}
+
+/** One pass: read what is new, decide each event through the item system, queue the wakes, then (and only then) keep the cursor. */
+export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skipped?: "off" | "no-desk" } {
+	const { store, outbox, now } = d;
+	const cfg = readConfig(d.conf);
+	if (!cfg.enabled) return { read: 0, woke: 0, skipped: "off" };
+	if (!d.canDeliver) return { read: 0, woke: 0, skipped: "no-desk" };
+	const crash = d.crash ?? (() => {});
+	const { cur, save } = openCursor(d, cfg);
+	if (recoverRotation(cur, now)) save();
+	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
+	sweepStrays(cur, d.inbox, now);
+	const r = readInbox(cur, d.inbox, now, cfg);
+	const c: Pass = { store, outbox, now, cfg, woke: [], deferred: new Set() };
+
+	for (const e of r.events) decide(c, e);
+	releasePending(c);
+	noteCap(c);
+	sendMorning(c);
+	forgetQuietFamilies(c);
+	crash("delivered");
+	if (r.retiredRead.length) crash("retired-read");
+	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
+	save();
+	if (r.retiredRead.length) crash("retired-saved");
+	deleteRetired(r.retiredRead);
+	if (r.events.length || r.bad || r.stale || c.woke.length)
+		d.log("alert-desk", {
+			events: r.events.length,
+			bad: r.bad,
+			stale: r.stale,
+			woke: c.woke,
+			deferred: c.deferred.size,
+		});
+	return { read: r.events.length, woke: c.woke.length };
 }

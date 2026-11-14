@@ -6,6 +6,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
+import { flagReader } from "./args.ts";
 import { TARGETS, tarballName } from "./build.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -15,9 +16,9 @@ export function parseSums(text: string): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const line of text.split("\n")) {
 		if (!line.trim()) continue;
-		const m = line.match(/^([0-9a-f]{64}) [ *](\S+)$/);
-		if (!m) throw Error(`SHA256SUMS: cannot read the line "${line.slice(0, 80)}"`);
-		out[m[2]!] = m[1]!;
+		const [, sum, file] = line.match(/^([0-9a-f]{64}) [ *](\S+)$/) ?? [];
+		if (!sum || !file) throw Error(`SHA256SUMS: cannot read the line "${line.slice(0, 80)}"`);
+		out[file] = sum;
 	}
 	return out;
 }
@@ -42,10 +43,7 @@ export function render(template: string, version: string, sums: Record<string, s
 }
 
 export function main(argv: string[] = process.argv.slice(2)) {
-	const flag = (n: string) => {
-		const i = argv.indexOf(n);
-		return i >= 0 ? argv[i + 1] : undefined;
-	};
+	const flag = flagReader(argv);
 	const sumsFile = flag("--sums");
 	if (!sumsFile) {
 		console.error(

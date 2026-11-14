@@ -6,22 +6,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { testRelay } from "../testing/relay.ts";
-import { fetchWake } from "../testing/wake.ts";
 import {
 	askQuestion,
 	claimWake,
 	getQuestion,
 	pageClaim,
-	readClaims,
-	recordAnswerDelivered,
-	wokenBy,
 	type Question,
+	readClaims,
+	wokenBy,
 } from "../core/questions.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
-import { createApp } from "./app.ts";
 import { openCapability } from "../testing/capability.ts";
+import { testRelay } from "../testing/relay.ts";
+import { fetchWake } from "../testing/wake.ts";
+import { createApp } from "./app.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";

@@ -8,12 +8,12 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { memStore } from "../testing/store.ts";
 import { testRelayLock } from "../testing/lock.ts";
-import { createOutbox, MAX_ATTEMPTS, maxAttemptsFromEnv, withDeliveryId, type WakeResult } from "./deliver.ts";
+import { memStore } from "../testing/store.ts";
+import { createOutbox, MAX_ATTEMPTS, maxAttemptsFromEnv, type WakeResult, withDeliveryId } from "./deliver.ts";
 import type { Gate } from "./hold.ts";
 import { MIGRATIONS } from "./migrations.ts";
-import { createRelay, retryAfterMs, type RelayDeps } from "./relay.ts";
+import { createRelay, type RelayDeps, retryAfterMs } from "./relay.ts";
 import { invalidateRights, RIGHTS_SENT_KEY, rightsEpoch, rightsFirstId, rightsStateKey } from "./rights-sent.ts";
 import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
@@ -963,13 +963,12 @@ describe("a Steward row that depends on the rights goes only when the durable re
 			q3: `Decision rights: the same as in the first item of this digest above, and still in force.\n${block}`,
 		};
 		r.w.gate = "busy";
-		Object.entries(texts).forEach(([id, text], i) =>
+		for (const [i, [id, text]] of Object.entries(texts).entries())
 			r.outbox.deliver(text, id, {
 				kind: "turn_ended",
 				thread: `t${i}`,
 				rights: [{ ...stamp, session: "s1", full: true }],
-			}),
-		);
+			});
 		r.w.gate = "idle";
 		await r.relay().pass();
 		expect(r.posts).toHaveLength(1);

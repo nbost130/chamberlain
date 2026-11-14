@@ -6,9 +6,10 @@
  * A wake that can wait (HOLDABLE_KINDS in hold.ts: a turn end, the sweep) is held instead, and the relay composes what is held into one
  * row when the Steward is idle. Every other wake is a pending row at once.
  */
-import { setting } from "./layout.ts";
+
 import { crashPoint } from "./crash.ts";
 import { holdable } from "./hold.ts";
+import { setting } from "./layout.ts";
 import type { Store, WakeMeta } from "./store.ts";
 
 /**
@@ -77,7 +78,7 @@ export function createOutbox(d: OutboxDeps) {
 	 * without its wake. An id that is already known (pending, held, delivered, dead-lettered or cancelled) writes nothing more.
 	 */
 	function commit(decide: () => WakeDraft | undefined): Committed {
-		const out = store.tx((): { kind: Committed; wake?: WakeDraft } => {
+		const out = store.tx((): { kind: "none" } | { kind: Exclude<Committed, "none">; wake: WakeDraft } => {
 			const wake = decide();
 			if (!wake) return { kind: "none" };
 			// A kill here leaves neither the decision nor the wake: they are one transaction.
@@ -95,7 +96,7 @@ export function createOutbox(d: OutboxDeps) {
 			};
 		});
 		if (out.kind === "none") return "none";
-		const { deliveryId, message, meta } = out.wake!;
+		const { deliveryId, message, meta } = out.wake;
 		if (out.kind === "dry") d.log("dry", { deliveryId, message });
 		else if (out.kind === "known") d.log("deliver-already-queued", { deliveryId });
 		else {
@@ -106,7 +107,12 @@ export function createOutbox(d: OutboxDeps) {
 		return out.kind;
 	}
 	/** A wake with nothing else to record. `alongside` returning false means the decision was already taken elsewhere: nothing is written. */
-	const deliver = (message: string, deliveryId: string, meta?: WakeMeta, alongside?: () => boolean | void): Committed =>
+	const deliver = (
+		message: string,
+		deliveryId: string,
+		meta?: WakeMeta,
+		alongside?: () => boolean | undefined,
+	): Committed =>
 		commit(() => (alongside?.() === false ? undefined : { message, deliveryId, ...(meta ? { meta } : {}) }));
 	return { commit, deliver };
 }

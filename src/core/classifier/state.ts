@@ -11,7 +11,9 @@
  * The redaction hook (`redact.command`) gets the state as JSON on stdin and must print the same shape on stdout within five seconds.
  * Anything else (a failure, a timeout, a different shape) throws, and the caller sends nothing: the thread is `unknown`.
  */
-export type From = "human" | "agent" | "none";
+import { runPiped } from "./spawn.ts";
+
+type From = "human" | "agent" | "none";
 export type SentState = {
 	thread_title?: string;
 	previous_message: { from: From; text: string };
@@ -155,15 +157,9 @@ export type HookRunner = (
 	timeoutMs: number,
 ) => Promise<{ code: number | null; stdout: string }>;
 
-export const spawnHook: HookRunner = async (argv, stdin, timeoutMs) => {
-	const p = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "ignore", timeout: timeoutMs });
-	p.stdin.write(stdin);
-	await p.stdin.end();
-	const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-	return { code: p.signalCode ? null : code, stdout };
-};
+const spawnHook: HookRunner = (argv, stdin, timeoutMs) => runPiped(argv, stdin, timeoutMs);
 
-export const REDACT_HOOK_MS = 5000;
+const REDACT_HOOK_MS = 5000;
 /** The state after the operator's redaction hook. Fails closed: any failure throws, and nothing may be sent. */
 export async function runRedactHook(
 	command: string[],

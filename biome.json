@@ -1,8 +1,31 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.6.7/schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
 	"files": { "includes": ["src/**/*.ts", "scripts/**/*.ts"] },
 	"formatter": { "enabled": true, "indentStyle": "tab", "lineWidth": 120 },
-	"linter": { "enabled": false },
-	"assist": { "enabled": false },
-	"javascript": { "formatter": { "quoteStyle": "double" } }
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"complexity": {
+				"noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 15 } },
+				"noExcessiveLinesPerFunction": { "level": "error", "options": { "maxLines": 50 } }
+			},
+			"style": { "useTemplate": "error" }
+		}
+	},
+	"assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
+	"javascript": { "formatter": { "quoteStyle": "double" } },
+	"overrides": [
+		{
+			"includes": ["**/*.test.ts", "src/testing/**", "src/test-setup.ts"],
+			"linter": {
+				"rules": {
+					"complexity": { "noExcessiveCognitiveComplexity": "off", "noExcessiveLinesPerFunction": "off" },
+					"style": { "noNonNullAssertion": "off" },
+					"suspicious": { "noExplicitAny": "off" }
+				}
+			}
+		}
+	]
 }

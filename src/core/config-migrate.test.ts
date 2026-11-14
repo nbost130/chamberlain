@@ -3,14 +3,14 @@ import {
 	chmodSync,
 	existsSync,
 	lstatSync,
-	readdirSync,
-	utimesSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
 	symlinkSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,23 +19,35 @@ import {
 	DAEMON_ENV,
 	DECISION_RIGHTS,
 	FAKE,
+	legacyFiles,
 	OPERATING_RULES,
 	SERVERS,
 	SETTINGS,
 	SWEEP,
-	WEB,
-	legacyFiles,
 	tokensFor,
+	WEB,
 	writeLegacyConf,
 } from "../testing/legacy-conf.ts";
 
 const TOKENS = tokensFor();
+
+import { loadConfig } from "../web/config.ts";
+import { readConfig, readOperator } from "./alert-desk.ts";
+import { readSettings } from "./config.ts";
 import { planLines, showLines } from "./config-cmd.ts";
-import { envValue, migrateLayout, parseEnvFile, planMigration, setThread, startupLayout } from "./config-migrate.ts";
 import {
-	ENV_KEYS,
+	envValue,
+	migrateLayout,
+	parseEnvFile,
+	planMigration,
+	revertLayout,
+	setThread,
+	startupLayout,
+} from "./config-migrate.ts";
+import {
 	attachDeprecationLog,
 	cfg,
+	ENV_KEYS,
 	readConfigFile,
 	readNamed,
 	readSecret,
@@ -44,10 +56,8 @@ import {
 	thread,
 } from "./layout.ts";
 import { readServers } from "./servers.ts";
+import { holdFlock } from "./singleton.ts";
 import { readSweepConfig } from "./sweep.ts";
-import { readConfig, readOperator } from "./alert-desk.ts";
-import { loadConfig } from "../web/config.ts";
-import { readSettings } from "./config.ts";
 
 const dirs: string[] = [];
 const fresh = () => {
@@ -606,5 +616,105 @@ describe("daemon.env", () => {
 		const p = planMigration(conf);
 		expect(p.added).toEqual([]);
 		expect(p.problems.join("\n")).toContain("daemon.env");
+	});
+});
+
+describe("plan edge cases pinned before the lint refactor", () => {
+	const writeConfig = (conf: string, doc: object) =>
+		writeFileSync(`${conf}/config.json`, `${JSON.stringify(doc)}\n`, { mode: 0o600 });
+	const priv = (path: string, text: string) => writeFileSync(path, text, { mode: 0o600 });
+
+	test("a key config.json holds with another value than the old file is reported, and config.json wins", () => {
+		const conf = fresh();
+		priv(
+			`${conf}/settings.json`,
+			`${JSON.stringify({ schemaVersion: 2, principalName: "Old File", compactTokens: 5 })}\n`,
+		);
+		writeConfig(conf, { principal: "From Config", compactTokens: 5 });
+		const p = planMigration(conf);
+		expect(p.differs).toEqual([{ key: "principal", from: "settings.json" }]);
+		expect(p.added).toEqual([]);
+		expect(p.config.principal).toBe("From Config");
+		expect(p.writeConfig).toBe(false);
+	});
+
+	test("a thread id config.json holds is reported when the old file differs; a thread file others can read is a problem", () => {
+		const conf = fresh();
+		writeConfig(conf, { threads: { steward: "from-config" } });
+		priv(`${conf}/steward-thread`, "from-file\n");
+		writeFileSync(`${conf}/decisions-thread`, "readable\n", { mode: 0o644 });
+		chmodSync(`${conf}/decisions-thread`, 0o644);
+		const p = planMigration(conf);
+		expect(p.differs).toEqual([{ key: "threads.steward", from: "steward-thread" }]);
+		expect(p.problems).toEqual(["decisions-thread must be a private regular file with mode exactly 0600 (it is 0644)"]);
+		expect((p.config.threads as Record<string, string>).steward).toBe("from-config");
+	});
+
+	test("a settings.json that is not JSON is reported as a problem and does not stop the plan", () => {
+		const conf = fresh();
+		priv(`${conf}/settings.json`, "{not json");
+		priv(`${conf}/steward-thread`, "t-1\n");
+		const p = planMigration(conf);
+		// One report per key the file would have supplied, each the parser's own message.
+		expect(p.problems).toHaveLength(6);
+		expect(p.problems.every((x) => x.startsWith("JSON Parse error"))).toBe(true);
+		expect(p.added).toEqual([{ key: "threads.steward", from: "steward-thread" }]);
+	});
+
+	test("secrets the config names: a missing one is a note, a directory is skipped, a moved one that is gone is not moved back", () => {
+		const conf = fresh();
+		writeLegacyConf(conf);
+		migrateLayout(conf);
+		rmSync(`${conf}/secrets/laptop-token`);
+		priv(`${conf}/laptop-token`, "written-again\n");
+		mkdirSync(`${conf}/dir-token`);
+		writeConfig(conf, {
+			...json(`${conf}/config.json`),
+			servers: [
+				{ name: "a", adapter: "t3", origin: "http://127.0.0.1:1", tokenFile: "ghost-token" },
+				{ name: "b", adapter: "t3", origin: "http://127.0.0.1:2", tokenFile: "dir-token" },
+			],
+		});
+		const p = planMigration(conf);
+		expect(p.notes).toContain(
+			"ghost-token: named by the config, but there is no such file in secrets/ or the config directory",
+		);
+		expect(p.secrets.find((s) => s.name === "dir-token")).toEqual({
+			name: "dir-token",
+			action: "skip",
+			why: "not a regular file",
+		});
+		expect(p.secrets.find((s) => s.name === "laptop-token")).toEqual({
+			name: "laptop-token",
+			action: "skip",
+			why: "moved by an earlier migration and now gone from secrets/: not moved back",
+		});
+	});
+
+	test("a migration that cannot take the config directory's lock reports it and writes nothing, for migrate and for revert", () => {
+		const conf = fresh();
+		writeLegacyConf(conf);
+		const held = holdFlock(conf, { waitMs: 0 });
+		try {
+			const m = migrateLayout(conf, { waitMs: 0 });
+			expect(m.changed).toBe(false);
+			expect(m.skipped).toContain("could not lock the config directory");
+			expect(existsSync(`${conf}/config.json`)).toBe(false);
+			const r = revertLayout(conf, { waitMs: 0 });
+			expect(r.skipped).toContain("could not lock the config directory");
+			expect(r.done).toEqual([]);
+		} finally {
+			held.release();
+		}
+	});
+
+	test("a revert with an unreadable config.json.reverted says which secrets it cannot move back", () => {
+		const conf = fresh();
+		priv(`${conf}/config.json.reverted`, "{not json");
+		const r = revertLayout(conf, { dryRun: true });
+		expect(r.problems).toEqual([
+			"config.json.reverted is not readable: the secrets it lists cannot be moved back from it",
+		]);
+		expect(r.done).toEqual(["nothing to revert"]);
 	});
 });

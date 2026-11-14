@@ -6,14 +6,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { OptionalCapability, WaitingCard } from "../core/adapter.ts";
-import { testRelay } from "../testing/relay.ts";
-import { askQuestion, recordAnswerDelivered, type Question } from "../core/questions.ts";
-import { memStore } from "../testing/store.ts";
+import { askQuestion, type Question } from "../core/questions.ts";
+import { openCapability } from "../testing/capability.ts";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
+import { testRelay } from "../testing/relay.ts";
+import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";
 import { createApp } from "./app.ts";
-import { createWaiting, threadSender, type ServerAdapter } from "./waiting.ts";
-import { openCapability } from "../testing/capability.ts";
+import { createWaiting, type ServerAdapter, threadSender } from "./waiting.ts";
 
 const card = (over: Partial<WaitingCard> = {}): WaitingCard => ({
 	id: "C-aaaaaaaaaaaa",
@@ -170,6 +170,25 @@ describe("answering", () => {
 		expect(await m.answer("C-eeeeeeeeeeee", 0, "sig-1")).toEqual({
 			status: 403,
 			body: { error: "enter it in its thread" },
+		});
+		expect(a.answers).toEqual([]);
+	});
+
+	test("a listed card whose server has since left the server list is refused with a pointer to its thread", async () => {
+		const a = createFakeAdapter();
+		a.cards = [card()];
+		let pairs = [pair(a)];
+		const m = createWaiting({
+			store: memStore(),
+			servers: () => pairs,
+			skipThreads: () => [],
+			log: () => {},
+		});
+		await m.poll();
+		pairs = [];
+		expect(await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).toEqual({
+			status: 403,
+			body: { error: "answer it in its thread on ws" },
 		});
 		expect(a.answers).toEqual([]);
 	});

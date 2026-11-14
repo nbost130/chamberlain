@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { heldOpen } from "./core/afk.ts";
-import { claimWake, getQuestion, pageClaim, ranked, questionStates } from "./core/questions.ts";
+import { claimWake, getQuestion, pageClaim, questionStates, ranked } from "./core/questions.ts";
 import { openStore } from "./core/sqlite-store.ts";
 import { dbPath, type Store } from "./core/store.ts";
 

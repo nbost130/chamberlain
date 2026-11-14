@@ -1,6 +1,6 @@
 /** The queue page's config: the `web` section of ~/.config/chamberlain/config.json. It must name the one address to bind, never a wildcard. */
 import { CONFIG_FILE, cfg } from "../core/layout.ts";
-import { SCHEMA_VERSION, checkVersion } from "../core/schema.ts";
+import { checkVersion, SCHEMA_VERSION } from "../core/schema.ts";
 
 export type WebConfig = {
 	schemaVersion?: number;
@@ -38,29 +38,33 @@ function ipv4Bytes(s: string): number[] | undefined {
 	return out;
 }
 
+/** Pure: the byte at an index, 0 past the end (the same value a shift or an OR gives an absent one). */
+const byteAt = (a: number[], k: number): number => a[k] ?? 0;
+
+/** Pure: the 16-bit words of a run of colon-separated IPv6 groups; an IPv4 tail counts as two. Undefined when a group is malformed. */
+function ipv6Groups(part: string): number[] | undefined {
+	if (part === "") return [];
+	const out: number[] = [];
+	const fields = part.split(":");
+	for (const [k, f] of fields.entries()) {
+		if (k === fields.length - 1 && f.includes(".")) {
+			const v4 = ipv4Bytes(f);
+			if (!v4) return undefined;
+			out.push((byteAt(v4, 0) << 8) | byteAt(v4, 1), (byteAt(v4, 2) << 8) | byteAt(v4, 3));
+		} else {
+			if (!/^[0-9a-f]{1,4}$/.test(f)) return undefined;
+			out.push(parseInt(f, 16));
+		}
+	}
+	return out;
+}
+
 /** Pure: an IPv6 literal as its sixteen bytes, from any spelling: compressed, zero-padded, any case, an IPv4 tail. */
 function ipv6Bytes(s: string): number[] | undefined {
 	if (!/^[0-9a-f:.]+$/.test(s) || s.split("::").length > 2) return undefined;
 	const [head, tail] = s.includes("::") ? (s.split("::") as [string, string]) : [s, undefined];
-	const groups = (part: string): number[] | undefined => {
-		if (part === "") return [];
-		const out: number[] = [];
-		const fields = part.split(":");
-		for (let k = 0; k < fields.length; k++) {
-			const f = fields[k]!;
-			if (k === fields.length - 1 && f.includes(".")) {
-				const v4 = ipv4Bytes(f);
-				if (!v4) return undefined;
-				out.push((v4[0]! << 8) | v4[1]!, (v4[2]! << 8) | v4[3]!);
-			} else {
-				if (!/^[0-9a-f]{1,4}$/.test(f)) return undefined;
-				out.push(parseInt(f, 16));
-			}
-		}
-		return out;
-	};
-	const h = groups(head);
-	const t = tail === undefined ? [] : groups(tail);
+	const h = ipv6Groups(head);
+	const t = tail === undefined ? [] : ipv6Groups(tail);
 	if (!h || !t) return undefined;
 	// An IPv4 tail is only valid at the very end of the address.
 	if (tail !== undefined && head.includes(".")) return undefined;
@@ -77,7 +81,7 @@ function ipv6Bytes(s: string): number[] | undefined {
 
 /** Pure: RFC 5952 text for sixteen bytes: lowercase, no leading zeros, the longest run of two or more zero groups as "::". */
 function ipv6Text(b: number[]): string {
-	const w = Array.from({ length: 8 }, (_, k) => (b[2 * k]! << 8) | b[2 * k + 1]!);
+	const w = Array.from({ length: 8 }, (_, k) => (byteAt(b, 2 * k) << 8) | byteAt(b, 2 * k + 1));
 	let best = -1,
 		bestLen = 0;
 	for (let k = 0; k < 8; ) {
@@ -121,14 +125,14 @@ export function canonicalIp(raw: string): CanonicalIp | undefined {
 /** Pure: do the first `bits` bits of two byte strings agree? */
 const inPrefix = (a: number[], prefix: number[], bits: number) => {
 	for (let k = 0; k < bits; k++)
-		if (((a[k >> 3]! >> (7 - (k & 7))) & 1) !== ((prefix[k >> 3]! >> (7 - (k & 7))) & 1)) return false;
+		if (((byteAt(a, k >> 3) >> (7 - (k & 7))) & 1) !== ((byteAt(prefix, k >> 3) >> (7 - (k & 7))) & 1)) return false;
 	return true;
 };
 const TAILSCALE_V4 = [100, 64, 0, 0]; // 100.64.0.0/10, Tailscale's CGNAT range
-const TAILSCALE_V6 = ipv6Bytes("fd7a:115c:a1e0::")!; // fd7a:115c:a1e0::/48, Tailscale's ULA range
+const TAILSCALE_V6 = [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0, ...Array<number>(10).fill(0)]; // fd7a:115c:a1e0::, fd7a:115c:a1e0::/48, Tailscale's ULA range
 
 /** Pure: may the page listen here? Only loopback (127.0.0.1, ::1) or a Tailscale address. Everything else is refused. */
-export function allowedBind(ip: CanonicalIp): boolean {
+function allowedBind(ip: CanonicalIp): boolean {
 	if (ip.family === 4) return ip.text === "127.0.0.1" || inPrefix(ip.bytes, TAILSCALE_V4, 10);
 	return ip.text === "::1" || inPrefix(ip.bytes, TAILSCALE_V6, 48);
 }

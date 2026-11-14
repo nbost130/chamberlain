@@ -8,8 +8,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { TOKEN_HEADER, newToken } from "../core/capability.ts";
-import { askQuestion, getQuestion, readClaim, type Question } from "../core/questions.ts";
+import { newToken, TOKEN_HEADER } from "../core/capability.ts";
+import { askQuestion, getQuestion, type Question, readClaim } from "../core/questions.ts";
 import { readRulings } from "../core/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";

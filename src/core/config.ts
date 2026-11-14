@@ -10,12 +10,14 @@
  */
 import { cfg, setting } from "./layout.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
-import { parseSettledMatch, type Settings, type SettledMatch } from "./settings-parse.ts";
-export { parseSettings } from "./settings-parse.ts";
+import { parseSettledMatch, type Settings } from "./settings-parse.ts";
+
 export type { Settings, SettledMatch } from "./settings-parse.ts";
+export { parseSettings } from "./settings-parse.ts";
+
 import { configDir, stateDir } from "./state-dir.ts";
 
-const HOME = process.env.HOME!;
+const HOME = process.env.HOME ?? "";
 export const CONF = configDir(process.env, HOME);
 export const STATE = stateDir(process.env, HOME);
 /** This checkout: the Steward's wakes and hand-off name the CLI tools by this path. In a compiled binary it is a path inside the binary, so nothing may build a command from it: use `selfCommand`. */
@@ -28,7 +30,7 @@ let forced: boolean | undefined;
 export const setCompiled = (v?: boolean): void => {
 	forced = v;
 };
-export const isCompiled = (): boolean => forced ?? COMPILED;
+const isCompiled = (): boolean => forced ?? COMPILED;
 
 /**
  * Every command-line tool, by the subcommand `chamberlain <sub>` runs it as (src/cli.ts) and the source file `bun <checkout>/<file>` runs from a checkout.
@@ -71,7 +73,7 @@ export const DEBUG_COMMANDS = [
 ] as const satisfies readonly CommandName[];
 export const isDebugCommand = (sub: string): boolean => (DEBUG_COMMANDS as readonly string[]).includes(sub);
 /** The words after `chamberlain` that run tool `sub`: the name, behind `debug` for a debug command. */
-export const binaryWords = (sub: CommandName): string[] => (isDebugCommand(sub) ? ["debug", sub] : [sub]);
+const binaryWords = (sub: CommandName): string[] => (isDebugCommand(sub) ? ["debug", sub] : [sub]);
 
 /**
  * The command that runs tool `sub`, as an agent or operator types it, without its arguments: `chamberlain <sub>` from the compiled
@@ -129,7 +131,7 @@ export const principal = (): string =>
 /** The same, for the start of a sentence. */
 export const Principal = (): string => {
 	const p = principal();
-	return p[0]!.toUpperCase() + p.slice(1);
+	return p.charAt(0).toUpperCase() + p.slice(1);
 };
 /** The possessive: "Ada's", "the operator's". */
 export const principalPoss = (): string => `${principal()}'s`;

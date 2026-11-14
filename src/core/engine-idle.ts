@@ -9,10 +9,10 @@ import { type ClassifyDeps, classifyIdle } from "./classifier/classify.ts";
 import type { Outbox } from "./deliver.ts";
 import {
 	DIGEST_PREFIX,
+	type IdleThreadSource,
 	idleParentsSource,
 	idlePrior,
 	selectIdleThreads,
-	type IdleThreadSource,
 } from "./idle-parents.ts";
 import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
@@ -20,7 +20,7 @@ import { evaluateSource, recordEvaluation } from "./source.ts";
 import type { Store } from "./store.ts";
 import { fenced, idleParentsConfig } from "./sweep.ts";
 
-export const IDLE_CLOCK = "idle-parents-clock";
+const IDLE_CLOCK = "idle-parents-clock";
 export type IdleClock = { lastAt: number };
 
 export type IdleParentsDeps = {

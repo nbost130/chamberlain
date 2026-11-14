@@ -8,7 +8,7 @@ import { readAfk } from "./afk.ts";
 import { principal } from "./config.ts";
 import type { Outbox } from "./deliver.ts";
 import type { Log } from "./log.ts";
-import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
+import { type Evaluation, evaluateSource, recordEvaluation } from "./source.ts";
 import type { Store } from "./store.ts";
 import {
 	type BusyFact,
@@ -16,10 +16,10 @@ import {
 	renderSweepPrompt,
 	runawaySource,
 	SWEEP_MS,
+	type SweepClock,
 	sweepAction,
 	sweepClock,
 	sweepMessage,
-	type SweepClock,
 } from "./sweep.ts";
 
 export type SweepDeps = {

@@ -1,39 +1,21 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import {
-	appendFileSync,
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { heldOpen } from "../core/afk.ts";
 import { holdCard, reconcileCardHolds } from "../core/card-hold.ts";
 import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import {
-	askQuestion,
-	claimWake,
-	getQuestion,
-	pageClaim,
-	questionStates,
-	recordAnswerDelivered,
-	type Question,
-} from "../core/questions.ts";
+import { askQuestion, claimWake, getQuestion, pageClaim, type Question, questionStates } from "../core/questions.ts";
 import { addInForce, propose, readRulings } from "../core/rulings.ts";
 import { openStore } from "../core/sqlite-store.ts";
-import { dbPath } from "../core/store.ts";
 import { HEALTH_KEY } from "../core/steward-health.ts";
+import { dbPath } from "../core/store.ts";
+import { openCapability } from "../testing/capability.ts";
 import { testRelay } from "../testing/relay.ts";
 import { fetchWake } from "../testing/wake.ts";
-import { createApp, type AppDeps } from "./app.ts";
+import { createApp } from "./app.ts";
 import { canonicalIp, checkBind, loadConfig, parseConfig } from "./config.ts";
 import { resolveEvidence } from "./evidence.ts";
-import { openCapability } from "../testing/capability.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];

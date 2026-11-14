@@ -18,13 +18,13 @@ import { createEngine } from "./core/engine.ts";
 import { askQuestion, getQuestion, type Question } from "./core/questions.ts";
 import { evaluateSource, recordEvaluation } from "./core/source.ts";
 import { openStore } from "./core/sqlite-store.ts";
+import type { Store } from "./core/store.ts";
+import { noAlert } from "./testing/alert.ts";
+import { openCapability } from "./testing/capability.ts";
+import { createFakeAdapter, type FakeAdapter } from "./testing/fake-adapter.ts";
+import { testRelayLock } from "./testing/lock.ts";
 import { createApp } from "./web/app.ts";
 import { createWaiting } from "./web/waiting.ts";
-import { createFakeAdapter, type FakeAdapter } from "./testing/fake-adapter.ts";
-import { noAlert } from "./testing/alert.ts";
-import { testRelayLock } from "./testing/lock.ts";
-import type { Store } from "./core/store.ts";
-import { openCapability } from "./testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const dirs: string[] = [];

@@ -2,31 +2,31 @@
  * Per-option routing of a queue answer: a thread-routed option picked with no note goes straight to the item's thread,
  * once; everything else, and a failed send, wakes the Steward with the reason.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld, heldOpen } from "../core/afk.ts";
 import { parseAsk } from "../ask.ts";
+import { appendHeld, heldOpen } from "../core/afk.ts";
 import {
+	type Answer,
 	answerRoute,
 	askQuestion,
 	claimWake,
 	getQuestion,
 	pageClaim,
-	readRelay,
-	recordAnswerDelivered,
-	startRelay,
-	type Answer,
 	type Question,
+	readRelay,
+	startRelay,
 } from "../core/questions.ts";
-import { testRelay } from "../testing/relay.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
+import { openCapability } from "../testing/capability.ts";
+import { testRelay } from "../testing/relay.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { createApp } from "./app.ts";
 import type { SendToThread } from "./waiting.ts";
-import { openCapability } from "../testing/capability.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];

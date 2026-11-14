@@ -48,6 +48,32 @@ export function judgeOff(config: JudgeConfig, trigger: Trigger): string | undefi
 	return undefined;
 }
 
+/** In place: the backends of a judge.json added to `config`. Throws on the first one that is malformed. */
+function mergeBackends(config: JudgeConfig, backends: Record<string, { command?: unknown }> | undefined) {
+	for (const [name, b] of Object.entries(backends ?? {})) {
+		if (!BACKEND_NAME.test(name))
+			throw Error(`backend name "${name.slice(0, 64)}" must be letters, digits, ".", "_" or "-"`);
+		if (
+			!Array.isArray(b?.command) ||
+			!b.command.length ||
+			!b.command.every((x) => typeof x === "string" && x.length > 0)
+		)
+			throw Error(`backend "${name}": command must be a non-empty list of strings`);
+		config.backends[name] = { command: b.command as string[] };
+	}
+}
+
+/** In place: the triggers of a judge.json added to `config`, which already holds the backends. Throws on the first one that is malformed. */
+function mergeTriggers(config: JudgeConfig, triggers: Record<string, { backend?: unknown }> | undefined) {
+	for (const [name, t] of Object.entries(triggers ?? {})) {
+		if (!(TRIGGERS as readonly string[]).includes(name)) throw Error(`unknown trigger "${name}"`);
+		if (typeof t?.backend !== "string" || !BACKEND_NAME.test(t.backend))
+			throw Error(`trigger "${name}": backend must name a backend`);
+		if (!config.backends[t.backend]) throw Error(`trigger "${name}": backend "${t.backend}" is not in "backends"`);
+		config.triggers[name] = { backend: t.backend };
+	}
+}
+
 /** Pure: a judge.json text merged over the defaults, or the first thing wrong with it. */
 export function parseJudgeConfig(
 	text: string | undefined,
@@ -60,24 +86,8 @@ export function parseJudgeConfig(
 			backends?: Record<string, { command?: unknown }>;
 		};
 		const config: JudgeConfig = { triggers: { ...base.triggers }, backends: { ...base.backends } };
-		for (const [name, b] of Object.entries(raw.backends ?? {})) {
-			if (!BACKEND_NAME.test(name))
-				throw Error(`backend name "${name.slice(0, 64)}" must be letters, digits, ".", "_" or "-"`);
-			if (
-				!Array.isArray(b?.command) ||
-				!b.command.length ||
-				!b.command.every((x) => typeof x === "string" && x.length > 0)
-			)
-				throw Error(`backend "${name}": command must be a non-empty list of strings`);
-			config.backends[name] = { command: b.command as string[] };
-		}
-		for (const [name, t] of Object.entries(raw.triggers ?? {})) {
-			if (!(TRIGGERS as readonly string[]).includes(name)) throw Error(`unknown trigger "${name}"`);
-			if (typeof t?.backend !== "string" || !BACKEND_NAME.test(t.backend))
-				throw Error(`trigger "${name}": backend must name a backend`);
-			if (!config.backends[t.backend]) throw Error(`trigger "${name}": backend "${t.backend}" is not in "backends"`);
-			config.triggers[name] = { backend: t.backend };
-		}
+		mergeBackends(config, raw.backends);
+		mergeTriggers(config, raw.triggers);
 		return { config };
 	} catch (e) {
 		return { config: base, error: `judge.json: ${e instanceof Error ? e.message : String(e)}` };
@@ -138,6 +148,32 @@ export type JudgeDeps = {
 	log?: (event: string, data?: Record<string, unknown>) => void;
 };
 
+/** A backend's finished run as an answer. It throws when the output is not JSON: the caller turns that into a failure. */
+function answerFrom(
+	backend: JudgeBackend,
+	r: { code: number; stdout: string; stderr: string },
+	input: JudgeInput,
+): JudgeAnswer {
+	if (r.code !== 0)
+		return { ok: false, backend, error: `${backend} judge exited ${r.code}: ${r.stderr.trim().slice(0, 160)}` };
+	const out = JSON.parse(r.stdout.trim().split("\n").filter(Boolean).at(-1) ?? "") as {
+		verdict?: unknown;
+		reason?: unknown;
+	};
+	if (typeof out.verdict !== "string" || !input.verdicts.includes(out.verdict))
+		return {
+			ok: false,
+			backend,
+			error: `${backend} judge gave verdict ${JSON.stringify(out.verdict)}, not one of ${input.verdicts.join(", ")}`,
+		};
+	return {
+		ok: true,
+		backend,
+		verdict: out.verdict,
+		reason: typeof out.reason === "string" ? out.reason.slice(0, 300) : "",
+	};
+}
+
 /** The one judge: `judge(trigger, input)`. */
 export function createJudge(d: JudgeDeps) {
 	const run = d.run ?? spawnRunner;
@@ -153,25 +189,7 @@ export function createJudge(d: JudgeDeps) {
 				error: `the ${backend} backend has no command (judge.json backends.${backend}.command)`,
 			};
 		try {
-			const r = await run([...command, input.system, input.user], d.timeoutMs ?? 45_000);
-			if (r.code !== 0)
-				return { ok: false, backend, error: `${backend} judge exited ${r.code}: ${r.stderr.trim().slice(0, 160)}` };
-			const out = JSON.parse(r.stdout.trim().split("\n").filter(Boolean).at(-1) ?? "") as {
-				verdict?: unknown;
-				reason?: unknown;
-			};
-			if (typeof out.verdict !== "string" || !input.verdicts.includes(out.verdict))
-				return {
-					ok: false,
-					backend,
-					error: `${backend} judge gave verdict ${JSON.stringify(out.verdict)}, not one of ${input.verdicts.join(", ")}`,
-				};
-			return {
-				ok: true,
-				backend,
-				verdict: out.verdict,
-				reason: typeof out.reason === "string" ? out.reason.slice(0, 300) : "",
-			};
+			return answerFrom(backend, await run([...command, input.system, input.user], d.timeoutMs ?? 45_000), input);
 		} catch (e) {
 			d.log?.("judge-failed", { trigger, backend, error: String(e).slice(0, 200) });
 			return {

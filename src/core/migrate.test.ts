@@ -1,14 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { assertSupported, FILES, migrateStorage, STEPS, upgradeData } from "./migrate.ts";
+import { LATEST_MIGRATION } from "./migrations.ts";
+import { checkVersion, SCHEMA_VERSION, SchemaTooNewError, stamp, versionOf } from "./schema.ts";
 import { readServers } from "./servers.ts";
 import { holdFlock } from "./singleton.ts";
-import { LATEST_MIGRATION } from "./migrations.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath } from "./store.ts";
-import { SCHEMA_VERSION, SchemaTooNewError, checkVersion, stamp, versionOf } from "./schema.ts";
 
 const dirs: string[] = [];
 const world = () => {
@@ -123,7 +123,7 @@ describe("assertSupported", () => {
 	test("a newer record in any versioned config file stops everything, and the message names the file", () => {
 		for (const name of ["web.json", "settings.json", "sweep.json", "servers.json"]) {
 			const w = world();
-			put(`${w.conf}/${name}`, JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 }) + "\n");
+			put(`${w.conf}/${name}`, `${JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 })}\n`);
 			expect(() => assertSupported(w)).toThrow(
 				new RegExp(`${name.replace(".", "\\.")} has schemaVersion ${SCHEMA_VERSION + 1}`),
 			);
@@ -220,6 +220,74 @@ describe("migrateStorage (config files)", () => {
 		put(`${w.conf}/settings.json`, JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 }));
 		expect(() => migrateStorage(w)).toThrow(SchemaTooNewError);
 		expect(existsSync(`${w.conf}/servers.json.pre-schema-v2.bak`)).toBe(false);
+	});
+});
+
+describe("a record-per-line (jsonl) file", () => {
+	/** No shipped file is jsonl any more, so the walk is given one for the test. */
+	const withJsonl = (fn: () => void) => {
+		const entry = { dir: "state" as const, name: "events.jsonl", kind: "jsonl" as const };
+		FILES.push(entry);
+		try {
+			fn();
+		} finally {
+			FILES.splice(FILES.indexOf(entry), 1);
+		}
+	};
+	const lines = ['{"a":1}', "", "{torn", '{"schemaVersion":2,"b":2}', '{"c":3}', ""];
+	test("assertSupported counts the older records and skips a torn line", () =>
+		withJsonl(() => {
+			const w = world();
+			put(`${w.state}/events.jsonl`, lines.join("\n"));
+			expect(assertSupported(w)).toEqual([
+				{ what: "events.jsonl", path: `${w.state}/events.jsonl`, version: 2, old: 2 },
+			]);
+		}));
+	test("a newer record in it stops everything, naming the file", () =>
+		withJsonl(() => {
+			const w = world();
+			put(`${w.state}/events.jsonl`, `{"schemaVersion":2}\n{"schemaVersion":${SCHEMA_VERSION + 1}}\n`);
+			expect(() => assertSupported(w)).toThrow(SchemaTooNewError);
+			expect(() => migrateStorage(w)).toThrow(/events\.jsonl/);
+		}));
+	test("migrateStorage upgrades only the older records and leaves blank lines, torn lines and current records byte for byte", () =>
+		withJsonl(() => {
+			const w = world();
+			put(`${w.state}/events.jsonl`, lines.join("\n"));
+			const r = migrateStorage(w);
+			expect(r).toEqual({ migrated: ["events.jsonl"], skipped: [] });
+			const out = readFileSync(`${w.state}/events.jsonl`, "utf8").split("\n");
+			expect(out).toHaveLength(lines.length);
+			expect(JSON.parse(out[0] ?? "")).toEqual({ schemaVersion: SCHEMA_VERSION, a: 1 });
+			expect(out.slice(1, 4)).toEqual(["", "{torn", '{"schemaVersion":2,"b":2}']);
+			expect(JSON.parse(out[4] ?? "")).toEqual({ schemaVersion: SCHEMA_VERSION, c: 3 });
+			expect(out[5]).toBe("");
+			expect(readFileSync(`${w.state}/events.jsonl.pre-schema-v${SCHEMA_VERSION}.bak`, "utf8")).toBe(lines.join("\n"));
+			expect(statSync(`${w.state}/events.jsonl`).mode & 0o777).toBe(0o600);
+			expect(migrateStorage(w)).toEqual({ migrated: [], skipped: [] });
+		}));
+	test("--check says how many records are older and changes nothing; a file that is not 0600 is skipped", () =>
+		withJsonl(() => {
+			const w = world();
+			put(`${w.state}/events.jsonl`, lines.join("\n"));
+			expect(migrateStorage({ ...w, check: true }).skipped).toEqual([
+				{ what: "events.jsonl", why: `2 records older than schemaVersion ${SCHEMA_VERSION} (not changed: --check)` },
+			]);
+			chmodSync(`${w.state}/events.jsonl`, 0o644);
+			expect(migrateStorage(w).skipped).toEqual([
+				{ what: "events.jsonl", why: "not a private regular file (mode exactly 0600)" },
+			]);
+		}));
+});
+
+describe("a config file that is not JSON", () => {
+	test("is left alone: it counts as current, so nothing migrates and nothing is skipped", () => {
+		const w = world();
+		put(`${w.conf}/web.json`, "{not json");
+		put(`${w.conf}/sweep.json`, JSON.stringify({ checks: [] }));
+		expect(assertSupported(w).find((s) => s.what === "web.json")).toMatchObject({ version: SCHEMA_VERSION, old: 0 });
+		expect(migrateStorage(w)).toEqual({ migrated: ["sweep.json"], skipped: [] });
+		expect(readFileSync(`${w.conf}/web.json`, "utf8")).toBe("{not json");
 	});
 });
 

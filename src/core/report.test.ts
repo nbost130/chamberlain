@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { reportKey, type ThreadState, type TurnItem } from "./decide";
 import { failedRead, type InstructionRead } from "./history";
-import { REPORT_HOLD_MS, reportWait, settleReport, type ReportWatch } from "./report";
+import { REPORT_HOLD_MS, type ReportWatch, reportWait, settleReport } from "./report";
 
 const QUIET = 180_000;
 const idle: ThreadState = {

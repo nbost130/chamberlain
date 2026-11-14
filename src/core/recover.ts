@@ -27,8 +27,8 @@
  * on `restore()`. Without a store the state is in memory only.
  */
 import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
-export type { RunLook };
-import { scrubForJudge, type JudgeAnswer, type Trigger } from "./judge.ts";
+
+import { type JudgeAnswer, scrubForJudge, type Trigger } from "./judge.ts";
 
 export type FailureKind =
 	| "stream_closed"
@@ -49,15 +49,6 @@ export const RETRY_KINDS: ReadonlySet<FailureKind> = new Set([
 	"capacity",
 	"provider_turn_failed",
 	"oom",
-]);
-export const NEVER_KINDS: ReadonlySet<FailureKind> = new Set([
-	"auth",
-	"cloudflare",
-	"safety",
-	"quota",
-	"workspace",
-	"interrupted",
-	"unknown",
 ]);
 
 export const MIN = 60_000;
@@ -91,6 +82,83 @@ export const DEFAULT_RECOVER_TIMING: RecoverTiming = {
 
 export type Classified = { kind: FailureKind; retry: boolean; waitMs: number; why: string };
 
+/** What the table reads of one failure: its lowercased texts, whether it was interrupted, and how long until its reset. */
+type Signals = {
+	msg: string;
+	code: string;
+	cls: string;
+	interrupted: boolean | undefined;
+	resetIn: number | undefined;
+	t: RecoverTiming;
+};
+type Rule = { kind: FailureKind; why: string; hit: (s: Signals) => boolean };
+
+/** The kinds that are never retried, in the order they are tested: a message that fits one of these and a retry kind is never retried. */
+const NEVER_RULES: Rule[] = [
+	{
+		kind: "interrupted",
+		why: "the run was interrupted",
+		hit: (s) => !!s.interrupted || /\binterrupted\b|\bcancel(?:l)?ed by\b/.test(s.msg) || s.cls === "interrupted",
+	},
+	{
+		kind: "cloudflare",
+		why: "a 403 / Cloudflare block",
+		hit: (s) => /cloudflare|attention required/.test(s.msg) || s.code === "api_error_403" || /\b403\b/.test(s.msg),
+	},
+	{
+		kind: "auth",
+		why: "authentication failed",
+		hit: (s) =>
+			/authenticat|claude auth login|unauthori[sz]ed|invalid api key|not logged in/.test(s.msg) ||
+			s.code === "api_error_401" ||
+			/\b401\b/.test(s.msg),
+	},
+	{
+		kind: "safety",
+		why: "blocked by a safety system",
+		hit: (s) =>
+			/misalignmentpolicyviolation|cyberpolicy/.test(s.code) ||
+			/safety systems|flagged for possible|content policy|usage policy/.test(s.msg),
+	},
+	{
+		kind: "workspace",
+		why: "workspace or git error",
+		hit: (s) => /workspace[_ ]preparation|git command failed|createworktree|worktree/.test(`${s.code} ${s.msg}`),
+	},
+	{
+		kind: "quota",
+		why: "a quota, not a rate limit",
+		hit: (s) =>
+			/quota|usage limit|credit|billing|exceeded your|spend limit|monthly limit|plan limit/.test(s.msg) ||
+			(s.resetIn !== undefined && Number.isFinite(s.resetIn) && s.resetIn > s.t.rateLimitMaxResetMs),
+	},
+];
+
+/** The kinds that are retried after the grace, tested after the rate limit. */
+const RETRY_RULES: Rule[] = [
+	{
+		kind: "oom",
+		why: "out of memory",
+		hit: (s) => /oom_kill|\boom\b/.test(s.code) || /out of memory|\boom\b/.test(s.msg),
+	},
+	{
+		kind: "capacity",
+		why: "provider capacity",
+		hit: (s) =>
+			/serveroverloaded|api_error_5(?:03|29)/.test(s.code) ||
+			/at capacity|overloaded|server error|\b(?:503|529)\b/.test(s.msg),
+	},
+	{ kind: "provider_turn_failed", why: "the provider turn failed", hit: (s) => /provider turn failed/.test(s.msg) },
+	{
+		kind: "stream_closed",
+		why: "the stream closed",
+		hit: (s) =>
+			/stream closed|event stream|responsestreamdisconnected|routing discovery timed out|stream disconnected/.test(
+				`${s.code} ${s.msg}`,
+			),
+	},
+];
+
 /**
  * Pure: what kind of failure this is, from the backend's own class, code and message. Never-retry kinds are tested first, so a
  * message that fits both ("Failed to authenticate. API Error: 403 ... Cloudflare") is never retried. A failure the table does
@@ -101,57 +169,23 @@ export function classifyFailure(
 	now = Date.now(),
 	t: RecoverTiming = DEFAULT_RECOVER_TIMING,
 ): Classified {
-	const msg = (f.message ?? "").toLowerCase();
-	const code = (f.code ?? "").toLowerCase();
-	const cls = (f.class ?? "").toLowerCase();
-	const never = (kind: FailureKind, why: string): Classified => ({ kind, retry: false, waitMs: 0, why });
-	const retry = (kind: FailureKind, why: string, waitMs = t.graceMs): Classified => ({
-		kind,
-		retry: true,
-		waitMs,
-		why,
-	});
-	if (f.interrupted || /\binterrupted\b|\bcancel(?:l)?ed by\b/.test(msg) || cls === "interrupted")
-		return never("interrupted", "the run was interrupted");
-	if (/cloudflare|attention required/.test(msg) || code === "api_error_403" || /\b403\b/.test(msg))
-		return never("cloudflare", "a 403 / Cloudflare block");
-	if (
-		/authenticat|claude auth login|unauthori[sz]ed|invalid api key|not logged in/.test(msg) ||
-		code === "api_error_401" ||
-		/\b401\b/.test(msg)
-	)
-		return never("auth", "authentication failed");
-	if (
-		/misalignmentpolicyviolation|cyberpolicy/.test(code) ||
-		/safety systems|flagged for possible|content policy|usage policy/.test(msg)
-	)
-		return never("safety", "blocked by a safety system");
-	if (/workspace[_ ]preparation|git command failed|createworktree|worktree/.test(`${code} ${msg}`))
-		return never("workspace", "workspace or git error");
-	const resetIn = f.resetAt ? Date.parse(f.resetAt) - now : undefined;
-	if (
-		/quota|usage limit|credit|billing|exceeded your|spend limit|monthly limit|plan limit/.test(msg) ||
-		(resetIn !== undefined && Number.isFinite(resetIn) && resetIn > t.rateLimitMaxResetMs)
-	)
-		return never("quota", "a quota, not a rate limit");
-	if (/rate limit|too many requests/.test(msg) || /api_error_429|\b429\b/.test(code) || /\b429\b/.test(msg)) {
-		const until = resetIn !== undefined && Number.isFinite(resetIn) ? resetIn + 30_000 : 0;
-		return retry("rate_limit", "a rate limit", Math.max(t.rateLimitWaitMs, until));
+	const s: Signals = {
+		msg: (f.message ?? "").toLowerCase(),
+		code: (f.code ?? "").toLowerCase(),
+		cls: (f.class ?? "").toLowerCase(),
+		interrupted: f.interrupted,
+		resetIn: f.resetAt ? Date.parse(f.resetAt) - now : undefined,
+		t,
+	};
+	const never = NEVER_RULES.find((r) => r.hit(s));
+	if (never) return { kind: never.kind, retry: false, waitMs: 0, why: never.why };
+	if (/rate limit|too many requests/.test(s.msg) || /api_error_429|\b429\b/.test(s.code) || /\b429\b/.test(s.msg)) {
+		const until = s.resetIn !== undefined && Number.isFinite(s.resetIn) ? s.resetIn + 30_000 : 0;
+		return { kind: "rate_limit", retry: true, waitMs: Math.max(t.rateLimitWaitMs, until), why: "a rate limit" };
 	}
-	if (/oom_kill|\boom\b/.test(code) || /out of memory|\boom\b/.test(msg)) return retry("oom", "out of memory");
-	if (
-		/serveroverloaded|api_error_5(?:03|29)/.test(code) ||
-		/at capacity|overloaded|server error|\b(?:503|529)\b/.test(msg)
-	)
-		return retry("capacity", "provider capacity");
-	if (/provider turn failed/.test(msg)) return retry("provider_turn_failed", "the provider turn failed");
-	if (
-		/stream closed|event stream|responsestreamdisconnected|routing discovery timed out|stream disconnected/.test(
-			`${code} ${msg}`,
-		)
-	)
-		return retry("stream_closed", "the stream closed");
-	return never("unknown", "not a failure the table knows");
+	const transient = RETRY_RULES.find((r) => r.hit(s));
+	if (transient) return { kind: transient.kind, retry: true, waitMs: t.graceMs, why: transient.why };
+	return { kind: "unknown", retry: false, waitMs: 0, why: "not a failure the table knows" };
 }
 
 /** What the rules need to know about the world around a thread. */
@@ -176,7 +210,7 @@ export function neverRetryThread(t: ThreadState, ctx: ThreadContext): string | u
 }
 
 export type Verdict = "retry_later" | "do_not_retry" | "ask_principal";
-export const VERDICTS: readonly Verdict[] = ["retry_later", "do_not_retry", "ask_principal"];
+const VERDICTS: readonly Verdict[] = ["retry_later", "do_not_retry", "ask_principal"];
 
 /** Pure: the judge's brief. It carries the two failures' class, code and scrubbed message, and never any thread text. */
 export function judgeBrief(
@@ -301,328 +335,429 @@ export const RETRY_TEXT =
 	"[automatic retry] Your last run failed with a transient error and nobody has written here since. Continue from where it stopped.";
 const HANDLED_MAX = 500;
 
-export function createRecovery(d: RecoverDeps) {
-	const now = d.now ?? Date.now;
-	const t: RecoverTiming = { ...DEFAULT_RECOVER_TIMING, ...d.timing };
-	const timer =
-		d.setTimer ??
-		((ms, fn) => {
-			const h = setTimeout(fn, ms);
-			return () => clearTimeout(h);
-		});
-	const store = d.store ?? memoryRecoverStore();
-	let st: RecoverState = store.load() ?? freshState();
-	const timers = new Map<string, () => void>();
+/** What one recovery holds: its dependencies, clock, timing, persisted state, and the cancel handle of each armed retry timer. */
+type Env = {
+	d: RecoverDeps;
+	now: () => number;
+	t: RecoverTiming;
+	timer: (ms: number, fn: () => void) => () => void;
+	store: RecoverStore;
+	st: RecoverState;
+	timers: Map<string, () => void>;
+};
+type Pending = NonNullable<ThreadRecord["pending"]>;
+/** A thread's counters as they were before an attempt. */
+type Before = NonNullable<Pending["attempt"]>;
 
-	const save = () => {
-		try {
-			store.save(st);
-		} catch (e) {
-			d.log("recover-state-unsaved", { error: String(e).slice(0, 160) });
-		}
-	};
-	/** The save the write-ahead depends on: it reports its failure instead of swallowing it, because a send with no durable record must not happen. */
-	const saveStrict = (): string | undefined => {
-		try {
-			store.save(st);
-			return undefined;
-		} catch (e) {
-			d.log("recover-state-unsaved", { error: String(e).slice(0, 160) });
-			return String(e instanceof Error ? e.message : e).slice(0, 160);
-		}
-	};
-	const rec = (id: string): ThreadRecord => (st.threads[id] ??= { failures: [], pings: 0 });
-	const ctx = async (id: string): Promise<ThreadContext> => ({
-		stewardId: d.stewardId(),
-		decisionsId: d.decisionsId(),
-		children: await d.children(id).catch(() => 0),
-	});
-	const clearPending = (id: string) => {
-		timers.get(id)?.();
-		timers.delete(id);
-		const r = st.threads[id];
-		if (r?.pending) delete r.pending;
-	};
-	const cancelAll = () => {
-		for (const id of Object.keys(st.threads)) clearPending(id);
-		for (const c of timers.values()) c();
-		timers.clear();
-		save();
-	};
-	const tripped = () => st.breaker.trippedAt !== undefined;
+const clockTimer = (ms: number, fn: () => void) => {
+	const h = setTimeout(fn, ms);
+	return () => clearTimeout(h);
+};
 
-	/** The breaker: true when this failure is the one that trips it. */
-	function count(kind: FailureKind, at: number): { tripped: boolean; fresh: boolean; n: number } {
-		const b = st.breaker;
-		if (b.trippedAt !== undefined && at - b.lastFailureAt > t.breakerQuietMs) {
-			delete b.trippedAt;
-			b.failures = [];
-			d.log("recover-breaker-reset", {});
-		}
-		b.lastFailureAt = at;
-		b.failures = b.failures.filter((x) => at - x.at <= t.breakerWindowMs);
-		b.failures.push({ at, kind });
-		const n = b.failures.filter((x) => x.kind === kind).length;
-		if (b.trippedAt !== undefined) return { tripped: true, fresh: false, n };
-		if (n >= t.breakerCount) {
-			b.trippedAt = at;
-			cancelAll();
-			return { tripped: true, fresh: true, n };
-		}
-		return { tripped: false, fresh: false, n };
+const save = (rc: Env) => {
+	try {
+		rc.store.save(rc.st);
+	} catch (e) {
+		rc.d.log("recover-state-unsaved", { error: String(e).slice(0, 160) });
 	}
-
-	function arm(id: string, ms: number) {
-		timers.get(id)?.();
-		timers.set(
-			id,
-			timer(ms, () => {
-				timers.delete(id);
-				attempt(id).catch((e) => d.log("recover-error", { threadId: id, error: String(e).slice(0, 200) }));
-			}),
-		);
+};
+/** The save the write-ahead depends on: it reports its failure instead of swallowing it, because a send with no durable record must not happen. */
+const saveStrict = (rc: Env): string | undefined => {
+	try {
+		rc.store.save(rc.st);
+		return undefined;
+	} catch (e) {
+		rc.d.log("recover-state-unsaved", { error: String(e).slice(0, 160) });
+		return String(e instanceof Error ? e.message : e).slice(0, 160);
 	}
+};
+const rec = (rc: Env, id: string): ThreadRecord => (rc.st.threads[id] ??= { failures: [], pings: 0 });
+const threadContext = async (rc: Env, id: string): Promise<ThreadContext> => ({
+	stewardId: rc.d.stewardId(),
+	decisionsId: rc.d.decisionsId(),
+	children: await rc.d.children(id).catch(() => 0),
+});
+const clearPending = (rc: Env, id: string) => {
+	rc.timers.get(id)?.();
+	rc.timers.delete(id);
+	const r = rc.st.threads[id];
+	if (r?.pending) delete r.pending;
+};
+const cancelAll = (rc: Env) => {
+	for (const id of Object.keys(rc.st.threads)) clearPending(rc, id);
+	for (const c of rc.timers.values()) c();
+	rc.timers.clear();
+	save(rc);
+};
+const tripped = (rc: Env) => rc.st.breaker.trippedAt !== undefined;
 
-	async function attempt(threadId: string) {
-		const p = st.threads[threadId]?.pending;
-		if (!p) return;
-		const standDown = (why: string) => {
-			clearPending(threadId);
-			save();
-			d.log("recover-stand-down", { threadId, runId: p.runId, kind: p.kind, why });
-		};
-		if (tripped()) return standDown("outage breaker is tripped");
-		// Every read that can take time comes first; what is checked after them is read once more, synchronously, right before the ping.
-		const instruction = await d.instructionId(threadId).catch(() => "unknown");
-		const children = await d.children(threadId).catch(() => 0);
-		const look = await d.look(threadId).catch(() => undefined);
-		// A read that fails stands down too: the retry must never race a message or a state it could not see.
-		if (instruction === "unknown" || !look) {
-			standDown(
+/** The breaker: true when this failure is the one that trips it. */
+function count(rc: Env, kind: FailureKind, at: number): { tripped: boolean; fresh: boolean; n: number } {
+	const b = rc.st.breaker;
+	if (b.trippedAt !== undefined && at - b.lastFailureAt > rc.t.breakerQuietMs) {
+		delete b.trippedAt;
+		b.failures = [];
+		rc.d.log("recover-breaker-reset", {});
+	}
+	b.lastFailureAt = at;
+	b.failures = b.failures.filter((x) => at - x.at <= rc.t.breakerWindowMs);
+	b.failures.push({ at, kind });
+	const n = b.failures.filter((x) => x.kind === kind).length;
+	if (b.trippedAt !== undefined) return { tripped: true, fresh: false, n };
+	if (n >= rc.t.breakerCount) {
+		b.trippedAt = at;
+		cancelAll(rc);
+		return { tripped: true, fresh: true, n };
+	}
+	return { tripped: false, fresh: false, n };
+}
+
+function arm(rc: Env, id: string, ms: number) {
+	rc.timers.get(id)?.();
+	rc.timers.set(
+		id,
+		rc.timer(ms, () => {
+			rc.timers.delete(id);
+			attempt(rc, id).catch((e) => rc.d.log("recover-error", { threadId: id, error: String(e).slice(0, 200) }));
+		}),
+	);
+}
+
+/** Ends a pending retry without sending it, and logs why. */
+function standDown(rc: Env, threadId: string, p: Pending, why: string) {
+	clearPending(rc, threadId);
+	save(rc);
+	rc.d.log("recover-stand-down", { threadId, runId: p.runId, kind: p.kind, why });
+}
+
+/** Why a pending retry must not go out, from the fresh read of the thread; `wake` is what the Steward is told when the retry was held back for lack of a read. */
+type Hold = { why: string; wake?: string };
+
+/** The fresh read of the thread against what the retry was scheduled for. */
+function lookHold(p: Pending, instruction: string, look: RunLook): string | undefined {
+	if (instruction !== p.instruction) return "someone wrote in the thread";
+	if (look.waiting) return "the thread is waiting on a card, approval or question now";
+	if (look.active) return "a run is active on the thread now";
+	if (look.latestStatus !== "failed") return `the thread's newest run is ${look.latestStatus ?? "missing"}, not failed`;
+	if (look.latestRunId && look.latestRunId !== p.runId) return "a newer run exists";
+	return undefined;
+}
+
+/** The daemon's own view of the thread, read synchronously right before the ping, against the rules. */
+function liveHold(rc: Env, live: ThreadState, children: number): string | undefined {
+	if (live.status !== "failed") return `the thread is ${live.status}, not failed`;
+	const stop = neverRetryThread(live, { stewardId: rc.d.stewardId(), decisionsId: rc.d.decisionsId(), children });
+	if (stop) return stop;
+	if (tripped(rc)) return "outage breaker is tripped";
+	return undefined;
+}
+
+/** Whether the reads taken after the grace allow the retry: undefined when they do. Synchronous, so the state is read once more right before the ping. */
+function holdReason(
+	rc: Env,
+	threadId: string,
+	p: Pending,
+	reads: { instruction: string; children: number; look: RunLook | undefined },
+): Hold | undefined {
+	const { instruction, children, look } = reads;
+	// A read that fails stands down too: the retry must never race a message or a state it could not see.
+	if (instruction === "unknown" || !look)
+		return {
+			why:
 				instruction === "unknown"
 					? "the thread's messages could not be read"
 					: "the thread could not be read again before the ping",
-			);
-			d.wake(
-				threadId,
-				p.kind,
-				"the automatic retry was held back because the thread could not be read, so nothing has been retried",
-			);
-			return;
-		}
-		if (instruction !== p.instruction) return standDown("someone wrote in the thread");
-		if (look.waiting) return standDown("the thread is waiting on a card, approval or question now");
-		if (look.active) return standDown("a run is active on the thread now");
-		if (look.latestStatus !== "failed")
-			return standDown(`the thread's newest run is ${look.latestStatus ?? "missing"}, not failed`);
-		if (look.latestRunId && look.latestRunId !== p.runId) return standDown("a newer run exists");
-		const live = d.state(threadId);
-		if (!live) {
-			standDown("the daemon cannot see the thread");
-			d.wake(
-				threadId,
-				p.kind,
-				"the automatic retry was held back because the daemon could not see the thread, so nothing has been retried",
-			);
-			return;
-		}
-		if (live.status !== "failed") return standDown(`the thread is ${live.status}, not failed`);
-		const stop = neverRetryThread(live, { stewardId: d.stewardId(), decisionsId: d.decisionsId(), children });
-		if (stop) return standDown(stop);
-		if (tripped()) return standDown("outage breaker is tripped");
-		// Write-ahead, failing closed: the attempt is recorded durably BEFORE the send, and the retry stays pending until the send is answered.
-		// If the record cannot be saved, nothing is sent. A crash after T3 accepted the message finds the attempt recorded (the next failure is
-		// the second one and goes to the judge); a crash before it re-sends the same message id (retrySeed), which T3 drops if the first one did
-		// land. The counters as they were before the attempt are saved with it, so a refusal that sent nothing can restore them exactly.
-		timers.delete(threadId);
-		const tr = rec(threadId);
-		const firstAttempt = p.attempt === undefined;
-		if (firstAttempt) {
-			p.attempt = { pings: tr.pings, retried: tr.retried ?? null };
-			tr.pings++;
-			tr.retried = { runId: p.runId, at: now(), failure: p.failure, kind: p.kind };
-		}
-		const unsaved = saveStrict();
-		if (unsaved !== undefined) {
-			if (firstAttempt) {
-				tr.pings = p.attempt!.pings;
-				if (p.attempt!.retried) tr.retried = p.attempt!.retried;
-				else delete tr.retried;
-				delete p.attempt;
-			}
-			clearPending(threadId);
-			d.wake(
-				threadId,
-				p.kind,
-				`the automatic retry was not sent because its record could not be saved (${unsaved}), so nothing has been retried`,
-			);
-			return;
-		}
-		let r: { ok: boolean; detail: string };
-		try {
-			r = await d.ping(threadId, RETRY_TEXT, retrySeed(threadId, p.failure));
-		} catch (e) {
-			r = { ok: false, detail: `the send threw: ${String(e instanceof Error ? e.message : e).slice(0, 160)}` };
-		}
-		clearPending(threadId);
-		if (!r.ok) {
-			// Only a refusal that says nothing was sent withdraws the attempt, and it restores the counters exactly as they were. Any other failure
-			// may have been sent, so the attempt stays counted: a confirmed acceptance is the only thing treated as sent, and a doubt is never treated as unsent.
-			if (r.detail.startsWith("not sent:")) {
-				tr.pings = p.attempt!.pings;
-				if (p.attempt!.retried) tr.retried = p.attempt!.retried;
-				else delete tr.retried;
-			}
-			save();
-			d.log("recover-ping-failed", { threadId, runId: p.runId, detail: r.detail });
-			d.wake(
-				threadId,
-				p.kind,
-				r.detail.startsWith("not sent:")
-					? `the automatic retry could not be sent (${r.detail}), so nothing has been retried`
-					: `the automatic retry may have been delivered (${r.detail}); it is counted as sent, so check the thread before retrying again`,
-			);
-			return;
-		}
-		save();
-		d.log("recover-retried", { threadId, runId: p.runId, kind: p.kind });
-	}
+			wake: "the automatic retry was held back because the thread could not be read, so nothing has been retried",
+		};
+	const fromLook = lookHold(p, instruction, look);
+	if (fromLook) return { why: fromLook };
+	const live = rc.d.state(threadId);
+	if (!live)
+		return {
+			why: "the daemon cannot see the thread",
+			wake: "the automatic retry was held back because the daemon could not see the thread, so nothing has been retried",
+		};
+	const fromLive = liveHold(rc, live, children);
+	return fromLive ? { why: fromLive } : undefined;
+}
 
-	/** One failed thread. Returns what the daemon should do about its wake. */
-	async function onFailure(thread: ThreadState): Promise<Handling> {
-		const at = now();
-		const read = await d.readFailure(thread.id).catch((e) => {
-			d.log("recover-read-failed", { threadId: thread.id, error: String(e).slice(0, 160) });
-			return undefined;
-		});
-		const runId = read?.runId ?? thread.latestRunId ?? `${thread.id}@${at}`;
-		if (st.handled.includes(runId)) return { action: "duplicate" };
-		st.handled.push(runId);
-		if (st.handled.length > HANDLED_MAX) st.handled.shift();
-		save();
-		const failure: RunFailure = read ?? { runId, message: "" };
-		const c = classifyFailure(failure, at, t);
-		const wake = (note: string): Handling => ({ action: "wake", kind: c.kind, note });
-		// A failure that cannot be read says nothing of its kind, so it is no evidence of an outage and nothing to retry.
-		if (!read)
-			return {
-				action: "wake",
-				kind: c.kind,
-				note: "the failure could not be read, so nothing was retried automatically",
-			};
-		// The Steward's and the Decisions thread's failures are never the daemon's to handle, and are not outage evidence.
-		const lone =
-			d.stewardId() === thread.id
-				? "the Steward's thread"
-				: d.decisionsId() === thread.id
-					? "the Decisions thread"
-					: undefined;
-		if (lone) return wake(`not retried automatically: ${lone}`);
-		if (c.kind !== "interrupted") {
-			const b = count(c.kind, at);
-			save();
-			if (b.tripped) {
-				d.log("recover-breaker", { kind: c.kind, count: b.n, fresh: b.fresh, threadId: thread.id });
-				return { action: "breaker", kind: c.kind, alarm: b.fresh, count: b.n };
-			}
-		}
-		const stop = neverRetryThread(d.state(thread.id) ?? thread, await ctx(thread.id));
-		if (stop) return wake(`not retried automatically: ${stop}`);
-		if (c.kind === "interrupted") return wake(`not retried automatically: ${c.why}`);
-		const tr = rec(thread.id);
-		tr.failures = tr.failures.filter((x) => at - x.at <= t.threadHorizonMs);
-		tr.failures.push({ runId, at, kind: c.kind });
-		save();
-		const prior = tr.retried;
-		// A failure after the retry goes to the judge, whenever within the horizon, unless it is a kind that is never retried anyway: those go straight to the Steward.
-		if (
-			!tr.judged &&
-			prior &&
-			prior.runId !== runId &&
-			at - prior.at <= t.threadHorizonMs &&
-			(c.retry || c.kind === "unknown")
-		) {
-			tr.judged = true;
-			delete tr.retried;
-			clearPending(thread.id);
-			save();
-			const brief = judgeBrief(c.kind, prior.failure, failure, at - prior.at);
-			const j = await d.judge("stalled-recovery", brief);
-			d.log("recover-judged", {
-				threadId: thread.id,
-				kind: c.kind,
-				backend: j.backend,
-				ok: j.ok,
-				verdict: j.ok ? j.verdict : undefined,
-				failures: tr.failures.length,
-			});
-			if (!j.ok)
-				return {
-					action: "verdict",
-					kind: c.kind,
-					backend: j.backend,
-					verdict: "unjudged",
-					reason: j.error,
-					ask: false,
-				};
-			return {
-				action: "verdict",
-				kind: c.kind,
-				backend: j.backend,
-				verdict: j.verdict as Verdict,
-				reason: j.reason,
-				ask: j.verdict === "ask_principal",
-			};
-		}
-		if (!c.retry) return wake(`not retried automatically: ${c.why}`);
-		if (tr.judged)
-			return wake(
-				`not retried automatically: the judge has already seen this thread fail twice (${tr.failures.length} failures so far)`,
-			);
-		if (tr.pings > 0) return wake("not retried automatically: the thread has already been retried once");
-		clearPending(thread.id);
-		const instruction = await d.instructionId(thread.id).catch(() => "unknown");
-		const waitMs = c.waitMs;
-		tr.pending = { runId, kind: c.kind, failure, instruction, due: at + waitMs };
-		save();
-		arm(thread.id, waitMs);
-		d.log("recover-scheduled", { threadId: thread.id, runId, kind: c.kind, inMs: waitMs });
-		return { action: "retry-scheduled", kind: c.kind, at: at + waitMs };
-	}
+/** Puts a thread's counters back as they were before the attempt. */
+function restoreCounters(tr: ThreadRecord, before: Before) {
+	tr.pings = before.pings;
+	if (before.retried) tr.retried = before.retried;
+	else delete tr.retried;
+}
 
+/**
+ * Write-ahead, failing closed: the attempt is recorded durably BEFORE the send, and the retry stays pending until the send is answered.
+ * If the record cannot be saved, nothing is sent. A crash after T3 accepted the message finds the attempt recorded (the next failure is
+ * the second one and goes to the judge); a crash before it re-sends the same message id (retrySeed), which T3 drops if the first one did
+ * land. The counters as they were before the attempt are saved with it, so a refusal that sent nothing can restore them exactly.
+ */
+function beginAttempt(rc: Env, threadId: string, p: Pending) {
+	rc.timers.delete(threadId);
+	const tr = rec(rc, threadId);
+	const first = p.attempt === undefined;
+	const before: Before = p.attempt ?? { pings: tr.pings, retried: tr.retried ?? null };
+	if (first) {
+		p.attempt = before;
+		tr.pings++;
+		tr.retried = { runId: p.runId, at: rc.now(), failure: p.failure, kind: p.kind };
+	}
+	return { tr, before, first };
+}
+
+/** The record of the attempt could not be saved: nothing was sent, so the counters go back and the Steward is told. */
+function abandonUnsaved(
+	rc: Env,
+	threadId: string,
+	p: Pending,
+	begun: ReturnType<typeof beginAttempt>,
+	unsaved: string,
+) {
+	if (begun.first) {
+		restoreCounters(begun.tr, begun.before);
+		delete p.attempt;
+	}
+	clearPending(rc, threadId);
+	rc.d.wake(
+		threadId,
+		p.kind,
+		`the automatic retry was not sent because its record could not be saved (${unsaved}), so nothing has been retried`,
+	);
+}
+
+/** The send was answered with a failure. */
+function pingRefused(rc: Env, threadId: string, p: Pending, begun: ReturnType<typeof beginAttempt>, detail: string) {
+	// Only a refusal that says nothing was sent withdraws the attempt, and it restores the counters exactly as they were. Any other failure
+	// may have been sent, so the attempt stays counted: a confirmed acceptance is the only thing treated as sent, and a doubt is never treated as unsent.
+	const notSent = detail.startsWith("not sent:");
+	if (notSent) restoreCounters(begun.tr, begun.before);
+	save(rc);
+	rc.d.log("recover-ping-failed", { threadId, runId: p.runId, detail });
+	rc.d.wake(
+		threadId,
+		p.kind,
+		notSent
+			? `the automatic retry could not be sent (${detail}), so nothing has been retried`
+			: `the automatic retry may have been delivered (${detail}); it is counted as sent, so check the thread before retrying again`,
+	);
+}
+
+async function attempt(rc: Env, threadId: string) {
+	const p = rc.st.threads[threadId]?.pending;
+	if (!p) return;
+	if (tripped(rc)) return standDown(rc, threadId, p, "outage breaker is tripped");
+	// Every read that can take time comes first; what is checked after them is read once more, synchronously, right before the ping.
+	const instruction = await rc.d.instructionId(threadId).catch(() => "unknown");
+	const children = await rc.d.children(threadId).catch(() => 0);
+	const look = await rc.d.look(threadId).catch(() => undefined);
+	const hold = holdReason(rc, threadId, p, { instruction, children, look });
+	if (hold) {
+		standDown(rc, threadId, p, hold.why);
+		if (hold.wake) rc.d.wake(threadId, p.kind, hold.wake);
+		return;
+	}
+	const begun = beginAttempt(rc, threadId, p);
+	const unsaved = saveStrict(rc);
+	if (unsaved !== undefined) return abandonUnsaved(rc, threadId, p, begun, unsaved);
+	let r: { ok: boolean; detail: string };
+	try {
+		r = await rc.d.ping(threadId, RETRY_TEXT, retrySeed(threadId, p.failure));
+	} catch (e) {
+		r = { ok: false, detail: `the send threw: ${String(e instanceof Error ? e.message : e).slice(0, 160)}` };
+	}
+	clearPending(rc, threadId);
+	if (!r.ok) return pingRefused(rc, threadId, p, begun, r.detail);
+	save(rc);
+	rc.d.log("recover-retried", { threadId, runId: p.runId, kind: p.kind });
+}
+
+/** The backend's record of a thread's newest failure; one that cannot be read is logged and comes back undefined. */
+function readFailure(rc: Env, threadId: string): Promise<RunFailure | undefined> {
+	return rc.d.readFailure(threadId).catch((e) => {
+		rc.d.log("recover-read-failed", { threadId, error: String(e).slice(0, 160) });
+		return undefined;
+	});
+}
+
+/** Marks a run handled, remembering the newest HANDLED_MAX; false when it already was. */
+function markHandled(rc: Env, runId: string): boolean {
+	if (rc.st.handled.includes(runId)) return false;
+	rc.st.handled.push(runId);
+	if (rc.st.handled.length > HANDLED_MAX) rc.st.handled.shift();
+	save(rc);
+	return true;
+}
+
+/** The Steward's and the Decisions thread's failures are never the daemon's to handle, and are not outage evidence. */
+function loneThread(rc: Env, threadId: string): string | undefined {
+	if (rc.d.stewardId() === threadId) return "the Steward's thread";
+	if (rc.d.decisionsId() === threadId) return "the Decisions thread";
+	return undefined;
+}
+
+/** Counts the failure toward the outage breaker (an interrupted run is no evidence of one); the breaker's handling when it is tripped. */
+function outageHandling(rc: Env, c: Classified, at: number, threadId: string): Handling | undefined {
+	if (c.kind === "interrupted") return undefined;
+	const b = count(rc, c.kind, at);
+	save(rc);
+	if (!b.tripped) return undefined;
+	rc.d.log("recover-breaker", { kind: c.kind, count: b.n, fresh: b.fresh, threadId });
+	return { action: "breaker", kind: c.kind, alarm: b.fresh, count: b.n };
+}
+
+/**
+ * The retry this thread's second failure follows, when it is one: a failure after the retry goes to the judge, whenever within the horizon, unless it is
+ * a kind that is never retried anyway: those go straight to the Steward.
+ */
+function priorRetry(
+	rc: Env,
+	tr: ThreadRecord,
+	runId: string,
+	at: number,
+	c: Classified,
+): NonNullable<ThreadRecord["retried"]> | undefined {
+	const prior = tr.retried;
+	if (tr.judged || !prior || prior.runId === runId || !(at - prior.at <= rc.t.threadHorizonMs)) return undefined;
+	return c.retry || c.kind === "unknown" ? prior : undefined;
+}
+
+/** Hands a thread's second failure to the judge, and holds the thread until it completes a turn. */
+async function judgeSecondFailure(
+	rc: Env,
+	threadId: string,
+	tr: ThreadRecord,
+	prior: NonNullable<ThreadRecord["retried"]>,
+	failed: { c: Classified; failure: RunFailure; at: number },
+): Promise<Handling> {
+	const { c, failure, at } = failed;
+	tr.judged = true;
+	delete tr.retried;
+	clearPending(rc, threadId);
+	save(rc);
+	const brief = judgeBrief(c.kind, prior.failure, failure, at - prior.at);
+	const j = await rc.d.judge("stalled-recovery", brief);
+	rc.d.log("recover-judged", {
+		threadId,
+		kind: c.kind,
+		backend: j.backend,
+		ok: j.ok,
+		verdict: j.ok ? j.verdict : undefined,
+		failures: tr.failures.length,
+	});
+	if (!j.ok)
+		return { action: "verdict", kind: c.kind, backend: j.backend, verdict: "unjudged", reason: j.error, ask: false };
 	return {
-		onFailure,
+		action: "verdict",
+		kind: c.kind,
+		backend: j.backend,
+		verdict: j.verdict as Verdict,
+		reason: j.reason,
+		ask: j.verdict === "ask_principal",
+	};
+}
+
+/** Why a first failure of a thread is not retried, or undefined when it may be. */
+function noRetryNote(tr: ThreadRecord, c: Classified): string | undefined {
+	if (!c.retry) return `not retried automatically: ${c.why}`;
+	if (tr.judged)
+		return `not retried automatically: the judge has already seen this thread fail twice (${tr.failures.length} failures so far)`;
+	if (tr.pings > 0) return "not retried automatically: the thread has already been retried once";
+	return undefined;
+}
+
+/** Schedules the one retry of a thread's first failure, after the kind's wait. */
+async function scheduleRetry(
+	rc: Env,
+	threadId: string,
+	tr: ThreadRecord,
+	failed: { c: Classified; failure: RunFailure; at: number; runId: string },
+): Promise<Handling> {
+	const { c, failure, at, runId } = failed;
+	clearPending(rc, threadId);
+	const instruction = await rc.d.instructionId(threadId).catch(() => "unknown");
+	const waitMs = c.waitMs;
+	tr.pending = { runId, kind: c.kind, failure, instruction, due: at + waitMs };
+	save(rc);
+	arm(rc, threadId, waitMs);
+	rc.d.log("recover-scheduled", { threadId, runId, kind: c.kind, inMs: waitMs });
+	return { action: "retry-scheduled", kind: c.kind, at: at + waitMs };
+}
+
+/** One failed thread. Returns what the daemon should do about its wake. */
+async function onFailure(rc: Env, thread: ThreadState): Promise<Handling> {
+	const at = rc.now();
+	const read = await readFailure(rc, thread.id);
+	const runId = read?.runId ?? thread.latestRunId ?? `${thread.id}@${at}`;
+	if (!markHandled(rc, runId)) return { action: "duplicate" };
+	const failure: RunFailure = read ?? { runId, message: "" };
+	const c = classifyFailure(failure, at, rc.t);
+	const wake = (note: string): Handling => ({ action: "wake", kind: c.kind, note });
+	// A failure that cannot be read says nothing of its kind, so it is no evidence of an outage and nothing to retry.
+	if (!read) return wake("the failure could not be read, so nothing was retried automatically");
+	const lone = loneThread(rc, thread.id);
+	if (lone) return wake(`not retried automatically: ${lone}`);
+	const outage = outageHandling(rc, c, at, thread.id);
+	if (outage) return outage;
+	const stop = neverRetryThread(rc.d.state(thread.id) ?? thread, await threadContext(rc, thread.id));
+	if (stop) return wake(`not retried automatically: ${stop}`);
+	if (c.kind === "interrupted") return wake(`not retried automatically: ${c.why}`);
+	const tr = rec(rc, thread.id);
+	tr.failures = tr.failures.filter((x) => at - x.at <= rc.t.threadHorizonMs);
+	tr.failures.push({ runId, at, kind: c.kind });
+	save(rc);
+	const prior = priorRetry(rc, tr, runId, at, c);
+	if (prior) return judgeSecondFailure(rc, thread.id, tr, prior, { c, failure, at });
+	const note = noRetryNote(tr, c);
+	if (note) return wake(note);
+	return scheduleRetry(rc, thread.id, tr, { c, failure, at, runId });
+}
+
+export function createRecovery(d: RecoverDeps) {
+	const store = d.store ?? memoryRecoverStore();
+	const rc: Env = {
+		d,
+		now: d.now ?? Date.now,
+		t: { ...DEFAULT_RECOVER_TIMING, ...d.timing },
+		timer: d.setTimer ?? clockTimer,
+		store,
+		st: store.load() ?? freshState(),
+		timers: new Map<string, () => void>(),
+	};
+	return {
+		onFailure: (thread: ThreadState) => onFailure(rc, thread),
 		/** After a restart: re-arms every retry that was pending, each no sooner than `restoreDelayMs` (the watchers need a moment to see the threads). */
 		restore() {
-			for (const [id, r] of Object.entries(st.threads))
+			for (const [id, r] of Object.entries(rc.st.threads))
 				if (r.pending) {
-					arm(id, Math.max(r.pending.due - now(), t.restoreDelayMs));
+					arm(rc, id, Math.max(r.pending.due - rc.now(), rc.t.restoreDelayMs));
 					d.log("recover-restored", { threadId: id, runId: r.pending.runId });
 				}
 		},
 		/** A thread completed a turn without failing: it is healthy again, so its record, and the judge's hold, end. */
 		healthy(threadId: string) {
-			clearPending(threadId);
-			if (st.threads[threadId]) {
-				delete st.threads[threadId];
-				save();
+			clearPending(rc, threadId);
+			if (rc.st.threads[threadId]) {
+				delete rc.st.threads[threadId];
+				save(rc);
 			}
 		},
 		/** Someone started a run on the thread: a pending retry is no longer needed. */
 		moved(threadId: string) {
-			const p = st.threads[threadId]?.pending;
+			const p = rc.st.threads[threadId]?.pending;
 			if (p) {
-				clearPending(threadId);
-				save();
+				clearPending(rc, threadId);
+				save(rc);
 				d.log("recover-stand-down", { threadId, runId: p.runId, kind: p.kind, why: "the thread moved on" });
 			}
 		},
-		pendingCount: () => Object.values(st.threads).filter((r) => r.pending).length,
-		tripped,
+		pendingCount: () => Object.values(rc.st.threads).filter((r) => r.pending).length,
+		tripped: () => tripped(rc),
 		/** Stops the timers. The persisted state is kept, so the next process re-arms what was pending. */
 		stop() {
-			for (const c of timers.values()) c();
-			timers.clear();
+			for (const c of rc.timers.values()) c();
+			rc.timers.clear();
 		},
 	};
 }

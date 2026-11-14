@@ -12,11 +12,11 @@
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
 import {
-	normalizeThread,
 	type Adapter,
 	type AnswerOutcome,
 	type Inspector,
 	type LastAssistant,
+	normalizeThread,
 	type OptionalCapability,
 	type PostOptions,
 	type PostResult,
@@ -32,8 +32,8 @@ import {
 	type WatchSink,
 } from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
-import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
+import type { Gate } from "../core/hold.ts";
 import type { Question } from "../core/questions.ts";
 
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
@@ -58,7 +58,7 @@ export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
  * `waitingError` makes the read throw. Otherwise, while the fake is not connected, every waiting read is `ok: false`, as the
  * contract says. `waitingRead` is returned whatever the connection, so a test can prove the core does not believe it.
  */
-export type FakeThread = {
+type FakeThread = {
 	lastMessage?: string;
 	/** What `lastAssistant` reports (id, text, ISO time). Unset: the thread has no finished assistant message. */
 	lastAssistant?: LastAssistant;

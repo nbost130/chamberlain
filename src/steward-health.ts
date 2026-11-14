@@ -7,8 +7,10 @@
  *                                                    read past Steward transcripts into the database (default: every Steward transcript in
  *                                                    the current Steward's project folder); idempotent
  */
-import { CONF, compactTokens, STATE } from "./core/config.ts";
+
+import { homeAdapter } from "./adapters/index.ts";
 import { has } from "./core/adapter.ts";
+import { CONF, compactTokens, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { setting } from "./core/layout.ts";
 import { HEALTH_CONFIG, liveHealth } from "./core/steward-health.ts";
@@ -19,7 +21,6 @@ import {
 	transcriptDir,
 	usageReport,
 } from "./core/steward-tokens.ts";
-import { homeAdapter } from "./adapters/index.ts";
 
 const OFF =
 	'Steward token metering is off. Turn it on with "stewardTokens": true in config.json (or CHAMBERLAIN_STEWARD_TOKENS=1); see docs/CONFIGURATION.md.';
@@ -40,7 +41,7 @@ async function tokens(argv: string[]) {
 					const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 					if (!has(adapter, "transcriptPath"))
 						throw Error(`the ${adapter.id} adapter has no transcript; pass --dir or the transcript files`);
-					dir = transcriptDir(await adapter.transcriptPath!());
+					dir = transcriptDir(await adapter.transcriptPath());
 				}
 				paths = await findStewardTranscripts(dir);
 			}
@@ -73,7 +74,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	try {
 		const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 		if (!has(adapter, "transcriptPath")) throw Error(`the ${adapter.id} adapter has no transcript to measure`);
-		console.log((await liveHealth(() => adapter.transcriptPath!())).report);
+		console.log((await liveHealth(() => adapter.transcriptPath())).report);
 	} catch (e) {
 		console.error(`Steward health: WATCH — measurement unavailable (${String(e)})`);
 		process.exitCode = 1;

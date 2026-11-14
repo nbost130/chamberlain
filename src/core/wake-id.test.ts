@@ -5,8 +5,8 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { memStore } from "../testing/store.ts";
 import { testRelayLock } from "../testing/lock.ts";
+import { memStore } from "../testing/store.ts";
 import { createOutbox, DELIVERY_ID_LINE, withDeliveryId } from "./deliver.ts";
 import { createRelay } from "./relay.ts";
 

@@ -45,9 +45,9 @@
  * `networkFilesystem` lets the daemon say so at start. Replacing or deleting `chamberlain.db` while the daemon runs makes a different
  * database, and moving it to another directory puts it under that directory's lock.
  */
-import { dlopen, FFIType, read, type Pointer } from "bun:ffi";
-import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dlopen, FFIType, type Pointer, read } from "bun:ffi";
 import { execFileSync } from "node:child_process";
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync, type Stats, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { FILE_MODE } from "./private.ts";
 import { requireTestEnv } from "./test-env.ts";
@@ -108,6 +108,12 @@ export function loadFlock(candidates: string[] = libcCandidates(), platform: str
 }
 
 let loaded: Flock | undefined;
+/** The test seam's library if it has one, else the process's own, loaded once. */
+function flockLib(seam?: () => Flock): Flock {
+	if (seam) return seam();
+	loaded ??= loadFlock();
+	return loaded;
+}
 
 export class RelayRunningError extends Error {
 	constructor(readonly lock: string) {
@@ -223,7 +229,7 @@ export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayL
 		/* checked again on the descriptor */
 	}
 	if (before && held.has(before)) throw new RelayRunningError(dir);
-	const lib = o.lib ? o.lib() : (loaded ??= loadFlock());
+	const lib = flockLib(o.lib);
 	const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY);
 	let key: string, dbKey: string;
 	try {
@@ -234,7 +240,7 @@ export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayL
 		if (errno !== 0) throw new Error(`flock(${dir}) failed with errno ${errno}; refusing to start the relay`);
 		try {
 			// Under the lock: the database in this directory, created if it is not there yet (that descriptor is never closed: see the header).
-			let st;
+			let st: Stats;
 			try {
 				st = statSync(path);
 			} catch {
@@ -322,7 +328,7 @@ const sleepSync = (ms: number) => {
  * running daemon waits for it and is refused).
  */
 export function holdFlock(path: string, o: { waitMs: number; lib?: () => Flock }): { release(): void } {
-	const lib = o.lib ? o.lib() : (loaded ??= loadFlock());
+	const lib = flockLib(o.lib);
 	const fd = openSync(path, constants.O_RDONLY);
 	const started = Date.now();
 	try {
@@ -369,14 +375,15 @@ export function networkFilesystemIn(path: string, mounts: { linux?: string; mac?
 	for (const line of (mounts.linux ?? "").split("\n")) {
 		// "36 35 98:0 /root /mnt/point opts - fstype source superopts": the type follows the " - " separator.
 		const [pre, post] = line.split(" - ");
-		const f = pre?.split(" ");
+		const mountPoint = pre?.split(" ")[4];
 		const type = post?.split(" ")[0];
-		if (f && f.length > 4 && type) consider(unescapeMount(f[4]!), type);
+		if (mountPoint !== undefined && type) consider(unescapeMount(mountPoint), type);
 	}
 	for (const line of (mounts.mac ?? "").split("\n")) {
 		// "//user@host/share on /Volumes/share (smbfs, nodev, nosuid)"
 		const m = /^.+ on (.+) \(([^,)]+)/.exec(line);
-		if (m) consider(m[1]!, m[2]!);
+		const [, point, fsType] = m ?? [];
+		if (point !== undefined && fsType !== undefined) consider(point, fsType);
 	}
 	const found = best as { at: number; type: string } | undefined;
 	return found && NETWORK_FS.test(found.type) ? found.type : undefined;

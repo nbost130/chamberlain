@@ -4,7 +4,7 @@
  * trusted, means the next wake sends them in full: doubt always sends them again.
  */
 import { createHash } from "node:crypto";
-import { RIGHTS_MARKER, rightsInFull, rightsUnchanged, type RightsSent } from "./decide.ts";
+import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged } from "./decide.ts";
 import { rightsWake } from "./messages.ts";
 import type { RightsStamp, Store } from "./store.ts";
 
@@ -16,10 +16,8 @@ export function parseRightsSent(raw: unknown): RightsSent | undefined {
 	const { hash, used, at, steward, session, epoch } = raw as Record<string, unknown>;
 	if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) return undefined;
 	if (epoch !== undefined && !isEpoch(epoch)) return undefined;
-	if (at !== undefined && typeof at !== "string") return undefined;
-	if (steward !== undefined && typeof steward !== "string") return undefined;
-	if (session !== undefined && typeof session !== "string") return undefined;
-	if (used !== undefined && (typeof used !== "number" || !Number.isFinite(used) || used < 0)) return undefined;
+	if (!isAbsentOrText(at) || !isAbsentOrText(steward) || !isAbsentOrText(session)) return undefined;
+	if (used !== undefined && !isCount(used)) return undefined;
 	return {
 		hash,
 		...(used !== undefined ? { used } : {}),
@@ -30,6 +28,8 @@ export function parseRightsSent(raw: unknown): RightsSent | undefined {
 	};
 }
 
+const isAbsentOrText = (v: unknown): v is string | undefined => v === undefined || typeof v === "string";
+const isCount = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
 const isEpoch = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
 /**

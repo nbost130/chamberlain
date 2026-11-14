@@ -7,8 +7,8 @@
 import type { WakeTransport } from "../core/deliver.ts";
 import { recordAnswerDelivered } from "../core/questions.ts";
 import { createRelay, type RelayDeps } from "../core/relay.ts";
-import { requireTestEnv } from "../core/test-env.ts";
 import type { Store } from "../core/store.ts";
+import { requireTestEnv } from "../core/test-env.ts";
 import { testRelayLock } from "./lock.ts";
 
 export function testRelay(store: Store, wake: WakeTransport, o: Partial<RelayDeps> = {}) {

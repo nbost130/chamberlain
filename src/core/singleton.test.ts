@@ -8,8 +8,9 @@
  * the lock, it tries again in the same process and opens and closes other descriptors to the database and its directory. Under POSIX `fcntl` locks that
  * released the holder's lock; under `flock` it must not.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
 	closeSync,
 	existsSync,
@@ -209,7 +210,7 @@ describe("one relay per state directory", () => {
 		try {
 			expect(await refusedFor(db, { env: { XDG_RUNTIME_DIR: `${root}/r2` } })).toBe("refused");
 			expect(
-				await refusedFor(`${state}/`.replace(/\/$/, "/../" + "d".repeat(60) + "/chamberlain.db"), {
+				await refusedFor(`${state}/`.replace(/\/$/, `/../${"d".repeat(60)}/chamberlain.db`), {
 					env: { XDG_RUNTIME_DIR: `${root}/r3` },
 				}),
 			).toBe("refused");

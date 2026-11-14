@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { compactBlocked, queueGate, queueStalled, readStewardQueue, stallAlarm, type StewardQueue } from "./queue.ts";
+import { compactBlocked, queueGate, queueStalled, readStewardQueue, type StewardQueue, stallAlarm } from "./queue.ts";
 
 const at = (s: string) => Date.parse(`2026-11-07T${s}Z`);
 const MIN = 60_000;

@@ -7,7 +7,7 @@ import { lstatSync, realpathSync } from "node:fs";
 import { extname } from "node:path";
 import { evidenceRoot, ITEM_ID } from "../core/questions.ts";
 
-export const EVIDENCE_TYPES: Record<string, string> = {
+const EVIDENCE_TYPES: Record<string, string> = {
 	".png": "image/png",
 	".jpg": "image/jpeg",
 	".jpeg": "image/jpeg",

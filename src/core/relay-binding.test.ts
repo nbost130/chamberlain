@@ -10,7 +10,7 @@ import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { createEngine } from "./engine.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
-import { holdRelayLock, lockCovers, RelayRunningError, type RelayLock } from "./singleton.ts";
+import { holdRelayLock, lockCovers, type RelayLock, RelayRunningError } from "./singleton.ts";
 import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 

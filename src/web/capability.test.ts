@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { COOKIE_MAX_AGE_S, TOKEN_HEADER, newToken } from "../core/capability.ts";
+import { COOKIE_MAX_AGE_S, newToken, TOKEN_HEADER } from "../core/capability.ts";
 import { askQuestion, type Question } from "../core/questions.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
