@@ -35,7 +35,7 @@ import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { normalizeWaitKind } from "./state.ts";
 import { checkProjection } from "./projection.ts";
 import { tagIn } from "../../core/questions.ts";
-import type { AnswerOutcome, ListWaitingOptions, WaitingCard } from "../../core/adapter.ts";
+import type { AnswerOutcome, ListWaitingOptions, ThreadLinks, WaitingCard } from "../../core/adapter.ts";
 import type { T3Server } from "./server.ts";
 
 export type Server = Pick<T3Server, "name" | "origin" | "tokenFile" | "operateTokenFile">;
@@ -324,6 +324,8 @@ export type WaitingDeps = {
 	connect?: (origin: string, token: string) => Promise<Pick<Rpc, "request" | "call"> & { ws: { close(): void } }>;
 	/** Per-call deadline; tests shorten it. */
 	timeoutMs?: number;
+	/** The server's thread links (./links.ts). A card links to its thread through it unless the page gives a `linkBase`. */
+	linker?: { links(threadId: string): ThreadLinks; ready(): Promise<void> };
 };
 
 /**
@@ -357,7 +359,9 @@ export function createT3Waiting(d: WaitingDeps) {
 			const rpc = await open_(token);
 			try {
 				const all = await snapshot(rpc as Rpc, ms);
-				const link = (t: ShellThread) => (o.linkBase ? `${o.linkBase}${t.id}` : undefined);
+				// The page's own link prefix wins; else the server's own link, once its environment is known (a short read the first time).
+				if (!o.linkBase) await within(d.linker?.ready() ?? Promise.resolve(), ms, "environment read").catch(() => {});
+				const link = (t: ShellThread) => (o.linkBase ? `${o.linkBase}${t.id}` : d.linker?.links(t.id).ref);
 				const threads = all.filter((t) => t.pendingRuntimeRequest?.id && !t.archivedAt && !skip.has(t.id));
 				const cards: MirrorCard[] = [];
 				for (const t of threads) {

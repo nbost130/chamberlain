@@ -19,6 +19,7 @@
  *   - no `alertDesk`       alerts are not routed to a desk thread: the inbox is never drained
  *   - no `handoffInstruction`  a HAND OFF verdict is put to the operator as a question; the daemon does not start the hand-off itself
  *   - no `transcriptPath`  Steward health reports "unavailable"
+ *   - no `threadLinks`     a card links to its thread only where the page's config names a link prefix for its server
  */
 import type { Gate } from "./hold.ts";
 import type { WakeTransport } from "./deliver.ts";
@@ -225,6 +226,23 @@ export type WaitingCard = {
 	sig: string;
 };
 
+/**
+ * Links to one thread on one server. Each is absent when it cannot be made exactly (the backend has not said which environment
+ * the server is, say): no link is better than one that opens the wrong thread or nothing.
+ */
+export type ThreadLinks = {
+	/**
+	 * The backend's own reference to the thread, as its messages write one (T3: `t3-thread://v2/<environmentId>/<threadId>`).
+	 * It opens inside the backend's own client, where it is written in a message; a browser or a phone's OS does not know it.
+	 */
+	ref?: string;
+	/**
+	 * A link a phone or computer hands to the backend's app to open the thread there (T3: `t3code://threads/<environmentId>/<threadId>`).
+	 * The page sends a device to it through its own http(s) route, `/open/<server>/<threadId>`: an embedded frame may open only http(s).
+	 */
+	app?: string;
+};
+
 export type ListWaitingOptions = {
 	/** Threads never listed (the Decisions thread). */
 	skipThreads: string[];
@@ -289,7 +307,8 @@ export type OptionalCapability =
 	| "compact"
 	| "snapshot"
 	| "alertDesk"
-	| "handoffInstruction";
+	| "handoffInstruction"
+	| "threadLinks";
 
 /**
  * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
@@ -356,6 +375,11 @@ export interface Adapter {
 	 * the hand-off to the operator: the daemon asks them instead.
 	 */
 	handoffInstruction?(): string;
+	/**
+	 * Links to one of this server's threads (`ThreadLinks`). Synchronous: an adapter that must look something up first (T3 asks its
+	 * server which environment it is) answers with what it knows now and starts the lookup, so a later call has the rest.
+	 */
+	threadLinks?(threadId: string): ThreadLinks;
 
 	// -- wording --
 
@@ -429,6 +453,7 @@ type CapabilityMethod = {
 	snapshot: "snapshot";
 	alertDesk: "alertDesk";
 	handoffInstruction: "handoffInstruction";
+	threadLinks: "threadLinks";
 };
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
@@ -451,6 +476,7 @@ export function conformance(a: Adapter): string[] {
 		snapshot: a.snapshot,
 		alertDesk: a.alertDesk,
 		handoffInstruction: a.handoffInstruction,
+		threadLinks: a.threadLinks,
 	};
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);

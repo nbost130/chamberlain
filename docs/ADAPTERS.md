@@ -143,6 +143,13 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
   gate. With it the core drains the alert inbox into wakes for the `desk` receiver and the one relay sends them to this transport, through its one serial queue (docs/alert-desk.md). The T3 adapter
   reads the `desk-wake-url` secret and `threads.desk` (`readPrivate("desk-wake-url")`, `readPrivate("desk-thread")`); without the URL `wake.ready()` is false and nothing is drained.
+- **`threadLinks(threadId)`** returns `{ ref?, app? }` for one of the server's threads, synchronously: `ref` is the backend's own
+  reference as its messages write it (T3: `t3-thread://v2/<environmentId>/<threadId>`), `app` a link a device's OS hands to the
+  backend's app (T3: `t3code://threads/<environmentId>/<threadId>`). Leave either out when it cannot be made exactly: no link is
+  better than one to the wrong thread. An adapter that has to look something up (T3 reads its server's environment id) answers
+  with what it knows and starts the lookup. The page uses `ref` as a card's `link` and sends "Open the thread" through its own
+  `http(s)` route `/open/<server>/<threadId>` to `app`, because an embedded frame may open only `http(s)`. In `listWaiting`, set
+  each card's `link` from the page's `linkBase` when it gives one, else from `ref`.
 - **Wording**: `serverLine()` and `approvalHint` adapt the sentences a wake says about the server and about approvals.
 
 ## Testing an adapter

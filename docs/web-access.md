@@ -8,7 +8,7 @@ anything else that can reach the port: another user on the machine, or any peer 
 | Request | What it needs |
 | --- | --- |
 | `app.js`, `app.css`, `inline.js` | Nothing: they are the page's own code and carry no data. |
-| The page (`/`, `/rulings`, `/item/<id>`), the API, an item's evidence | The key: a signed cookie, the `x-decision-token` header, or (for a page load or an evidence image) `?k=<key>` in the address. For **evidence** the cookie counts only when the browser says the request comes from the page's own origin (`Sec-Fetch-Site: same-origin` or `none`): another port on the same host is "same-site", and cannot embed your evidence images with your cookie. The header and `?k=` are explicit and work as before. |
+| The page (`/`, `/rulings`, `/item/<id>`, `/open/<server>/<threadId>`), the API, an item's evidence | The key: a signed cookie, the `x-decision-token` header, or (for a page load or an evidence image) `?k=<key>` in the address. For **evidence** the cookie counts only when the browser says the request comes from the page's own origin (`Sec-Fetch-Site: same-origin` or `none`): another port on the same host is "same-site", and cannot embed your evidence images with your cookie. The header and `?k=` are explicit and work as before. |
 | An inline frame (origin `null`) | The key in the `x-decision-token` header, nothing else. A cookie or `?k=` on an API call does not count. |
 | A page on any other origin | Refused (`403`), key or not. |
 
@@ -32,7 +32,7 @@ reads the key (it never makes one: with none, because the page has never started
 Treat them like a password: anyone who holds one can read the queue and answer for you. They are never in a log: `chamberlain web` prints the address without a key and tells you to run this command.
 
 Every link Chamberlain makes itself carries the key: `chamberlain ask` puts it in the view it posts to the Decisions thread (with the page up but no key yet, it posts the
-one-line notice and says so on stderr, never a link that cannot work), and the inline view passes it on every call and on its evidence images and "Open the queue page" link.
+one-line notice and says so on stderr, never a link that cannot work), and the inline view passes it on every call and on its evidence images and its "Open the queue page" and "Open the thread" links (the second goes through `/open/<server>/<threadId>`, see [CONFIGURATION.md](CONFIGURATION.md)).
 
 ## Rotating it
 

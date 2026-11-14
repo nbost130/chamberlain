@@ -17,9 +17,10 @@ import {
 	type Server,
 	type WaitingDeps,
 } from "./waiting.ts";
+import { t3Linker } from "./links.ts";
 
 /** The page's mirror over T3 servers: one T3 reader per server (kept between polls, as the adapter keeps its own), listed and answered through the aggregator. */
-type MirrorDeps = Pick<WaitingDeps, "conf" | "log" | "connect" | "timeoutMs"> & {
+type MirrorDeps = Pick<WaitingDeps, "conf" | "log" | "connect" | "timeoutMs" | "linker"> & {
 	servers: () => Server[];
 	skipThreads: () => string[];
 	links?: Record<string, string>;
@@ -31,7 +32,14 @@ function adapters(d: MirrorDeps) {
 			const key = `${server.name}\0${server.operateTokenFile}`;
 			let w = readers.get(key);
 			if (!w) {
-				w = createT3Waiting({ server, conf: d.conf, log: d.log, connect: d.connect, timeoutMs: d.timeoutMs });
+				w = createT3Waiting({
+					server,
+					conf: d.conf,
+					log: d.log,
+					connect: d.connect,
+					timeoutMs: d.timeoutMs,
+					linker: d.linker,
+				});
 				readers.set(key, w);
 			}
 			return {
@@ -136,7 +144,15 @@ test("a card is read-only without the token, or when it asks several things, all
 	expect(cardsFrom("main", true, T, [text])[0]!.answerable).toBe(false);
 });
 
-function rig(opts: { operate?: boolean; items?: () => unknown[]; fail?: (token: string) => string | undefined } = {}) {
+function rig(
+	opts: {
+		operate?: boolean;
+		items?: () => unknown[];
+		fail?: (token: string) => string | undefined;
+		linker?: WaitingDeps["linker"];
+		links?: Record<string, string>;
+	} = {},
+) {
 	const conf = mkdtempSync(`${tmpdir()}/chamberlain-mirror-`);
 	dirs.push(conf);
 	mkdirSync(conf, { recursive: true });
@@ -182,6 +198,8 @@ function rig(opts: { operate?: boolean; items?: () => unknown[]; fail?: (token: 
 		skipThreads: () => ["skipme"],
 		log: (e, data) => logs.push({ e, data }),
 		connect: connect as any,
+		linker: opts.linker,
+		links: opts.links,
 	});
 	return {
 		m,
@@ -192,6 +210,34 @@ function rig(opts: { operate?: boolean; items?: () => unknown[]; fail?: (token: 
 		},
 	};
 }
+
+describe("a card's thread link", () => {
+	test("is the server's own T3 link, made from its environment, when the page names no prefix", async () => {
+		const { m } = rig({ linker: t3Linker({ origin: "http://x", environmentId: "env-mac" }) });
+		await m.poll();
+		expect(m.list()[0]!.link).toBe("t3-thread://v2/env-mac/th-1");
+	});
+	test("waits for the home server's environment read before it lists, so the first list already links", async () => {
+		const read = async () => ({ environmentId: "env-home" });
+		const { m } = rig({ linker: t3Linker({ origin: "http://x" }, { read }) });
+		await m.poll();
+		expect(m.list()[0]!.link).toBe("t3-thread://v2/env-home/th-1");
+	});
+	test("is none when the environment can't be read: no link rather than a broken one", async () => {
+		const read = async () => undefined;
+		const { m } = rig({ linker: t3Linker({ origin: "http://x" }, { read }) });
+		await m.poll();
+		expect(m.list()[0]!.link).toBeUndefined();
+	});
+	test("a prefix the page names for the server (web.mirrorLinks) wins over the server's own link", async () => {
+		const { m } = rig({
+			linker: t3Linker({ origin: "http://x", environmentId: "env-mac" }),
+			links: { main: "https://t3.example/env-x/" },
+		});
+		await m.poll();
+		expect(m.list()[0]!.link).toBe("https://t3.example/env-x/th-1");
+	});
+});
 
 test("poll lists the card, skips the Questions/Decisions threads, and answers it through the operate token", async () => {
 	const { m, sent } = rig();
