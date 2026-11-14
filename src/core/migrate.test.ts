@@ -21,9 +21,9 @@ const world = () => {
 const put = (path: string, text: string) => { writeFileSync(path, text, { mode: 0o600 }); chmodSync(path, 0o600); };
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-/** What legacy-wake left in the config directory: nothing carried a schemaVersion. */
+/** Config files written by hand: none carries a schemaVersion. */
 function oldInstall(w: { conf: string; state: string }) {
-	put(`${w.conf}/servers.json`, JSON.stringify([{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }]));
+	put(`${w.conf}/servers.json`, JSON.stringify({ servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }] }));
 	put(`${w.conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port: 3790 }));
 	put(`${w.conf}/settings.json`, JSON.stringify({ principalName: "Ada" }));
 	put(`${w.conf}/sweep.json`, JSON.stringify({ checks: [] }));
@@ -44,19 +44,18 @@ describe("schema helpers", () => {
 });
 
 describe("upgradeData: steps walk the chain", () => {
-	const steps = { json: [(d: object) => ({ ...d, a: 1 }), (d: object) => ({ ...d, b: 2 }), (d: object) => ({ ...d, c: 3 })], jsonl: [], servers: [], claim: [] } as unknown as typeof STEPS;
+	const steps = { json: [(d: object) => ({ ...d, a: 1 }), (d: object) => ({ ...d, b: 2 }), (d: object) => ({ ...d, c: 3 })], jsonl: [], servers: [] } as unknown as typeof STEPS;
 	test("from 0 runs every step, from 2 only the last, from the target none", () => {
 		expect(upgradeData("json", {}, 0, 3, steps)).toEqual({ schemaVersion: 3, a: 1, b: 2, c: 3 });
 		expect(upgradeData("json", { schemaVersion: 2 }, 2, 3, steps)).toEqual({ schemaVersion: 3, c: 3 });
 		expect(upgradeData("json", { x: 1 }, 3, 3, steps)).toEqual({ x: 1 });
 	});
 	test("a missing step is an error, never a silent skip", () => expect(() => upgradeData("jsonl", {}, 0, 1, steps)).toThrow("no migration for jsonl from schemaVersion 0"));
-	test("the shipped steps cover 0 to SCHEMA_VERSION for every kind (the importer upgrades legacy records with them)", () => {
+	test("the shipped steps cover 0 to SCHEMA_VERSION for every kind", () => {
 		for (const kind of Object.keys(STEPS) as (keyof typeof STEPS)[]) expect(STEPS[kind]).toHaveLength(SCHEMA_VERSION);
 	});
-	test("servers: a bare array becomes {schemaVersion, servers}; a claim loses its `v`", () => {
-		expect(upgradeData("servers", [{ name: "a" }], 0)).toEqual({ schemaVersion: 2, servers: [{ name: "a", adapter: "t3" }] });
-		expect(upgradeData("claim", { v: 2, owner: "page" }, 0)).toEqual({ schemaVersion: 2, owner: "page" });
+	test("servers: an unversioned file is stamped, and each entry gains its adapter", () => {
+		expect(upgradeData("servers", { servers: [{ name: "a" }] }, 0)).toEqual({ schemaVersion: 2, servers: [{ name: "a", adapter: "t3" }] });
 	});
 	test("servers 1 -> 2: every entry names its adapter, T3 unless it already names one, and nothing else changes", () => {
 		const v1 = { schemaVersion: 1, servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", mayBeOffline: true }, { name: "box", adapter: "other", socket: "/run/x.sock" }] };
@@ -69,7 +68,6 @@ describe("upgradeData: steps walk the chain", () => {
 	test("every other kind only re-stamps at 1 -> 2", () => {
 		expect(upgradeData("json", { schemaVersion: 1, host: "x" }, 1)).toEqual({ schemaVersion: 2, host: "x" });
 		expect(upgradeData("jsonl", { schemaVersion: 1, type: "ask" }, 1)).toEqual({ schemaVersion: 2, type: "ask" });
-		expect(upgradeData("claim", { schemaVersion: 1, owner: "page" }, 1)).toEqual({ schemaVersion: 2, owner: "page" });
 	});
 	test("a newer config file anywhere is refused, naming it", () => {
 		const w = world();

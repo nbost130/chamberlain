@@ -101,20 +101,19 @@ describe("the import boundary", () => {
 // ---- one item system --------------------------------------------------------------------------------
 
 /** The identifiers of the mechanisms the item system replaced. Any of them coming back is a second mechanism. */
-const OLD_MECHANISMS: [RegExp, string, boolean?][] = [
+const OLD_MECHANISMS: [RegExp, string][] = [
 	[/\bsticky\b/, "a sticky flag (an item's ladder says whether it repeats)"],
 	[/\bseedable\b/, "a seedable flag (a finding's baseline says whether it is learned silently)"],
 	[/\bSEEN_MAX\b|\bseen\s*:\s*(string\[\]|Set)|\bnextSeen\b|\bdecideSweep\b|\bfindingsFrom\b/, "a seen list (known items are rows in the items table)"],
 	[/\balarmedAt\b|\blastAlertedAt\b|\balertedAt\b|\blastNotifiedAt\b|\bnotifiedAt\b/, "an in-memory notification clock (an alarm is an item with a repeat policy)"],
 	// The names the mechanism had before the terminology pass (docs/GLOSSARY.md). A copy of old code that brings one back would be a second mechanism.
 	[/\bdecideAlert\b|\bwouldAlert\w*|\bLadder\b|\bladder\b|\bstepsMs\b|\balertCount\b|\bnextAlertAt\b|\balert_count\b|\bnext_alert_at\b|\bwould_alert_count\b|\bwould_next_alert_at\b/, "an old name of the notification decision, repeat policy or counters (decideNotification, RepeatPolicy, notification_count)"],
-	[/["'`]woken["'`]|["'`]blind["'`]|\bBLIND\b|\bblindText\b/, "an item state or kind of the old model (triggered, acknowledged, resolved; evaluation_error)", true],
+	[/["'`]woken["'`]|["'`]blind["'`]|\bBLIND\b|\bblindText\b/, "an item state or kind of the old model (triggered, acknowledged, resolved; evaluation_error)"],
 	// An in-memory map that de-duplicated card answers, and expired: the one second mechanism the item system's own test once let through.
 	[/\bSENT_TTL_MS\b|\bconst\s+sent\s*=\s*new\s+Map\b/, "an in-memory answer-dedup map (a card answer is an item of source card-answer, claimed in the database)"],
-	// The one place that may NAME the old state files (and the old woken/ directory) is the importer that reads them (and the config migration's comment about it).
-	[/\bfired\.json\b|\bsweep-state\b|\bwoken\//, "a state file for what already fired", true],
+	// Nothing may name the old state files (or the old woken/ directory): state lives in the database.
+	[/\bfired\.json\b|\bsweep-state\b|\bwoken\//, "a state file for what already fired"],
 ];
-const LEGACY_READERS = new Set(["core/legacy-import.ts", "cli/import.ts"]);
 const NOTIFICATION_COLUMNS = /\b(notification_count|next_notification_at|shadow_notification_count|shadow_next_notification_at)\b/;
 const ITEM_WRITE = /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+items\b/i;
 const NOTIFICATION_FIELD_WRITE = /\b(notificationCount|nextNotificationAt|shadowNotificationCount|shadowNextNotificationAt)\s*(\+\+|--|[-+*]?=(?!=))/;
@@ -127,7 +126,7 @@ const ITEM_OWNERS = new Set(["core/sqlite-store.ts", "core/migrations.ts", "core
 export function itemViolations(file: string, code: string): string[] {
 	const bare = stripComments(code);
 	const bad: string[] = [];
-	for (const [re, what, legacyOk] of OLD_MECHANISMS) if (re.test(bare) && !(legacyOk && LEGACY_READERS.has(file))) bad.push(`${file} has ${what}`);
+	for (const [re, what] of OLD_MECHANISMS) if (re.test(bare)) bad.push(`${file} has ${what}`);
 	if (!ITEM_OWNERS.has(file)) {
 		if (NOTIFICATION_COLUMNS.test(bare)) bad.push(`${file} names a notification column: only the store writes them`);
 		if (ITEM_WRITE.test(bare)) bad.push(`${file} writes the items table: go through ItemStore.observe`);
@@ -150,7 +149,7 @@ describe("one item system", () => {
 		const onDisk = [...new Bun.Glob("**/*.ts").scanSync({ cwd: SRC })].filter((f) => !f.endsWith(".test.ts")).sort();
 		expect(sources().sort()).toEqual(onDisk);
 		// Entry points, nested folders and a folder that does not exist yet are all seen.
-		for (const f of ["daemon.ts", "ask.ts", "core/engine.ts", "web/app.ts", "adapters/t3/waiting.ts", "cli/import.ts", "testing/store.ts"]) expect(sources()).toContain(f);
+		for (const f of ["daemon.ts", "ask.ts", "core/engine.ts", "web/app.ts", "adapters/t3/waiting.ts", "cli.ts", "testing/store.ts"]) expect(sources()).toContain(f);
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-walk-`);
 		try {
 			mkdirSync(`${root}/tools/deep`, { recursive: true });
@@ -195,7 +194,6 @@ describe("one item system", () => {
 		expect(itemViolations("core/x.ts", 'run("INSERT INTO items (source) VALUES (?)")')).toHaveLength(1);
 		expect(itemViolations("core/x.ts", "item.notificationCount += 1;")).toHaveLength(1);
 		expect(itemViolations("core/x.ts", "if (now >= item.nextNotificationAt) send();")).toHaveLength(1);
-		expect(itemViolations("cli/import.ts", 'readFileSync(`${d}/fired.json`)')).toEqual([]);
 		expect(itemViolations("core/engine.ts", 'readFileSync(`${d}/fired.json`)')).toHaveLength(1);
 		// What is allowed: the owners, comments, tests of a read, and the words in prose.
 		expect(itemViolations("core/sqlite-store.ts", 'run("UPDATE items SET notification_count = ?")')).toEqual([]);
@@ -232,7 +230,7 @@ export const MAY_POST: Record<string, string> = {
 	"testing/wake.ts": "fetchWake, a test double for the transport",
 };
 /** The only files that may name the wake or compaction webhook's config file. */
-const NAMES_A_WAKE_URL = new Set(["adapters/t3/index.ts", "adapters/t3/switch-steward.ts", "core/legacy-import.ts"]);
+const NAMES_A_WAKE_URL = new Set(["adapters/t3/index.ts", "adapters/t3/switch-steward.ts"]);
 /** Where each construct that can send or enable sending may appear (a definition site and its legitimate callers). */
 const MAY_CALL: Record<string, Set<string>> = {
 	createRelay: new Set([RELAY, "core/engine.ts", "testing/relay.ts"]),

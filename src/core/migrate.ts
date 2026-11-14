@@ -1,18 +1,16 @@
 /**
  * Schema migration of the CONFIG files, the ones people edit (settings.json, web.json, sweep.json, servers.json). One small module that
  *  - refuses to start on a file written by a NEWER Chamberlain (assertSupported), and
- *  - upgrades OLDER or unversioned files (legacy-wake wrote none) to the current SCHEMA_VERSION, in place (migrateStorage).
+ *  - upgrades OLDER or unversioned files (a hand-written file has no schemaVersion) to the current SCHEMA_VERSION, in place (migrateStorage).
  *
  *   bun src/core/migrate.ts            check every config file, upgrade the old ones (backups beside them)
  *   bun src/core/migrate.ts --check    only report; change nothing
  *
  * State does not live in files any more: it is in the database, whose own versioned SQL migrations are in
- * src/core/migrations.ts (a newer database is refused by openStore). The old state files (queue.jsonl, rulings.jsonl,
- * woken/ ...) are read by the one-time importer, src/cli/import.ts, which reuses `upgradeData` below to bring a legacy
- * record up to the current shape.
+ * src/core/migrations.ts (a newer database is refused by openStore).
  *
  * STEPS[kind][v] upgrades a record from version v to v+1, so a file at any older version walks the chain. This build
- * has two steps per kind (0 -> 1: stamp `schemaVersion`, two kinds also change shape; 1 -> 2: re-stamp, and each servers.json entry gains its `adapter`). The daemon and the
+ * has two steps per kind (0 -> 1: stamp `schemaVersion`; 1 -> 2: re-stamp, and each servers.json entry gains its `adapter`). The daemon and the
  * page run migrateStorage at start; every command-line tool runs only assertSupported.
  *
  * One migrator at a time is the kernel's doing: a `flock(2)` exclusive lock on the config directory, held for the whole rewrite (singleton.ts
@@ -25,13 +23,13 @@ import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleto
 import { STATE, CONF } from "./config.ts";
 import { SCHEMA_VERSION, SchemaTooNewError, checkVersion, versionOf } from "./schema.ts";
 
-/** json: one document. jsonl: one record per line. servers: servers.json (a bare array before 1). claim: a legacy woken/<item> file, read only by the importer. */
-export type Kind = "json" | "jsonl" | "servers" | "claim";
+/** json: one document. jsonl: one record per line. servers: servers.json. */
+export type Kind = "json" | "jsonl" | "servers";
 type Step = (data: any) => any;
 type Dir = "conf" | "state";
 export type StoredFile = { dir: Dir; name: string; kind: Kind };
 
-/** Every versioned config file. (The legacy state files the importer reads are not listed: nothing writes them any more.) */
+/** Every versioned config file. */
 export const FILES: StoredFile[] = [
 	{ dir: "conf", name: "settings.json", kind: "json" },
 	{ dir: "conf", name: "web.json", kind: "json" },
@@ -47,13 +45,10 @@ export const STEPS: Record<Kind, Step[]> = {
 	json: [stampStep, sameShape],
 	jsonl: [stampStep, sameShape],
 	servers: [
-		// 0 -> 1: the bare array of servers becomes {schemaVersion, servers}.
-		(d) => (Array.isArray(d) ? { schemaVersion: 1, servers: d } : stampStep(d)),
+		stampStep,
 		// 1 -> 2: every entry names its adapter. Every server was T3 Code before adapters existed.
 		(d) => (d && typeof d === "object" && Array.isArray((d as { servers?: unknown }).servers) ? { ...d, servers: (d as { servers: Record<string, unknown>[] }).servers.map((x) => ({ ...x, adapter: x.adapter ?? "t3" })) } : d),
 	],
-	// 0 -> 1: legacy-wake claim files carried `v: 2`; the version is now `schemaVersion`.
-	claim: [(d) => { if (!d || typeof d !== "object" || Array.isArray(d)) return d; const { v: _v, ...rest } = d as Record<string, unknown>; return { schemaVersion: 1, ...rest }; }, sameShape],
 };
 
 /** Pure: a record upgraded from `from` through every step to `to`. A version with no step is an error, never a skip. */
@@ -68,9 +63,8 @@ export function upgradeData(kind: Kind, data: unknown, from: number, to = SCHEMA
 	return d;
 }
 
-/** A claim from before schemaVersion was `v: 2`; a claim with neither is the old owner-only text, which can't be upgraded. */
-const versionOfData = (kind: Kind, what: string, d: unknown): number => {
-	if (kind === "servers" && Array.isArray(d)) return 0;
+/** The version a parsed file or record claims; a file with no `schemaVersion` is version 0. */
+const versionOfData = (_kind: Kind, what: string, d: unknown): number => {
 	const o = (d && typeof d === "object" ? d : {}) as { schemaVersion?: unknown };
 	return versionOf(what, o.schemaVersion);
 };
@@ -101,7 +95,6 @@ export function assertSupported(o: { conf?: string; state?: string } = {}): File
 		for (const d of parse(e)) {
 			if (d === undefined) continue;
 			const v = checkVersion(e.what, versionOfData(e.kind, e.what, d));
-			// A claim with `v: 2` is a legacy-wake claim: version 0 until migrated.
 			version = any ? Math.max(version, v) : v;
 			any = true;
 			if (v < SCHEMA_VERSION) old++;

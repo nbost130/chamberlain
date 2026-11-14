@@ -129,7 +129,7 @@ export function rightsGap(record: RightsSent | undefined, now: RightsState): str
 	return undefined;
 }
 
-/** The stamp of a Steward wake queued before the stamps existed (migration 10, and every wake legacy-import.ts brings in): its text is never read. */
+/** The stamp of a Steward wake queued before the stamps existed (migration 10): its text is never read. */
 export const LEGACY_STAMP: RightsStamp = { hash: "", legacy: "unstamped" };
 
 /** Pure: a short key for one state (the Steward thread, its session, the rights hash or "unreadable", and the epoch when it is not 0). */

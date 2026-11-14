@@ -1,7 +1,7 @@
 /**
  * servers.json: the servers Chamberlain watches, each served by one adapter (src/adapters/). `{"schemaVersion": 2,
- * "servers": [...]}`. Version 1 had no `adapter` (every server was T3 Code) and the unversioned form from before that
- * was a bare array; both are still read, as `adapter: "t3"`, and src/core/migrate.ts rewrites them.
+ * "servers": [...]}`. Version 1 had no `adapter` (every server was T3 Code); it is still read, as `adapter: "t3"`, and
+ * src/core/migrate.ts rewrites it.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile, modeText } from "./private.ts";
@@ -31,9 +31,9 @@ export type ServerEntry = {
 	[adapterOption: string]: unknown;
 };
 
-/** Pure: the entries of a parsed servers.json, from either shape. Throws on a newer schema or a malformed entry. */
+/** Pure: the entries of a parsed servers.json. Throws on a newer schema or a malformed entry. */
 export function parseServers(raw: unknown): ServerEntry[] {
-	const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? (checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion), (raw as { servers?: unknown }).servers) : undefined;
+	const list = raw && typeof raw === "object" && !Array.isArray(raw) ? (checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion), (raw as { servers?: unknown }).servers) : undefined;
 	if (!Array.isArray(list)) throw Error('servers.json: need {"schemaVersion": 2, "servers": [{name, adapter, ...}]}');
 	const names = new Set<string>();
 	for (const x of list as Partial<ServerEntry>[]) {

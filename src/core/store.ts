@@ -179,7 +179,7 @@ export type RightsStamp = {
 	epoch?: number;
 	/**
 	 * "unstamped": a Steward wake queued before the stamps existed (migration 10 marks every undelivered Steward row and held wake that has no
-	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it depends
+	 * stamp, whatever its text). Which Steward it was composed for is unknown, so it depends
 	 * on the record like a pointer does.
 	 */
 	legacy?: "unstamped";

@@ -15,7 +15,7 @@ import { dbPath, type Store } from "./core/store.ts";
 type Dir = string;
 const scratch = (): Dir => { const d = mkdtempSync(`${tmpdir()}/chamberlain-hvq-`); mkdirSync(`${d}/state`, { recursive: true }); mkdirSync(`${d}/conf`, { recursive: true, mode: 0o700 }); return d; };
 function run(dir: Dir, script: string, ...args: string[]) {
-	const { XDG_STATE_HOME: _s, XDG_CACHE_HOME: _c, XDG_CONFIG_HOME: _f, CHAMBERLAIN_STATE: _a, CHAMBERLAIN_CACHE: _b, CHAMBERLAIN_CONF: _g, CHAMBERLAIN_PRINCIPAL: _p, ...rest } = process.env;
+	const { XDG_STATE_HOME: _s, XDG_CACHE_HOME: _c, XDG_CONFIG_HOME: _f, CHAMBERLAIN_STATE: _a, CHAMBERLAIN_CONF: _g, CHAMBERLAIN_PRINCIPAL: _p, ...rest } = process.env;
 	return spawnSync(process.execPath, [new URL(script, import.meta.url).pathname, ...args], { env: { ...rest, HOME: dir, CHAMBERLAIN_STATE: `${dir}/state`, CHAMBERLAIN_CONF: `${dir}/conf` }, encoding: "utf8" });
 }
 const BASE = { kind: "product", context: "- one line", options: [{ label: "Yes" }, { label: "No" }], thread: "Billing", server: "main" };

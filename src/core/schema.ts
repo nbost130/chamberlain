@@ -1,12 +1,12 @@
 /**
  * The on-disk schema version. Every file Chamberlain keeps (JSON documents, and each line of a JSONL ledger) carries a
- * `schemaVersion` integer. This build writes SCHEMA_VERSION. A file without the field is from before versioning
- * (legacy-wake) and counts as version 0: src/core/migrate.ts upgrades it. A file with a NEWER version was written by a newer
+ * `schemaVersion` integer. This build writes SCHEMA_VERSION. A file without the field (one written by hand) counts as
+ * version 0: src/core/migrate.ts upgrades it. A file with a NEWER version was written by a newer
  * Chamberlain, and this build refuses to read it rather than guess.
  */
 export const SCHEMA_VERSION = 2;
 /*
- * History: 1 stamped every file (it was unversioned in legacy-wake, so version 0). 2 gave each servers.json entry an `adapter`
+ * History: 1 stamped every file (until then none carried a version, so version 0). 2 gave each servers.json entry an `adapter`
  * (every server was T3 Code before adapters existed); no other file changed shape, so they are only re-stamped.
  */
 

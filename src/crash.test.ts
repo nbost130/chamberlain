@@ -54,7 +54,7 @@ async function world(id: string) {
 	mkdirSync(conf, { recursive: true, mode: 0o700 }); mkdirSync(state, { recursive: true });
 	secret(`${conf}/wake-url`, `http://127.0.0.1:${hook.port}/wake`);
 	// The daemon's one server is a port nothing listens on: it starts, recovers, and retries its socket quietly.
-	secret(`${conf}/servers.json`, JSON.stringify([{ name: "test", origin: "http://127.0.0.1:9", tokenFile: "read-token", mayBeOffline: true }]));
+	secret(`${conf}/servers.json`, JSON.stringify({ servers: [{ name: "test", origin: "http://127.0.0.1:9", tokenFile: "read-token", mayBeOffline: true }] }));
 	secret(`${conf}/read-token`, "not-a-token");
 	const port = await freePort();
 	secret(`${conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port }));

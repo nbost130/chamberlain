@@ -39,7 +39,6 @@ export const COMMANDS = {
 	ruling: "src/core/ruling.ts",
 	butler: "src/core/butler.ts",
 	migrate: "src/core/migrate.ts",
-	import: "src/cli/import.ts",
 	brief: "src/brief.ts",
 	wakes: "src/wakes.ts",
 	"steward-health": "src/steward-health.ts",

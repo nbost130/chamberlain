@@ -39,7 +39,7 @@ describe("a private file is a regular file with mode exactly 0600", () => {
 		["privateFile (tokens, URLs, thread ids)", "read-token", "token", (c) => privateFile(c, "read-token")],
 		["settings.json", "settings.json", "{}", (c) => readSettings(c)],
 		["web.json", "web.json", JSON.stringify({ host: "127.0.0.1", port: 3790 }), (c) => loadConfig(c)],
-		["servers.json", "servers.json", "[]", (c) => readServers(c)],
+		["servers.json", "servers.json", "{\"servers\":[]}", (c) => readServers(c)],
 		["sweep.json", "sweep.json", JSON.stringify({ checks: [] }), (c) => readSweepConfig(c)],
 		["operating-rules.md", "operating-rules.md", "rules", (c) => loadOperatingRules(c)],
 	];

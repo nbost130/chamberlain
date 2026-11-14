@@ -142,7 +142,7 @@ describe("the away record and the brief", () => {
 describe("hold refs, notes and the CLI", () => {
 	/** afk.ts as a real process on a scratch state directory. */
 	function cli(dir: string, ...args: string[]) {
-		const { XDG_STATE_HOME: _s, XDG_CACHE_HOME: _c, XDG_CONFIG_HOME: _f, CHAMBERLAIN_STATE: _a, CHAMBERLAIN_CACHE: _b, ...rest } = process.env;
+		const { XDG_STATE_HOME: _s, XDG_CACHE_HOME: _c, XDG_CONFIG_HOME: _f, CHAMBERLAIN_STATE: _a, ...rest } = process.env;
 		return spawnSync(process.execPath, [new URL("./afk.ts", import.meta.url).pathname, ...args], { env: { ...rest, HOME: dir, CHAMBERLAIN_STATE: `${dir}/state`, CHAMBERLAIN_CONF: `${dir}/conf` }, encoding: "utf8" });
 	}
 	const open = (dir: string) => openStore(dbPath(`${dir}/state`));

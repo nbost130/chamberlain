@@ -25,7 +25,7 @@ function world() {
 	const conf = `${root}/conf`, state = `${root}/state`, journal = `${root}/journal`;
 	mkdirSync(conf, { mode: 0o700 }); mkdirSync(state, { mode: 0o700 });
 	const put = (name: string, body: string) => { writeFileSync(`${conf}/${name}`, body, { mode: 0o600 }); chmodSync(`${conf}/${name}`, 0o600); };
-	put("servers.json", JSON.stringify([{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }]));
+	put("servers.json", JSON.stringify({ servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }] }));
 	put("web.json", JSON.stringify({ host: "127.0.0.1", port: 3790 }));
 	put("settings.json", JSON.stringify({ principalName: "Ada" }));
 	put("sweep.json", JSON.stringify({ checks: [] }));
