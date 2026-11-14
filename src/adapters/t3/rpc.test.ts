@@ -58,6 +58,55 @@ describe("Rpc lifetime", () => {
 	});
 });
 
+describe("Rpc.receive: what each server message does", () => {
+	const open = () => {
+		const ws = new FakeSocket();
+		return { ws, rpc: new Rpc(ws as unknown as WebSocket, Promise.resolve()) };
+	};
+	test("an Exit with a Success resolves the call with its value and forgets it", async () => {
+		const { rpc } = open();
+		const p = rpc.call("x", {});
+		rpc.receive(JSON.stringify({ _tag: "Exit", requestId: "100", exit: { _tag: "Success", value: { ok: 1 } } }));
+		expect(await p).toEqual({ ok: 1 });
+		expect(rpc.pending.size).toBe(0);
+		rpc.fail();
+	});
+	test("an Exit that is not a Success rejects the call with the failure text", async () => {
+		const { rpc } = open();
+		const p = rpc.call("x", {});
+		rpc.receive(JSON.stringify({ _tag: "Exit", requestId: "100", exit: { _tag: "Failure", cause: "boom" } }));
+		await expect(p).rejects.toThrow('rpc failure: {"_tag":"Failure","cause":"boom"}');
+		expect(rpc.pending.size).toBe(0);
+		rpc.fail();
+	});
+	test("a Chunk is acknowledged, and a batch of messages is read in order", () => {
+		const { ws, rpc } = open();
+		const seen: unknown[] = [];
+		void rpc.call("x", {}, (v) => seen.push(v)).catch(() => {});
+		rpc.receive(JSON.stringify([{ _tag: "Chunk", requestId: "100", values: [{ kind: "a" }, { kind: "b" }] }]));
+		expect(seen).toEqual([{ kind: "a" }, { kind: "b" }]);
+		expect(ws.sent.at(-1)).toBe(JSON.stringify({ _tag: "Ack", requestId: "100" }));
+		rpc.fail();
+	});
+	test("a Defect or a protocol error closes the socket; a message for no known call changes nothing", () => {
+		for (const _tag of ["Defect", "ClientProtocolError"]) {
+			const { ws, rpc } = open();
+			let closed = false;
+			ws.addEventListener("close", () => {
+				closed = true;
+			});
+			rpc.receive(JSON.stringify({ _tag }));
+			expect(closed).toBe(true);
+		}
+		const { ws, rpc } = open();
+		const before = ws.sent.length;
+		rpc.receive(JSON.stringify({ _tag: "Chunk", requestId: "999", values: [{}] }));
+		rpc.receive(JSON.stringify({ _tag: "Exit", requestId: "999", exit: { _tag: "Success" } }));
+		expect(ws.sent.length).toBe(before);
+		rpc.fail();
+	});
+});
+
 describe("shellSnapshot: one fresh read of a server's threads", () => {
 	const chunk = (rpc: Rpc, value: unknown) =>
 		rpc.receive(JSON.stringify({ _tag: "Chunk", requestId: "100", values: [value] }));
