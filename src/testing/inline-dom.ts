@@ -117,20 +117,24 @@ export function run(
 		status?: number | (() => number);
 		/** The reply to a POST: its status and JSON body. Absent: a POST is answered like any call. */
 		post?: (path: string, body: any) => { status: number; body: unknown } | undefined;
+		/** Held back before a POST is answered: the request is already counted in `calls`, and its reply waits for this. */
+		hold?: () => Promise<void>;
 		/** The view's `window`. Absent: the script sees none, as no test before needed one (it reads as a frame). */
 		window?: unknown;
+		/** The shell has no `#dq` root: the view makes its own on the body (the returned element is that one). */
+		noRoot?: boolean;
 	} = {},
 ) {
 	const body = new El("body");
 	const dq = new El("div");
-	body.append(dq);
+	if (!o.noRoot) body.append(dq);
 	const document = {
 		currentScript: { src: o.src ?? "http://queue.test/inline.js?view=decisions" },
 		head: new El("head"),
 		body,
 		visibilityState: "visible",
 		createElement: (t: string) => new El(t),
-		getElementById: (id: string) => (id === "dq" ? dq : null),
+		getElementById: (id: string) => (id === "dq" && !o.noRoot ? dq : null),
 	};
 	const fetch = async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
 		const status = () => (typeof o.status === "function" ? o.status() : (o.status ?? 200));
@@ -140,6 +144,7 @@ export function run(
 			path: new URL(url).pathname,
 			...(init?.body ? { body: JSON.parse(init.body) } : {}),
 		});
+		if (init?.method === "POST") await o.hold?.();
 		// A POST is answered by `post` when the test gives one (its status and body), else as every call is.
 		const posted =
 			init?.method === "POST" ? o.post?.(new URL(url).pathname, init.body ? JSON.parse(init.body) : {}) : undefined;
@@ -163,6 +168,6 @@ export function run(
 		"window",
 		readFileSync(new URL("../web/static/inline.js", import.meta.url), "utf8"),
 	)(document, fetch, () => 0, URL, o.window);
-	return dq;
+	return o.noRoot ? body.children[0]! : dq;
 }
 export const settle = () => new Promise((r) => setTimeout(r, 5));

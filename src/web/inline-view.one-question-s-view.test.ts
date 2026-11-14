@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { run, settle } from "../testing/inline-dom.ts";
 import { buttons, item } from "../testing/web-inline-view-fixtures.ts";
+import { VIEW_KEY_WRITES } from "./view-key.ts";
 
 describe("one question's view (?item=) and the recent answers know snoozed and dismissed", () => {
 	test("a snoozed question says when it returns and links to it on the full page", async () => {
@@ -16,7 +17,7 @@ describe("one question's view (?item=) and the recent answers know snoozed and d
 		await settle();
 		expect(dq.textContent).toContain("Snoozed. It returns ");
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("snoozed");
-		// un-snoozing is not the view key's (src/web/view-key.ts): the link opens the full page
+		// this one-question view only links to the full page; the Decisions view's Snoozed tab brings an item back in place
 		expect(dq.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
 			["Un-snooze", "http://queue.test/item/Q-snz1"],
 		]);
@@ -57,16 +58,13 @@ describe("one question's view (?item=) and the recent answers know snoozed and d
 	});
 });
 
-test("the view's script posts only to the view key's four writes: answer, snooze, direction, dismiss", () => {
+test("the view's script posts only to the view key's five writes: answer, snooze, un-snooze, direction, dismiss", () => {
 	const source = readFileSync(new URL("../web/static/inline.js", import.meta.url), "utf8");
 	// the one POST goes to /api/items/<id>/<action>, and every action it is given is on the list in src/web/view-key.ts
 	expect([...source.matchAll(/method:\s*"POST"/g)]).toHaveLength(1);
-	expect([...new Set([...source.matchAll(/\bsend\("([a-z-]+)"/g)].map((m) => m[1]))].sort()).toEqual([
-		"answer",
-		"direction",
-		"dismiss",
-		"snooze",
-	]);
+	const named = [...source.matchAll(/\b(?:send|act)\("([a-z-]+)"/g)].map((m) => m[1]);
+	expect([...new Set(named)].sort()).toEqual(["answer", "direction", "dismiss", "snooze", "unsnooze"]);
+	expect(named.every((a) => (VIEW_KEY_WRITES as readonly string[]).includes(a!))).toBe(true);
 	expect(source).not.toMatch(/\/(unsnooze|not-now|accept-all|cards\/|confirm)/);
 	expect(source).not.toMatch(/api\/rulings\/|saveRuling|rulingWording/);
 });

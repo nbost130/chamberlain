@@ -1,6 +1,6 @@
 /**
  * What the VIEW key may do, against the real handler (createApp) with a real capability: exactly the allowlist in ./view-key.ts (three reads, answer,
- * snooze, direction, dismiss) from any origin or none, nothing else; the page key keeps everything it had; and every write records which key made it.
+ * snooze, un-snooze, direction, dismiss) from any origin or none, nothing else; the page key keeps everything it had; and every write records which key made it.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -16,15 +16,14 @@ import { authorityOf, keyUsed, mayDo, VIEW_KEY_READS, VIEW_KEY_WRITES, viewKeyVe
 const { ORIGIN, LATER, setup, tok, WRITES, REFUSED } = useWebViewKeyFixtures();
 
 describe("the allowlist is one explicit list", () => {
-	test("three reads and four writes, and nothing else", () => {
+	test("three reads and five writes, and nothing else", () => {
 		expect([...VIEW_KEY_READS].sort()).toEqual(["/api/queue", "/api/recent", "/api/rulings"]);
-		expect([...VIEW_KEY_WRITES]).toEqual(["answer", "snooze", "direction", "dismiss"]);
+		expect([...VIEW_KEY_WRITES]).toEqual(["answer", "snooze", "unsnooze", "direction", "dismiss"]);
 	});
-	test("the verdict on each route: the four writes and three reads pass; un-snooze, not-now, batch, rulings, cards and an item's read do not", () => {
+	test("the verdict on each route: the five writes and three reads pass; not-now, batch, rulings, cards and an item's read do not", () => {
 		for (const w of VIEW_KEY_WRITES) expect(viewKeyVerdict("POST", `/api/items/Q-abcd/${w}`)).toBe(w);
 		for (const r of VIEW_KEY_READS) expect(viewKeyVerdict("GET", r)).toBe("read");
 		for (const [m, p] of [
-			["POST", "/api/items/Q-abcd/unsnooze"],
 			["POST", "/api/items/Q-abcd/not-now"],
 			["POST", "/api/accept-all"],
 			["POST", "/api/rulings/R1/confirm"],
@@ -37,16 +36,16 @@ describe("the allowlist is one explicit list", () => {
 			["GET", "/"],
 			["PUT", "/api/items/Q-abcd/snooze"],
 			["DELETE", "/api/items/Q-abcd/dismiss"],
-			["OPTIONS", "/api/items/Q-abcd/unsnooze"],
+			["OPTIONS", "/api/items/Q-abcd/not-now"],
 			["OPTIONS", "/api/accept-all"],
 		] as const)
 			expect([m, p, viewKeyVerdict(m, p)]).toEqual([m, p, "refuse"]);
 		expect(viewKeyVerdict("OPTIONS", "/api/items/Q-abcd/snooze")).toBe("preflight");
 	});
-	test("the authorities: full does every action, the view key its four, the page key from a frame only the plain answer", () => {
+	test("the authorities: full does every action, the view key its five, the page key from a frame only the plain answer", () => {
 		const all = ["answer", "snooze", "unsnooze", "direction", "dismiss", "not-now", "accept-all", "ruling"];
 		expect(all.filter((a) => mayDo("full", a))).toEqual(all);
-		expect(all.filter((a) => mayDo("view", a))).toEqual(["answer", "snooze", "direction", "dismiss"]);
+		expect(all.filter((a) => mayDo("view", a))).toEqual(["answer", "snooze", "unsnooze", "direction", "dismiss"]);
 		expect(all.filter((a) => mayDo("restricted", a))).toEqual(["answer"]);
 		expect([authorityOf(false, true), authorityOf(true, true), authorityOf(true, false)]).toEqual([
 			"full",
@@ -117,6 +116,26 @@ for (const [label, origin] of [
 			expect(answer).toMatchObject({ choice: 1, key: "view" });
 			expect(answer).not.toHaveProperty("note");
 		});
+		test("un-snooze brings a snoozed item back at once, recorded as the view key's; an item that is not snoozed is refused (409)", async () => {
+			const s = setup();
+			expect((await s.send("POST", "/api/items/Q-abcd/unsnooze", h(s), {})).status).toBe(409);
+			expect((await s.send("POST", "/api/items/Q-abcd/snooze", h(s), { until: LATER })).status).toBe(200);
+			expect(getQuestion(s.store, "Q-abcd")!.snooze?.active).toBe(true);
+			expect((await s.send("POST", "/api/items/Q-abcd/unsnooze", h(s), {})).status).toBe(200);
+			await s.app.idle();
+			expect(getQuestion(s.store, "Q-abcd")).toMatchObject({ status: "open" });
+			expect(getQuestion(s.store, "Q-abcd")!.snooze?.active).not.toBe(true);
+			expect(s.logs.filter((l) => l.event === "unsnoozed")).toMatchObject([{ id: "Q-abcd", key: "view" }]);
+			expect(JSON.stringify(s.logs)).not.toContain(s.view);
+		});
+		test("a snoozed item is dismissed straight from the snoozed list: one request, recorded as the view key's, and its snooze ends", async () => {
+			const s = setup();
+			expect((await s.send("POST", "/api/items/Q-abcd/snooze", h(s), { until: LATER })).status).toBe(200);
+			expect((await s.send("POST", "/api/items/Q-abcd/dismiss", h(s), {})).status).toBe(200);
+			await s.app.idle();
+			expect(getQuestion(s.store, "Q-abcd")).toMatchObject({ status: "dismissed" });
+			expect(readClaim(s.store, "Q-abcd")?.answer).toMatchObject({ kind: "dismissed", key: "view" });
+		});
 		test("the answer's ledger row says the view key too, and a ruling field is still refused", async () => {
 			const s = setup();
 			expect((await s.send("POST", "/api/items/Q-efgh/answer", h(s), { choice: 0, saveRuling: true })).status).toBe(
@@ -130,7 +149,7 @@ for (const [label, origin] of [
 		for (const [method, path, body] of REFUSED) {
 			test(`${method} ${path} ${body ? JSON.stringify(body).slice(0, 40) : ""} is refused (403 or 401) and nothing changes`, async () => {
 				const s = setup();
-				// a snoozed item, so un-snooze has something to undo
+				// a snoozed item, so a refused route has something to change if it were let through
 				expect((await s.send("POST", "/api/items/Q-abcd/snooze", h(s), { until: LATER })).status).toBe(200);
 				const before = JSON.stringify([
 					getQuestion(s.store, "Q-abcd"),
@@ -168,24 +187,20 @@ for (const [label, origin] of [
 }
 
 describe("preflight, from T3's null-origin frame", () => {
-	test("the four writes and the reads get the grant-nothing 204; every other route is refused with no CORS", async () => {
+	test("the five writes and the reads get the grant-nothing 204; every other route is refused with no CORS", async () => {
 		const s = setup();
 		for (const p of [
 			"/api/queue",
 			"/api/items/Q-abcd/answer",
 			"/api/items/Q-abcd/snooze",
+			"/api/items/Q-abcd/unsnooze",
 			"/api/items/Q-abcd/direction",
 			"/api/items/Q-abcd/dismiss",
 		]) {
 			const r = await s.send("OPTIONS", p, { origin: "null" });
 			expect([p, r.status, r.headers.get("access-control-allow-origin")]).toEqual([p, 204, "null"]);
 		}
-		for (const p of [
-			"/api/items/Q-abcd/unsnooze",
-			"/api/items/Q-abcd/not-now",
-			"/api/accept-all",
-			"/api/rulings/R1/retire",
-		]) {
+		for (const p of ["/api/items/Q-abcd/not-now", "/api/accept-all", "/api/rulings/R1/retire"]) {
 			const r = await s.send("OPTIONS", p, { origin: "null" });
 			expect([p, r.status, r.headers.get("access-control-allow-origin")]).toEqual([p, 403, null]);
 		}

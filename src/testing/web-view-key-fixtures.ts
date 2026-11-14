@@ -109,7 +109,6 @@ export function useWebViewKeyFixtures() {
 
 	/** Every other write or read, each refused to the view key whatever its origin. */
 	const REFUSED: [string, string, unknown?][] = [
-		["POST", "/api/items/Q-abcd/unsnooze", {}],
 		["POST", "/api/items/Q-abcd/not-now", {}],
 		["POST", "/api/accept-all", { ids: ["Q-abcd"] }],
 		["POST", "/api/rulings/R1/confirm", {}],

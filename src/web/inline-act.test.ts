@@ -27,13 +27,19 @@ function view(post: (path: string, body: any) => { status: number; body: unknown
 	const headers: Record<string, string>[] = [];
 	// As the server does, the item leaves the waiting list once a write is recorded (answered, snoozed, dismissed or directed).
 	let open = items;
-	const dq = run(() => ({ items: open, snoozed: [], cards: [] }), {
+	// and a snoozed one is on the snoozed list, with its time, until it returns
+	let put: unknown[] = [];
+	const dq = run(() => ({ items: open, snoozed: put, cards: [] }), {
 		src: SRC,
 		calls,
 		headers,
 		post: (path, body) => {
 			const r = post(path, body);
-			if (r.status === 200) open = [];
+			if (r.status === 200) {
+				if (path.endsWith("/snooze"))
+					put = open.map((i) => ({ ...(i as object), snooze: { until: body.until, active: true } }));
+				open = [];
+			}
 			return r;
 		},
 	});
@@ -49,7 +55,11 @@ const tap = async (dq: El, text: string) => {
 const msg = (dq: El) =>
 	dq
 		.all(
-			(e) => e.className.includes("dq-msg") && !e.className.includes("dq-away") && !e.className.includes("dq-locked"),
+			(e) =>
+				e.className.includes("dq-msg") &&
+				!e.className.includes("dq-away") &&
+				!e.className.includes("dq-locked") &&
+				e.textContent !== "", // a snoozed card's own message line, empty until it is used
 		)
 		.at(-1)!;
 
