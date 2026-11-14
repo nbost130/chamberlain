@@ -735,18 +735,234 @@ export type DrainDeps = {
 	crash?: (point: CrashPoint) => void;
 };
 
-/** One pass: read what is new, decide each event through the item system, queue the wakes, then (and only then) keep the cursor. */
-export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skipped?: "off" | "no-desk" } {
-	const { store, outbox, now } = d;
-	const cfg = readConfig(d.conf);
-	if (!cfg.enabled) return { read: 0, woke: 0, skipped: "off" };
-	if (!d.canDeliver) return { read: 0, woke: 0, skipped: "no-desk" };
-	const crash = d.crash ?? (() => {});
-	const stored = store.state.get<Cursor>(CURSOR_KEY);
+/** What one pass works on: the stores, the clock, the config, and the wakes it has queued and the families the daily cap held back so far. */
+type Pass = { store: Store; outbox: Outbox; now: number; cfg: DeskConfig; woke: string[]; deferred: Set<string> };
+
+/** Alert wakes of the rolling 24 h: the desk's own outbox rows and held wakes. Morning and cap notes are not alerts and do not count. */
+function capFull(c: Pass): boolean {
+	if (c.cfg.dailyCap <= 0) return false;
+	const members = [
+		...c.store.wakes.rows("all", DESK_RECEIVER).flatMap((row) => row.members),
+		...c.store.wakes.held(DESK_RECEIVER),
+	];
+	return (
+		members.filter((m) => m.deliveryId.startsWith("desk:") && c.now - m.queuedAt < DAY_MS).length >= c.cfg.dailyCap
+	);
+}
+
+const parkPending = (c: Pass, e: DeskEvent, sig: string, at: number, reason: Reason) =>
+	c.store.items.observe({
+		source: ALERT_DESK,
+		kind: "pending",
+		dedupKey: pendingKey(e.family),
+		mode: "silenced",
+		payload: { event: e, sig, reason } satisfies PendingPayload,
+		now: at,
+	});
+
+function dropPending(c: Pass, family: string, at: number, opts: { keepRepeat?: boolean } = {}) {
+	const p = c.store.items.get(ALERT_DESK, pendingKey(family));
+	if (p?.status !== "triggered") return;
+	// A change that was undone is cancelled; a 24 h repeat the cap held back is not a change and stays until it is delivered.
+	if (opts.keepRepeat && (p.payload as PendingPayload).reason === "repeat") return;
+	c.store.items.resolve(ALERT_DESK, pendingKey(family), at);
+}
+
+function absorb(c: Pass, family: string, at: number) {
+	const a = c.store.items.get(ALERT_DESK, family);
+	if (a) c.store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at });
+}
+
+/** Queues the wake for an event the gates let through, with every item change, in one transaction. `consumed`: the 24 h repeat already notified. */
+function emit(c: Pass, e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): void {
+	const { store, cfg } = c;
+	const out = c.outbox.commit((): WakeDraft | undefined => {
+		const before = store.items.get(ALERT_DESK, e.family);
+		const absorbed = Number(before?.payload.absorbed ?? 0);
+		const wakes = Number(before?.payload.wakes ?? 0) + 1;
+		const payload = {
+			sig,
+			title: clip(e.title, 140),
+			severity: e.severity,
+			source: e.source,
+			absorbed: 0,
+			wakes,
+			lastEventAt: at,
+		};
+		if (consumed) store.items.patch(ALERT_DESK, e.family, payload);
+		else {
+			// A change is a new occurrence: resolve the open item so the next observation reopens it and notifies.
+			if (before && before.status !== "resolved") store.items.resolve(ALERT_DESK, e.family, at);
+			const o = store.items.observe({
+				source: ALERT_DESK,
+				kind: "alert",
+				dedupKey: e.family,
+				repeat: repeatEvery(cfg.repeatMs),
+				payload,
+				now: at,
+			});
+			if (!o.notify) return undefined;
+		}
+		dropPending(c, e.family, at);
+		const id = wakeId(e.family, sig, e.ts);
+		return {
+			deliveryId: id,
+			message: alertMessage(e, reason, absorbed, Math.round(cfg.windowMs / 60_000)),
+			meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+		};
+	});
+	if (out === "queued") c.woke.push(`${e.family}:${reason}`);
+}
+
+/** The gates a wake-worthy event passes: the daily cap, then the family's window. Returns whether it was emitted. */
+function release(c: Pass, e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): boolean {
+	const { store, cfg } = c;
+	if (capFull(c)) {
+		c.deferred.add(e.family);
+		store.tx(() => parkPending(c, e, sig, at, reason));
+		return false;
+	}
+	const gate = store.items.observe({
+		source: ALERT_DESK,
+		kind: "window",
+		dedupKey: windowKey(e.family),
+		repeat: repeatEvery(cfg.windowMs),
+		now: at,
+	});
+	if (!gate.notify) {
+		store.tx(() => {
+			parkPending(c, e, sig, at, reason);
+			absorb(c, e.family, at);
+		});
+		return false;
+	}
+	emit(c, e, sig, reason, at, consumed);
+	return true;
+}
+
+/** The same alert again. The item's own 24 h repeat says whether it is a recurrence; otherwise it is folded, and a change that was
+ * waiting for its window is cancelled (the alert is back to what the desk was last told). */
+function repeatOrFold(c: Pass, e: DeskEvent, sig: string, at: number): void {
+	const o = c.store.items.observe({
+		source: ALERT_DESK,
+		kind: "alert",
+		dedupKey: e.family,
+		repeat: repeatEvery(c.cfg.repeatMs),
+		now: at,
+	});
+	if (o.notify) {
+		if (!release(c, e, sig, "repeat", at, true)) {
+			/* parked */
+		}
+	} else {
+		absorb(c, e.family, at);
+		dropPending(c, e.family, at, { keepRepeat: true });
+	}
+}
+
+/** One event through the item system: a new alert, a changed one, or the same one again. */
+function decide(c: Pass, e: DeskEvent): void {
+	const at = Math.min(c.now, Date.parse(e.ts));
+	const sig = signature(e);
+	const a = c.store.items.get(ALERT_DESK, e.family);
+	if (!a || a.status === "resolved") {
+		release(c, e, sig, "new", at, false);
+		return;
+	}
+	if (a.payload.sig !== sig) {
+		release(c, e, sig, "changed", at, false);
+		return;
+	}
+	c.store.tx(() => repeatOrFold(c, e, sig, at));
+}
+
+/** A change that waited for its window to close, or a wake the cap deferred. */
+function releasePending(c: Pass): void {
+	for (const p of c.store.items.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })) {
+		const { event, sig, reason } = p.payload as PendingPayload;
+		const a = c.store.items.get(ALERT_DESK, event.family);
+		const open = a !== undefined && a.status !== "resolved";
+		// A change that was undone before its window closed is cancelled; a parked 24 h repeat is not a change and still goes.
+		if (reason !== "repeat" && open && a.payload.sig === sig) {
+			c.store.items.resolve(ALERT_DESK, p.dedupKey, c.now);
+			continue;
+		}
+		release(c, event, sig, reason === "repeat" ? "repeat" : open ? "changed" : "new", c.now, reason === "repeat");
+	}
+}
+
+/** Once a day, if the cap held anything back, the desk is told so. */
+function noteCap(c: Pass): void {
+	if (!c.deferred.size) return;
+	c.outbox.commit(() => {
+		if (
+			!c.store.items.observe({
+				source: ALERT_DESK,
+				kind: "cap-note",
+				dedupKey: "cap",
+				repeat: repeatEvery(DAY_MS),
+				now: c.now,
+			}).notify
+		)
+			return undefined;
+		c.woke.push("cap");
+		return {
+			deliveryId: `desk-cap:${Math.floor(c.now / DAY_MS)}`,
+			message: capMessage(c.cfg, [...c.deferred]),
+			meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+		};
+	});
+}
+
+/** The first pass of each local day from the morning hour sends the morning wake. */
+function sendMorning(c: Pass): void {
+	const { store, now } = c;
+	const { day, hour } = localDay(now, c.cfg.timezone);
+	if (hour < c.cfg.morningHour) return;
+	c.outbox.commit(() => {
+		if (!store.items.observe({ source: ALERT_DESK, kind: "morning", dedupKey: day, repeat: NOTIFY_ONCE, now }).notify)
+			return undefined;
+		const live = (i: Item) =>
+			now - Number(i.payload.lastEventAt ?? i.lastSeen) < DAY_MS && Number(i.payload.wakes ?? 0) > 0;
+		const handled = store.items
+			.list({ source: ALERT_DESK, kind: "alert" })
+			.filter(live)
+			.map((i) => ({
+				family: i.dedupKey,
+				wakes: Number(i.payload.wakes),
+				severity: String(i.payload.severity),
+				title: String(i.payload.title),
+			}));
+		const waiting = store.items
+			.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })
+			.map((i) => (i.payload as PendingPayload).event.family);
+		c.woke.push("morning");
+		return {
+			deliveryId: `desk-morning:${day}`,
+			message: morningMessage(day, handled, waiting),
+			meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+		};
+	});
+}
+
+/** Families nobody has reported for three days are resolved: a later event is a new occurrence. */
+function forgetQuietFamilies(c: Pass): void {
+	const { store, now } = c;
+	store.tx(() => {
+		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" }))
+			if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS)
+				store.items.resolve(ALERT_DESK, i.dedupKey, now);
+		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" }))
+			if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
+	});
+}
+
+/** The stored cursor, or the first one (kept before anything is read, so a crash later in the pass never decides it again). */
+function openCursor(d: DrainDeps, cfg: DeskConfig): { cur: Cursor; save: () => void } {
+	const stored = d.store.state.get<Cursor>(CURSOR_KEY);
 	const cur = structuredClone(stored ?? firstCursor(d.inbox, cfg.startAt));
-	const save = () => store.state.set(CURSOR_KEY, cur);
+	const save = () => d.store.state.set(CURSOR_KEY, cur);
 	if (!stored) {
-		// The first start is decided once: the cursor is kept before anything is read, so a crash later in this pass never decides it again.
 		save();
 		d.log("alert-desk-start", {
 			startAt: cfg.startAt,
@@ -755,224 +971,52 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 			...(cfg.startAt === "end" && cur.offset ? { skippedBytes: cur.offset } : {}),
 		});
 	}
-	if (recoverRotation(cur, now)) save();
-	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
-	sweepStrays(cur, d.inbox, now);
-	const r = readInbox(cur, d.inbox, now, cfg);
-	const woke: string[] = [];
-	const deferred = new Set<string>();
+	return { cur, save };
+}
 
-	/** Alert wakes of the rolling 24 h: the desk's own outbox rows and held wakes. Morning and cap notes are not alerts and do not count. */
-	function capFull(): boolean {
-		if (cfg.dailyCap <= 0) return false;
-		const members = [
-			...store.wakes.rows("all", DESK_RECEIVER).flatMap((row) => row.members),
-			...store.wakes.held(DESK_RECEIVER),
-		];
-		return members.filter((m) => m.deliveryId.startsWith("desk:") && now - m.queuedAt < DAY_MS).length >= cfg.dailyCap;
-	}
-	const parkPending = (e: DeskEvent, sig: string, at: number, reason: Reason) =>
-		store.items.observe({
-			source: ALERT_DESK,
-			kind: "pending",
-			dedupKey: pendingKey(e.family),
-			mode: "silenced",
-			payload: { event: e, sig, reason } satisfies PendingPayload,
-			now: at,
-		});
-	const dropPending = (family: string, at: number, opts: { keepRepeat?: boolean } = {}) => {
-		const p = store.items.get(ALERT_DESK, pendingKey(family));
-		if (p?.status !== "triggered") return;
-		// A change that was undone is cancelled; a 24 h repeat the cap held back is not a change and stays until it is delivered.
-		if (opts.keepRepeat && (p.payload as PendingPayload).reason === "repeat") return;
-		store.items.resolve(ALERT_DESK, pendingKey(family), at);
-	};
-	const absorb = (family: string, at: number) => {
-		const a = store.items.get(ALERT_DESK, family);
-		if (a) store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at });
-	};
-
-	/** Queues the wake for an event the gates let through, with every item change, in one transaction. `consumed`: the 24 h repeat already notified. */
-	function emit(e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): void {
-		const out = outbox.commit((): WakeDraft | undefined => {
-			const before = store.items.get(ALERT_DESK, e.family);
-			const absorbed = Number(before?.payload.absorbed ?? 0);
-			const wakes = Number(before?.payload.wakes ?? 0) + 1;
-			const payload = {
-				sig,
-				title: clip(e.title, 140),
-				severity: e.severity,
-				source: e.source,
-				absorbed: 0,
-				wakes,
-				lastEventAt: at,
-			};
-			if (consumed) store.items.patch(ALERT_DESK, e.family, payload);
-			else {
-				// A change is a new occurrence: resolve the open item so the next observation reopens it and notifies.
-				if (before && before.status !== "resolved") store.items.resolve(ALERT_DESK, e.family, at);
-				const o = store.items.observe({
-					source: ALERT_DESK,
-					kind: "alert",
-					dedupKey: e.family,
-					repeat: repeatEvery(cfg.repeatMs),
-					payload,
-					now: at,
-				});
-				if (!o.notify) return undefined;
-			}
-			dropPending(e.family, at);
-			const id = wakeId(e.family, sig, e.ts);
-			return {
-				deliveryId: id,
-				message: alertMessage(e, reason, absorbed, Math.round(cfg.windowMs / 60_000)),
-				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
-			};
-		});
-		if (out === "queued") woke.push(`${e.family}:${reason}`);
-	}
-
-	/** The gates a wake-worthy event passes: the daily cap, then the family's window. Returns whether it was emitted. */
-	function release(e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): boolean {
-		if (capFull()) {
-			deferred.add(e.family);
-			store.tx(() => parkPending(e, sig, at, reason));
-			return false;
-		}
-		const gate = store.items.observe({
-			source: ALERT_DESK,
-			kind: "window",
-			dedupKey: windowKey(e.family),
-			repeat: repeatEvery(cfg.windowMs),
-			now: at,
-		});
-		if (!gate.notify) {
-			store.tx(() => {
-				parkPending(e, sig, at, reason);
-				absorb(e.family, at);
-			});
-			return false;
-		}
-		emit(e, sig, reason, at, consumed);
-		return true;
-	}
-
-	for (const e of r.events) {
-		const at = Math.min(now, Date.parse(e.ts));
-		const sig = signature(e);
-		const a = store.items.get(ALERT_DESK, e.family);
-		if (!a || a.status === "resolved") {
-			release(e, sig, "new", at, false);
-			continue;
-		}
-		if (a.payload.sig !== sig) {
-			release(e, sig, "changed", at, false);
-			continue;
-		}
-		// The same alert again. The item's own 24 h repeat says whether it is a recurrence; otherwise it is folded, and a change that was
-		// waiting for its window is cancelled (the alert is back to what the desk was last told).
-		store.tx(() => {
-			const o = store.items.observe({
-				source: ALERT_DESK,
-				kind: "alert",
-				dedupKey: e.family,
-				repeat: repeatEvery(cfg.repeatMs),
-				now: at,
-			});
-			if (o.notify) {
-				if (!release(e, sig, "repeat", at, true)) {
-					/* parked */
-				}
-			} else {
-				absorb(e.family, at);
-				dropPending(e.family, at, { keepRepeat: true });
-			}
-		});
-	}
-
-	// A change that waited for its window to close, or a wake the cap deferred.
-	for (const p of store.items.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })) {
-		const { event, sig, reason } = p.payload as PendingPayload;
-		const a = store.items.get(ALERT_DESK, event.family);
-		const open = a !== undefined && a.status !== "resolved";
-		// A change that was undone before its window closed is cancelled; a parked 24 h repeat is not a change and still goes.
-		if (reason !== "repeat" && open && a.payload.sig === sig) {
-			store.items.resolve(ALERT_DESK, p.dedupKey, now);
-			continue;
-		}
-		release(event, sig, reason === "repeat" ? "repeat" : open ? "changed" : "new", now, reason === "repeat");
-	}
-
-	// Once a day, the cap says so; and the first pass of the day from the morning hour sends the morning wake.
-	if (deferred.size) {
-		outbox.commit(() => {
-			if (
-				!store.items.observe({
-					source: ALERT_DESK,
-					kind: "cap-note",
-					dedupKey: "cap",
-					repeat: repeatEvery(DAY_MS),
-					now,
-				}).notify
-			)
-				return undefined;
-			woke.push("cap");
-			return {
-				deliveryId: `desk-cap:${Math.floor(now / DAY_MS)}`,
-				message: capMessage(cfg, [...deferred]),
-				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
-			};
-		});
-	}
-	const { day, hour } = localDay(now, cfg.timezone);
-	if (hour >= cfg.morningHour) {
-		outbox.commit(() => {
-			if (!store.items.observe({ source: ALERT_DESK, kind: "morning", dedupKey: day, repeat: NOTIFY_ONCE, now }).notify)
-				return undefined;
-			const live = (i: Item) =>
-				now - Number(i.payload.lastEventAt ?? i.lastSeen) < DAY_MS && Number(i.payload.wakes ?? 0) > 0;
-			const handled = store.items
-				.list({ source: ALERT_DESK, kind: "alert" })
-				.filter(live)
-				.map((i) => ({
-					family: i.dedupKey,
-					wakes: Number(i.payload.wakes),
-					severity: String(i.payload.severity),
-					title: String(i.payload.title),
-				}));
-			const waiting = store.items
-				.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })
-				.map((i) => (i.payload as PendingPayload).event.family);
-			woke.push("morning");
-			return {
-				deliveryId: `desk-morning:${day}`,
-				message: morningMessage(day, handled, waiting),
-				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
-			};
-		});
-	}
-
-	// Families nobody has reported for three days are resolved: a later event is a new occurrence.
-	store.tx(() => {
-		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" }))
-			if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS)
-				store.items.resolve(ALERT_DESK, i.dedupKey, now);
-		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" }))
-			if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
-	});
-	crash("delivered");
-	if (r.retiredRead.length) crash("retired-read");
-	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
-	save();
-	if (r.retiredRead.length) crash("retired-saved");
-	for (const x of r.retiredRead) {
+/** After the wakes are queued and the cursor is saved: the retired files that were read to their end are deleted. */
+function deleteRetired(read: Retired[]): void {
+	for (const x of read) {
 		try {
 			unlinkSync(x.path);
 		} catch {
 			/* already gone */
 		}
 	}
-	if (r.events.length || r.bad || r.stale || woke.length)
-		d.log("alert-desk", { events: r.events.length, bad: r.bad, stale: r.stale, woke, deferred: deferred.size });
-	return { read: r.events.length, woke: woke.length };
+}
+
+/** One pass: read what is new, decide each event through the item system, queue the wakes, then (and only then) keep the cursor. */
+export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skipped?: "off" | "no-desk" } {
+	const { store, outbox, now } = d;
+	const cfg = readConfig(d.conf);
+	if (!cfg.enabled) return { read: 0, woke: 0, skipped: "off" };
+	if (!d.canDeliver) return { read: 0, woke: 0, skipped: "no-desk" };
+	const crash = d.crash ?? (() => {});
+	const { cur, save } = openCursor(d, cfg);
+	if (recoverRotation(cur, now)) save();
+	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
+	sweepStrays(cur, d.inbox, now);
+	const r = readInbox(cur, d.inbox, now, cfg);
+	const c: Pass = { store, outbox, now, cfg, woke: [], deferred: new Set() };
+
+	for (const e of r.events) decide(c, e);
+	releasePending(c);
+	noteCap(c);
+	sendMorning(c);
+	forgetQuietFamilies(c);
+	crash("delivered");
+	if (r.retiredRead.length) crash("retired-read");
+	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
+	save();
+	if (r.retiredRead.length) crash("retired-saved");
+	deleteRetired(r.retiredRead);
+	if (r.events.length || r.bad || r.stale || c.woke.length)
+		d.log("alert-desk", {
+			events: r.events.length,
+			bad: r.bad,
+			stale: r.stale,
+			woke: c.woke,
+			deferred: c.deferred.size,
+		});
+	return { read: r.events.length, woke: c.woke.length };
 }
