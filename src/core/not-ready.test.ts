@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
+import { noAlert } from "../testing/alert.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";
@@ -72,7 +73,7 @@ describe("the engine with no wake URL", () => {
 		const fake = createFakeAdapter({ wakeReady: false });
 		fake.threads.set("t1", { lastMessage: "stuck", waiting: [{ type: "user_input_request", requestId: "req-1", label: "Pick", questions: [{ question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }] }] }] });
 		const store = memStore();
-		const engine = createEngine({ conf, lock: testRelayLock(store), store, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }], housekeeping: false, log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 } });
+		const engine = createEngine({ conf, lock: testRelayLock(store), store, alert: noAlert, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }], housekeeping: false, log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 } });
 		void engine.start();
 		stops.push(() => engine.stop());
 		fake.emit({ kind: "needs_input", thread: { id: "t1", title: "Build", status: "waiting", pendingRequestId: "req-1" } });

@@ -82,6 +82,8 @@ export type EngineDeps = {
 	housekeeping?: boolean;
 	/** Stalled-thread recovery (src/core/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
 	recover?: boolean | Partial<RecoverTiming>;
+	/** Runs the operator's alert command for an alarm. Default: executes it. A test passes `noAlert` (the `noAlert` helper in the testing directory) so it never reaches a real one. */
+	alert?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => void;
 	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
 	judge?: Judge;
 	/** Reads GitHub for the held-ledger reconciler (src/core/gh.ts). Undefined: holds that name a PR, issue or branch are not checked. */
@@ -130,7 +132,9 @@ export function createEngine(d: EngineDeps) {
 		// An alert command is the operator's own (settings.json `alertCommand`): it gets `warning <title> <summary>`.
 		const cmd = alertCommand();
 		if (!cmd) return;
-		execFile(cmd, ["warning", title, summary], { timeout: 30000, env: { ...process.env, CHAMBERLAIN_ALARM_KEY: key } }, (err) => { if (err) log("alarm-emit-failed", { key, error: String(err.message).slice(0, 200) }); });
+		const env = { ...process.env, CHAMBERLAIN_ALARM_KEY: key };
+		if (d.alert) { d.alert(cmd, ["warning", title, summary], env); return; }
+		execFile(cmd, ["warning", title, summary], { timeout: 30000, env }, (err) => { if (err) log("alarm-emit-failed", { key, error: String(err.message).slice(0, 200) }); });
 	}
 
 	let stewardId = privateFile("steward-thread");

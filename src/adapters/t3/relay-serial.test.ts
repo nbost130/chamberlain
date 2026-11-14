@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { webhookWake } from "./wake.ts";
 import { createFakeAdapter } from "../../testing/fake-adapter.ts";
+import { noAlert } from "../../testing/alert.ts";
 import { testRelayLock } from "../../testing/lock.ts";
 import { memStore } from "../../testing/store.ts";
 import { createEngine } from "../../core/engine.ts";
@@ -112,7 +113,7 @@ describe("the relay never has two POSTs in flight", () => {
 		fake.compact!.send = slowly(fake.compact!.send);
 		fake.probe = { readable: true, contextTokens: 5000 };
 		const engine = createEngine({
-			conf, lock: testRelayLock(store), store, housekeeping: false, compactAt: 1000, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
+			conf, lock: testRelayLock(store), store, alert: noAlert, housekeeping: false, compactAt: 1000, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 },
 		});
 		cleanups.push(async () => { await engine.stop(); rmSync(root, { recursive: true, force: true }); });

@@ -8,6 +8,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import type { WakeTransport } from "./deliver.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
+import { noAlert } from "../testing/alert.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
@@ -208,7 +209,7 @@ describe("the engine drains the inbox into the desk", () => {
 		const logged: { event: string; [k: string]: unknown }[] = [];
 		const fake = createFakeAdapter(caps);
 		const engine = createEngine({
-			conf, lock: testRelayLock(store), store, housekeeping: true, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
+			conf, lock: testRelayLock(store), store, alert: noAlert, housekeeping: true, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => logged.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 },
 		});
 		engines.push(engine);
@@ -284,7 +285,7 @@ describe("one relay, one serial queue, for every receiver", () => {
 		const adapter = { ...fake, wake: slow("steward"), alertDesk: { wake: slow("desk"), isBusy: () => "idle" as Gate } };
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-one-relay-`);
 		mkdirSync(`${root}/conf`, { recursive: true, mode: 0o700 });
-		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter }], log: () => {}, timing: { tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
+		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, alert: noAlert, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter }], log: () => {}, timing: { tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
 		for (let i = 0; i < 3; i++) {
 			store.wakes.enqueue(row(`s${i}`, { kind: "needs_input" }));
 			store.wakes.enqueue(row(`d${i}`, { kind: "alert_desk", receiver: "desk" }));

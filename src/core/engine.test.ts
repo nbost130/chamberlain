@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
+import { noAlert } from "../testing/alert.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { MIGRATIONS } from "./migrations.ts";
@@ -46,7 +47,7 @@ function rig(o: { store?: Store; wrap?: (s: Store) => Store; adapter?: FakeAdapt
 	const clock = { t: Date.now() };
 	const events: Logged[] = [];
 	const deps: EngineDeps = {
-		conf, lock: testRelayLock(store), store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false, gh: o.gh, ask: o.ask,
+		conf, lock: testRelayLock(store), alert: noAlert, store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false, gh: o.gh, ask: o.ask,
 		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 		log: (event, data) => events.push({ event, ...data }),
 		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -550,7 +551,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const judgeCalls: unknown[] = [];
 		const clock = { t: Date.now() };
 		const engine = createEngine({
-			conf, lock: testRelayLock(store), store, housekeeping: false,
+			conf, lock: testRelayLock(store), store, alert: noAlert, housekeeping: false,
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => events.push({ event, ...data }),
 			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -1133,7 +1134,7 @@ describe("the judge is an explicit setting", () => {
 		if (o.judgeJson) writeFileSync(`${conf}/judge.json`, o.judgeJson, { mode: 0o600 });
 		const store = memStore();
 		const events: Logged[] = [];
-		const engine = createEngine({ conf, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: createFakeAdapter() }], log: (event, data) => events.push({ event, ...data }), ...(o.recover ? { recover: true } : {}) });
+		const engine = createEngine({ conf, lock: testRelayLock(store), store, alert: noAlert, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: createFakeAdapter() }], log: (event, data) => events.push({ event, ...data }), ...(o.recover ? { recover: true } : {}) });
 		engines.push(engine);
 		return events;
 	};
@@ -1161,7 +1162,7 @@ describe("(2)(3) card holds after a restart, and across servers", () => {
 		mkdirSync(`${root}/conf`, { recursive: true, mode: 0o700 });
 		writeFileSync(`${root}/conf/decision-rights.md`, "ask", { mode: 0o600 });
 		const events: Logged[] = [];
-		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: servers.map((x) => ({ server: { name: x.name, adapter: "fake" }, adapter: x.fake })), log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
+		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, alert: noAlert, housekeeping: false, servers: servers.map((x) => ({ server: { name: x.name, adapter: "fake" }, adapter: x.fake })), log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
 		engines.push(engine);
 		void engine.start();
 		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
@@ -1277,7 +1278,7 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		const fake = createFakeAdapter();
 		fake.threads.set("t1", { waiting: [card] });
 		const events: Logged[] = [];
-		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake", ...(o.mayBeOffline ? { mayBeOffline: true } : {}) }, adapter: fake }], log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000, ...(o.cardUnverifiedAlarmMs !== undefined ? { cardUnverifiedAlarmMs: o.cardUnverifiedAlarmMs } : {}) }, relay: { retryAfterMs: () => 0 } });
+		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, alert: noAlert, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake", ...(o.mayBeOffline ? { mayBeOffline: true } : {}) }, adapter: fake }], log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000, ...(o.cardUnverifiedAlarmMs !== undefined ? { cardUnverifiedAlarmMs: o.cardUnverifiedAlarmMs } : {}) }, relay: { retryAfterMs: () => 0 } });
 		engines.push(engine);
 		void engine.start();
 		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };

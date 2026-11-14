@@ -21,6 +21,7 @@ import { openStore } from "./core/sqlite-store.ts";
 import { createApp } from "./web/app.ts";
 import { createWaiting } from "./web/waiting.ts";
 import { createFakeAdapter, type FakeAdapter } from "./testing/fake-adapter.ts";
+import { noAlert } from "./testing/alert.ts";
 import { testRelayLock } from "./testing/lock.ts";
 import type { Store } from "./core/store.ts";
 
@@ -144,7 +145,7 @@ function daemon(dir: string, store: Store) {
 	mkdirSync(conf, { recursive: true, mode: 0o700 });
 	writeFileSync(`${conf}/decision-rights.md`, "The Steward may merge green PRs.", { mode: 0o600 });
 	const fake = createFakeAdapter();
-	const engine = createEngine({ conf, lock: testRelayLock(store), store, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }], housekeeping: false, log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 } });
+	const engine = createEngine({ conf, lock: testRelayLock(store), store, alert: noAlert, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }], housekeeping: false, log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 } });
 	void engine.start();
 	stoppers.push(() => engine.stop());
 	return { fake, engine };
