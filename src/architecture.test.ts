@@ -31,8 +31,10 @@ const SRC = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 export function specifiers(code: string): string[] {
 	const bare = stripComments(code);
 	const out: string[] = [];
+	// A static import or re-export, a side-effect import, and a call to import or require with a literal first argument (extra arguments, such as
+	// import attributes, and a space before the parenthesis included).
 	for (const m of bare.matchAll(
-		/\b(?:import|export)\b[^"';]*?\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g,
+		/\b(?:import|export)\b[^"';]*?\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*[,)]/g,
 	))
 		out.push((m[1] ?? m[2] ?? m[3])!);
 	return out;
@@ -47,11 +49,16 @@ export function walk(root: string, dir = ""): string[] {
 /** Every .ts file under a directory of src/, as paths relative to src/. */
 const files = (dir: string) => walk(SRC, dir);
 
-/** The relative imports of a source text (static, dynamic and re-exports), resolved against `from` to src/-relative paths. */
+/**
+ * The imports of a source text (static, dynamic, require and re-exports) that point into this tree, as src/-relative paths: relative
+ * specifiers resolved against `from`, and absolute paths and file: URLs as they are. A package name points nowhere in src/ and is not listed.
+ */
 export function importsOf(code: string, from: string): string[] {
-	return specifiers(code)
-		.filter((p) => p.startsWith("."))
-		.map((p) => relative(SRC, resolve(SRC, dirname(from), p)));
+	return specifiers(code).flatMap((p) => {
+		if (p.startsWith(".")) return [relative(SRC, resolve(SRC, dirname(from), p))];
+		const abs = p.replace(/^file:\/\//, "");
+		return abs.startsWith("/") ? [relative(SRC, abs)] : [];
+	});
 }
 
 /** Pure: the violations of the rules in one file: what it imports that it may not. */
@@ -163,8 +170,38 @@ export function moduleViolations(file: string, code: string): string[] {
 		if (mine && target === REGISTRY)
 			bad.push(`${file} imports the registry: a module is made by it, never the reverse`);
 	}
-	if (mine && !file.endsWith(".test.ts") && /from\s*["']bun:sqlite["']/.test(stripComments(code)))
+	if (mine && !file.endsWith(".test.ts") && specifiers(code).includes("bun:sqlite"))
 		bad.push(`${file} imports bun:sqlite: a module opens its database through src/core/database.ts`);
+	return bad;
+}
+
+/**
+ * The module's reach (docs/EMAIL-TRIAGE.md, section 8, "Tracking links are never opened by the module"): a module has no HTTP client and
+ * starts no process of its own. A non-test file under src/modules/ may not call `fetch(`, open a socket or server, name an HTTP, socket or
+ * DNS package, or spawn; the model CLI is spawned by src/core/llm/cli.ts, which is core. A provider or a route that must run the operator's
+ * own program is listed in MAY_SPAWN with the reason, and nothing else is: B2 (#35) lists the provider's file, B7 (#40) the route's.
+ */
+export const MAY_SPAWN: Record<string, string> = {};
+const NETWORK_PACKAGES =
+	/^(node:)?(http|https|http2|net|tls|dgram|dns|dns\/promises)$|^(undici|ws|node-fetch|axios|got)$/;
+const NETWORK_CALLS =
+	/\bfetch\s*\(|\bnew\s+WebSocket\b|\bXMLHttpRequest\b|\bBun\.(connect|listen|serve|udpSocket|dns)\b/;
+const SPAWNS = /\bBun\.(?:spawn|spawnSync)\b|\bBun\.\$|\b(execa|spawnSync|execSync|execFile|execFileSync)\s*\(/;
+
+/** Pure: the violations of the reach rule in one non-test file under src/modules/. `file` is src/-relative. */
+export function moduleReachViolations(file: string, code: string): string[] {
+	if (!file.startsWith("modules/") || file.endsWith(".test.ts")) return [];
+	const bare = stripComments(code);
+	const bad: string[] = [];
+	for (const spec of specifiers(code)) {
+		if (NETWORK_PACKAGES.test(spec)) bad.push(`${file} imports ${spec}: a module has no HTTP, socket or DNS client`);
+		if (/^(node:)?child_process$/.test(spec) && !(file in MAY_SPAWN))
+			bad.push(`${file} imports ${spec}: a module spawns nothing unless MAY_SPAWN lists the file`);
+	}
+	if (NETWORK_CALLS.test(bare))
+		bad.push(`${file} calls fetch or opens a socket or server: a module has no network client`);
+	if (SPAWNS.test(bare) && !(file in MAY_SPAWN))
+		bad.push(`${file} spawns a process: a module spawns nothing unless MAY_SPAWN lists the file`);
 	return bad;
 }
 
@@ -196,8 +233,48 @@ describe("optional modules", () => {
 		expect(importers.filter((f) => !f.endsWith(".test.ts")).sort()).toEqual(["cli.ts", "daemon.ts"]);
 	});
 
+	test("no file under src/modules/ has a network client or spawns a process it is not listed for", () => {
+		const bad = files("modules").flatMap((f) => moduleReachViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+		expect(Object.keys(MAY_SPAWN).filter((f) => !files("modules").includes(f))).toEqual([]);
+	});
+
+	test("the reach scanner catches each way to reach out (so a pass means something)", () => {
+		const f = "modules/mail/x.ts";
+		for (const code of [
+			'const r = await fetch("https://example.com");',
+			'const r = await fetch ("https://example.com");',
+			'import https from "node:https";',
+			'import { connect } from "net";',
+			'import { request } from "undici";',
+			'const s = new WebSocket("wss://x");',
+			"const s = Bun.listen({});",
+			"const p = Bun.spawn(['ls']);",
+			"const p = Bun.spawnSync(['ls']);",
+			"const p = Bun.$`ls`;",
+			'import { exec } from "node:child_process";',
+			'const m = require("node:http");',
+			'const m = await import("node:dns", {});',
+		])
+			expect(moduleReachViolations(f, code), code).not.toEqual([]);
+		// What is allowed: the same words in comments, tests and strings of another shape, and other files that are not modules.
+		expect(moduleReachViolations(f, "// await fetch(url) is not allowed here\nconst a = 1;")).toEqual([]);
+		expect(moduleReachViolations("modules/mail/x.test.ts", "Bun.spawn(['bun']); await fetch(u);")).toEqual([]);
+		expect(moduleReachViolations("core/x.ts", "Bun.spawn(['ls']);")).toEqual([]);
+		expect(moduleReachViolations(f, 'import { join } from "node:path";\nconst s = "fetched";')).toEqual([]);
+	});
+
 	test("the scanner catches each kind of violation (so a pass means something)", () => {
 		expect(moduleViolations("core/x.ts", 'import { a } from "../modules/mail/db.ts";')).toHaveLength(1);
+		// The spellings a plain relative static import hides behind: a space before the parenthesis, import options, require, and an absolute path or file URL.
+		for (const code of [
+			'await import ("../modules/mail/db.ts");',
+			'await import("../modules/mail/db.ts", {});',
+			'const m = require("../modules/mail/db.ts");',
+			'export * from "file://" + "x";\nexport * from "file://%SRC%/modules/mail/db.ts";',
+			'import { a } from "%SRC%/modules/mail/db.ts";',
+		])
+			expect(moduleViolations("core/x.ts", code.replaceAll("%SRC%", SRC)), code).not.toEqual([]);
 		expect(moduleViolations("core/x.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
 		expect(moduleViolations("core/x.test.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
 		expect(moduleViolations("core/x.ts", 'const m = await import("../modules/mail/cli.ts");')).toHaveLength(1);

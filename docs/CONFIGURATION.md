@@ -341,7 +341,7 @@ reading model (`models.driver` anything but `"none"`) **and** `allowMailToLeaveM
 | `newsletters` | `[]` | `[{"name": ..., "match": {"listId": ...} or {"sender": ...}, "maxHighlights": 1 to 5}]`. |
 | `interests` | `[]` | Topics highlights are scored against. |
 | `routes` | one route, `steward` | Where a picked highlight goes. Each is `{"id", "label", "kind"}` with `kind` `"steward"` (a task for the Steward), `"file"` (add `"file"`: Markdown is appended to it) or `"command"` (add `"command": ["program", ...]`: given the highlight as JSON on stdin, run only on a tap; **it is your own program and may fetch what it is given, so it is outside the module's no-fetch guarantee**). A route is added by writing it here, with no code. |
-| `defaultRoute` | the first route | The route offered first until a route has been learned for that kind of item. Must be one of `routes`. |
+| `defaultRoute` | the first `file` route, else the first route | The route offered first until a route has been learned for that kind of item. Must be one of `routes`. |
 | `cleanup.unattended` | `{minApproval: 0.95, shadowDays: 14, minBatches: 10, sampleRate: 0.25, sampleWindow: 8}` | The numbers of the unattended-archive mode, which is **off on every install and has no switch here**: it is turned on only by a measured shadow trial and the Steward's confirmation (EMAIL-TRIAGE.md, sections 5 and 8). The first three are floors: a weaker value is refused. |
 
 `chamberlain mail` (or `mail status`) says the module is off, or prints what is in force and makes `mail.db`.

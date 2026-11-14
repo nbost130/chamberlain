@@ -116,7 +116,10 @@ describe("mail.db keeps metadata and bounded derived text, never a mail body", (
 			const sql = db.one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table)?.sql as string;
 			for (const col of db.all(`PRAGMA table_info(${table})`).filter((c) => c.type === "TEXT")) {
 				const name = col.name as string;
-				expect(sql, `${table}.${name}`).toMatch(new RegExp(`length\\(${name}\\) <= \\d+`));
+				const cap = sql.match(new RegExp(`length\\(${name}\\) <= (\\d+)`));
+				expect(cap, `${table}.${name}`).not.toBeNull();
+				// No cap is body-sized: the longest anything derived from a mail may be is a short value (the cap of mail_state.value).
+				expect(Number(cap?.[1]), `${table}.${name}`).toBeLessThanOrEqual(1000);
 			}
 		}
 	});

@@ -166,10 +166,17 @@ function parseScope(o: Obj, d: MailConfig): MailConfig["scope"] {
 	const where = `${W}.scope`;
 	const s = section(o, "scope", ["query", "lookbackDays", "maxMessagesPerRun"]);
 	return {
-		query: str(s, "query", where, d.scope.query),
+		query: cappedStr(s, "query", where, d.scope.query, 500),
 		lookbackDays: num(s, "lookbackDays", where, d.scope.lookbackDays, true),
 		maxMessagesPerRun: num(s, "maxMessagesPerRun", where, d.scope.maxMessagesPerRun, true),
 	};
+}
+
+/** A non-empty string of at most `max` characters. */
+function cappedStr(o: Obj, k: string, where: string, d: string, max: number): string {
+	const v = str(o, k, where, d);
+	if (v.length > max) throw Error(`${where}: ${k} must be at most ${max} characters`);
+	return v;
 }
 
 /** The label prefix: a plain name, because a label is `<prefix>/<name>` and the provider refuses any other prefix. */
@@ -274,6 +281,10 @@ function parseUnattended(o: Obj, d: MailConfig): MailConfig["cleanup"]["unattend
 
 /** The checks that read across sections: what a provider needs, the switch for text that leaves the machine, and a default route that exists. */
 function crossCheck(c: MailConfig): void {
+	if (!c.routes.some((r) => r.id === c.defaultRoute))
+		throw Error(
+			`${W}: defaultRoute "${c.defaultRoute}" is not one of the routes (${c.routes.map((r) => r.id).join(", ")})`,
+		);
 	if (c.provider === "none") return;
 	if (c.provider === "command" && !c.command.argv)
 		throw Error(`${W}: provider "command" needs command.argv, the operator's own program`);
@@ -281,11 +292,13 @@ function crossCheck(c: MailConfig): void {
 		throw Error(
 			`${W}: the model "${c.models.driver}" reads mail text, which leaves this machine; set "allowMailToLeaveMachine": true to allow it, or set models.driver to "none" for rules only`,
 		);
-	if (!c.routes.some((r) => r.id === c.defaultRoute))
-		throw Error(
-			`${W}: defaultRoute "${c.defaultRoute}" is not one of the routes (${c.routes.map((r) => r.id).join(", ")})`,
-		);
 }
+
+/**
+ * The route offered first when none is named: the first `file` route, because a reading list in the operator's notes is where a highlight goes
+ * until a route has been learned (the answer to design question 2); a list with no file route offers its first route.
+ */
+const defaultRouteOf = (routes: Route[]): string => (routes.find((r) => r.kind === "file") ?? routes[0])?.id ?? "";
 
 /** Pure: the section, with defaults for what it leaves out. Anything it does not understand throws. */
 export function parseMail(raw: unknown): MailConfig {
@@ -294,12 +307,7 @@ export function parseMail(raw: unknown): MailConfig {
 	const o = object(raw, W, KEYS);
 	const { provider, mode, allow } = parseGate(o, d);
 	const routes = parseRoutes(o.routes, `${W}.routes`, d.routes);
-	const defaultRoute = str(
-		o,
-		"defaultRoute",
-		W,
-		routes.some((r) => r.id === d.defaultRoute) ? d.defaultRoute : (routes[0]?.id ?? ""),
-	);
+	const defaultRoute = str(o, "defaultRoute", W, defaultRouteOf(routes));
 	const c: MailConfig = {
 		provider,
 		mode,

@@ -50,12 +50,21 @@ export const claudeArgv = (o: { command: string; model: string; system: string }
 /** The value after a flag in an argv, or undefined when the flag is missing or last. */
 const flagValue = (argv: string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
 
-/** Throws unless the argv keeps the model from acting: no tools and no settings (so no hook), no MCP servers, no commands, no session file. */
+/** Throws unless the argv keeps the model from acting: no tools and no settings (so no hook), no MCP servers, no commands, no session file, and no flag beyond the ones `claudeArgv` sets. */
 export function assertNoTools(argv: string[]): void {
 	for (const flag of ["--tools", "--setting-sources"])
 		if (!argv.includes(flag) || flagValue(argv, flag) !== "") throw Error(`the model argv must carry ${flag} ""`);
 	for (const flag of ["--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence"])
 		if (!argv.includes(flag)) throw Error(`the model argv must carry ${flag}`);
+	// Exactly the argv `claudeArgv` builds, and nothing more: a repeated or extra flag (`--tools Bash`, `--setting-sources user`,
+	// `--mcp-config`, `--settings`) could override a guard above, and what the CLI does with a repeated flag is its own business.
+	const own = claudeArgv({
+		command: argv[0] ?? "",
+		model: flagValue(argv, "--model") ?? "",
+		system: flagValue(argv, "--system-prompt") ?? "",
+	});
+	if (argv.length !== own.length || argv.some((a, i) => a !== own[i]))
+		throw Error("the model argv must be exactly the one claudeArgv builds: no repeated or extra flag");
 }
 
 /** The real runner. It refuses an argv that would let the model act before it spawns anything, so no caller can reach the CLI without the rule. */

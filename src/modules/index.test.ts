@@ -95,6 +95,30 @@ describe("off means absent", () => {
 		expect(readdirSync(a.state)).toEqual([]);
 	});
 
+	test("starting the modules sets no timer, off or (until B8 adds the schedule) on", () => {
+		const timers: string[] = [];
+		const real = { timeout: globalThis.setTimeout, interval: globalThis.setInterval };
+		globalThis.setTimeout = ((...a: Parameters<typeof setTimeout>) => {
+			timers.push("setTimeout");
+			return real.timeout(...a);
+		}) as typeof setTimeout;
+		globalThis.setInterval = ((...a: Parameters<typeof setInterval>) => {
+			timers.push("setInterval");
+			return real.interval(...a);
+		}) as typeof setInterval;
+		try {
+			const off = dirs();
+			startModules({ conf: off.conf, state: off.state, log: () => {} }).stop();
+			const on = dirs();
+			configure(on.conf, { mail: ON });
+			startModules({ conf: on.conf, state: on.state, log: () => {} }).stop();
+		} finally {
+			globalThis.setTimeout = real.timeout;
+			globalThis.setInterval = real.interval;
+		}
+		expect(timers).toEqual([]);
+	});
+
 	test("with the module on, the first start makes mail.db and says so once; stopping closes it", () => {
 		const a = dirs();
 		configure(a.conf, { mail: ON });

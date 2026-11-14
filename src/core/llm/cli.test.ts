@@ -62,6 +62,23 @@ describe("the no-tools rule is written once, in claudeArgv", () => {
 		expect(() => assertNoTools(["claude", "-p", "--setting-sources", "", "--tools"])).toThrow('--tools ""');
 	});
 
+	test("a guard that is repeated, overridden or joined by another flag is refused: the argv is exactly claudeArgv's", () => {
+		for (const extra of [
+			["--tools", "Bash"],
+			["--setting-sources", "user"],
+			["--tools", ""],
+			["--mcp-config", "x.json"],
+			["--settings", "{}"],
+			["--allowedTools", "Bash"],
+			["--dangerously-skip-permissions"],
+			["--bare"],
+		])
+			expect(() => assertNoTools([...ARGV, ...extra]), extra.join(" ")).toThrow("exactly the one claudeArgv builds");
+		// An extra flag before the system prompt shifts the rest, which is not the argv either.
+		expect(() => assertNoTools([...ARGV.slice(0, 2), "--tools", "Bash", ...ARGV.slice(2)])).toThrow();
+		expect(() => assertNoTools(ARGV.slice(0, -2))).toThrow("exactly the one claudeArgv builds");
+	});
+
 	test("the real runner refuses an unsafe argv before it spawns anything", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "llm-cli-"));
 		const marker = join(dir, "ran");

@@ -183,6 +183,7 @@ describe("mail: no credential, and anything it does not understand throws", () =
 			[{ scope: { lookbackDays: 1.5 } }, "lookbackDays must be a positive whole number"],
 			[{ scope: { maxMessagesPerRun: -1 } }, "maxMessagesPerRun must be a positive whole number"],
 			[{ scope: { query: "" } }, "query must be a non-empty string"],
+			[{ scope: { query: "q".repeat(501) } }, "query must be at most 500 characters"],
 			[{ labels: { prefix: "a/b" } }, "plain name"],
 			[{ labels: { prefix: "" } }, "prefix must be a non-empty string"],
 			[{ models: { driver: "haiku; rm" } }, "driver is not a model name"],
@@ -280,12 +281,33 @@ describe("mail.routes", () => {
 		expect(() => parseMail({ provider: "gog", allowMailToLeaveMachine: true, defaultRoute: "obsidian" })).toThrow(
 			'defaultRoute "obsidian" is not one of the routes (steward)',
 		);
-		// With routes of its own and no defaultRoute named, the first route is the default (the built-in one is not there).
+		// With routes of its own and no defaultRoute named, the first file route is the default: a reading list is where a highlight goes until a
+		// route has been learned, whatever order the routes are listed in. Without a file route, the first route is.
 		const c = parseMail({
 			provider: "gog",
 			allowMailToLeaveMachine: true,
-			routes: [{ id: "obsidian", label: "Obsidian Reading list", kind: "file", file: "~/r.md" }],
+			routes: [
+				{ id: "steward", label: "Task for the Steward", kind: "steward" },
+				{ id: "reader", label: "Readwise Reader", kind: "command", command: ["save-to-reader"] },
+				{ id: "obsidian", label: "Obsidian Reading list", kind: "file", file: "~/r.md" },
+			],
 		});
+		expect(c.defaultRoute).toBe("obsidian");
+		const noFile = parseMail({
+			provider: "gog",
+			allowMailToLeaveMachine: true,
+			routes: [
+				{ id: "reader", label: "Readwise Reader", kind: "command", command: ["save-to-reader"] },
+				{ id: "steward", label: "Task for the Steward", kind: "steward" },
+			],
+		});
+		expect(noFile.defaultRoute).toBe("reader");
+		// An explicit default wins, and one that is not a route is refused even while the module is off.
+		expect(parseMail({ ...EXAMPLE, defaultRoute: "steward" }).defaultRoute).toBe("steward");
+		expect(() => parseMail({ provider: "none", defaultRoute: "nowhere" })).toThrow('defaultRoute "nowhere" is not one');
+		// Nathan's example, with defaultRoute left out, still defaults to the Obsidian Reading list.
+		const { defaultRoute: _left, ...withoutDefault } = EXAMPLE;
+		expect(parseMail(withoutDefault).defaultRoute).toBe("obsidian");
 		expect(c.defaultRoute).toBe("obsidian");
 	});
 });
