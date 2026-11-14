@@ -37,6 +37,7 @@ import {
 	SCALARS,
 	SECRETS_DIR,
 	THREADS,
+	JOURNAL,
 	MIGRATED_SUFFIX,
 	NON_SECRET_HOME,
 	SECRET_FILE,
@@ -47,6 +48,7 @@ import {
 	oldFileState,
 	parseConfigDoc,
 	readConfigFile,
+	readJournal,
 	reappeared,
 	reappearedFiles,
 	syncDir,
@@ -79,19 +81,21 @@ const STAYS = [
 	"daemon.env",
 ];
 
-/** Written before the first secret moves and removed once config.json is on disk: it names the secrets a crashed run may have moved. */
-const JOURNAL = ".config-migrating";
-
-/** The secrets the journal names that are now in secrets/ and gone from their old name: moved by a run that crashed before it wrote config.json. */
+/** The secrets the journal names that are now in secrets/: moved by a run that crashed before it wrote config.json. (A symlink still at its old name counts: its copy is done.) */
 function movedBeforeCrash(conf: string): string[] {
-	try {
-		const j = JSON.parse(readFileSync(`${conf}/${JOURNAL}`, "utf8")) as { secrets?: unknown };
-		return (Array.isArray(j.secrets) ? j.secrets : []).filter(
-			(n): n is string =>
-				typeof n === "string" && existsSync(`${conf}/${SECRETS_DIR}/${n}`) && !existsSync(`${conf}/${n}`),
-		);
-	} catch {
-		return []; // no journal, or one that is not readable: nothing to add
+	return readJournal(conf).secrets.filter((n) => existsSync(`${conf}/${SECRETS_DIR}/${n}`));
+}
+
+/** Leftover temporary files of a run that crashed: `secrets/*.tmp-<pid>` and the flushed-write temporaries beside config.json. Safe to remove under the lock. */
+function removeStaleTemporaries(conf: string): void {
+	for (const dir of [`${conf}/${SECRETS_DIR}`, conf]) {
+		try {
+			for (const e of readdirSync(dir))
+				if (/\.tmp-\d+$/.test(e) && (dir !== conf || e.startsWith(CONFIG_FILE) || e.startsWith(JOURNAL)))
+					rmSync(`${dir}/${e}`, { force: true });
+		} catch {
+			// EMPTY_CATCH_OK: no such directory, nothing to clean.
+		}
 	}
 }
 
@@ -316,6 +320,16 @@ export function planMigration(conf: string): Plan {
 			continue;
 		}
 		const state = oldFileState(conf, name, true);
+		if (
+			state === "reappeared" &&
+			there &&
+			lstatSync(from).isSymbolicLink() &&
+			readJournal(conf).secrets.includes(name)
+		) {
+			// A crashed run copied this symlink's content into secrets/ and did not set the link aside: finish that, do not call the link a stranger.
+			plan.secrets.push({ name, action: "move", why: "finishing a run that crashed after the copy" });
+			continue;
+		}
 		if (state === "reappeared") {
 			// Moved by an earlier migration and written again at the old name: never read, never moved over the one in secrets/.
 			if (there) {
@@ -424,7 +438,12 @@ function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 	if (moves.length) {
 		ensureSecretsDir(conf);
 		chmodSync(`${conf}/${SECRETS_DIR}`, 0o700);
-		writeFileDurable(`${conf}/${JOURNAL}`, `${JSON.stringify({ secrets: moves.map((m) => m.name) })}\n`);
+	}
+	removeStaleTemporaries(conf);
+	if (moves.length || plan.renames.length) {
+		// The journal is the UNION of what earlier crashed runs moved and what this one will: a run that overwrote it would forget the first.
+		const secrets = [...new Set([...movedBeforeCrash(conf), ...moves.map((m) => m.name)])];
+		writeFileDurable(`${conf}/${JOURNAL}`, `${JSON.stringify({ secrets, renames: plan.renames })}\n`);
 	}
 	for (const s of moves) {
 		const from = `${conf}/${s.name}`;
@@ -433,13 +452,16 @@ function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 		if (lstatSync(from).isSymbolicLink()) {
 			// A symlink cannot be moved as a secret (it would point at nothing from secrets/): its content is written under the secret's name,
 			// keeping the target's date, and the link itself is set aside as <name>.migrated.
-			const target = statSync(from);
-			const tmp = `${to}.tmp-${process.pid}`;
-			rmSync(tmp, { force: true });
-			copyFileSync(from, tmp);
-			chmodSync(tmp, 0o600);
-			utimesSync(tmp, target.atime, target.mtime);
-			renameSync(tmp, to);
+			if (!existsSync(to)) {
+				const target = statSync(from);
+				const tmp = `${to}.tmp-${process.pid}`;
+				rmSync(tmp, { force: true });
+				copyFileSync(from, tmp);
+				chmodSync(tmp, 0o600);
+				utimesSync(tmp, target.atime, target.mtime);
+				renameSync(tmp, to);
+				after(`secret-copied:${s.name}`); // a test seam: the copy is done, the link is not yet set aside
+			}
 			renameSync(from, `${conf}/${freeMigratedName(conf, s.name)}`);
 		} else {
 			renameSync(from, to); // atomic; the mtime goes with it (the token-age alarm reads it), and one copy is left
@@ -454,7 +476,6 @@ function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 	if (plan.writeConfig) {
 		parseConfigDoc(plan.config);
 		writeConfigFile(conf, plan.config); // flushed, then the directory: config.json is on disk before any file is set aside
-		rmSync(`${conf}/${JOURNAL}`, { force: true });
 		changed = true;
 		after("config");
 	}
@@ -466,6 +487,7 @@ function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 		after(`rename:${f}`);
 	}
 	if (plan.renames.length) syncDir(conf);
+	rmSync(`${conf}/${JOURNAL}`, { force: true }); // every step is done: nothing is pending any more
 	return changed;
 }
 
@@ -607,24 +629,24 @@ export function revertLayout(
 	};
 	try {
 		const live = readConfigFile(conf);
-		let source: Record<string, unknown> | undefined = live;
-		if (!source) {
-			const reverted = latestReverted(conf);
-			if (reverted) {
-				try {
-					source = JSON.parse(readFileSync(`${conf}/${reverted}`, "utf8")) as Record<string, unknown>;
-				} catch {
-					report.problems.push(`${reverted} is not readable: the moved secrets cannot be listed from it`);
-				}
+		// The newest config.json.reverted is read ALWAYS, not only when there is no live config.json: a revert that crashed after setting config.json aside, then a
+		// start that migrated the restored files again, leaves a live config.json whose list omits the secrets that are still in secrets/.
+		let reverted: Record<string, unknown> | undefined;
+		const revertedName = latestReverted(conf);
+		if (revertedName) {
+			try {
+				reverted = JSON.parse(readFileSync(`${conf}/${revertedName}`, "utf8")) as Record<string, unknown>;
+			} catch {
+				report.problems.push(`${revertedName} is not readable: the secrets it lists cannot be moved back from it`);
 			}
 		}
-		// The moved secrets: config.json's list, plus any a crashed migration moved before it wrote config.json (its journal names them).
-		const marker = [
-			...(isObject(source?.migrated) && Array.isArray((source?.migrated as { files?: unknown }).files)
-				? (source?.migrated as { files: unknown[] }).files.filter((x): x is string => typeof x === "string")
-				: []),
-			...movedBeforeCrash(conf),
-		];
+		const source: Record<string, unknown> | undefined = live ?? reverted; // the thread ids and the rest come from the live config when there is one
+		const listed = (d: Record<string, unknown> | undefined): string[] =>
+			isObject(d?.migrated) && Array.isArray((d?.migrated as { files?: unknown }).files)
+				? (d?.migrated as { files: unknown[] }).files.filter((x): x is string => typeof x === "string")
+				: [];
+		// The moved secrets: the live config.json's list, the newest reverted one's, and any a crashed migration moved (its journal names them).
+		const marker = [...new Set([...listed(live), ...listed(reverted), ...movedBeforeCrash(conf)])];
 		const rawThreads = source?.threads;
 
 		// 1. the newest <name>.migrated of each non-secret file back to <name>; older archives are kept as <name>.earlier
@@ -717,7 +739,7 @@ export function startupLayout(conf: string, log: (event: string, data?: Record<s
 	try {
 		const probe = planMigration(conf);
 		const todo = first ? probe.added.length + probe.secrets.filter((s) => s.action === "move").length : 0;
-		if (todo || probe.renames.length) {
+		if (todo || probe.renames.length || existsSync(`${conf}/${JOURNAL}`)) {
 			const result = migrateLayout(conf);
 			if (result.skipped) log("config-migrate-failed", { why: result.skipped });
 			else if (result.changed)
