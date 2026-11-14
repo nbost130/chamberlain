@@ -3,7 +3,7 @@ import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, renam
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
-	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, morningPattern, parseConfig, parseLine, parseMorning, readConfig, readInbox, readMorning, renderDeskPrompt, severityOf, signature,
+	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, morningPattern, parseConfig, parseLine, parseMorning, parseOperator, readConfig, readInbox, readMorning, readOperator, renderDeskPrompt, severityOf, signature, systemTimezone,
 	type Cursor, type CrashPoint, type DeskConfig, type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
@@ -25,7 +25,7 @@ function rig(config: Partial<Record<string, unknown>> = { morningHour: 23 }) {
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
 	const inbox = `${dir}/inbox.jsonl`;
 	// These tests write the inbox before the first pass and expect it read, so they start at the beginning; the first-start tests say "end".
-	const writeConfig = (c: Record<string, unknown>) => writeFileSync(`${dir}/alert-desk.json`, JSON.stringify({ startAt: "beginning", ...c }));
+	const writeConfig = (c: Record<string, unknown>) => writeFileSync(`${dir}/alert-desk.json`, JSON.stringify({ startAt: "beginning", timezone: "Etc/GMT+5", ...c }));
 	writeConfig(config);
 	const logged: { event: string; [k: string]: unknown }[] = [];
 	const pass = (now: number, over: { canDeliver?: boolean; crash?: (p: CrashPoint) => void } = {}) => {
@@ -491,8 +491,11 @@ describe("the standing prompt is a template, filled from config", () => {
 	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
 	const vars = { principalName: "Ada", serverName: "box-1", allowlistHook: "bun /opt/chamberlain/src/desk-allowlist.ts hook", askCommand: "bun /opt/chamberlain/src/ask.ts", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
 	test("the bundled prompt names nobody and no host: who it works for and where are placeholders", () => {
-		for (const v of ["{{principalName}}", "{{serverName}}", "{{allowlistHook}}", "{{askCommand}}", "{{morningSources}}"]) expect(template).toContain(v);
+		for (const v of ["{{principalName}}", "{{serverName}}", "{{allowlistHook}}", "{{askCommand}}", "{{morningSources}}", "{{gatherStep}}", "{{toolList}}", "{{operatorCommands}}"]) expect(template).toContain(v);
 		expect(template).not.toMatch(/\.claude\//);
+	});
+	test("the bundled prompt names no model and no private wrapper: those are the operator's, from alert-desk.json", () => {
+		expect(template).not.toMatch(/sonnet|haiku|opus|example-tool|example-gatherer/i);
 	});
 	test("the desk is told not to re-ask what is settled, when a question can wait, and when notSettled is allowed", () => {
 		const out = renderDeskPrompt(template, vars);
@@ -502,7 +505,7 @@ describe("the standing prompt is a template, filled from config", () => {
 	});
 	test("rendered, every placeholder is filled from the config, and the morning sources are listed", () => {
 		const out = renderDeskPrompt(template, vars);
-		expect(out).not.toMatch(/\{\{(principalName|serverName|allowlistHook|askCommand|morningSources)\}\}/);
+		expect(out).not.toMatch(/\{\{(principalName|serverName|allowlistHook|askCommand|morningSources|gatherStep|toolList|operatorCommands)\}\}/);
 		expect(out).not.toContain("<!--");
 		expect(out).toContain("every alert Ada's systems raise");
 		expect(out).toContain('"server":"box-1"');
@@ -556,5 +559,64 @@ describe("the standing prompt is a template, filled from config", () => {
 		expect(warned[0]).toContain("group-writable");
 		expect(readMorning(mkdtempSync(`${tmpdir()}/desk-none-`), (m) => warned.push(m))).toEqual({ commands: [] });
 		expect(warned).toHaveLength(1);
+	});
+});
+
+describe("the operator's own command shapes and gatherer", () => {
+	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
+	const base = { principalName: "Ada", serverName: "box-1", allowlistHook: "chamberlain debug desk-allowlist hook", askCommand: "chamberlain ask", morning: { commands: [] } };
+	const shapes = parseOperator({ commandShapes: { opsctl: { bare: true, subcommands: { health: { positional: "word", max: 1 }, journal: { flags: { "--limit": "digits" }, positional: "word", min: 1, max: 1 } } } } }).shapes;
+
+	test("with no gatherer the prompt tells the desk to read the evidence itself and lists no Agent tool", () => {
+		const out = renderDeskPrompt(template, base);
+		expect(out).toContain("No gatherer agent is configured, so read the evidence yourself");
+		expect(out).toContain("the only tools you have are Bash (in these shapes), Read, Grep and Glob;");
+		expect(out).not.toContain("subagent_type");
+	});
+	test("with a gatherer the prompt names it in the evidence step and in the tool list", () => {
+		const out = renderDeskPrompt(template, { ...base, gatherer: "evidence-reader" });
+		expect(out).toContain('Fan out at most 4 `evidence-reader` subagents for the family (Agent tool, `subagent_type: "evidence-reader"`)');
+		expect(out).toContain("the Agent tool for `evidence-reader` gatherers;");
+	});
+	test("the operator's shapes are bullets in the list of what may run, and with none the list has no gap", () => {
+		const out = renderDeskPrompt(template, { ...base, shapes });
+		expect(out).toContain("- `opsctl`, `opsctl health [<word>]`, `opsctl journal [--limit <digits>] <word>`.\n- Reads with the Read, Grep and Glob tools");
+		const none = renderDeskPrompt(template, base);
+		expect(none).not.toContain("opsctl");
+		expect(none).toContain("`docker inspect --format");
+		expect(none).not.toMatch(/\n\n- Reads with/);
+		expect(none).toContain("or `Config.Env`.\n- Reads with the Read, Grep and Glob tools");
+	});
+	test("a value with a `$` in it is not a replacement pattern", () => {
+		expect(renderDeskPrompt(template, { ...base, gatherer: "a$&b" })).toContain("`a$&b`");
+	});
+	test("they parse from alert-desk.json, and a malformed shape or gatherer is left out whole, with a warning", () => {
+		const warned: string[] = [];
+		const o = parseOperator({ gatherer: "bad name!", commandShapes: { good: { subcommands: { status: { max: 0 } } }, bad: { subcommands: { "Run View": {} } }, docker: { max: 5 }, "a/b": {}, worse: { flags: { "x": "bool" } }, kind: { positional: "anything" } } }, (m) => warned.push(m));
+		expect(Object.keys(o.shapes)).toEqual(["good"]);
+		expect(o.gatherer).toBeUndefined();
+		expect(warned).toHaveLength(6);
+		expect(parseOperator({ gatherer: "evidence-reader" }).gatherer).toBe("evidence-reader");
+	});
+	test("they are read only from an alert-desk.json the operator owns that no one else can write", () => {
+		const conf = mkdtempSync(`${tmpdir()}/desk-operator-`);
+		writeFileSync(`${conf}/alert-desk.json`, JSON.stringify({ gatherer: "evidence-reader", commandShapes: { opsctl: { bare: true } } }));
+		chmodSync(`${conf}/alert-desk.json`, 0o600);
+		expect(readOperator(conf).gatherer).toBe("evidence-reader");
+		expect(Object.keys(readOperator(conf).shapes)).toEqual(["opsctl"]);
+		chmodSync(`${conf}/alert-desk.json`, 0o666);
+		const warned: string[] = [];
+		const o = readOperator(conf, (m) => warned.push(m));
+		expect(o).toEqual({ morning: { commands: [] }, shapes: {} });
+		expect(warned[0]).toContain("writable");
+	});
+});
+
+describe("the morning time zone", () => {
+	test("defaults to the machine's own zone, not a place", () => {
+		expect(DEFAULTS.timezone).toBe(systemTimezone());
+		expect(parseConfig({}).timezone).toBe(systemTimezone());
+		expect(parseConfig({ timezone: "Asia/Tokyo" }).timezone).toBe("Asia/Tokyo");
+		expect(systemTimezone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
 	});
 });

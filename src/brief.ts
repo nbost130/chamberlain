@@ -11,7 +11,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { defaultStore } from "./core/default-store.ts";
 import { readAfk } from "./core/afk.ts";
-import { deskAskCommand, readMorning, renderDeskPrompt } from "./core/alert-desk.ts";
+import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/alert-desk.ts";
 import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, principal, REPO, selfCommand } from "./core/config.ts";
 import { startup } from "./core/migrate.ts";
@@ -31,7 +31,8 @@ export function main(argv: string[] = process.argv.slice(2)) {
 	if (argv[0] === "desk") {
 		const own = `${CONF}/alert-desk-prompt.md`;
 		const template = existsSync(own) ? text(own) : text(DESK_PROMPT_FILE);
-		console.log(renderDeskPrompt(template, { principalName: principal(), serverName: homeServer(servers).name, allowlistHook: `${selfCommand("desk-allowlist")} hook`, askCommand: deskAskCommand(), morning: readMorning(CONF, (m) => console.error(m)) }));
+		const operator = readOperator(CONF, (m) => console.error(m));
+		console.log(renderDeskPrompt(template, { principalName: principal(), serverName: homeServer(servers).name, allowlistHook: `${selfCommand("desk-allowlist")} hook`, askCommand: deskAskCommand(), morning: operator.morning, shapes: operator.shapes, gatherer: operator.gatherer }));
 		process.exit(0);
 	}
 	console.log(stewardBrief({

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
 import { deskAskCommand, renderDeskPrompt } from "./core/alert-desk.ts";
 import { selfCommand, setCompiled } from "./core/config.ts";
+import { parseShapes } from "./core/desk-shapes.ts";
 import { checkCommand, checkPath, checkTool, LOG_DIRS } from "./desk-allowlist.ts";
 
 const HOME = process.env.HOME!;
@@ -16,8 +17,27 @@ const MORNING = [
 	`bun ${MONITOR} list --limit <N> --json`,
 	`docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= <N>\\nOutputFormat: csv\\n' | lq"`,
 ];
-const refused = (cmd: string) => { const v = checkCommand(cmd, { morning: MORNING }); expect(v.ok).toBe(false); return v.ok ? "" : v.reason; };
-const allowed = (cmd: string) => expect(checkCommand(cmd, { morning: MORNING })).toEqual({ ok: true });
+/**
+ * A wrapper only one install has, declared the way alert-desk.json's `commandShapes` declares it. Nothing of the kind is built in.
+ * (`opsctl` stands in for any read-only CLI.)
+ */
+const SHAPES = parseShapes({
+	opsctl: {
+		bare: true,
+		subcommands: {
+			health: { positional: "word", max: 1 },
+			docker: { max: 0 },
+			service: { positional: "word", min: 1, max: 1 },
+			network: { positional: ["ports"], max: 1 },
+			journal: { flags: { "--limit": "digits" }, positional: "word", min: 1, max: 1 },
+		},
+	},
+});
+const OPS = { morning: MORNING, shapes: SHAPES };
+/** The gatherer agent the operator named in alert-desk.json. */
+const GATHERER = "evidence-reader";
+const refused = (cmd: string) => { const v = checkCommand(cmd, OPS); expect(v.ok).toBe(false); return v.ok ? "" : v.reason; };
+const allowed = (cmd: string) => expect(checkCommand(cmd, OPS)).toEqual({ ok: true });
 
 describe("the approved shapes are accepted", () => {
 	test.each([
@@ -29,11 +49,11 @@ describe("the approved shapes are accepted", () => {
 		"systemctl is-active monitor.service",
 		"systemctl list-units --failed",
 		"systemctl --user list-units --failed",
-		"example-tool",
-		"example-tool health cron",
-		"example-tool service all",
-		"example-tool network ports",
-		"example-tool journal monitor --limit 20",
+		"opsctl",
+		"opsctl health cron",
+		"opsctl service all",
+		"opsctl network ports",
+		"opsctl journal monitor --limit 20",
 		"gh run view 123456 --log-failed --repo example-org/app",
 		"gh run list --repo example-org/app --limit 5",
 		"gh pr checks 42 --repo example-org/monitor",
@@ -92,8 +112,8 @@ describe("each widened argument is refused", () => {
 	test("journalctl cannot read another file or change anything", () => {
 		for (const c of ["journalctl --file=/home/u/.env", "journalctl -D /tmp/x", "journalctl --directory=/tmp/x", "journalctl --vacuum-size=1M", "journalctl --rotate", "journalctl --flush", "journalctl --setup-keys", "journalctl --root=/x", "journalctl -u a -o export", "journalctl -u 'a b;id'", "journalctl /usr/bin/sudo", "journalctl -n abc", "journalctl --since '$(id)'"]) refused(c);
 	});
-	test("gh and example-tool: only the listed reads", () => {
-		for (const c of ["gh run view 1 --web", "gh pr merge 1", "gh run rerun 1", "gh run view abc", "gh api repos/x/y", "gh pr checks 1 --repo ../../x", "gh run view 1 --log", "example-tool update", "example-tool update --check", "example-tool docker restart", "example-tool journal", "example-tool bogus", "example-tool --version"]) refused(c);
+	test("gh and opsctl: only the listed reads", () => {
+		for (const c of ["gh run view 1 --web", "gh pr merge 1", "gh run rerun 1", "gh run view abc", "gh api repos/x/y", "gh pr checks 1 --repo ../../x", "gh run view 1 --log", "opsctl update", "opsctl update --check", "opsctl docker restart", "opsctl journal", "opsctl bogus", "opsctl --version"]) refused(c);
 	});
 	test("a command outside the set, by name, path or environment prefix", () => {
 		for (const c of ["cat /var/log/syslog", "ls /var/log", "rm -rf /tmp/x", "sudo journalctl", "curl https://x.test", "bash -c 'id'", "sh -c id", "python3 -c 'print(1)'", "/usr/bin/journalctl -n 5", "./journalctl", "FOO=bar journalctl -n 5", "env journalctl", "find / -name .env", "grep -r token /var/log", "tee /tmp/x", "kill 1", "bun -e '1'", `bun ${HOME}/Projects/chamberlain/src/daemon.ts`, `bun ${MONITOR} emit --source x`, `bun ${MONITOR} heartbeat`]) refused(c);
@@ -102,8 +122,8 @@ describe("each widened argument is refused", () => {
 		for (const t of ["journalctl -n 5; id", "journalctl -n 5 && id", "journalctl -n 5 || id", "journalctl -n 5 & id", "journalctl -n $(id)", "journalctl -n `id`", "journalctl -n 5 > /tmp/x", "journalctl -n 5 >> /tmp/x", "journalctl -n 5 < /etc/passwd", "journalctl -u *", "journalctl -u a?", "journalctl -n 5\nid", "journalctl -u \"$HOME\"", "journalctl -u '", "journalctl -n 5 | sh", "journalctl -n 5 | head -n 5 | sh", "journalctl -n 5 | tee /tmp/x", "journalctl -n 5 | head", "journalctl -n 5 | head -n 5 -c 3", "journalctl -n 5 |", "| journalctl", "journalctl -u ~root", "journalctl -u a\\ b", "journalctl --since=${IFS}x"]) refused(t);
 	});
 	test("appending shell syntax to any approved command refuses it", () => {
-		const cmds = ["journalctl -u a.service -n 5", "systemctl status a.service", "example-tool health", "gh pr checks 1 --repo a/b", "git status", "docker ps", "docker logs --tail 5 c"];
-		for (const c of cmds) for (const tail of [" ; id", " && id", " > /tmp/x", " $(id)", " `id`", " | sh", "\nid"]) expect(checkCommand(c + tail, { morning: MORNING }).ok).toBe(false);
+		const cmds = ["journalctl -u a.service -n 5", "systemctl status a.service", "opsctl health", "gh pr checks 1 --repo a/b", "git status", "docker ps", "docker logs --tail 5 c"];
+		for (const c of cmds) for (const tail of [" ; id", " && id", " > /tmp/x", " $(id)", " `id`", " | sh", "\nid"]) expect(checkCommand(c + tail, OPS).ok).toBe(false);
 	});
 	test("the exact shapes cannot be extended", () => {
 		refused(`bun ${MONITOR} list --limit 1000 --json; id`);
@@ -150,7 +170,7 @@ describe("the whole argument list is parsed: a flag given twice is refused, in a
 			"systemctl status a.service --user --user", "systemctl status a.service -n 5 -n 6", "systemctl status a.service -l --full", "systemctl status a.service --full -l", "systemctl status a.service -n 5 --lines 6",
 			"docker ps -a --all", "docker ps -a -a", "docker ps --format '{{.Names}}' --format '{{.Labels}}'", "docker logs --tail 1 --tail 2 c", "docker logs -t --timestamps c",
 			"git diff -n 1 --max-count 2", "git log --stat --stat", "git diff --since 1.day --since 2.day",
-			"gh run view 1 --repo a/b --repo c/d", "gh run view 1 --log-failed --log-failed", "gh run list --limit 1 --limit 2", "example-tool journal x --limit 1 --limit 2",
+			"gh run view 1 --repo a/b --repo c/d", "gh run view 1 --log-failed --log-failed", "gh run list --limit 1 --limit 2", "opsctl journal x --limit 1 --limit 2",
 		]) expect(refused(c)).toContain("more than once");
 	});
 	test("every value of every flag is checked, not only the first", () => {
@@ -223,17 +243,27 @@ describe("the hook's decision per tool", () => {
 		expect(checkTool(42, {}).ok).toBe(false);
 		expect(checkTool("mcp__t3-code__t3_thread_send", { message: "x" })).toMatchObject({ ok: false });
 	});
-	test("the Agent tool starts a example-gatherer gatherer and nothing else", () => {
-		expect(checkTool("Agent", { subagent_type: "example-gatherer", prompt: "read /var/log/syslog" }).ok).toBe(true);
-		expect(checkTool("Task", { subagent_type: "example-gatherer", description: "d", prompt: "p", run_in_background: true }).ok).toBe(true);
-		expect(checkTool("Task", { subagent_type: "example-gatherer" }).ok).toBe(false);
-		for (const input of [{}, { subagent_type: "general-purpose" }, { subagent_type: "other-agent" }, { subagent_type: "example-gatherer2" }, { prompt: "x" }]) expect(checkTool("Agent", input).ok).toBe(false);
+	test("the Agent tool starts the operator's gatherer and nothing else", () => {
+		const o = { gatherer: GATHERER };
+		expect(checkTool("Agent", { subagent_type: GATHERER, prompt: "read /var/log/syslog" }, o).ok).toBe(true);
+		expect(checkTool("Task", { subagent_type: GATHERER, description: "d", prompt: "p", run_in_background: true }, o).ok).toBe(true);
+		expect(checkTool("Task", { subagent_type: GATHERER }, o).ok).toBe(false);
+		for (const input of [{}, { subagent_type: "general-purpose" }, { subagent_type: "other-agent" }, { subagent_type: `${GATHERER}2` }, { prompt: "x" }]) expect(checkTool("Agent", input, o).ok).toBe(false);
 	});
-	test("a example-gatherer start cannot carry any other field: no checkout, no model, no remote run, no name or team", () => {
-		const base = { subagent_type: "example-gatherer", prompt: "read /var/log/syslog" };
-		for (const extra of [{ isolation: "worktree" }, { isolation: "remote" }, { model: "opus" }, { name: "x" }, { team_name: "t" }, { mode: "bypassPermissions" }, { cwd: "/" }, { Isolation: "worktree" }, { subagent_type: "example-gatherer", prompt: 1 }, { run_in_background: "yes" }]) {
-			expect(checkTool("Agent", { ...base, ...extra }).ok).toBe(false);
-			expect(checkTool("Task", { ...base, ...extra }).ok).toBe(false);
+	test("with no gatherer configured the Agent tool is refused, whatever it asks to start", () => {
+		for (const name of [GATHERER, "general-purpose", "example-gatherer"]) {
+			for (const tool of ["Agent", "Task"]) {
+				const v = checkTool(tool, { subagent_type: name, prompt: "read /var/log/syslog" }, { gatherer: undefined });
+				expect(v.ok).toBe(false);
+				expect(v.ok ? "" : v.reason).toContain("no gatherer agent is configured");
+			}
+		}
+	});
+	test("a gatherer start cannot carry any other field: no checkout, no model, no remote run, no name or team", () => {
+		const base = { subagent_type: GATHERER, prompt: "read /var/log/syslog" };
+		for (const extra of [{ isolation: "worktree" }, { isolation: "remote" }, { model: "opus" }, { name: "x" }, { team_name: "t" }, { mode: "bypassPermissions" }, { cwd: "/" }, { Isolation: "worktree" }, { subagent_type: GATHERER, prompt: 1 }, { run_in_background: "yes" }]) {
+			expect(checkTool("Agent", { ...base, ...extra }, { gatherer: GATHERER }).ok).toBe(false);
+			expect(checkTool("Task", { ...base, ...extra }, { gatherer: GATHERER }).ok).toBe(false);
 		}
 	});
 	test("run as the hook: exit 2 with a reason for a refusal, 0 for an allow", async () => {
@@ -252,7 +282,7 @@ describe("the hook's decision per tool", () => {
 
 describe("the morning sources are the operator's, never built in", () => {
 	test("with no morning sources configured, a monitor's command is refused", () => {
-		expect(checkCommand(`bun ${MONITOR} heartbeat --json`, { morning: [] }).ok).toBe(false);
+		expect(checkCommand(`bun ${MONITOR} heartbeat --json`, { morning: [], shapes: {} }).ok).toBe(false);
 	});
 	test("a configured width is enforced: <N:1-5> takes 1 to 5 digits and no more", () => {
 		const morning = [`bun ${MONITOR} list --limit <N:1-5> --json`];
@@ -261,8 +291,8 @@ describe("the morning sources are the operator's, never built in", () => {
 		expect(checkCommand(`bun ${MONITOR} list --limit <N:1-5> --json`, { morning }).ok).toBe(false);
 	});
 	test("<N> is digits only, and the rest of the command must match exactly", () => {
-		expect(checkCommand(`bun ${MONITOR} list --limit 12 --json`, { morning: MORNING }).ok).toBe(true);
-		for (const c of [`bun ${MONITOR} list --limit x --json`, `bun ${MONITOR} list --limit 1 --json --out /tmp/x`, `bun ${MONITOR} list --limit 1;id --json`]) expect(checkCommand(c, { morning: MORNING }).ok).toBe(false);
+		expect(checkCommand(`bun ${MONITOR} list --limit 12 --json`, OPS).ok).toBe(true);
+		for (const c of [`bun ${MONITOR} list --limit x --json`, `bun ${MONITOR} list --limit 1 --json --out /tmp/x`, `bun ${MONITOR} list --limit 1;id --json`]) expect(checkCommand(c, OPS).ok).toBe(false);
 	});
 });
 
@@ -286,7 +316,7 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 		const line = askLine(deskAskCommand(env));
 		expect(line.startsWith(`${deskAskCommand(env)} '{`)).toBe(true);
 		expect(line).not.toContain("cd ");
-		expect(checkCommand(line, { morning: [] })).toEqual({ ok: true });
+		expect(checkCommand(line, { morning: [], shapes: {} })).toEqual({ ok: true });
 		expect(hook(line, env)).toEqual({ code: 0, out: "allow" });
 	});
 
@@ -303,7 +333,7 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 	test("the old spelling, `cd <repo> && bun src/ask.ts`, is refused: the template no longer teaches it", () => {
 		expect(template).not.toContain("bun src/ask.ts");
 		expect(template).toContain("{{askCommand}} '");
-		expect(checkCommand(`cd /opt/chamberlain && bun src/ask.ts '{"kind":"product"}'`, { morning: [] }).ok).toBe(false);
+		expect(checkCommand(`cd /opt/chamberlain && bun src/ask.ts '{"kind":"product"}'`, { morning: [], shapes: {} }).ok).toBe(false);
 	});
 });
 
@@ -335,8 +365,8 @@ describe("in the compiled binary the desk files a decision with `chamberlain ask
 		const line = out.split("\n").find((l) => l.includes(" '{\"kind\":"))!;
 		expect(line.startsWith("chamberlain ask '{")).toBe(true);
 		expect(out).toContain("`chamberlain desk-allowlist hook` (Chamberlain's desk allowlist)");
-		expect(checkCommand(line, { morning: [] })).toEqual({ ok: true });
-		expect(checkCommand(`chamberlain ask '{}' ; id`, { morning: [] }).ok).toBe(false);
-		expect(checkCommand(`bun ${selfCommand("ask", { compiled: false }).slice(4)} '{}'`, { morning: [] }).ok).toBe(false);
+		expect(checkCommand(line, { morning: [], shapes: {} })).toEqual({ ok: true });
+		expect(checkCommand(`chamberlain ask '{}' ; id`, { morning: [], shapes: {} }).ok).toBe(false);
+		expect(checkCommand(`bun ${selfCommand("ask", { compiled: false }).slice(4)} '{}'`, { morning: [], shapes: {} }).ok).toBe(false);
 	});
 });

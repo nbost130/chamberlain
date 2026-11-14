@@ -41,7 +41,7 @@ than `maxAgeHours` (6) when read are not woken about. A cursor (inode and offset
 absorbed because the items already hold what woke the desk. A big, fully read inbox is renamed away and its retired file read once more a minute
 later, for a writer that still held it.
 
-**The first start.** With no cursor stored (the desk's first run, or its first run after `bun src/cli/import.ts`, which does not carry an
+**The first start.** With no cursor stored (the desk's first run, or its first run after an import that does not carry an
 older system's desk state over), `startAt` in `alert-desk.json` decides where reading begins. `"end"`, the default, sets the cursor to the
 inbox's current end, so nothing already in the inbox wakes the desk (a line being written at that moment is skipped whole); with no inbox yet,
 the cursor starts at its beginning, so the first lines written to it are read. `"beginning"` reads the whole existing inbox (events older than
@@ -63,9 +63,9 @@ desk skips an id it has already handled: its prompt says to search the thread fo
 ## The command allowlist is enforced
 
 `src/desk-allowlist.ts` is a Claude Code PreToolUse hook that DENIES BY DEFAULT. It allows only: Bash in a fixed set of command shapes (journalctl,
-systemctl status, example-tool reads, gh run view, git, docker ps/logs/inspect with a plain `--format`, and the Morning sweep's own commands);
+systemctl status, read-only gh and git commands, docker ps/logs/inspect with a plain `--format`, your own `commandShapes`, and the Morning sweep's own commands);
 Read, Grep and Glob under `/var/log`, `~/.cache/alert-desk` and `DESK_LOG_DIRS` (never a credential path, after `..` and symlinks are resolved); and the
-Agent tool only to start a `example-gatherer` gatherer, which is how the desk fans out. Every other tool is refused: the write tools, every MCP tool, and any
+Agent tool only to start the `gatherer` agent you name in `alert-desk.json`, which is how the desk fans out (with none named, no agent starts). Every other tool is refused: the write tools, every MCP tool, and any
 name it does not know. A command's whole argument list is parsed: a flag that is not on that command's list is refused, a flag given twice in any
 spelling (`--format` then `-f`) is refused, and every value is checked. `bun src/desk-allowlist.ts check '<command>'` tests one by hand.
 
@@ -108,15 +108,44 @@ Migration 8 cannot be undone by the old build: a database from a newer build is 
 `$CHAMBERLAIN_CONF/alert-desk.json` (all optional) and the environment:
 
 ```json
-{ "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Etc/GMT+5", "maxAgeHours": 6, "enabled": true, "startAt": "end",
-  "morningCommands": ["bun /opt/monitor/report.ts list --limit <N> --json"], "morningNotes": "Skip the monitor's own heartbeat events." }
+{ "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Europe/London", "maxAgeHours": 6, "enabled": true, "startAt": "end",
+  "morningCommands": ["bun /opt/monitor/report.ts list --limit <N> --json"], "morningNotes": "Skip the monitor's own heartbeat events.",
+  "gatherer": "evidence-reader",
+  "commandShapes": { "opsctl": { "bare": true, "subcommands": { "health": { "positional": "word", "max": 1 }, "journal": { "flags": { "--limit": "digits" }, "positional": "word", "min": 1, "max": 1 } } } } }
 ```
+
+`timezone` is the zone `morningHour` is read in; unset, it is the machine's own zone.
 
 `morningCommands` are the sources the Morning sweep reads that the inbox does not carry, each run exactly as written (`<N>` is a number the
 desk fills in, 1 to 12 digits; `<N:1-5>` gives the slot its own width, here 1 to 5 digits, and `<N:10>` exactly 10, any width within 1 to
 12; a command with a malformed slot, such as `<N:0-3>` or `<N:5-2>`, is left out with a warning), and `morningNotes` says how to read them. Both go into the prompt (`bun src/brief.ts desk`), and `src/desk-allowlist.ts` allows
 exactly these commands, so they widen what the desk may run: they are read only when `alert-desk.json` is owned by you and no group or other
 user can write it (0600 or 0644). Nothing of the kind is built in; with none configured, the Morning sweep reports only what its wake carries.
+
+**`commandShapes`** add read commands only your install has (a wrapper around a CLI, say) to what the desk may run. Each key is a bare command name; a
+shape lists what the command may take, and nothing else is accepted:
+
+| Field | Meaning |
+| --- | --- |
+| `subcommands` | `{ "<one or two words>": <body> }`: the command must start with one of them, and the rest is checked against that body |
+| `bare` | `true` allows the command with no argument at all (with `subcommands`) |
+| `flags` | `{ "--flag": "bool" \| <kind> }`: the flags allowed, each `bool` or taking one value of that kind |
+| `same` | `{ "--long": "-s" }`: two spellings of one flag, which may be given once between them |
+| `positional` | a kind, or a list of the literal words allowed |
+| `min`, `max` | how many positional arguments (a shape with none takes none) |
+| `paths` | `true` lets `--` end the flags, followed by relative paths inside the checkout |
+
+A **kind** is one of `digits`, `word`, `unit` (a systemd unit name), `time`, `repo` (`owner/name`), `ref` (a git ref): each a fixed pattern, never free text. A
+flag given twice, in any spelling, is refused, and so is any flag or argument the shape does not list. The generic shapes that ship are `gh` (`run view`, `run list`,
+`pr checks`) and `git` (`status`, `log`, `diff`), written in this same format (`src/core/desk-shapes.ts`); `journalctl`, `systemctl` and `docker` are code,
+and none of the five can be redefined. A malformed shape is left out whole, with a warning.
+
+**`gatherer`** is the name of an agent the desk may start to read evidence (the Agent tool, `subagent_type: <name>`, with only a prompt, a description and
+`run_in_background`; any other field is refused, so it cannot be widened into a checkout, another model or a remote run). The standing prompt names it, and
+the gatherer is under the same hook as the desk. Unset, the desk reads the evidence itself and the Agent tool is refused.
+
+`commandShapes` and `gatherer` widen what the desk may run, so, like `morningCommands`, they are read only when `alert-desk.json` is owned by you and no
+group or other user can write it.
 
 `ALERT_DESK_INBOX` overrides the inbox path. The T3 adapter needs a private `desk-wake-url` (a webhook bound to the desk thread) and, for its busy
 gate, `desk-thread`; without the URL the desk is off and the inbox is not read. The first pass of each local day from `morningHour` sends the

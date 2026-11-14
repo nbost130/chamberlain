@@ -1,6 +1,6 @@
 /**
  * The Alert Desk's command allowlist, enforced in code: a Claude Code PreToolUse hook for the desk thread's project (and so for the
- * `example-gatherer` gatherers it starts). The standing prompt (docs/alert-desk-prompt.md) tells the desk what it may run; this is what refuses
+ * gatherer agents it starts). The standing prompt (docs/alert-desk-prompt.md) tells the desk what it may run; this is what refuses
  * the rest, so a gatherer that has been talked into something by an alert's text still cannot do it.
  *
  *   bun src/desk-allowlist.ts hook            reads the hook's JSON on stdin; exit 2 with the reason on stderr refuses the call
@@ -8,7 +8,7 @@
  *
  * The rule is a FIXED SET OF COMMAND SHAPES, not a list of dangerous things. A command is one simple command, tokenized here with the quoting
  * rules a POSIX shell applies to the subset accepted (no expansion, substitution, redirection, chaining or globbing outside quotes, and none of
- * `$`, a backtick or a backslash inside them), whose name is in SHAPES and whose every flag is one that shape lists. The one pipe allowed is a
+ * `$`, a backtick or a backslash inside them), whose name has a shape (journalctl, systemctl and docker in code; gh, git and the operator's own as data, `src/core/desk-shapes.ts`) and whose every flag is one that shape lists. The one pipe allowed is a
  * final `head -n N`, `tail -n N` or `wc -l`. Anything else is refused with the first thing wrong.
  *
  * File reads (the Read, Grep and Glob tools) are allowed only under LOG_DIRS, after `..` and symlinks are resolved, and never for a path with a
@@ -16,8 +16,9 @@
  */
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { deskAskCommand, morningPattern, readMorning } from "./core/alert-desk.ts";
+import { type DeskOperator, deskAskCommand, morningPattern, readOperator } from "./core/alert-desk.ts";
 import { CONF, selfCommand } from "./core/config.ts";
+import { GENERIC_SHAPES, type Shape, type ShapeBody, type ShapeSet, type ValueKind } from "./core/desk-shapes.ts";
 
 export type Verdict = { ok: true } | { ok: false; reason: string };
 const ok: Verdict = { ok: true };
@@ -78,6 +79,7 @@ const TIME = /^[\w:. +-]{1,40}$/;
 const UNIT = /^[A-Za-z0-9@_.:-]{1,100}$/;
 const WORD = /^[A-Za-z0-9_.@:-]{1,64}$/;
 const REPO = /^[\w.-]{1,60}\/[\w.-]{1,100}$/;
+const REF = /^[A-Za-z0-9._/@~^{}-]{1,100}$/;
 
 /**
  * Parses the WHOLE argument list against a spec, never one flag at a time: a flag that is not in the spec is refused, a flag given twice (in any
@@ -131,14 +133,9 @@ const journalctl: Spec = {
 	flags: { "--user": "bool", "--no-pager": "bool", "-r": "bool", "--reverse": "bool", "-u": UNIT, "--unit": UNIT, "-n": DIGITS, "--lines": DIGITS, "--since": TIME, "--until": TIME, "-p": PRIORITY, "--priority": PRIORITY, "-o": OUTPUT, "--output": OUTPUT },
 	same: { "--reverse": "-r", "--unit": "-u", "--lines": "-n", "--priority": "-p", "--output": "-o" },
 };
-const gitDiffLike: Spec = {
-	flags: { "--stat": "bool", "--shortstat": "bool", "--name-only": "bool", "--name-status": "bool", "--oneline": "bool", "--no-color": "bool", "-n": DIGITS, "--max-count": DIGITS, "--since": TIME, "--until": TIME },
-	same: { "--max-count": "-n" },
-	positional: /^[A-Za-z0-9._/@~^{}-]{1,100}$/, max: 4,
-};
 const CONTAINER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/;
 
-function checkSimple(tokens: string[]): Verdict {
+function checkSimple(tokens: string[], shapes: ShapeSet): Verdict {
 	const [name, ...args] = tokens;
 	if (!name || name.includes("/") || name.includes("=")) return no("the command must be a bare name from the allowlist");
 	switch (name) {
@@ -154,37 +151,6 @@ function checkSimple(tokens: string[]): Verdict {
 			if (sub === "list-units" && units.length) return no("systemctl list-units takes no unit");
 			if (sub !== "list-units" && units.length === 0) return no(`systemctl ${sub} needs a unit`);
 			return ok;
-		}
-		case "example-tool": {
-			const [sub, ...rest] = args;
-			if (sub === undefined) return ok;
-			if (sub === "update" || sub.startsWith("-")) return no("example-tool: only its read commands are allowed");
-			const shapes: Record<string, Spec> = {
-				health: { flags: {}, positional: WORD, max: 1 }, docker: { flags: {}, max: 0 }, service: { flags: {}, positional: WORD, max: 1, min: 1 }, estate: { flags: {}, max: 0 },
-				network: { flags: {}, positional: /^ports$/, max: 1 }, process: { flags: {}, max: 0 }, redis: { flags: {}, max: 0 }, journal: { flags: { "--limit": DIGITS }, positional: WORD, max: 1, min: 1 },
-			};
-			const spec = shapes[sub];
-			if (!spec) return no(`example-tool: ${JSON.stringify(sub.slice(0, 30))} is not a read command on the allowlist`);
-			const r = parse(rest, spec, `example-tool ${sub}`);
-			return isVerdict(r) ? r : ok;
-		}
-		case "gh": {
-			const [a, b, ...rest] = args;
-			const repo: Record<string, Flag> = { "--repo": REPO };
-			if (a === "run" && b === "view") { const r = parse(rest, { flags: { ...repo, "--log-failed": "bool" }, positional: DIGITS, max: 1, min: 1 }, "gh run view"); return isVerdict(r) ? r : ok; }
-			if (a === "run" && b === "list") { const r = parse(rest, { flags: { ...repo, "--limit": DIGITS }, max: 0 }, "gh run list"); return isVerdict(r) ? r : ok; }
-			if (a === "pr" && b === "checks") { const r = parse(rest, { flags: repo, positional: DIGITS, max: 1, min: 1 }, "gh pr checks"); return isVerdict(r) ? r : ok; }
-			return no("gh: only `run view`, `run list` and `pr checks` are allowed");
-		}
-		case "git": {
-			const [sub, ...rest] = args;
-			if (!sub || !["status", "log", "diff"].includes(sub)) return no("git: only status, log and diff are allowed");
-			// A `--` ends the flags; what follows is relative paths inside the repo, never `..` or an absolute path.
-			const dd = rest.indexOf("--");
-			const before = dd < 0 ? rest : rest.slice(0, dd), paths = dd < 0 ? [] : rest.slice(dd + 1);
-			if (paths.some((p) => !/^[A-Za-z0-9._/-]{1,200}$/.test(p) || p.startsWith("/") || p.split("/").includes(".."))) return no("git: a path after -- must be relative, inside the repo");
-			const r = parse(before, sub === "status" ? { flags: {}, max: 0 } : gitDiffLike, `git ${sub}`);
-			return isVerdict(r) ? r : ok;
 		}
 		case "docker": {
 			const [sub, ...rest] = args;
@@ -204,27 +170,63 @@ function checkSimple(tokens: string[]): Verdict {
 			}
 			return no("docker: only ps, logs and inspect are allowed");
 		}
-		default:
-			return no(`${JSON.stringify(name.slice(0, 40))} is not on the allowlist`);
+		default: {
+			const shape = GENERIC_SHAPES[name] ?? shapes[name];
+			return shape ? checkShape(name, args, shape) : no(`${JSON.stringify(name.slice(0, 40))} is not on the allowlist`);
+		}
 	}
+}
+
+const KINDS: Record<ValueKind, RegExp> = { digits: DIGITS, word: WORD, unit: UNIT, time: TIME, repo: REPO, ref: REF };
+
+/** Compiles one command's (or subcommand's) data shape into the spec `parse` applies. */
+function specOf(b: ShapeBody): Spec {
+	const flags: Record<string, Flag> = {};
+	for (const [k, v] of Object.entries(b.flags ?? {})) flags[k] = v === "bool" ? "bool" : KINDS[v];
+	const positional = b.positional === undefined ? undefined : Array.isArray(b.positional) ? new RegExp(`^(?:${b.positional.map(escRe).join("|")})$`) : KINDS[b.positional];
+	// A shape that lists no positional takes none; one that does takes up to its `max` (unbounded if unset).
+	return { flags, ...(b.same ? { same: b.same } : {}), ...(positional ? { positional } : {}), ...(b.max !== undefined ? { max: b.max } : positional ? {} : { max: 0 }), ...(b.min !== undefined ? { min: b.min } : {}) };
+}
+
+/** A command that is a data shape (gh, git, and the operator's own): its subcommand is one of the shape's, and the rest fits that subcommand's body. */
+function checkShape(name: string, args: string[], shape: Shape): Verdict {
+	let body: ShapeBody = shape, rest = args, what = name;
+	if (shape.subcommands) {
+		if (args.length === 0 && shape.bare) return ok;
+		const sub = Object.keys(shape.subcommands).sort((x, y) => y.split(" ").length - x.split(" ").length).find((k) => k.split(" ").every((w, i) => args[i] === w));
+		if (sub === undefined) return no(`${name}: only ${Object.keys(shape.subcommands).map((k) => `\`${k}\``).join(", ")} ${shape.bare ? "(or nothing) " : ""}are allowed`);
+		body = shape.subcommands[sub]!;
+		rest = args.slice(sub.split(" ").length);
+		what = `${name} ${sub}`;
+	}
+	if (body.paths) {
+		// A `--` ends the flags; what follows is relative paths inside the checkout, never `..` or an absolute path.
+		const dd = rest.indexOf("--");
+		const paths = dd < 0 ? [] : rest.slice(dd + 1);
+		if (dd >= 0) rest = rest.slice(0, dd);
+		if (paths.some((p) => !/^[A-Za-z0-9._/-]{1,200}$/.test(p) || p.startsWith("/") || p.split("/").includes(".."))) return no(`${what}: a path after -- must be relative, inside the repo`);
+	}
+	const r = parse(rest, specOf(body), what);
+	return isVerdict(r) ? r : ok;
 }
 
 /**
  * The few commands that are not simple flag shapes, matched whole: the decision queue, and the operator's own morning sources
- * (`morningCommands` in alert-desk.json, each exactly as written with `<N>` for a number, `<N:a-b>` for one of a to b digits; read only from a file the operator owns
- * that no one else can write, `readMorning`). Nothing private is built in: with no morning sources, none is allowed.
+ * (`morningCommands` in alert-desk.json, each exactly as written with `<N>` for a number, `<N:a-b>` for one of a to b digits). The operator's
+ * `commandShapes` and `gatherer` come from the same file. All three are read only from a file the operator owns that no one else can write
+ * (`readOperator`). Nothing private is built in: with none configured, only the generic shapes above are allowed.
  */
 /** The one command the desk may run to file a decision (DESK_ASK_PATH, else this build's own): the same command the standing prompt is filled with. */
 const askCommand = () => deskAskCommand();
 /** Does a morning command have a `<N>` or `<N:a-b>` slot? Without one it is matched as the exact string. */
 const hasSlot = (m: string) => /<N(?::[^>]*)?>/.test(m);
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-let configured: string[] | undefined;
-/** The morning commands in the config directory, read once per process (the hook is one process per call). */
-const morningCommands = () => (configured ??= readMorning(CONF, (m) => console.error(m)).commands);
+let configured: DeskOperator | undefined;
+/** What the operator configured, read once per process (the hook is one process per call). */
+const operator = () => (configured ??= readOperator(CONF, (m) => console.error(m)));
 
-/** Is this one shell command allowed? `o.morning` is a seam for tests: the morning commands, instead of alert-desk.json's. */
-export function checkCommand(cmd: unknown, o: { morning?: readonly string[] } = {}): Verdict {
+/** Is this one shell command allowed? `o` is a seam for tests: the morning commands and command shapes, instead of alert-desk.json's. */
+export function checkCommand(cmd: unknown, o: { morning?: readonly string[]; shapes?: ShapeSet } = {}): Verdict {
 	if (typeof cmd !== "string" || !cmd.trim()) return no("no command");
 	// Never trimmed or normalised: the command is matched as it was sent. Surrounding whitespace of any kind (a space, a tab, a newline, a
 	// no-break space, a byte-order mark) is not part of any allowed shape, so it is refused, as the predecessor's exact match refused it.
@@ -232,7 +234,7 @@ export function checkCommand(cmd: unknown, o: { morning?: readonly string[] } = 
 	if (c.length > 9000) return no("the command is too long");
 	if (new RegExp(`^${escRe(askCommand())} '[^']{1,8000}'$`).test(c)) return ok;
 	// A morning command with no `<N>` slot is the exact string; one with a slot is its anchored full-string pattern, on the same untrimmed input.
-	if ((o.morning ?? morningCommands()).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c))) return ok;
+	if ((o.morning ?? operator().morning.commands).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c))) return ok;
 	const t = tokenize(c);
 	if ("error" in t) return no(t.error);
 	const [first, ...pipes] = t.parts;
@@ -242,7 +244,7 @@ export function checkCommand(cmd: unknown, o: { morning?: readonly string[] } = 
 		const tail = a.join(" ");
 		if (!((p === "head" || p === "tail") && /^-n \d{1,5}$/.test(tail)) && !(p === "wc" && tail === "-l")) return no("a pipe may only go into `head -n N`, `tail -n N` or `wc -l`");
 	}
-	return checkSimple(first!);
+	return checkSimple(first!, o.shapes ?? operator().shapes);
 }
 
 // ---- file reads --------------------------------------------------------------------------------------
@@ -266,12 +268,12 @@ export function checkPath(p: unknown): Verdict {
 
 /**
  * The hook's decision for one tool call, and it DENIES BY DEFAULT: Bash (in the fixed shapes), Read, Grep and Glob (under the log directories),
- * and the Agent tool only to start a `example-gatherer` gatherer, which is how the desk fans out. Every other tool is refused, MCP tools and the write
- * tools included, and so is a call with no tool name. The settings matcher must therefore cover every tool (see docs/alert-desk.md).
+ * and the Agent tool only to start the operator's `gatherer` agent (`gatherer` in alert-desk.json), which is how the desk fans out; with none
+ * configured the Agent tool is refused too. Every other tool is refused, MCP tools and the write tools included, and so is a call with no tool
+ * name. The settings matcher must therefore cover every tool (see docs/alert-desk.md). `o.gatherer` is a seam for tests.
  */
-export const GATHERER = "example-gatherer";
 const GATHERER_FIELDS = new Set(["subagent_type", "description", "prompt", "run_in_background"]);
-export function checkTool(tool: unknown, input: Record<string, unknown> | undefined): Verdict {
+export function checkTool(tool: unknown, input: Record<string, unknown> | undefined, o: { gatherer?: string } = {}): Verdict {
 	const i = input ?? {};
 	if (typeof tool !== "string" || !tool) return no("no tool name");
 	switch (tool) {
@@ -284,17 +286,19 @@ export function checkTool(tool: unknown, input: Record<string, unknown> | undefi
 			return checkPath(i.path);
 		case "Agent":
 		case "Task": {
-			if (i.subagent_type !== GATHERER) return no(`${tool}: the desk may start only a ${GATHERER} gatherer`);
+			const gatherer = "gatherer" in o ? o.gatherer : operator().gatherer;
+			if (!gatherer) return no(`${tool}: no gatherer agent is configured (\`gatherer\` in alert-desk.json), so the desk starts no agent`);
+			if (i.subagent_type !== gatherer) return no(`${tool}: the desk may start only a ${gatherer} gatherer`);
 			// Only the fields a plain gatherer needs. Anything else (isolation, a model, a name, a working directory, a team) is refused, so the
 			// exception cannot be widened into a checkout, a stronger model or a remote run.
 			const extra = Object.keys(i).find((k) => !GATHERER_FIELDS.has(k));
-			if (extra !== undefined) return no(`${tool}: the field ${JSON.stringify(extra.slice(0, 40))} is not allowed when starting a ${GATHERER} gatherer`);
-			if (typeof i.prompt !== "string" || (i.description !== undefined && typeof i.description !== "string")) return no(`${tool}: a ${GATHERER} gatherer needs a text prompt`);
+			if (extra !== undefined) return no(`${tool}: the field ${JSON.stringify(extra.slice(0, 40))} is not allowed when starting a ${gatherer} gatherer`);
+			if (typeof i.prompt !== "string" || (i.description !== undefined && typeof i.description !== "string")) return no(`${tool}: a ${gatherer} gatherer needs a text prompt`);
 			if (i.run_in_background !== undefined && typeof i.run_in_background !== "boolean") return no(`${tool}: run_in_background must be true or false`);
 			return ok;
 		}
 		default:
-			return no(`${tool} is not an allowed tool: the desk reads, starts ${GATHERER} gatherers and files decisions, and does nothing else`);
+			return no(`${tool} is not an allowed tool: the desk reads, starts its gatherer agent and files decisions, and does nothing else`);
 	}
 }
 

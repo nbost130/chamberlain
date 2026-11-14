@@ -28,6 +28,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { selfCommand } from "./config.ts";
+import { type ShapeSet, describeShape, parseGatherer, parseShapes } from "./desk-shapes.ts";
 import type { Outbox, WakeDraft } from "./deliver.ts";
 import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import { authorityProblem } from "./private.ts";
@@ -62,7 +63,12 @@ export type DeskConfig = {
 	 */
 	startAt: "end" | "beginning";
 };
-export const DEFAULTS: DeskConfig = { enabled: true, windowMs: 15 * 60_000, repeatMs: DAY_MS, dailyCap: 30, morningHour: 7, timezone: "Etc/GMT+5", maxAgeMs: 6 * 3600_000, rotateBytes: 5 * 1024 * 1024, startAt: "end" };
+export const DEFAULTS: DeskConfig = { enabled: true, windowMs: 15 * 60_000, repeatMs: DAY_MS, dailyCap: 30, morningHour: 7, timezone: systemTimezone(), maxAgeMs: 6 * 3600_000, rotateBytes: 5 * 1024 * 1024, startAt: "end" };
+
+/** The machine's own time zone, which is what "7 in the morning" means unless `timezone` in alert-desk.json says otherwise. */
+export function systemTimezone(): string {
+	try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
+}
 
 export const configPath = (conf: string) => `${conf}/alert-desk.json`;
 export const inboxPath = (env: Record<string, string | undefined>, home: string) => env.ALERT_DESK_INBOX || `${home}/.cache/alert-desk/inbox.jsonl`;
@@ -125,23 +131,41 @@ export function parseMorning(raw: unknown, warn: (msg: string) => void = () => {
 	return { commands, ...(notes ? { notes } : {}) };
 }
 
-/** The morning sources in `<conf>/alert-desk.json`, or none (with a warning saying why) when the file is not the operator's alone. */
-export function readMorning(conf: string, warn: (msg: string) => void = () => {}): MorningSources {
+/**
+ * What the operator adds to the desk in alert-desk.json: the morning sources, `commandShapes` (the command shapes of tools only their install
+ * has: src/core/desk-shapes.ts) and `gatherer` (the name of the agent the desk may start to read evidence). All widen what the desk may run,
+ * so all are read only from a file the operator owns that no group or other user can write.
+ */
+export type DeskOperator = { morning: MorningSources; shapes: ShapeSet; gatherer?: string };
+const NONE = (): DeskOperator => ({ morning: { commands: [] }, shapes: {} });
+
+/** Pure: the operator's additions from a parsed alert-desk.json. Anything malformed is left out (`warn` says which, and why). */
+export function parseOperator(raw: unknown, warn: (msg: string) => void = () => {}): DeskOperator {
+	const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+	const gatherer = parseGatherer(o.gatherer, warn);
+	return { morning: parseMorning(raw, warn), shapes: parseShapes(o.commandShapes, warn), ...(gatherer ? { gatherer } : {}) };
+}
+
+/** The operator's additions in `<conf>/alert-desk.json`, or none (with a warning saying why) when the file is not the operator's alone. */
+export function readOperator(conf: string, warn: (msg: string) => void = () => {}): DeskOperator {
 	const path = configPath(conf);
 	let fd: number;
 	try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
-		if ((e as NodeJS.ErrnoException).code !== "ENOENT") warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
-		return { commands: [] };
+		if ((e as NodeJS.ErrnoException).code !== "ENOENT") warn(`alert desk: ignoring the operator's settings in ${path}: ${(e as Error).message}`);
+		return NONE();
 	}
 	try {
 		const bad = authorityProblem(fstatSync(fd), "file");
-		if (bad) { warn(`alert desk: ignoring the morning sources in ${path}: ${bad}`); return { commands: [] }; }
-		return parseMorning(JSON.parse(readFileSync(fd, "utf8")), warn);
+		if (bad) { warn(`alert desk: ignoring the operator's settings in ${path}: ${bad}`); return NONE(); }
+		return parseOperator(JSON.parse(readFileSync(fd, "utf8")), warn);
 	} catch (e) {
-		warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
-		return { commands: [] };
+		warn(`alert desk: ignoring the operator's settings in ${path}: ${(e as Error).message}`);
+		return NONE();
 	} finally { closeSync(fd); }
 }
+
+/** The morning sources in `<conf>/alert-desk.json` (see `readOperator`). */
+export const readMorning = (conf: string, warn: (msg: string) => void = () => {}): MorningSources => readOperator(conf, warn).morning;
 
 /**
  * Pure: the pattern a morning command is matched by: the command exactly, with each `<N>` one to twelve digits and each `<N:a-b>` (or
@@ -161,7 +185,10 @@ export function morningPattern(command: string): RegExp {
 }
 
 /** What the desk's standing prompt is filled with: who it works for, the server it runs on, the allowlist hook command, the ask command, the morning sources. */
-export type DeskPromptVars = { principalName: string; serverName: string; allowlistHook: string; askCommand: string; morning: MorningSources };
+export type DeskPromptVars = { principalName: string; serverName: string; allowlistHook: string; askCommand: string; morning: MorningSources;
+	/** The operator's command shapes and gatherer agent (`readOperator`); none when omitted. */
+	shapes?: ShapeSet; gatherer?: string;
+};
 
 /**
  * The one command the desk may run to file a decision: `bun $DESK_ASK_PATH` when that is set, else `chamberlain ask` from the compiled binary or
@@ -180,7 +207,8 @@ export function morningSourcesText(m: MorningSources): string {
 
 /**
  * Pure: the desk's standing prompt from its template (docs/alert-desk-prompt.md): `<!-- -->` comments dropped, and `{{principalName}}`,
- * `{{serverName}}`, `{{allowlistHook}}`, `{{askCommand}}` and `{{morningSources}}` filled in, the way the sweep prompt is (sweep.ts `renderSweepPrompt`).
+ * `{{serverName}}`, `{{allowlistHook}}`, `{{askCommand}}`, `{{morningSources}}`, `{{gatherStep}}`, `{{toolList}}` and `{{operatorCommands}}` filled in, the
+ * way the sweep prompt is (sweep.ts `renderSweepPrompt`).
  */
 export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
 	return template.replace(/<!--[\s\S]*?-->\s*/g, "").trim()
@@ -188,7 +216,28 @@ export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
 		.replaceAll("{{serverName}}", v.serverName)
 		.replaceAll("{{allowlistHook}}", v.allowlistHook)
 		.replaceAll("{{askCommand}}", v.askCommand)
-		.replaceAll("{{morningSources}}", morningSourcesText(v.morning));
+		.replaceAll("{{morningSources}}", morningSourcesText(v.morning))
+		.replaceAll("{{gatherStep}}", () => gatherStepText(v.gatherer))
+		.replaceAll("{{toolList}}", () => toolListText(v.gatherer))
+		// The operator's own command shapes are bullets in the list of what may run: with none, the line goes, so no blank line splits the list.
+		.replace(/\n\{\{operatorCommands\}\}(?=\n)/, () => operatorCommandsText(v.shapes ?? {}));
+}
+
+/** Pure: the evidence-gathering step, which names the operator's gatherer agent when there is one. */
+export function gatherStepText(gatherer?: string): string {
+	return gatherer
+		? `Fan out at most 4 \`${gatherer}\` subagents for the family (Agent tool, \`subagent_type: "${gatherer}"\`). Brief each one with one narrow question and one read-only command or file, and nothing else. Do not read the logs yourself; you decide, they read.`
+		: "No gatherer agent is configured, so read the evidence yourself: one narrow question at a time, each with one read-only command or file from the list below.";
+}
+
+/** Pure: the tools the desk has, which include the Agent tool only for the operator's gatherer. */
+export function toolListText(gatherer?: string): string {
+	return gatherer ? `Bash (in these shapes), Read, Grep, Glob and the Agent tool for \`${gatherer}\` gatherers` : "Bash (in these shapes), Read, Grep and Glob";
+}
+
+/** Pure: the operator's own command shapes as bullets for the list of what may run (empty when there are none). */
+export function operatorCommandsText(shapes: ShapeSet): string {
+	return Object.entries(shapes).map(([name, shape]) => `\n- ${describeShape(name, shape).join(", ")}.`).join("");
 }
 
 // ---- events -----------------------------------------------------------------------------------------
