@@ -112,6 +112,12 @@ answered.by: enum(page|batch|card|daemon|reconciler) <- by
 wake-queued.item: item <- id
 card-confirmation-issued.item: item <- id
 card-confirmation-refused.item: item <- id
+snoozed.item: item <- id
+unsnoozed.item: item <- id
+snooze-returned.item: item <- id
+snooze-returned.notified: bool
+snooze-post-failed.item: item <- id
+snooze-return-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 title-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 recover-state-unsaved.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 recover-stand-down.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind

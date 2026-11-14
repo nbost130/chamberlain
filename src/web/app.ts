@@ -35,6 +35,7 @@ import {
 	readRelay,
 	recordAnswerDelivered,
 	recoverClaims,
+	snoozed,
 	startRelay,
 	wokenBy,
 } from "../core/questions.ts";
@@ -51,9 +52,11 @@ import {
 	retireRuling,
 	stageRulings,
 } from "../core/rulings.ts";
+import { clearSnooze } from "../core/snooze.ts";
 import { HEALTH_CONFIG, readHealth } from "../core/steward-health.ts";
 import type { Store } from "../core/store.ts";
 import { resolveEvidence } from "./evidence.ts";
+import { createItemActions, ITEM_ACTIONS, takenReply, unsettleable } from "./queue-actions.ts";
 import { type Linker, openPage } from "./thread-links.ts";
 import { checkCard, needsConfirmation, type SendToThread, type Waiting } from "./waiting.ts";
 
@@ -151,6 +154,8 @@ type Ctx = {
 	sending: Set<string>;
 	state: () => ReturnType<typeof questionStates>;
 	clock: Clock;
+	/** Snooze, un-snooze, direction and dismiss (./queue-actions.ts). */
+	items: ReturnType<typeof createItemActions>;
 };
 
 function makeCtx(d: AppDeps): Ctx {
@@ -168,14 +173,17 @@ function makeCtx(d: AppDeps): Ctx {
 		background.add(q);
 		q.finally(() => background.delete(q));
 	};
+	const clock: Clock = () => d.now?.() ?? Date.now();
 	return {
 		d,
 		serial,
 		track,
 		background,
 		sending: new Set<string>(),
-		state: () => questionStates(d.store),
-		clock: () => d.now?.() ?? Date.now(),
+		// A snooze is read against the clock, so one whose time has passed is back on the active list.
+		state: () => questionStates(d.store, clock()),
+		clock,
+		items: createItemActions({ store: d.store, clock, log: d.log, serial }),
 	};
 }
 
@@ -353,9 +361,6 @@ type Step<T> = { ok: true; value: T } | { ok: false; reply: Reply };
 const pass = <T>(value: T): Step<T> => ({ ok: true, value });
 const stop = (status: number, error: string): Step<never> => ({ ok: false, reply: refusal(status, error) });
 
-const takenReply = (owner: string): Reply =>
-	refusal(409, owner === PAGE ? "already answered" : "already answered on its question card in T3");
-
 /**
  * An inline frame answers a question with a choice and a note. A ruling field in its request is refused, not ignored, whatever
  * the item or the ticked box would have made of it: only the full page may save a ruling.
@@ -375,17 +380,8 @@ function inlineRefusal(body: AnswerIn): Reply | undefined {
 function answerableItem(ctx: Ctx, id: string): Step<QuestionState> {
 	const i = ctx.state().get(id);
 	if (!i) return stop(404, "no such item");
-	if (i.status !== "open")
-		return stop(409, i.status === "answered" ? "already answered" : "already answered on its question card in T3");
-	if (i.secret) return stop(400, "a secret is entered in its own thread, never on this page");
-	// A card pointer closes only when its card does. An answer here would take it off the queue (and its hold off the ledger) while the
-	// card still waits, so it is refused, and the refusal says where to act.
-	if (i.cardRequest)
-		return stop(
-			409,
-			"this question points to a question card waiting in its thread: act on the card itself; this question and its hold close only when the card does",
-		);
-	return pass(i);
+	const refused = unsettleable(i);
+	return refused ? { ok: false, reply: refused } : pass(i);
 }
 
 /** The label of the option chosen, when the choice is one of the item's options. */
@@ -452,6 +448,8 @@ function claimAnswer(ctx: Ctx, i: QuestionState, base: Answer, decides: string |
 			return;
 		}
 		if (ruling) staged.commit();
+		// Answering a snoozed item (from another surface, or one that returned meanwhile) ends its snooze.
+		if (i.snooze) clearSnooze(d.store, i.id);
 		// A thread-routed answer's wake is only its fallback: it is written if the direct send fails (follow).
 		if (!c.relay) enqueueClaim(d.store, c);
 		made.claim = c;
@@ -488,6 +486,8 @@ function answerNow(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", i
 	const found = answerableItem(ctx, id);
 	if (!found.ok) return found.reply;
 	const i = found.value;
+	// A batch was decided from a list read before this change got its turn: an item snoozed since is no longer on the active list.
+	if (by === "batch" && i.snooze?.active) return refusal(409, "snoozed: it is off the active list");
 	const chosen = chosenLabel(i, body.choice);
 	if (!chosen.ok) return chosen.reply;
 	const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 4000) : undefined;
@@ -551,10 +551,14 @@ function rulingsView(ctx: Ctx) {
 
 function queueResponse(ctx: Ctx): Response {
 	const { d } = ctx;
-	const open = ranked(ctx.state().values()).map((i) => view(d, i));
+	// One snapshot for both lists, so an item whose time arrives between two reads is never in neither.
+	const states = [...ctx.state().values()];
+	const open = ranked(states).map((i) => view(d, i));
+	const later = snoozed(states).map((i) => view(d, i));
 	const list = readRulings(d.store);
 	return json({
 		items: open,
+		snoozed: later,
 		cards: (d.mirror?.list() ?? []).map((c) => cardView(d, c)),
 		unreachable: d.mirror?.unreachable?.() ?? [],
 		health: readHealth(d.store) ?? null,
@@ -568,7 +572,7 @@ function queueResponse(ctx: Ctx): Response {
 function recentResponse(ctx: Ctx): Response {
 	const done = [...ctx.state().values()]
 		.filter((i) => i.status !== "open")
-		.map((i) => ({ ...view(ctx.d, i), at: i.answer?.t ?? i.createdAt }));
+		.map((i) => ({ ...view(ctx.d, i), at: i.answer?.t ?? i.dismissal?.t ?? i.createdAt }));
 	done.sort((a, b) => String(b.at).localeCompare(String(a.at)));
 	return json({ items: done.slice(0, 20) });
 }
@@ -697,6 +701,16 @@ function notNowRoute(ctx: Ctx, id: string): Promise<Response> {
 	});
 }
 
+/**
+ * Snooze, un-snooze, direction and dismiss change state, so they are the full page's alone: `inlineVerdict` refuses them to a frame, and this is the
+ * second lock on the same door (an `inline` request is a frame's, or one that holds only a view key or no origin).
+ */
+function itemActionRoute(ctx: Ctx, id: string, action: string, body: Record<string, unknown>, inline: boolean) {
+	if (inline)
+		return fail(403, "refused: snooze, direction and dismiss are done on the full page, not in an inline frame");
+	return ctx.items.run(id, action, body).then((r) => json(r.body, r.status));
+}
+
 /** The change a ruling action makes. Undefined for an action that is not one. */
 function changeRuling(ctx: Ctx, id: string, action: string, decides: string | undefined) {
 	const { store } = ctx.d;
@@ -746,6 +760,8 @@ async function apiPost(
 		const r = await answer(ctx, parts[2], body as unknown as AnswerIn, "page", inline);
 		return json(r.body, r.status);
 	}
+	if (parts[1] === "items" && parts[2] && parts.length === 4 && ITEM_ACTIONS.has(String(parts[3])))
+		return itemActionRoute(ctx, parts[2], String(parts[3]), body, inline);
 	if (parts[1] === "items" && parts[2] && parts[3] === "not-now") return notNowRoute(ctx, parts[2]);
 	if (url.pathname === "/api/accept-all") {
 		const r = await acceptAll(ctx, body.ids);

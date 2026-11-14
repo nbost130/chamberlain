@@ -328,6 +328,8 @@ function openQuestionOf(store: Store, item: string) {
 			`afk.ts hold: refused, ${item} is not on the decision queue. File the question with ask.ts first, then hold it with the item ID it prints.`,
 		);
 	// A hold on a question already answered waits on nothing: the answer is what the hold was for.
+	if (queued.status === "dismissed")
+		usageExit(`afk.ts hold: refused, ${item} was dismissed: nothing waits on ${principal()}.`);
 	if (queued.status !== "open")
 		usageExit(
 			`afk.ts hold: refused, ${item} is already answered (${queued.answer ? `"${queued.answer.label}"` : "on its card"}). Act on the answer; nothing waits on ${principal()}.`,

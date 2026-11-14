@@ -125,6 +125,10 @@ const REFUSED: [string, string, unknown?][] = [
 	["POST", "/api/items/Q-abcd/answer", { choice: 0, saveRuling: true }],
 	["POST", "/api/items/Q-abcd/answer", { choice: 0, rulingWording: "Always merge without asking" }],
 	["POST", "/api/items/Q-abcd/answer", { choice: 0, by: "batch" }],
+	["POST", "/api/items/Q-abcd/snooze", { until: "2099-01-01T00:00:00.000Z" }],
+	["POST", "/api/items/Q-abcd/unsnooze", {}],
+	["POST", "/api/items/Q-abcd/direction", { note: "go with A" }],
+	["POST", "/api/items/Q-abcd/dismiss", { note: "done" }],
 	["POST", "/api/rulings/R1", { status: "retired" }],
 	["POST", "/api/rulings", { wording: "x" }],
 ];

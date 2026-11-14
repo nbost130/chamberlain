@@ -6,7 +6,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { principal } from "./config.ts";
-import { answerWakeText } from "./messages.ts";
+import { answerWakeText, dismissedWakeText } from "./messages.ts";
 import { ledgerEvents } from "./obs/ledger.ts";
 import type { Ruling } from "./rulings.ts";
 import type { ClaimRecord, EvidenceRow, Item, RelayRecord, Store } from "./store.ts";
@@ -53,6 +53,11 @@ export type Question = {
 	createdAt: string;
 };
 
+/**
+ * What an answer is when no option was chosen: `direction` is a note and no option (an answer, so the Steward reads it), `dismissed`
+ * is "already handled / no longer needed" (not an answer: it settles nothing). Both carry `choice: -1`.
+ */
+export type AnswerKind = "direction" | "dismissed";
 export type Answer = {
 	choice: number;
 	label: string;
@@ -61,10 +66,25 @@ export type Answer = {
 	by: "page" | "batch";
 	t: string;
 	deliveryId: string;
+	kind?: AnswerKind;
+};
+/** A question put off until a time: the page keeps it off the active list while `active`, and the daemon tells the principal when it returns. */
+type Snooze = {
+	/** When it returns: an ISO time. */
+	until: string;
+	/** When it was snoozed. */
+	at: string;
+	/** `until` has not passed yet: the item is in the Snoozed section, not the active list. */
+	active: boolean;
+	/** The daemon has handled its return (src/core/snooze.ts `returnDueSnoozes`). */
+	returned: boolean;
 };
 export type QuestionState = Question & {
-	status: "open" | "answered" | "answered-on-card";
+	status: "open" | "answered" | "answered-on-card" | "dismissed";
 	answer?: Answer;
+	/** A dismissed item: "already handled / no longer needed", with the principal's optional note. Never an answer. */
+	dismissal?: { note?: string; t: string };
+	snooze?: Snooze;
 	delivered: boolean;
 	notNowAt?: string;
 	/** A thread-routed answer's direct send: whether it reached the item's thread. */
@@ -133,6 +153,55 @@ export function askQuestion(store: Store, q: Question, now = Date.now()) {
 	});
 }
 
+/** Pure: the question as it was filed, without the state read from its claim, relay and snooze. What an adapter posts. */
+export function plainQuestion(q: QuestionState): Question {
+	const { status: _s, answer: _a, dismissal: _d, snooze: _z, delivered: _v, notNowAt: _n, relay: _r, ...filed } = q;
+	return filed;
+}
+
+/** The payload fields a snooze keeps (see `snoozeOf`): read into `snooze`, so they are not also left on the question. */
+const SNOOZE_FIELDS = ["snoozedUntil", "snoozedAt", "snoozeReturned"] as const;
+const withoutSnoozeFields = (q: Question): Question => {
+	const filed: Record<string, unknown> = { ...q };
+	for (const k of SNOOZE_FIELDS) delete filed[k];
+	return filed as Question;
+};
+
+/**
+ * Where a question stands, from its payload and its claim's answer: its status, the answer or the dismissal (a dismissal is recorded in the
+ * claim but is never an answer, so it is read back as `dismissal`, never as `answer`) and the snooze an open item carries.
+ */
+function outcomeOf(
+	payload: Record<string, unknown>,
+	given: Answer | undefined,
+	answered: boolean,
+	now: number,
+): Pick<QuestionState, "status" | "answer" | "dismissal" | "snooze"> {
+	const dismissed = given?.kind === "dismissed";
+	const snooze = answered ? undefined : snoozeOf(payload, now);
+	const status =
+		payload.answeredOnCard === true ? "answered-on-card" : dismissed ? "dismissed" : answered ? "answered" : "open";
+	return {
+		status,
+		...(given && !dismissed ? { answer: given } : {}),
+		...(given && dismissed ? { dismissal: { ...(given.note ? { note: given.note } : {}), t: given.t } } : {}),
+		...(snooze ? { snooze } : {}),
+	};
+}
+
+/** The snooze an open item carries, read against `now`: a snooze whose time has passed is not active, and the item is on the active list. */
+function snoozeOf(payload: Record<string, unknown>, now: number): Snooze | undefined {
+	if (typeof payload.snoozedUntil !== "string") return undefined;
+	const until = Date.parse(payload.snoozedUntil);
+	if (Number.isNaN(until)) return undefined;
+	return {
+		until: payload.snoozedUntil,
+		at: typeof payload.snoozedAt === "string" ? payload.snoozedAt : payload.snoozedUntil,
+		active: until > now,
+		returned: payload.snoozeReturned === payload.snoozedUntil,
+	};
+}
+
 /** `{}` unless `cond`, so an optional field is left off a state rather than set to undefined. */
 const when = <T extends object>(cond: unknown, fields: T): Partial<T> => (cond ? fields : {});
 
@@ -153,6 +222,7 @@ function stateOf(
 	claim: ClaimRecord | undefined,
 	ev: EvidenceRow[] | undefined,
 	relay: RelayRecord | undefined,
+	now: number,
 ): QuestionState {
 	// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
 	const answered = claim !== undefined || i.status === "resolved";
@@ -164,24 +234,26 @@ function stateOf(
 	const notNowAt = i.status === "acknowledged" && !answered && typeof setAside === "string" ? setAside : undefined;
 	return {
 		// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
-		...withUrgency(i.payload as unknown as Question),
+		...withUrgency(withoutSnoozeFields(i.payload as unknown as Question)),
 		...when(ev?.length, { evidence: evidenceOf(ev ?? []) }),
-		status: onCard ? "answered-on-card" : answered ? "answered" : "open",
-		...when(claim?.answer, { answer: claim?.answer as Answer }),
+		...outcomeOf(i.payload, claim?.answer as Answer | undefined, answered, now),
 		delivered: i.status === "resolved" && !onCard,
 		...when(notNowAt !== undefined, { notNowAt }),
 		...when(sent, { relay: sent }),
 	};
 }
 
-/** Every question and where it stands, composed from the item, its claim, its direct send and its evidence. */
-export function questionStates(store: Store): Map<string, QuestionState> {
+/**
+ * Every question and where it stands, composed from the item, its claim, its direct send and its evidence. `now` is the clock a snooze
+ * is read against: nothing rewrites a snoozed item when its time passes, so it is back on the active list the moment `now` reaches it.
+ */
+export function questionStates(store: Store, now = Date.now()): Map<string, QuestionState> {
 	const claims = new Map(store.claims.list(QUEUE).map((c) => [c.item, c]));
 	const relays = store.claims.listRelays(QUEUE);
 	const evidence = store.evidence.listAll(QUEUE);
 	const out = new Map<string, QuestionState>();
 	for (const i of store.items.list({ source: QUEUE, kind: "question" }))
-		out.set(i.dedupKey, stateOf(i, claims.get(i.dedupKey), evidence.get(i.dedupKey), relays.get(i.dedupKey)));
+		out.set(i.dedupKey, stateOf(i, claims.get(i.dedupKey), evidence.get(i.dedupKey), relays.get(i.dedupKey), now));
 	return out;
 }
 export const getQuestion = (store: Store, id: string): QuestionState | undefined => questionStates(store).get(id);
@@ -196,12 +268,12 @@ const KIND_RANK: Record<Kind, number> = { "only-you": 0, product: 1, ruling: 2, 
 const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
 
 /**
- * Pure: the open queue, ranked. Non-urgent questions sit below every urgent one; within each of the two, "not now" sinks
- * to the end, then only-you first, then what blocks the most, then the oldest.
+ * Pure: the active queue, ranked. A snoozed item is not in it (see `snoozed`). Non-urgent questions sit below every urgent one;
+ * within each of the two, "not now" sinks to the end, then only-you first, then what blocks the most, then the oldest.
  */
 export function ranked(items: Iterable<QuestionState>): QuestionState[] {
 	return [...items]
-		.filter((i) => i.status === "open")
+		.filter((i) => i.status === "open" && !i.snooze?.active)
 		.sort(
 			(a, b) =>
 				Number(!isUrgent(a)) - Number(!isUrgent(b)) ||
@@ -212,10 +284,19 @@ export function ranked(items: Iterable<QuestionState>): QuestionState[] {
 		);
 }
 
+/** Pure: the open items put off until later, soonest to return first. */
+export const snoozed = (items: Iterable<QuestionState>): QuestionState[] =>
+	[...items]
+		.filter((i) => i.status === "open" && i.snooze?.active)
+		.sort(
+			(a, b) => (a.snooze?.until ?? "").localeCompare(b.snooze?.until ?? "") || a.createdAt.localeCompare(b.createdAt),
+		);
+
 /** Pure: what "Accept all recommendations" may answer. Never an only-you item, a secret, or one with no recommendation. */
 export function batchable(i: QuestionState): boolean {
 	return (
 		i.status === "open" &&
+		!i.snooze?.active &&
 		i.kind !== "only-you" &&
 		!i.secret &&
 		i.recommended !== undefined &&
@@ -238,6 +319,8 @@ export type AnswerRoute =
  * any thread-routed option the wake says why this one didn't go direct. An item with none behaves as it always has.
  */
 export function answerRoute(i: Question, a: Answer): AnswerRoute {
+	// A direction or a dismissal chose no option, so it has no relay text to send: the Steward always reads it.
+	if (a.kind) return { direct: false };
 	if (!i.options.some((o) => o.route === "thread")) return { direct: false };
 	const o = i.options[a.choice];
 	if (!o || o.label !== a.label) return { direct: false, why: "custom answer" };
@@ -284,7 +367,53 @@ function threadRelayMessage(i: Question, a: Answer, relay: string): string {
 		.join("\n");
 }
 
+/** What a direction's answer says in place of an option's label (the wake and the record carry these words). */
+export const DIRECTION_LABEL = "direction, no option chosen";
+export const DISMISSED_LABEL = "dismissed";
+const itemLines = (i: Question) => [
+	`item: ${i.id}`,
+	`question: ${i.title}`,
+	`thread: ${i.thread}${i.threadId ? ` (${i.server}, ${i.threadId})` : ` (${i.server})`}`,
+];
+
+/** Pure: an answer with no option chosen. A direction needs its note (the caller checks); both choose `-1`, and neither saves a ruling. */
+export function plainAnswer(kind: AnswerKind, id: string, note: string | undefined, t: string): Answer {
+	return {
+		choice: -1,
+		label: kind === "direction" ? DIRECTION_LABEL : DISMISSED_LABEL,
+		...(note ? { note } : {}),
+		by: "page",
+		t,
+		deliveryId: answerDeliveryId(id),
+		kind,
+	};
+}
+
+/** The wake for a direction: the Steward reads the note and acts on it. It names the item, says no option was chosen, and carries the note. */
+function directionWake(i: Question, a: Answer): string {
+	const lines = [
+		...itemLines(i),
+		`choice: ${DIRECTION_LABEL}: they picked none of the options and wrote you a note instead`,
+		`note: ${a.note ?? "none"}`,
+		"ruling: none saved; this direction settles this item only",
+		"route: to you, never straight to the thread: you read the note and act on it",
+	];
+	return answerWakeText(i.id, lines.join("\n"));
+}
+
+/** The wake for a dismissal: short, and not an answer. The Steward stops tracking the item. */
+function dismissWake(i: Question, a: Answer): string {
+	const lines = [
+		...itemLines(i),
+		"dismissed: they said this is already handled or no longer needed. It is not an answer and settles nothing, so no ruling and no precedent. Stop tracking it.",
+		a.note ? `note: ${a.note}` : "note: none",
+	];
+	return dismissedWakeText(i.id, lines.join("\n"));
+}
+
 export function answerWake(i: Question, a: Answer, why?: StewardWhy): string {
+	if (a.kind === "direction") return directionWake(i, a);
+	if (a.kind === "dismissed") return dismissWake(i, a);
 	const chosen = i.options[a.choice];
 	const relay = chosen?.label === a.label && chosen.route === "thread" ? chosen.relay : undefined;
 	const lines = [

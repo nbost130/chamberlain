@@ -12,6 +12,7 @@ import {
 	type Inspector,
 	isWaitingRead,
 	normalizeThread,
+	type PostResult,
 	type ThreadEvent,
 	type ThreadState,
 	type WaitingItem,
@@ -48,6 +49,7 @@ import {
 } from "./recover.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
 import type { RelayLock } from "./singleton.ts";
+import { announceReturns } from "./snooze.ts";
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
@@ -148,6 +150,8 @@ export type EngineDeps = {
 	relay?: Partial<Pick<RelayDeps, "retryAfterMs" | "maxAttempts" | "staleAfterMs" | "now" | "ceilingMs">>;
 	/** Runs `ask.ts` for the Steward-health hand-off question, asked only when the adapter cannot start the hand-off itself (no `handoffInstruction`). Undefined: that question is not asked. */
 	ask?: (raw: object) => Promise<void>;
+	/** Shows a question where the operator reads, for a snoozed urgent one that returned. Default: the adapter's one-line notice; the daemon passes the pinned view (ask.ts `postQuestion`). */
+	post?: (item: Question, adapter: Adapter) => Promise<PostResult>;
 	/** The Steward's compaction size, in tokens. */
 	compactAt?: number;
 	/** Where the full-sweep prompt template lives when the config directory has no sweep-prompt.md. */
@@ -1264,6 +1268,18 @@ class Core {
 			})),
 		);
 
+	/** Snoozed questions whose time has come (src/core/snooze.ts): recorded once, and an urgent one is shown where the operator reads again. */
+	private snoozeReturnTick(): Promise<void> {
+		return announceReturns({
+			store: this.store,
+			now: this.d.relay?.now?.() ?? Date.now(),
+			dry: this.DRY,
+			log: this.log,
+			adapter: this.homeAdapter,
+			post: this.d.post ?? ((item, adapter) => adapter.post(item, {})),
+		});
+	}
+
 	private async holdReconcileTick() {
 		try {
 			const { closed } = reconcileItemHolds(this.store);
@@ -1426,6 +1442,7 @@ class Core {
 			this.relay.pass(),
 			this.stewardCheck().catch((e) => this.log("steward-check-error", { error: String(e) })),
 			this.cardReconcileTick(),
+			this.snoozeReturnTick(),
 		];
 		if (this.d.housekeeping !== false) this.housekeepingChecks(checks);
 		await Promise.all(checks);

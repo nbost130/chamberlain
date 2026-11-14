@@ -11,6 +11,8 @@ const DEFAULT_TAG = { "only-you": "Only you", product: "Review", ruling: "Ruling
 const S = {
 	route: "queue", items: [], inForce: 0, unconfirmed: 0, testMode: false, filter: "all", sel: 0,
 	pick: {}, note: {}, save: {}, wording: {}, editing: {}, busy: false, total: 0, done: 0,
+	// Items put off until later (the Snoozed section, collapsed until opened), and which item has its snooze choices open.
+	snoozed: [], snoozedOpen: false, panel: {},
 	// Cards waiting in other threads, and the answer in progress on each: its pick, and the server's confirmation once one is asked for.
 	cards: [], cpick: {}, carm: {}, cbusy: {},
 	rulings: [], rfilter: "all", rsel: 0, rwording: {},
@@ -64,10 +66,11 @@ async function load() {
 		} else {
 			const j = await api("/api/queue");
 			S.health = j.health;
-			Object.assign(S, { items: j.items, cards: j.cards || [], inForce: j.inForce, unconfirmed: j.unconfirmed, testMode: j.testMode });
+			Object.assign(S, { items: j.items, snoozed: j.snoozed || [], cards: j.cards || [], inForce: j.inForce, unconfirmed: j.unconfirmed, testMode: j.testMode });
+			scheduleReturn();
 			if (!S.total || S.items.length > S.total - S.done) { S.total = S.items.length + S.done; }
 			S.route = r.route;
-			if (r.id) { const k = visible().findIndex((i) => i.id === r.id); if (k >= 0) S.sel = k; else if (r.route === "item") { S.route = "queue"; history.replaceState({}, "", "/"); } }
+			if (r.id) { const k = visible().findIndex((i) => i.id === r.id); if (k >= 0) S.sel = k; else if (r.route === "item") { S.route = "queue"; history.replaceState({}, "", "/"); if (S.snoozed.some((i) => i.id === r.id)) S.snoozedOpen = true; } }
 			S.sel = Math.min(S.sel, Math.max(0, visible().length - 1));
 		}
 	} catch (e) { toast(`Could not load: ${e.message}`, true); }
@@ -75,6 +78,13 @@ async function load() {
 }
 
 // ---- queue ----
+// A snoozed item comes back by itself at its time (the server reads the clock), so reload then: the page never sits on a stale "Snoozed" list.
+let returnTimer;
+function scheduleReturn() {
+	clearTimeout(returnTimer);
+	const next = S.snoozed.map((i) => Date.parse(i.snooze?.until)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+	if (next !== undefined) returnTimer = setTimeout(load, Math.min(Math.max(next - Date.now() + 1000, 1000), 2147483000));
+}
 // An approval, a secret and a card pointer are always urgent, whatever their `urgent` field says (questions.ts alwaysUrgent).
 const urgentOf = (i) => i.urgent !== false || i.secret === true || Boolean(i.cardRequest) || /^\s*(approval|secret)\s*$/i.test(i.tag || "");
 const visible = () => {
@@ -113,7 +123,7 @@ function header() {
 
 function listHtml() {
 	const v = visible();
-	if (!v.length) return `<section class="list" aria-label="Queue"><div class="empty">Nothing waiting on you.<br>New questions from the Steward land here.</div></section>`;
+	if (!v.length) return `<section class="list" aria-label="Queue"><div class="empty">Nothing waiting on you.<br>New questions from the Steward land here.</div>${snoozedHtml()}</section>`;
 	let n = 0;
 	const rowHtml = (i) => {
 		const idx = n++;
@@ -133,7 +143,44 @@ function listHtml() {
 		if (!rows.length) return "";
 		return `<div class="group c-${k.kind}"><span class="dot"></span>${urgent ? "" : "NOT URGENT · "}${k.label}</div>` + rows.map(rowHtml).join("");
 	}).join("");
-	return `<section class="list" aria-label="Queue">${groups(true)}${groups(false)}</section>`;
+	return `<section class="list" aria-label="Queue">${groups(true)}${groups(false)}${snoozedHtml()}</section>`;
+}
+
+// ---- snooze, direction, dismiss ----
+// Snooze offers what T3's thread snooze does: 1 hour, later today, tomorrow morning, next week, and a time of your own. The choices are worked
+// out here, in this browser's time zone, and the server is sent an absolute time. Later today is 18:00, or 3 hours on when 18:00 is under an hour
+// away, and is left out when that would be tomorrow. Tomorrow morning and next week (the coming Monday) are 09:00.
+function snoozeChoices(now) {
+	const at = (days, hour) => { const d = new Date(now.getTime()); d.setDate(d.getDate() + days); d.setHours(hour, 0, 0, 0); return d; };
+	const evening = at(0, 18);
+	const later = evening.getTime() - now.getTime() >= 3600_000 ? evening : new Date(now.getTime() + 3 * 3600_000);
+	return [
+		{ id: "hour", label: "1 hour", at: new Date(now.getTime() + 3600_000) },
+		...(later.getDate() === now.getDate() ? [{ id: "later", label: "Later today", at: later }] : []),
+		{ id: "tomorrow", label: "Tomorrow morning", at: at(1, 9) },
+		{ id: "week", label: "Next week", at: at((8 - now.getDay()) % 7 || 7, 9) },
+	];
+}
+const when = (iso) => {
+	const d = new Date(iso), now = new Date();
+	const soon = d.getTime() - now.getTime() < 6 * 86400_000;
+	return d.toLocaleString([], soon ? { weekday: "short", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+};
+// Little buttons along an item's bottom edge, in this order: Open thread, Snooze, Direction, Dismiss. A secret and a card pointer are settled in
+// their own thread, so they get only the thread link and Snooze.
+function actionsHtml(i, settles) {
+	const link = threadHref(i) ? `<a class="mini" href="${esc(threadHref(i))}">Open thread</a>` : "";
+	const open = S.panel[i.id] === "snooze";
+	const choices = open ? `<div class="snooze-panel" role="group" aria-label="Snooze until">
+		${snoozeChoices(new Date()).map((c) => `<button type="button" class="mini" data-snooze="${c.id}" title="${esc(when(c.at.toISOString()))}">${c.label}</button>`).join("")}
+		<label class="custom">Custom <input type="datetime-local" id="snooze-custom" aria-label="Snooze until a time of your own"></label><button type="button" class="mini" data-act="snooze-custom">Set</button></div>` : "";
+	return `<div class="item-actions" role="group" aria-label="More ways to handle this">${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button><button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>` : ""}</div>${choices}`;
+}
+function snoozedHtml() {
+	if (!S.snoozed.length) return "";
+	const row = (i) => `<div class="srow" data-snoozed="${esc(i.id)}"><span class="body"><span class="title">${esc(i.title)}</span><span class="meta"><span>${esc(i.thread)}</span><span>returns ${esc(when(i.snooze.until))}</span></span></span>
+		<span class="sact">${threadHref(i) ? `<a class="mini" href="${esc(threadHref(i))}">Open thread</a>` : ""}<button type="button" class="mini" data-act="unsnooze" data-id="${esc(i.id)}">Un-snooze</button></span></div>`;
+	return `<div class="snoozed"><button type="button" class="group snoozed-head" data-act="toggle-snoozed" aria-expanded="${S.snoozedOpen}"><span class="dot"></span>SNOOZED · ${S.snoozed.length}<span class="caret" aria-hidden="true">${S.snoozedOpen ? "▾" : "▸"}</span></button>${S.snoozedOpen ? S.snoozed.map(row).join("") : ""}</div>`;
 }
 
 function evidenceHtml(i) {
@@ -186,7 +233,8 @@ function detailHtml() {
 	const v = visible();
 	if (!i) return `<section class="detail" aria-label="Selected decision"><div class="empty">Pick a decision on the left.</div></section>`;
 	const kind = KINDS.find((k) => k.kind === i.kind);
-	const link = threadHref(i) ? `<a class="open" href="${esc(threadHref(i))}">Open thread</a>` : `<span class="open">${esc(i.server)} · ${esc(i.threadId || "")}</span>`;
+	// The thread link lives in the row of buttons along the bottom (actionsHtml); with no link, the crumbs say where the thread is.
+	const link = threadHref(i) ? "" : `<span class="open">${esc(i.server)} · ${esc(i.threadId || "")}</span>`;
 	const pos = S.done + S.sel + 1, total = S.total || v.length;
 	const mtop = `<div class="mtop"><a href="/" data-nav="/" aria-label="Back to decisions">${ICON.back}</a><span class="pos">${S.sel + 1} of ${v.length}</span><div class="bar" aria-hidden="true">${Array.from({ length: Math.min(total, 12) }, (_, k) => `<span class="${k < S.done ? "done" : k === pos - 1 ? "here" : ""}"></span>`).join("")}</div></div>`;
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
@@ -197,6 +245,7 @@ function detailHtml() {
 			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
 			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
+			${actionsHtml(i, false)}
 		</section>`;
 	}
 	if (i.secret) {
@@ -204,6 +253,7 @@ function detailHtml() {
 			<div class="secret"><b>This needs a secret.</b>${i.secretRequest === "ended" ? `<span class="expired">Request expired. Its secret box is closed: ask the thread to reopen it.</span>` : `<span>Enter it in its own thread. This page never takes a secret value, and the Steward never sees one.</span>`}
 			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
+			${actionsHtml(i, false)}
 		</section>`;
 	}
 	const pick = defaultPick(i);
@@ -217,6 +267,7 @@ function detailHtml() {
 		${doesHtml(i)}
 		<div class="buttons"><button type="button" class="btn-answer" data-act="answer" ${S.busy ? "disabled" : ""}>Answer${sl ? ` ${esc(sl)}` : ""} <span class="kbd">Enter</span></button>
 			<button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
+		${actionsHtml(i, true)}
 	</section>
 	<footer class="mbar i-mbar"><button type="button" class="btn-ghost" data-act="not-now">Not now</button><button type="button" class="btn-answer" data-act="answer" ${S.busy ? "disabled" : ""}>Answer${sl ? ` ${esc(sl)}` : ""}</button></footer>`;
 }
@@ -245,6 +296,50 @@ async function answerCurrent() {
 		const next = current();
 		if (onItem) go(next ? `/item/${next.id}` : "/", true);
 	} catch (e) { S.busy = false; toast(e.message, true); render(); }
+}
+// Direction, Dismiss and Snooze each leave the queue the way an answer does. On a phone the item screen goes on to the next one.
+async function afterSettle(onItem) {
+	S.busy = false;
+	await load();
+	const next = current();
+	if (onItem) go(next ? `/item/${next.id}` : "/", true);
+}
+// Direction sends the note with no option chosen, so the note is required. Dismiss sends it if there is one. Neither is an answer to the question.
+async function settleCurrent(kind) {
+	const i = current();
+	if (!i || i.secret || i.cardRequest || S.busy) return;
+	const note = (S.note[i.id] || "").trim();
+	if (kind === "direction" && !note) { toast("Write your direction in the note first. It goes to the Steward with no option chosen.", true); document.getElementById("note")?.focus(); return; }
+	if (kind === "dismiss" && !confirm(`Dismiss “${i.title}”? It leaves the queue and its hold closes. This is not an answer: nothing is settled.`)) return;
+	S.busy = true; render();
+	try {
+		await api(`/api/items/${encodeURIComponent(i.id)}/${kind}`, { note: note || undefined });
+		delete S.note[i.id];
+		S.done++;
+		toast(kind === "direction" ? `Direction sent on “${i.title}”. The Steward reads your note; no option was chosen.` : `Dismissed “${i.title}”. It is off the queue and nothing was answered.`);
+		await afterSettle(S.route === "item");
+	} catch (e) { S.busy = false; toast(e.message, true); render(); }
+}
+async function snoozeCurrent(at) {
+	const i = current();
+	if (!i || S.busy) return;
+	S.busy = true; render();
+	try {
+		const r = await api(`/api/items/${encodeURIComponent(i.id)}/snooze`, { until: at.toISOString() });
+		delete S.panel[i.id];
+		toast(`Snoozed “${i.title}” until ${when(r.until)}. It comes back by itself.`);
+		await afterSettle(S.route === "item");
+	} catch (e) { S.busy = false; toast(e.message, true); render(); }
+}
+// A custom time is read in this browser's own time zone; the server checks it is ahead of now and within a year.
+function snoozeCustom() {
+	const v = document.getElementById("snooze-custom")?.value;
+	const at = v ? new Date(v) : undefined;
+	if (!at || Number.isNaN(at.getTime())) { toast("Pick a date and time first.", true); return; }
+	snoozeCurrent(at);
+}
+async function unsnooze(id) {
+	try { await api(`/api/items/${encodeURIComponent(id)}/unsnooze`, {}); toast("Back on the active list."); await load(); } catch (e) { toast(e.message, true); }
 }
 async function notNow() {
 	const i = current();
@@ -385,7 +480,7 @@ function render() { if (S.route === "rulings") renderRulings(); else renderQueue
 
 // ---- events ----
 app.addEventListener("click", (ev) => {
-	const t = ev.target.closest("[data-nav],[data-sel],[data-filter],[data-act],[data-rfilter],[data-rsel],[data-ract],[data-cact]");
+	const t = ev.target.closest("[data-nav],[data-sel],[data-filter],[data-act],[data-rfilter],[data-rsel],[data-ract],[data-cact],[data-snooze]");
 	if (!t) return;
 	if (t.dataset.nav) { ev.preventDefault(); go(t.dataset.nav); return; }
 	if (t.dataset.sel !== undefined) {
@@ -400,8 +495,14 @@ app.addEventListener("click", (ev) => {
 	if (t.dataset.rsel !== undefined) { S.rsel = Number(t.dataset.rsel); render(); if (matchMedia("(max-width: 760px)").matches) document.querySelector(".raside")?.scrollIntoView({ behavior: "smooth" }); return; }
 	if (t.dataset.ract) { rulingAct(t.dataset.ract); return; }
 	if (t.dataset.cact) { cardAct(t.dataset.cact, t.dataset.cid); return; }
+	if (t.dataset.snooze) { const c = snoozeChoices(new Date()).find((x) => x.id === t.dataset.snooze); if (c) snoozeCurrent(c.at); return; }
 	const a = t.dataset.act;
 	if (a === "answer") answerCurrent();
+	else if (a === "direction" || a === "dismiss") settleCurrent(a);
+	else if (a === "snooze-panel") { const i = current(); if (i) { S.panel[i.id] = S.panel[i.id] === "snooze" ? undefined : "snooze"; render(); } }
+	else if (a === "snooze-custom") snoozeCustom();
+	else if (a === "toggle-snoozed") { S.snoozedOpen = !S.snoozedOpen; render(); }
+	else if (a === "unsnooze") unsnooze(t.dataset.id);
 	else if (a === "not-now") notNow();
 	else if (a === "accept-all") acceptAll();
 	else if (a === "edit-wording") { const i = current(); S.editing[i.id] = true; render(); document.getElementById("wording")?.focus(); }

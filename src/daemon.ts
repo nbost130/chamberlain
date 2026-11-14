@@ -6,6 +6,7 @@
  */
 
 import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
+import { postQuestion } from "./ask.ts";
 import { CONF, STATE, selfArgv } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { createEngine } from "./core/engine.ts";
@@ -104,6 +105,8 @@ function engineDeps(
 		stewardTokens: setting("stewardTokens", CONF) === true,
 		exclude: setting("exclude", CONF) ?? [],
 		log,
+		// A snoozed urgent question that returns is shown where the operator reads, in the pinned view like a new one (ask.ts).
+		post: postQuestion,
 		sweepPromptFile: SWEEP_PROMPT_FILE,
 		// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).
 		gh: ghRead,
