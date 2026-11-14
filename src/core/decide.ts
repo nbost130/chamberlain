@@ -1,8 +1,8 @@
-import { principal, principalPoss } from "./config.ts";
 import type { ThreadState, WakeKind } from "./adapter.ts";
+import { principalPoss } from "./config.ts";
 
 /** Pure rules: which thread transitions are worth waking the Steward for. They read the normalized ThreadState (adapter.ts). */
-export type { ThreadState, WakeKind, WaitQuestion } from "./adapter.ts";
+export type { ThreadState } from "./adapter.ts";
 export type Candidate = { kind: WakeKind; thread: ThreadState; key: string };
 
 export const LIVE = new Set(["running", "queued", "starting", "preparing", "waiting"]);
@@ -13,7 +13,7 @@ const ENDED = new Set(["completed", "idle", "interrupted"]);
  * and a key of thread and previous status alone swallowed the second one (2026-11-13). A backend that names no run keeps the
  * old key, which is the best it can do.
  */
-export const failureKey = (next: ThreadState, prev: ThreadState): string =>
+const failureKey = (next: ThreadState, prev: ThreadState): string =>
 	next.latestRunId ? `${next.id}:failed:${next.latestRunId}:${prev.status}` : `${next.id}:failed:${prev.status}`;
 
 /** Transitions worth a wake. `prev` undefined means first sighting: nothing fires. */
@@ -192,7 +192,7 @@ export function principalWroteWithin(items: TurnItem[], now: number, windowMs: n
 	return last?.createdBy === "user" && now - Date.parse(last.updatedAt ?? "") < windowMs;
 }
 
-export const REPORT_WAKES_MAX = 3;
+const REPORT_WAKES_MAX = 3;
 /**
  * Pure: the report wake these items may use, when their latest instruction came from the Steward. A machine's turn
  * spends none of the three, but it can carry the real final report, so it gets one wake of its own per instruction.

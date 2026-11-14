@@ -79,7 +79,7 @@ export type Observation = {
 export type Observed = { item: Item; created: boolean; reopened: boolean; notify: boolean; wouldNotify: boolean };
 export type ItemFilter = { source?: string; kind?: string; status?: ItemStatus | ItemStatus[]; subject?: Subject };
 
-export interface ItemStore {
+interface ItemStore {
 	/**
 	 * Reports that an item exists now: creates it, refreshes `last_seen`, reopens a resolved one as a new occurrence, and
 	 * asks the one notification function (`decideNotification` in notification.ts) whether it notifies. This is the only
@@ -121,7 +121,7 @@ export type RelayRecord = {
 };
 export type EvidenceRow = { type: "image" | "video" | "link"; name?: string; url?: string; caption?: string };
 
-export interface ClaimStore {
+interface ClaimStore {
 	/**
 	 * Takes an item's one wake: inserts the claim in one transaction. The first claim wins,
 	 * enforced by a unique constraint, across processes; every later claimant gets the winner's claim back.
@@ -139,7 +139,7 @@ export interface ClaimStore {
 	listRelays(source: string): Map<string, RelayRecord>;
 }
 
-export interface EvidenceStore {
+interface EvidenceStore {
 	put(source: string, item: string, rows: EvidenceRow[]): void;
 	list(source: string, item: string): EvidenceRow[];
 	/** Every item's evidence rows, by item key. */
@@ -148,7 +148,7 @@ export interface EvidenceStore {
 
 // ---- rulings, decisions, butlers, the away record -----------------------------------------------
 
-export interface RulingStore {
+interface RulingStore {
 	list(): Ruling[];
 	/** Inserts or replaces one ruling by id. */
 	save(r: Ruling): void;
@@ -161,11 +161,11 @@ export type DecisionRow = {
 	rulingIds?: string[];
 	ref: string | null;
 };
-export interface DecisionStore {
+interface DecisionStore {
 	append(d: DecisionRow): void;
 	list(): DecisionRow[];
 }
-export interface ButlerStore {
+interface ButlerStore {
 	list(): Butler[];
 	get(id: string): Butler | undefined;
 	/** False when the id is already in the ledger. */
@@ -174,7 +174,7 @@ export interface ButlerStore {
 	stop(id: string, stopped: string, reason?: string): boolean;
 }
 export type AwayRecord = { enteredAt: string; words: string; expectedReturn?: string; spendNote?: string };
-export interface AwayStore {
+interface AwayStore {
 	current(): AwayRecord | undefined;
 	/** Starts an absence, replacing a current one. */
 	enter(a: AwayRecord): void;
@@ -253,7 +253,7 @@ export type OutboxRow = {
 /** A digest (or a lone held wake) as composed, ready to be frozen into a row with the held items it carries. */
 export type Composed = { deliveryId: string; message: string; folded: number; members: string[] } & Partial<WakeMeta>;
 
-export interface WakeStore {
+interface WakeStore {
 	/**
 	 * A producer's wake for now: inserts a pending outbox row, with its own id bound as its one member, in the caller's transaction. False
 	 * (nothing written) when the id is already known: bound to any row, whatever its status (so a delivered or cancelled wake is never
@@ -303,7 +303,7 @@ export type Challenge = {
 	expiresAt: number;
 };
 export type ChallengeVerdict = "ok" | "unknown" | "expired" | "used" | "mismatch";
-export interface ChallengeStore {
+interface ChallengeStore {
 	/** Records a new challenge, and deletes this session's earlier unconsumed ones for the same card (one live challenge per card and session). */
 	issue(c: Challenge): void;
 	/**
@@ -349,7 +349,7 @@ export type Disposition = DispositionKey & {
 	correctedAction: Exclude<DispositionAction, "unknown"> | null;
 };
 export type DispositionWrite = Omit<Disposition, "feedback" | "correctedAction">;
-export interface DispositionStore {
+interface DispositionStore {
 	get(k: DispositionKey): Disposition | undefined;
 	/** Writes one classification attempt: a new row, or the row for its key replaced, keeping any feedback it had. */
 	put(d: DispositionWrite): void;
@@ -376,7 +376,7 @@ export interface DispositionStore {
 /** One line of the daemon's log: `t` and `event` and, when set, `src`, then whatever fields the event carried. */
 export type LogEvent = { t: string; event: string; src?: string } & Record<string, unknown>;
 export type EventQuery = { since?: string; until?: string; events?: string[]; src?: string; limit?: number };
-export interface EventStore {
+interface EventStore {
 	append(e: LogEvent, importKey?: string): void;
 	/** Oldest first. */
 	query(q?: EventQuery): LogEvent[];
@@ -384,7 +384,7 @@ export interface EventStore {
 	prune(before: string): number;
 }
 
-export interface StateStore {
+interface StateStore {
 	get<T = unknown>(key: string): T | undefined;
 	set(key: string, value: unknown): void;
 	delete(key: string): void;
@@ -397,7 +397,7 @@ export interface StateStore {
  * greater than every value any process took before it. It orders events without the wall clock: a card hold records a value
  * when it is written, and a read taken with a greater value started after that hold was committed.
  */
-export interface SequenceStore {
+interface SequenceStore {
 	next(): number;
 	/** The newest value taken (0 before any). */
 	current(): number;
@@ -432,7 +432,7 @@ export type WakeUsage = {
 	/** Compactions inside the segment (`compact_boundary` rows). */
 	compactions: number;
 };
-export interface UsageStore {
+interface UsageStore {
 	/** Inserts or replaces each row by (session, wake key), in one transaction. A rerun over the same transcript writes the same rows. */
 	upsert(rows: WakeUsage[]): void;
 	/** Rows started at or after `since`, of one session if given, oldest first. */

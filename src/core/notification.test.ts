@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
 	decideNotification,
-	repeatAtIntervals,
 	NOTIFY_ONCE,
-	repeatEvery,
 	type NotificationState,
+	repeatAtIntervals,
+	repeatEvery,
 } from "./notification.ts";
 
 const fresh = (o: Partial<NotificationState> = {}): NotificationState => ({

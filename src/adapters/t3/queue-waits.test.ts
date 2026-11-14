@@ -1,9 +1,19 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../../testing/store.ts";
-import { analyze, format, fromDeliveryId, pct, readRuns, stat, wakesFrom, type Delivered } from "./queue-waits.ts";
+import {
+	analyze,
+	type Delivered,
+	format,
+	fromDeliveryId,
+	pct,
+	readRuns,
+	stat,
+	type Wake,
+	wakesFrom,
+} from "./queue-waits.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -125,7 +135,7 @@ describe("analyze over a small fixture", () => {
 		// An answer wake with no creation time anywhere.
 		delivered(400, "answer:item:Q-1"),
 		// A post that no run answers.
-		delivered(500, "D:ended:x:" + at(490), { queuedAt: at(490), kind: "turn_ended", thread: "D" }),
+		delivered(500, `D:ended:x:${at(490)}`, { queuedAt: at(490), kind: "turn_ended", thread: "D" }),
 	];
 	test("waits, turn lengths, the worst waits, and what could not be measured", () => {
 		const { path, run, db } = fixtureDb();
@@ -206,5 +216,116 @@ describe("read-only", () => {
 		expect(() => ro.run("delete from orchestration_v2_projection_runs")).toThrow();
 		ro.close();
 		expect(readRuns(path, "steward", 0)).toEqual([]);
+	});
+});
+
+describe("analyze: the notes and counts, pinned", () => {
+	const w = (deliveryId: string, postedAt: number, extra: Partial<Wake> = {}): Wake => ({
+		deliveryId,
+		kind: "k",
+		postedAt,
+		...extra,
+	});
+	const closing =
+		"Runs are matched to wakes by time only (T3's run table does not name the wake): a run requested within 20s before the post was logged.";
+
+	test("plural wording, every count, and the wait statistics of a mixed window", () => {
+		const wakes = [
+			w("a", 100_000),
+			w("b", 200_000),
+			w("c", 300_000, { createdAt: 1, createdFrom: "delivery-id" }),
+			w("d", 400_000, { createdAt: 2, createdFrom: "delivery-id" }),
+			w("e", 500_000, { createdAt: 3, createdFrom: "recorded" }),
+			w("f", 600_000, { createdAt: 4, createdFrom: "recorded" }),
+		];
+		const runs = [
+			{ runId: "r1", requestedAt: 99_900 },
+			{ runId: "r2", requestedAt: 199_900 },
+			{ runId: "r3", requestedAt: 299_900, startedAt: 300_000 },
+			{ runId: "r4", requestedAt: 399_900, startedAt: 400_000 },
+			{ runId: "r5", requestedAt: 499_900 },
+		];
+		const r = analyze(wakes, runs, 24, 700_000);
+		expect(r.wakes).toEqual({
+			posted: 6,
+			matched: 5,
+			unmatched: 1,
+			noCreationTime: 2,
+			createdFromId: 2,
+			notStarted: 3,
+		});
+		expect(r.totalWait).toEqual({ n: 2, p50: 299_999, p90: 399_998, max: 399_998 });
+		expect(r.heldWait).toEqual({ n: 2, p50: 299_899, p90: 399_898, max: 399_898 });
+		expect(r.t3Wait).toEqual({ n: 2, p50: 100, p90: 100, max: 100 });
+		expect(r.turns).toBeUndefined();
+		expect(r.worst.map((x) => [x.deliveryId, x.createdAt, x.waitMs])).toEqual([
+			["d", 2, 399_998],
+			["c", 1, 299_999],
+		]);
+		expect(r.notes).toEqual([
+			"2 wakes have no creation time in the log (answer wakes logged before queuedAt was recorded), so their total and held waits are not measured; their T3 queue wait is.",
+			"2 wakes took their creation time from the millisecond in their delivery ID, as no queuedAt was recorded.",
+			"1 wake matched no Steward run (still queued, a different thread, or the run is outside the window); not counted in any wait.",
+			"3 matched runs had not started yet; not counted in any wait.",
+			closing,
+		]);
+	});
+
+	test("singular wording", () => {
+		const r = analyze(
+			[w("a", 100_000, { createdAt: 1, createdFrom: "delivery-id" })],
+			[{ runId: "r1", requestedAt: 99_900 }],
+			1,
+			700_000,
+		);
+		expect(r.notes).toEqual([
+			"1 wake took their creation time from the millisecond in their delivery ID, as no queuedAt was recorded.",
+			"1 matched run had not started yet; not counted in any wait.",
+			closing,
+		]);
+	});
+
+	test("a post matches only an unclaimed run requested within 20s before it or 2s after it", () => {
+		const wakes = [
+			w("a", 100_000, { createdAt: 0 }),
+			w("b", 100_000, { createdAt: 0 }),
+			w("c", 200_000, { createdAt: 0 }),
+		];
+		const runs = [
+			{ runId: "early", requestedAt: 79_999, startedAt: 80_000 }, // 20.001s before: too early
+			{ runId: "edge", requestedAt: 80_000, startedAt: 80_500 }, // exactly 20s before: matches the post at 100s
+			{ runId: "late", requestedAt: 202_000, startedAt: 203_000 }, // exactly 2s after: matches the post at 200s
+		];
+		const r = analyze(wakes, runs, 24, 300_000);
+		// a and b share one post, so they share one run: three wakes matched through two runs.
+		expect(r.wakes).toMatchObject({ posted: 3, matched: 3, unmatched: 0 });
+		expect(r.t3Wait).toEqual({ n: 3, p50: 500, p90: 1_000, max: 1_000 });
+		expect(r.turns).toBeUndefined();
+	});
+
+	test("turn length counts every Steward run with a start and a completion, and drops one that ends before it starts", () => {
+		const r = analyze(
+			[],
+			[
+				{ runId: "a", requestedAt: 0, startedAt: 1_000, completedAt: 4_000 },
+				{ runId: "b", requestedAt: 0, startedAt: 5_000, completedAt: 4_000 },
+				{ runId: "c", requestedAt: 0, startedAt: 1_000 },
+			],
+			24,
+			10_000,
+		);
+		expect(r.turns).toEqual({ n: 1, p50: 3_000, p90: 3_000, max: 3_000 });
+	});
+});
+
+describe("format: durations", () => {
+	test("seconds under 10 keep a decimal, then whole seconds, minutes from 90s, hours from 90 minutes", () => {
+		const s = (ms: number) => ({ n: 1, p50: ms, p90: ms, max: ms });
+		const out = (ms: number) => format({ ...analyze([], [], 24, 0), totalWait: s(ms) }).split("\n")[3];
+		expect(out(9_999)).toContain("p50 10.0s");
+		expect(out(10_000)).toContain("p50 10s");
+		expect(out(89_999)).toContain("p50 90s");
+		expect(out(90_000)).toContain("p50 1.5m");
+		expect(out(90 * 60_000)).toContain("p50 1.5h");
 	});
 });

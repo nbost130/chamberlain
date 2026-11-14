@@ -6,14 +6,15 @@
  * - relay path: the real src/daemon.ts sends a row a producer wrote, and dies at each of the relay's steps.
  * Every child runs with HOME, CHAMBERLAIN_CONF and CHAMBERLAIN_STATE in a scratch directory, and wakes go to a local webhook.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ensureToken } from "./core/capability.ts";
 import { CRASH_STEPS } from "./core/crash.ts";
 import { withDeliveryId } from "./core/deliver.ts";
-import { askQuestion, getQuestion, readClaim, type Question } from "./core/questions.ts";
+import { askQuestion, getQuestion, type Question, readClaim } from "./core/questions.ts";
 import { LEGACY_STAMP } from "./core/rights-sent.ts";
 import { readRulings } from "./core/rulings.ts";
 import { openStore } from "./core/sqlite-store.ts";
@@ -206,7 +207,13 @@ describe("page path: the real queue server dies answering a real request, and th
 		const host = `127.0.0.1:${w.port}`;
 		const r = await fetch(`http://${host}/api/items/${ID}/answer`, {
 			method: "POST",
-			headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
+			headers: {
+				host,
+				"content-type": "application/json",
+				"x-decision-queue": "1",
+				"x-decision-token": w.key,
+				origin: `http://${host}`,
+			},
 			body: JSON.stringify(body),
 		}).then(
 			(x) => x.status,
@@ -223,7 +230,13 @@ describe("page path: the real queue server dies answering a real request, and th
 		const host = `127.0.0.1:${w.port}`;
 		const status = await fetch(`http://${host}/api/items/${ID}/answer`, {
 			method: "POST",
-			headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
+			headers: {
+				host,
+				"content-type": "application/json",
+				"x-decision-queue": "1",
+				"x-decision-token": w.key,
+				origin: `http://${host}`,
+			},
 			body: JSON.stringify({ choice }),
 		}).then((x) => x.status);
 		p.kill();
@@ -681,7 +694,13 @@ describe("an answer is never held: the real page writes it and the real daemon s
 			const host = `127.0.0.1:${w.port}`;
 			const r = await fetch(`http://${host}/api/items/${ID}/answer`, {
 				method: "POST",
-				headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
+				headers: {
+					host,
+					"content-type": "application/json",
+					"x-decision-queue": "1",
+					"x-decision-token": w.key,
+					origin: `http://${host}`,
+				},
 				body: JSON.stringify({ choice: 0 }),
 			});
 			expect(r.status).toBe(200);

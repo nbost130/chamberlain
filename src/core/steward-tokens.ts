@@ -28,7 +28,7 @@ const WAKE_HEADER = /(?:^|<webhook-data-[0-9a-f]+>)\[(?:chamberlain|t3-wake)\] (
  * The wake kinds Chamberlain (and t3-wake before it) has sent. A header naming any other word is stored as `wake`: the kind is a fixed
  * vocabulary, so no word of a transcript ever reaches the database or a report.
  */
-export const WAKE_KINDS = [
+const WAKE_KINDS = [
 	"turn_ended",
 	"needs_input",
 	"failed",
@@ -59,6 +59,23 @@ const NOTICES = [/^Update on pull request #\d+/, /^Delegated task /];
 
 export type Prompt = { kind: string; variant?: string; deliveryId?: string };
 
+/** The compact command, as the first thing in a prompt. */
+const isCompactCommand = (t: string): boolean =>
+	/^<command-name>\/compact<\/command-name>/.test(t) || /<command-name>\/compact<\/command-name>/.test(t.slice(0, 200));
+
+/** A wake: its kind (a word outside the fixed vocabulary is `wake`), a sweep's variant, and its delivery id when it carries one. */
+function wakePrompt(text: string, t: string, word: string): Prompt {
+	const kind = (WAKE_KINDS as readonly string[]).includes(word) ? word : "wake";
+	const id = text.match(DELIVERY_ID)?.[1];
+	const variant =
+		kind === "sweep"
+			? /time for a full supervision sweep/.test(t.slice(0, HEADER_WITHIN))
+				? "full"
+				: "findings"
+			: undefined;
+	return { kind, ...(variant ? { variant } : {}), ...(id ? { deliveryId: id } : {}) };
+}
+
 /**
  * What a turn-starting prompt is: a wake of some kind, `start`, `compact`, `notice` or `message`, or undefined when it continues the segment in
  * progress. Pure: the text is read here and never kept.
@@ -66,40 +83,41 @@ export type Prompt = { kind: string; variant?: string; deliveryId?: string };
 export function classifyPrompt(text: string): Prompt | undefined {
 	const t = text.trimStart();
 	if (!t || CONTINUATIONS.some((r) => r.test(t))) return undefined;
-	if (
-		/^<command-name>\/compact<\/command-name>/.test(t) ||
-		/<command-name>\/compact<\/command-name>/.test(t.slice(0, 200))
-	)
-		return { kind: "compact" };
+	if (isCompactCommand(t)) return { kind: "compact" };
 	const head = t.slice(0, HEADER_WITHIN).match(WAKE_HEADER);
-	if (head) {
-		const kind = (WAKE_KINDS as readonly string[]).includes(head[1]!) ? head[1]! : "wake";
-		const id = text.match(DELIVERY_ID)?.[1];
-		const variant =
-			kind === "sweep"
-				? /time for a full supervision sweep/.test(t.slice(0, HEADER_WITHIN))
-					? "full"
-					: "findings"
-				: undefined;
-		return { kind, ...(variant ? { variant } : {}), ...(id ? { deliveryId: id } : {}) };
-	}
+	if (head) return wakePrompt(text, t, head[1] ?? "");
 	if (/^You are the new Steward\b/.test(t)) return { kind: "start" };
 	if (NOTICES.some((r) => r.test(t))) return { kind: "notice" };
 	return { kind: "message" };
 }
 
+/** One transcript row, as far as this file reads it. Rows come from JSON, so every field may be missing or odd. */
+type Row = {
+	isSidechain?: unknown;
+	isMeta?: unknown;
+	isCompactSummary?: unknown;
+	toolUseResult?: unknown;
+	type?: string;
+	subtype?: string;
+	uuid?: unknown;
+	parentUuid?: unknown;
+	requestId?: unknown;
+	timestamp?: unknown;
+	message?: { id?: unknown; model?: unknown; usage?: Record<string, unknown>; content?: unknown };
+};
+type ContentBlock = { type?: unknown; text?: unknown } | null | undefined;
+
 /** The text of a user row's prompt, or undefined when the row is not a prompt (a tool result, a meta row, a compaction summary). */
-function promptText(r: any): string | undefined {
+function promptText(r: Row): string | undefined {
 	if (r.isMeta || r.isCompactSummary || r.toolUseResult !== undefined) return undefined;
 	const c = r.message?.content;
 	if (typeof c === "string") return c;
-	if (!Array.isArray(c) || c.some((b: any) => b?.type === "tool_result")) return undefined;
-	const text = c
-		.filter((b: any) => b?.type === "text" && typeof b.text === "string")
-		.map((b: any) => b.text)
-		.join("\n");
+	if (!Array.isArray(c)) return undefined;
+	const blocks = c as ContentBlock[];
+	if (blocks.some((b) => b?.type === "tool_result")) return undefined;
+	const text = blocks.flatMap((b) => (b?.type === "text" && typeof b.text === "string" ? [b.text] : [])).join("\n");
 	// An image with no words is still the principal speaking.
-	return text || (c.some((b: any) => b?.type === "image") ? "[image]" : undefined);
+	return text || (blocks.some((b) => b?.type === "image") ? "[image]" : undefined);
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
@@ -116,6 +134,131 @@ type Open = Omit<
 	calls: Map<string, Call>;
 };
 
+/** What `segmentTranscript` carries from row to row. */
+type Segmenter = {
+	session: string;
+	out: Open[];
+	seenKeys: Map<string, number>;
+	/** The segment a model request started in, by request id: its later rows stay with it. */
+	owner: Map<string, Open>;
+	/**
+	 * The segment each row belongs to, by its uuid. A row belongs to its parent row's segment (Claude Code links every row to the one before
+	 * it in the conversation), so a prompt written while an earlier request is still running takes none of that request's rows. A row whose
+	 * parent is unknown falls back to the latest prompt.
+	 */
+	rowSeg: Map<string, Open>;
+	cur: Open | undefined;
+};
+
+const parentSeg = (sg: Segmenter, r: Row): Open | undefined =>
+	(r.parentUuid ? sg.rowSeg.get(String(r.parentUuid)) : undefined) ?? sg.cur;
+
+const markRow = (sg: Segmenter, r: Row, seg: Open | undefined) => {
+	if (seg && r.uuid) sg.rowSeg.set(String(r.uuid), seg);
+};
+
+function openSegment(sg: Segmenter, key: string, p: Prompt, at: number | undefined): Open {
+	const n = (sg.seenKeys.get(key) ?? 0) + 1;
+	sg.seenKeys.set(key, n);
+	const seg: Open = {
+		session: sg.session,
+		wakeKey: n === 1 ? key : `${key}#${n}`,
+		kind: p.kind,
+		...(p.variant ? { variant: p.variant } : {}),
+		...(p.deliveryId ? { deliveryId: p.deliveryId } : {}),
+		startedAt: at ?? 0,
+		endedAt: at ?? 0,
+		compactions: 0,
+		calls: new Map(),
+	};
+	sg.out.push(seg);
+	return seg;
+}
+
+/** A user row starts a segment when it is a turn-starting prompt; any other user row belongs to its parent's segment. */
+function scanUser(sg: Segmenter, r: Row, at: number | undefined) {
+	const text = promptText(r);
+	const p = text === undefined ? undefined : classifyPrompt(text);
+	if (p) {
+		sg.cur = openSegment(sg, p.deliveryId ?? `uuid:${r.uuid ?? sg.out.length}`, p, at);
+		markRow(sg, r, sg.cur);
+	} else markRow(sg, r, parentSeg(sg, r));
+}
+
+/** One model request's usage: the four fields, and the context size they make up. */
+function callOf(u: Record<string, unknown>): Call {
+	const input = num(u.input_tokens),
+		cacheRead = num(u.cache_read_input_tokens),
+		cacheCreation = num(u.cache_creation_input_tokens);
+	return { input, cacheRead, cacheCreation, output: num(u.output_tokens), context: input + cacheRead + cacheCreation };
+}
+
+/** An assistant row: a counted model request goes to the segment it started in, or else to its parent row's. */
+function scanAssistant(sg: Segmenter, r: Row, at: number | undefined) {
+	const u = r.message?.usage;
+	const id = String(r.message?.id ?? r.requestId ?? r.uuid ?? "");
+	// A request continued across rows stays with the segment it started in; a new one goes to its parent row's segment.
+	const found = (id ? sg.owner.get(id) : undefined) ?? parentSeg(sg, r);
+	markRow(sg, r, found);
+	if (!u || !id || r.message?.model === "<synthetic>") return;
+	let seg = found;
+	if (!seg) {
+		seg = openSegment(sg, "preamble", { kind: "preamble" }, at);
+		sg.cur = seg;
+	}
+	markRow(sg, r, seg);
+	sg.owner.set(id, seg);
+	// A later row of the same request replaces its usage but keeps its place: the map's order is the order the requests started.
+	seg.calls.set(id, callOf(u));
+	if (at !== undefined) {
+		if (!seg.startedAt) seg.startedAt = at;
+		seg.endedAt = Math.max(seg.endedAt, at);
+	}
+}
+
+/** Folds one transcript line into the segments. */
+function scanSegmentLine(sg: Segmenter, line: string) {
+	if (!line.trim()) return;
+	let r: Row;
+	try {
+		r = JSON.parse(line);
+	} catch {
+		return;
+	}
+	if (r.isSidechain) return;
+	const at = ms(r.timestamp);
+	if (r.type === "user") scanUser(sg, r, at);
+	else if (r.type === "system" && r.subtype === "compact_boundary") {
+		const seg = parentSeg(sg, r);
+		if (seg) seg.compactions++;
+		markRow(sg, r, seg);
+	} else if (r.type === "assistant") scanAssistant(sg, r, at);
+	else markRow(sg, r, parentSeg(sg, r));
+}
+
+/** A segment's requests summed, with the context size at its first, last and largest request. */
+function finishSegment({ calls, ...s }: Open): WakeUsage {
+	const list = [...calls.values()];
+	const sum = (f: (c: Call) => number) => list.reduce((a, c) => a + f(c), 0);
+	const first = list[0];
+	const last = list.at(-1);
+	return {
+		...s,
+		requests: list.length,
+		inputTokens: sum((c) => c.input),
+		cacheReadInputTokens: sum((c) => c.cacheRead),
+		cacheCreationInputTokens: sum((c) => c.cacheCreation),
+		outputTokens: sum((c) => c.output),
+		...(first && last
+			? {
+					contextStart: first.context,
+					contextEnd: last.context,
+					contextPeak: Math.max(...list.map((c) => c.context)),
+				}
+			: {}),
+	};
+}
+
 /**
  * Splits one transcript into per-wake segments. Only canonical rows count: sidechains (subagents) and API request snapshots are skipped, and
  * a model request written as several rows (one per content block, the same `message.id`) counts once, with its last usage. A synthetic
@@ -125,110 +268,16 @@ export async function segmentTranscript(
 	lines: AsyncIterable<string> | Iterable<string>,
 	session: string,
 ): Promise<WakeUsage[]> {
-	const out: Open[] = [];
-	const seenKeys = new Map<string, number>();
-	const owner = new Map<string, Open>();
-	/**
-	 * The segment each row belongs to, by its uuid. A row belongs to its parent row's segment (Claude Code links every row to the one before
-	 * it in the conversation), so a prompt written while an earlier request is still running takes none of that request's rows. A row whose
-	 * parent is unknown falls back to the latest prompt.
-	 */
-	const rowSeg = new Map<string, Open>();
-	let cur: Open | undefined;
-	const parentSeg = (r: any): Open | undefined => (r.parentUuid ? rowSeg.get(String(r.parentUuid)) : undefined) ?? cur;
-	const mark = (r: any, seg: Open | undefined) => {
-		if (seg && r.uuid) rowSeg.set(String(r.uuid), seg);
+	const sg: Segmenter = {
+		session,
+		out: [],
+		seenKeys: new Map(),
+		owner: new Map(),
+		rowSeg: new Map(),
+		cur: undefined,
 	};
-	const open = (key: string, p: Prompt, at: number | undefined): Open => {
-		const n = (seenKeys.get(key) ?? 0) + 1;
-		seenKeys.set(key, n);
-		const seg: Open = {
-			session,
-			wakeKey: n === 1 ? key : `${key}#${n}`,
-			kind: p.kind,
-			...(p.variant ? { variant: p.variant } : {}),
-			...(p.deliveryId ? { deliveryId: p.deliveryId } : {}),
-			startedAt: at ?? 0,
-			endedAt: at ?? 0,
-			compactions: 0,
-			calls: new Map(),
-		};
-		out.push(seg);
-		return seg;
-	};
-	for await (const line of lines) {
-		if (!line.trim()) continue;
-		let r: any;
-		try {
-			r = JSON.parse(line);
-		} catch {
-			continue;
-		}
-		if (r.isSidechain) continue;
-		const at = ms(r.timestamp);
-		if (r.type === "user") {
-			const text = promptText(r);
-			const p = text === undefined ? undefined : classifyPrompt(text);
-			if (p) {
-				cur = open(p.deliveryId ?? `uuid:${r.uuid ?? out.length}`, p, at);
-				mark(r, cur);
-			} else mark(r, parentSeg(r));
-			continue;
-		}
-		if (r.type === "system" && r.subtype === "compact_boundary") {
-			const seg = parentSeg(r);
-			if (seg) seg.compactions++;
-			mark(r, seg);
-			continue;
-		}
-		if (r.type !== "assistant") {
-			mark(r, parentSeg(r));
-			continue;
-		}
-		const u = r.message?.usage;
-		const id = String(r.message?.id ?? r.requestId ?? r.uuid ?? "");
-		// A request continued across rows stays with the segment it started in; a new one goes to its parent row's segment.
-		const counted = Boolean(u && id && r.message?.model !== "<synthetic>");
-		const found = (id ? owner.get(id) : undefined) ?? parentSeg(r);
-		mark(r, found);
-		if (!counted) continue;
-		const seg = found ?? (cur = open("preamble", { kind: "preamble" }, at));
-		mark(r, seg);
-		owner.set(id, seg);
-		const call: Call = {
-			input: num(u.input_tokens),
-			cacheRead: num(u.cache_read_input_tokens),
-			cacheCreation: num(u.cache_creation_input_tokens),
-			output: num(u.output_tokens),
-			context: 0,
-		};
-		call.context = call.input + call.cacheRead + call.cacheCreation;
-		// A later row of the same request replaces its usage but keeps its place: the map's order is the order the requests started.
-		seg.calls.set(id, call);
-		if (at !== undefined) {
-			if (!seg.startedAt) seg.startedAt = at;
-			seg.endedAt = Math.max(seg.endedAt, at);
-		}
-	}
-	return out.map(({ calls, ...s }) => {
-		const list = [...calls.values()];
-		const sum = (f: (c: Call) => number) => list.reduce((a, c) => a + f(c), 0);
-		return {
-			...s,
-			requests: list.length,
-			inputTokens: sum((c) => c.input),
-			cacheReadInputTokens: sum((c) => c.cacheRead),
-			cacheCreationInputTokens: sum((c) => c.cacheCreation),
-			outputTokens: sum((c) => c.output),
-			...(list.length
-				? {
-						contextStart: list[0]!.context,
-						contextEnd: list.at(-1)!.context,
-						contextPeak: Math.max(...list.map((c) => c.context)),
-					}
-				: {}),
-		};
-	});
+	for await (const line of lines) scanSegmentLine(sg, line);
+	return sg.out.map(finishSegment);
 }
 
 /** Every token a segment processed: the four usage fields added. */
@@ -236,10 +285,10 @@ export const totalTokens = (w: WakeUsage): number =>
 	w.inputTokens + w.cacheReadInputTokens + w.cacheCreationInputTokens + w.outputTokens;
 
 /** Is this kind a wake Chamberlain sent (as opposed to the start prompt, a compaction, a notice or a message)? */
-export const isWake = (kind: string): boolean => !["start", "compact", "notice", "message", "preamble"].includes(kind);
+const isWake = (kind: string): boolean => !["start", "compact", "notice", "message", "preamble"].includes(kind);
 
 /** Reads and segments one transcript file. */
-export async function readTranscript(path: string, session = basename(path, ".jsonl")): Promise<WakeUsage[]> {
+async function readTranscript(path: string, session = basename(path, ".jsonl")): Promise<WakeUsage[]> {
 	const stream = createReadStream(path, "utf8");
 	const lines = createInterface({ input: stream, crlfDelay: Infinity });
 	try {
@@ -271,11 +320,12 @@ export async function findStewardTranscripts(dir: string): Promise<string[]> {
 /** The backfill's arguments: `--dir <folder>` and any transcript files named. */
 export function parseBackfillArgs(argv: string[]): { dir?: string; files: string[] } {
 	const at = argv.indexOf("--dir");
-	if (at >= 0 && !argv[at + 1]) throw Error("--dir needs a folder");
-	const files = argv.filter((a, i) => i !== at && !(at >= 0 && i === at + 1));
+	const dir = at >= 0 ? argv[at + 1] : undefined;
+	if (at >= 0 && !dir) throw Error("--dir needs a folder");
+	const files = argv.filter((_a, i) => i !== at && !(at >= 0 && i === at + 1));
 	const bad = files.find((f) => !f.endsWith(".jsonl"));
 	if (bad) throw Error(`not a transcript (.jsonl): ${bad}`);
-	return { ...(at >= 0 ? { dir: argv[at + 1]! } : {}), files };
+	return { ...(dir !== undefined ? { dir } : {}), files };
 }
 
 export type BackfillResult = { files: number; sessions: string[]; rows: number; wakes: number };
@@ -303,11 +353,44 @@ export const USAGE_INTERVAL_MS = 60 * 60_000;
 /** `retry`: transcripts of earlier Stewards whose last read failed, read again on the next run until one succeeds or the file is gone. */
 type UsageState = { at: string; path?: string; retry?: string[] };
 
+type UsageDeps = { store: Store; find: () => Promise<Transcript>; now?: () => number };
+
+/** Reads and stores one transcript. A failed read is reported, and an earlier transcript that is not gone is kept for the next run. */
+async function collectTranscript(
+	store: Store,
+	p: string,
+	t: Transcript,
+	out: { retry: string[]; failed: string[] },
+): Promise<void> {
+	try {
+		const segs = await readTranscript(p, p === t.path ? t.session : undefined);
+		if (segs.length) store.usage.upsert(segs);
+	} catch (e) {
+		out.failed.push(`${basename(p)}: ${String(e).slice(0, 120)}`);
+		// The current transcript is read again every run anyway; an earlier one is kept for the next run unless it is gone.
+		if (p !== t.path && (e as NodeJS.ErrnoException).code !== "ENOENT") out.retry.push(p);
+	}
+}
+
+/** One run: the earlier transcripts still owed, then the current one. What it could not read comes back, and the run's state is saved. */
+async function collectUsage(deps: UsageDeps, now: number, prior: UsageState | undefined): Promise<string[]> {
+	const t = await deps.find();
+	const earlier = [...(prior?.retry ?? []), ...(prior?.path ? [prior.path] : [])].filter((p) => p !== t.path);
+	const out = { retry: [] as string[], failed: [] as string[] };
+	for (const p of [...new Set(earlier), t.path]) await collectTranscript(deps.store, p, t, out);
+	deps.store.state.set(USAGE_KEY, {
+		at: new Date(now).toISOString(),
+		path: t.path,
+		...(out.retry.length ? { retry: out.retry } : {}),
+	} satisfies UsageState);
+	return out.failed;
+}
+
 /**
  * The daemon's hourly collector, on only when `stewardTokens` is on. It re-reads the Steward's current transcript and upserts its rows; when
  * the Steward has changed since the last run, it reads the previous transcript once more, so a hand-off loses none of the old session's last hour.
  */
-export function usageTicker(deps: { store: Store; find: () => Promise<Transcript>; now?: () => number }) {
+export function usageTicker(deps: UsageDeps) {
 	let busy = false;
 	return async () => {
 		const now = (deps.now ?? Date.now)();
@@ -315,25 +398,7 @@ export function usageTicker(deps: { store: Store; find: () => Promise<Transcript
 		if (busy || (prior && now - Date.parse(prior.at) < USAGE_INTERVAL_MS)) return;
 		busy = true;
 		try {
-			const t = await deps.find();
-			const earlier = [...(prior?.retry ?? []), ...(prior?.path ? [prior.path] : [])].filter((p) => p !== t.path);
-			const retry: string[] = [],
-				failed: string[] = [];
-			for (const p of [...new Set(earlier), t.path]) {
-				try {
-					const segs = await readTranscript(p, p === t.path ? t.session : undefined);
-					if (segs.length) deps.store.usage.upsert(segs);
-				} catch (e) {
-					failed.push(`${basename(p)}: ${String(e).slice(0, 120)}`);
-					// The current transcript is read again every run anyway; an earlier one is kept for the next run unless it is gone.
-					if (p !== t.path && (e as NodeJS.ErrnoException).code !== "ENOENT") retry.push(p);
-				}
-			}
-			deps.store.state.set(USAGE_KEY, {
-				at: new Date(now).toISOString(),
-				path: t.path,
-				...(retry.length ? { retry } : {}),
-			} satisfies UsageState);
+			const failed = await collectUsage(deps, now, prior);
 			if (failed.length) throw Error(`could not read ${failed.join("; ")}`);
 		} finally {
 			busy = false;
@@ -353,7 +418,7 @@ export function percentile(values: number[], p: number): number | undefined {
 	return s[Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))];
 }
 
-export type KindStats = {
+type KindStats = {
 	kind: string;
 	wakes: number;
 	tokensP50?: number;
@@ -415,28 +480,33 @@ function slope(ys: number[]): number | undefined {
 	return num / den;
 }
 
+/** One session's trend: its first wake, its context at the first and last wake, its peak, and its growth since the last compaction. */
+function trendOf(session: string, rs: WakeUsage[]): SessionTrend {
+	rs.sort((a, b) => a.startedAt - b.startedAt);
+	const first = rs[0];
+	if (!first) throw Error("sessionTrends: a session group is never empty");
+	const ctx = rs.filter((r) => r.contextStart !== undefined);
+	// The growth since the last compaction: a compaction resets the context, so the slope is measured after it.
+	const lastCompact = rs.findLastIndex((r) => r.compactions > 0 || r.kind === "compact");
+	const since = rs
+		.slice(lastCompact + 1)
+		.flatMap((r) => (isWake(r.kind) && r.contextStart !== undefined ? [r.contextStart] : []));
+	const peaks = rs.flatMap((r) => (r.contextPeak === undefined ? [] : [r.contextPeak]));
+	return {
+		session,
+		firstAt: first.startedAt,
+		wakes: rs.filter((r) => isWake(r.kind)).length,
+		contextFirst: ctx[0]?.contextStart,
+		contextLast: ctx.at(-1)?.contextStart,
+		contextPeak: peaks.length ? Math.max(...peaks) : undefined,
+		growthPerWake: slope(since),
+	};
+}
+
 export function sessionTrends(rows: WakeUsage[]): SessionTrend[] {
 	const by = new Map<string, WakeUsage[]>();
 	for (const r of rows) by.set(r.session, [...(by.get(r.session) ?? []), r]);
-	return [...by.entries()]
-		.map(([session, rs]) => {
-			rs.sort((a, b) => a.startedAt - b.startedAt);
-			const ctx = rs.filter((r) => r.contextStart !== undefined);
-			// The growth since the last compaction: a compaction resets the context, so the slope is measured after it.
-			const lastCompact = rs.findLastIndex((r) => r.compactions > 0 || r.kind === "compact");
-			const since = rs.slice(lastCompact + 1).filter((r) => isWake(r.kind) && r.contextStart !== undefined);
-			const peaks = rs.flatMap((r) => (r.contextPeak === undefined ? [] : [r.contextPeak]));
-			return {
-				session,
-				firstAt: rs[0]!.startedAt,
-				wakes: rs.filter((r) => isWake(r.kind)).length,
-				contextFirst: ctx[0]?.contextStart,
-				contextLast: ctx.at(-1)?.contextStart,
-				contextPeak: peaks.length ? Math.max(...peaks) : undefined,
-				growthPerWake: slope(since.map((r) => r.contextStart!)),
-			};
-		})
-		.sort((a, b) => a.firstAt - b.firstAt);
+	return [...by.entries()].map(([session, rs]) => trendOf(session, rs)).sort((a, b) => a.firstAt - b.firstAt);
 }
 
 export function windowStats(rows: WakeUsage[], label: string, since: number): WindowStats {

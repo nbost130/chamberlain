@@ -8,8 +8,8 @@ import {
 	runRedactHook,
 	type SentState,
 	sentChars,
-	tail,
 	type ThreadText,
+	tail,
 } from "./state.ts";
 
 const SEND = { lastChars: 1500, previousChars: 400, title: true };

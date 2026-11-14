@@ -1,27 +1,27 @@
+import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
-import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
+import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
+import { type ItemSource, runSources } from "./source.ts";
 import {
 	checkSource,
 	commitsAheadCommand,
 	configuredSources,
 	exec,
-	fenced,
 	FULL_SWEEP_MS,
+	fenced,
 	parseCheckOutput,
 	parseSweepConfig,
 	principalHereNote,
 	readSweepConfig,
 	renderSweepPrompt,
 	runawaySource,
+	type SweepAction,
 	sweepAction,
 	sweepClock,
 	sweepMessage,
-	type SweepAction,
 } from "./sweep.ts";
-import { runSources, type ItemSource } from "./source.ts";
 
 const SOON = 60_000;
 /** A source that reports what the test says, as a check would. */
@@ -237,6 +237,34 @@ describe("sweep.json", () => {
 	});
 });
 
+describe("sweep.json, every refusal", () => {
+	const refused = (checks: unknown, message: string) =>
+		expect(() => parseSweepConfig({ checks })).toThrow(Error(message));
+	test("a check is named, runnable, and not the built-in", () => {
+		const naming = "needs a name of letters, digits, dot, dash or underscore";
+		refused([null], `sweep.json: check 1 ${naming}`);
+		refused([{ name: "ok", command: ["x"] }, { command: ["x"] }], `sweep.json: check 2 ${naming}`);
+		refused([{ name: "a".repeat(41), command: ["x"] }], `sweep.json: check 1 ${naming}`);
+		refused(
+			[{ name: "idle-parents", command: ["x"] }],
+			'sweep.json: "idle-parents" is the built-in idle-parents check; tune it with "idleParents", not a check',
+		);
+		refused([{ name: "a", command: "x" }], 'sweep.json: check a needs "command": ["program", "arg", ...]');
+		refused([{ name: "a", command: ["x", 1] }], 'sweep.json: check a needs "command": ["program", "arg", ...]');
+	});
+	test("a timeout is a positive number, a mode is one of three", () => {
+		for (const timeoutMs of [0, -5, Number.POSITIVE_INFINITY, "5"])
+			refused([{ name: "a", command: ["x"], timeoutMs }], "sweep.json: check a timeoutMs must be positive");
+		refused([{ name: "a", command: ["x"], mode: 3 }], "sweep.json: check a mode must be silenced, shadow or live");
+		expect(parseSweepConfig({ checks: [{ name: "a", command: ["x"], mode: "live" }] }).checks).toEqual([
+			{ name: "a", command: ["x"], mode: "live" },
+		]);
+	});
+	test("a section that only tunes idle-parents needs no checks", () => {
+		expect(parseSweepConfig({ idleParents: { enabled: false } }).checks).toEqual([]);
+	});
+});
+
 describe("operator checks", () => {
 	test("output is bounded and validated", () => {
 		const f = parseCheckOutput(JSON.stringify([{ dedupKey: "low", text: "x".repeat(900), repeatIntervalMs: 0 }]));
@@ -275,6 +303,41 @@ describe("operator checks", () => {
 			"goes with repeatIntervalMs",
 		);
 		expect(() => parseCheckOutput('[{"dedupKey":"a","text":"t","subject":{"kind":"pr"}}]')).toThrow("subject");
+	});
+	test("every refusal of a finding names it and the field", () => {
+		const refused = (finding: unknown, message: string) =>
+			expect(() => parseCheckOutput(JSON.stringify([{ dedupKey: "ok", text: "t" }, finding]))).toThrow(Error(message));
+		refused(null, "finding 2 is not an object");
+		refused([], "finding 2 is not an object");
+		refused("x", "finding 2 is not an object");
+		refused({ dedupKey: "", text: "t" }, "finding 2 needs a string dedupKey and text");
+		refused({ dedupKey: "a", text: 4 }, "finding 2 needs a string dedupKey and text");
+		const interval = "finding 2: repeatIntervalMs must be a number of milliseconds, 0 or more";
+		refused({ dedupKey: "a", text: "t", repeatIntervalMs: "1" }, interval);
+		refused({ dedupKey: "a", text: "t", repeatIntervalMs: -1 }, interval);
+		const max = "finding 2: maxNotifications must be a whole number, 1 or more, and goes with repeatIntervalMs";
+		refused({ dedupKey: "a", text: "t", repeatIntervalMs: 1, maxNotifications: 0 }, max);
+		refused({ dedupKey: "a", text: "t", repeatIntervalMs: 1, maxNotifications: 1.5 }, max);
+		refused({ dedupKey: "a", text: "t", repeatIntervalMs: 1, maxNotifications: "2" }, max);
+		refused({ dedupKey: "a", text: "t", maxNotifications: 2 }, max);
+		refused({ dedupKey: "a", text: "t", baseline: "yes" }, "finding 2: baseline must be true or false");
+		const subject = 'finding 2: subject must be {"kind", "id"}';
+		refused({ dedupKey: "a", text: "t", subject: "pr" }, subject);
+		refused({ dedupKey: "a", text: "t", subject: { kind: "pr", id: 7 } }, subject);
+		refused({ dedupKey: "a", text: "t", subject: { id: "7" } }, subject);
+	});
+	test("what a finding does not ask for is left out, and the texts are cut", () => {
+		expect(
+			parseCheckOutput(
+				JSON.stringify([
+					{ dedupKey: "k".repeat(300), text: "t", baseline: false, repeatIntervalMs: 5, maxNotifications: 1 },
+					{ dedupKey: "b", text: "t", subject: { kind: "pr", id: "1", extra: true } },
+				]),
+			),
+		).toEqual([
+			{ dedupKey: "k".repeat(200), text: "t", repeatIntervalMs: 5, maxNotifications: 1 },
+			{ dedupKey: "b", text: "t", subject: { kind: "pr", id: "1" } },
+		]);
 	});
 	test("a check that fails or prints nonsense is in error, never clear", async () => {
 		const run = (async (cmd: string) => {

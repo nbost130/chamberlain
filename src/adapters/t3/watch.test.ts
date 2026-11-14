@@ -9,13 +9,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { AdapterEnv, WaitingItem } from "../../core/adapter.ts";
 import { heldOpen } from "../../core/afk.ts";
-import { cardWaitOf, holdCard, reconcileCardHolds, type CardThreadRead } from "../../core/card-hold.ts";
+import { type CardThreadRead, cardWaitOf, holdCard, reconcileCardHolds } from "../../core/card-hold.ts";
 import { questionStates } from "../../core/questions.ts";
 import { memStore } from "../../testing/store.ts";
 import { OPEN_CARD_STATUSES, readCards, TERMINAL_CARD_STATUSES } from "./projection.ts";
+import type { Rpc } from "./rpc.ts";
 import { toState } from "./state.ts";
 import { createT3Waiting } from "./waiting.ts";
-import type { Rpc } from "./rpc.ts";
 import { T3Link, waitingOf } from "./watch.ts";
 
 const approval = { type: "approval_request", status: "waiting", requestId: "a1", label: "deploy" };

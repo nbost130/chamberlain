@@ -21,12 +21,13 @@
  *   - no `transcriptPath`  Steward health reports "unavailable"
  *   - no `threadLinks`     a card links to its thread only where the page's config names a link prefix for its server
  */
-import type { Gate } from "./hold.ts";
+
 import type { WakeTransport } from "./deliver.ts";
 import type { InstructionRead } from "./history.ts";
+import type { Gate } from "./hold.ts";
 import type { Question } from "./questions.ts";
-import type { Store } from "./store.ts";
 import type { ServerEntry } from "./servers.ts";
+import type { Store } from "./store.ts";
 
 // ---- the normalized thread -----------------------------------------------------------------------
 
@@ -214,7 +215,7 @@ export type Inspector = {
 export type PostOptions = {
 	/** The decision-queue page's base URL, when the page answers right now. Absent: post a plain notice. */
 	queueUrl?: string;
-	/** The page's capability token (src/core/capability.ts), put in every link the post carries. A view needs it with `queueUrl`; without it the post is a notice. */
+	/** The page's VIEW key (src/core/capability.ts, `secrets/view-key`), put in the script address the post carries. Never the page's own key: a post is copied into the thread. A view needs it with `queueUrl`; without it the post is a notice. */
 	capability?: string;
 };
 export type PostResult = { ok: boolean; detail: string; where: "view" | "notice" };
@@ -298,13 +299,13 @@ export type Transcript = {
 	session: string;
 	thread: string;
 	/** Names a tool call that reads another thread by the thread it reads (see MeasureOptions in steward-health.ts). */
-	threadReadKey?: (tool: string, input: Record<string, any>) => string | undefined;
+	threadReadKey?: (tool: string, input: Record<string, unknown>) => string | undefined;
 };
 
 // ---- the adapter ---------------------------------------------------------------------------------
 
 /** What a snapshot knows of one thread. */
-export type ThreadFactsRow = {
+type ThreadFactsRow = {
 	id: string;
 	archived: boolean;
 	settled: boolean;
@@ -333,7 +334,7 @@ export type OptionalCapability =
  * (src/core/alert-desk.ts) into wakes for the `desk` receiver, and the one relay sends them here (a second receiver, through its one serial queue), so the desk holds and digests on its own
  * thread's state, never the Steward's.
  */
-export type AlertDeskLane = {
+type AlertDeskLane = {
 	/** How a wake reaches the desk thread. Its `ready()` is false until the operator has made the desk (no URL), and then nothing is drained. */
 	wake: WakeTransport;
 	/** Does the desk thread have a turn running or queued? Like `Adapter.isBusy`, for the desk's thread. */
@@ -475,14 +476,20 @@ type CapabilityMethod = {
 	threadLinks: "threadLinks";
 };
 
-/** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
-export function conformance(a: Adapter): string[] {
+/** What is missing of the parts every adapter must have: an id, `watch`, `isBusy`, `post`, and a `wake` with `ready` and `send`. */
+function requiredProblems(a: Adapter): string[] {
 	const bad: string[] = [];
 	if (!a.id) bad.push("no id");
 	for (const m of ["watch", "isBusy", "post"] as const)
 		if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
 	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function")
 		bad.push("required capability wake needs ready() and send()");
+	return bad;
+}
+
+/** Where declared capabilities and implemented methods disagree, and any declared capability that does not exist. */
+function capabilityProblems(a: Adapter): string[] {
+	const bad: string[] = [];
 	const methods: Record<OptionalCapability, unknown> = {
 		answer: a.answer,
 		listWaiting: a.listWaiting,
@@ -504,4 +511,9 @@ export function conformance(a: Adapter): string[] {
 	}
 	for (const cap of a.capabilities) if (!(cap in methods)) bad.push(`declares unknown capability ${cap}`);
 	return bad;
+}
+
+/** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
+export function conformance(a: Adapter): string[] {
+	return [...requiredProblems(a), ...capabilityProblems(a)];
 }

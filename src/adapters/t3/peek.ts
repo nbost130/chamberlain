@@ -6,8 +6,8 @@
  */
 import { CONF, principal } from "../../core/config.ts";
 import { readSecret } from "../../core/layout.ts";
-import { connect } from "./rpc.ts";
 import { readServers } from "../../core/servers.ts";
+import { connect } from "./rpc.ts";
 import { t3Server } from "./server.ts";
 
 type Item = {

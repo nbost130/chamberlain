@@ -6,7 +6,7 @@
 import { STATE } from "./config.ts";
 import { InsecureModeError } from "./private.ts";
 import { SchemaTooNewError } from "./schema.ts";
-import { openStore, type OpenOptions } from "./sqlite-store.ts";
+import { type OpenOptions, openStore } from "./sqlite-store.ts";
 import { dbPath, type Store } from "./store.ts";
 
 export function defaultStore(state = STATE, open: OpenOptions = {}): Store {

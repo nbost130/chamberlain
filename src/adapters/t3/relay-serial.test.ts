@@ -8,15 +8,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { webhookWake } from "./wake.ts";
-import { createFakeAdapter } from "../../testing/fake-adapter.ts";
-import { noAlert } from "../../testing/alert.ts";
-import { testRelayLock } from "../../testing/lock.ts";
-import { memStore } from "../../testing/store.ts";
 import { createEngine } from "../../core/engine.ts";
 import { createRelay } from "../../core/relay.ts";
 import { holdRelayLock } from "../../core/singleton.ts";
 import { openStore } from "../../core/sqlite-store.ts";
+import { noAlert } from "../../testing/alert.ts";
+import { createFakeAdapter } from "../../testing/fake-adapter.ts";
+import { testRelayLock } from "../../testing/lock.ts";
+import { memStore } from "../../testing/store.ts";
+import { webhookWake } from "./wake.ts";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {

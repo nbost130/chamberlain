@@ -6,7 +6,7 @@
 import type { StewardProbe } from "./adapter.ts";
 import { needsCompact } from "./decide.ts";
 import type { Log } from "./log.ts";
-import { alarms, type AlarmText } from "./messages.ts";
+import { type AlarmText, alarms } from "./messages.ts";
 import { type openRightsSent, rightsHighWater } from "./rights-sent.ts";
 
 const QUEUE_READ_FAILURES_MAX = 5;
@@ -33,58 +33,79 @@ export type StewardCheckDeps = {
 	onDecisionsThread: (id: string | undefined) => void;
 };
 
+/** What the check remembers from one minute to the next. */
+type StewardState = { lastCompactAt: number; compactHeldFor: string | undefined; queueReadFailures: number };
+
+/**
+ * Keeps the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen. A shrink invalidates the
+ * record by bumping the epoch, so a full block composed before it cannot restore the record when it lands.
+ */
+function keepRightsMark(c: StewardCheckDeps, used: number | undefined): void {
+	const sent = c.rightsSent.get(),
+		high = rightsHighWater(sent, used);
+	if (high) c.rightsSent.set(high);
+	else if (sent) {
+		c.rightsSent.set(undefined);
+		c.log("rights-invalidated", { reason: "context shrink", used });
+	}
+}
+
+/**
+ * A 202 only means queued. This is the check that the Steward is actually working through them.
+ * One failed read is the backend busy. A run of them means both checks here can no longer see, and that must not be silent.
+ */
+function watchSteward(c: StewardCheckDeps, st: StewardState, p: StewardProbe): void {
+	st.queueReadFailures = p.readable ? 0 : st.queueReadFailures + 1;
+	if (st.queueReadFailures >= QUEUE_READ_FAILURES_MAX)
+		c.raiseAlarm("steward-queue-unreadable", alarms.queueUnreadable(st.queueReadFailures));
+	if (p.stalled) c.alarm("steward-stalled", p.stalled.title, p.stalled.summary);
+}
+
+/** The compaction request, through the relay: a task whose prompt is /compact, so it takes no message. Only the log line is shared with wakes. */
+async function sendCompact(c: StewardCheckDeps, id: string): Promise<void> {
+	const deliveryId = `compact:${id}:${Date.now()}`;
+	try {
+		const r = await c.compact(deliveryId);
+		c.log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 });
+	} catch (e) {
+		c.log("deliver-error", { deliveryId, attempt: 1, error: e instanceof Error ? e.message : String(e) });
+	}
+}
+
+/** Compacts the Steward `id` when its context has outgrown the limit, unless one went in the cooldown or the backend says one must not go now. */
+async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: StewardProbe, id: string): Promise<void> {
+	const used = p.contextTokens;
+	if (!needsCompact(used, c.compactAt, Date.now() - st.lastCompactAt < COMPACT_COOLDOWN_MS)) return;
+	const blocked = p.compactBlocked;
+	if (blocked !== st.compactHeldFor) c.log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
+	st.compactHeldFor = blocked;
+	if (blocked) return;
+	st.lastCompactAt = Date.now();
+	if (!c.compactReady()) {
+		c.raiseAlarm("steward-compact", alarms.compactUnavailable(used));
+		return;
+	}
+	// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
+	// here, before the job runs, let a full block already in flight land after and restore it.
+	c.log("fire", { server: "steward", kind: "compact", threadId: id, used });
+	if (c.dry) return;
+	// The request goes out through the relay, the only code that calls a transport.
+	await sendCompact(c, id);
+}
+
 export function createStewardCheck(c: StewardCheckDeps) {
-	const { privateFile, exclude, probe, rightsSent, log, alarm, raiseAlarm, compactAt, onDecisionsThread } = c;
-	const DRY = c.dry;
+	const st: StewardState = { lastCompactAt: 0, compactHeldFor: undefined, queueReadFailures: 0 };
 	/** Once a minute: keep the Steward out of its own wakes, and compact it when its context has outgrown the limit. */
-	let lastCompactAt = 0;
-	let compactHeldFor: string | undefined;
-	let queueReadFailures = 0;
 	async function stewardCheck() {
-		onDecisionsThread(privateFile("decisions-thread"));
-		const id = privateFile("steward-thread");
+		c.onDecisionsThread(c.privateFile("decisions-thread"));
+		const id = c.privateFile("steward-thread");
 		if (!id) return;
-		exclude.add(id);
-		const p = probe();
+		c.exclude.add(id);
+		const p = c.probe();
 		if (!p) return;
-		const used = p.contextTokens;
-		// Keep the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen. A shrink invalidates the
-		// record by bumping the epoch, so a full block composed before it cannot restore the record when it lands.
-		const sent = rightsSent.get(),
-			high = rightsHighWater(sent, used);
-		if (high) rightsSent.set(high);
-		else if (sent) {
-			rightsSent.set(undefined);
-			log("rights-invalidated", { reason: "context shrink", used });
-		}
-		// A 202 only means queued. This is the check that the Steward is actually working through them.
-		// One failed read is the backend busy. A run of them means both checks here can no longer see, and that must not be silent.
-		queueReadFailures = p.readable ? 0 : queueReadFailures + 1;
-		if (queueReadFailures >= QUEUE_READ_FAILURES_MAX)
-			raiseAlarm("steward-queue-unreadable", alarms.queueUnreadable(queueReadFailures));
-		if (p.stalled) alarm("steward-stalled", p.stalled.title, p.stalled.summary);
-		if (!needsCompact(used, compactAt, Date.now() - lastCompactAt < COMPACT_COOLDOWN_MS)) return;
-		const blocked = p.compactBlocked;
-		if (blocked !== compactHeldFor) log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
-		compactHeldFor = blocked;
-		if (blocked) return;
-		lastCompactAt = Date.now();
-		if (!c.compactReady()) {
-			raiseAlarm("steward-compact", alarms.compactUnavailable(used));
-			return;
-		}
-		// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
-		// here, before the job runs, let a full block already in flight land after and restore it.
-		log("fire", { server: "steward", kind: "compact", threadId: id, used });
-		if (DRY) return;
-		// The compaction target is a task whose prompt is /compact, so it takes no message. Only the log line is shared with wakes. The request goes out through the relay, the only code that calls a transport.
-		const deliveryId = `compact:${id}:${Date.now()}`;
-		try {
-			const r = await c.compact(deliveryId);
-			log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 });
-		} catch (e) {
-			log("deliver-error", { deliveryId, attempt: 1, error: e instanceof Error ? e.message : String(e) });
-		}
+		keepRightsMark(c, p.contextTokens);
+		watchSteward(c, st, p);
+		await compactIfNeeded(c, st, p, id);
 	}
 
 	return { check: stewardCheck };

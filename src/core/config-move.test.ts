@@ -6,11 +6,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
-	readFileSync,
-	lstatSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -21,12 +21,9 @@ import { tmpdir } from "node:os";
 import { FAKE, legacyFiles, tokensFor, writeLegacyConf } from "../testing/legacy-conf.ts";
 import { loadConfig } from "../web/config.ts";
 import { readConfig } from "./alert-desk.ts";
-import { assertSupported } from "./migrate.ts";
 import { getValue, reappearedLine, showLines } from "./config-cmd.ts";
 import { migrateLayout, revertLayout, setThread, startupLayout } from "./config-migrate.ts";
 import {
-	THREADS,
-	attachDeprecationLog,
 	cfg,
 	readConfigFile,
 	readNamed,
@@ -34,8 +31,10 @@ import {
 	reappearedFiles,
 	resetLayout,
 	setting,
+	THREADS,
 	thread,
 } from "./layout.ts";
+import { assertSupported } from "./migrate.ts";
 import { readServers } from "./servers.ts";
 import { readSweepConfig } from "./sweep.ts";
 

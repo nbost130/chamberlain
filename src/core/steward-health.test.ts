@@ -1,19 +1,20 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { parseAsk } from "../ask.ts";
+import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
+import { createOutbox } from "./deliver.ts";
+import { askQuestion, QUEUE } from "./questions.ts";
 import {
 	HEALTH_CONFIG as C,
+	type Health,
 	handoffDeliveryId,
 	handoffWakeMessage,
-	measure as measureWith,
 	healthTicker,
+	measure as measureWith,
 	readHealth,
-	type Health,
 } from "./steward-health.ts";
-import { createOutbox } from "./deliver.ts";
-import { testRelay } from "../testing/relay.ts";
-import { askQuestion, QUEUE } from "./questions.ts";
-import { parseAsk } from "../ask.ts";
+
 // The format signal reads a prompt hook that grades each reply; this is its pattern, as an operator would configure it.
 const formatPattern = /FORMAT CONTRACT[^\n]*Last response (broke:|was clean)/;
 // What an adapter tells the health check about its tools: here the fixtures' `t3_thread_read` and a `peek.ts` shell call.
@@ -193,6 +194,62 @@ test("malformed row does not crash or yield false OK", async () => {
 	const h = await measure([...fixture, assistant(10), "{partial"], session);
 	expect(h.verdict).toBe("WATCH");
 	expect(h.unknown).toContain("malformed transcript row");
+});
+test("usage counts are summed and the peak kept; a count that is not a non-negative number reads as unavailable but is still sampled", async () => {
+	const usage = (u: object, timestamp: string) =>
+		row({ type: "assistant", timestamp, message: { usage: u, content: [] } });
+	const good = await measure(
+		[usage({ input_tokens: 100, cache_read_input_tokens: 20, cache_creation_input_tokens: 3 }, "2026-11-10T13:00:00Z")],
+		session,
+	);
+	expect(good).toMatchObject({ tokens: 123, peakTokens: 123, usageAt: "2026-11-10T13:00:00Z" });
+	const bad = await measure(
+		[
+			usage({ input_tokens: 100, cache_read_input_tokens: 20 }, "2026-11-10T13:00:00Z"),
+			usage({ input_tokens: -1 }, "2026-11-10T13:05:00Z"),
+		],
+		session,
+	);
+	expect(bad.tokens).toBeUndefined();
+	expect(bad.peakTokens).toBe(120);
+	expect(bad.usageAt).toBe("2026-11-10T13:05:00Z");
+	expect(bad.unknown).toContain("context usage unavailable");
+	const text = await measure([usage({ input_tokens: "5" }, "2026-11-10T13:00:00Z")], session);
+	expect(text.tokens).toBeUndefined();
+	expect(text.peakTokens).toBeUndefined();
+});
+test("sidechain rows are ignored; a shell read of the session file is a self read and a mention is not", async () => {
+	const bash = (id: string, command: string) => ({ type: "tool_use", id, name: "Bash", input: { command } });
+	const h = await measure(
+		[
+			row({ isSidechain: true, type: "assistant", timestamp: "t", message: { usage: { input_tokens: 999 } } }),
+			assistant(50, [
+				bash("b1", `cat /x/${session}.jsonl`),
+				bash("b2", `echo ${session}.jsonl`),
+				bash("b3", "cat /x/other.jsonl"),
+				{ type: "tool_use", id: "r1", name: "Read", input: { file_path: `/x/${session}.jsonl` } },
+				{ type: "tool_use", id: "r2", name: "Read", input: {} },
+				{ type: "text", text: "no id" },
+				{ type: "tool_use", name: "Read", input: { file_path: `/x/${session}.jsonl` } },
+			]),
+		],
+		session,
+	);
+	expect(h.tokens).toBe(50);
+	expect(h.selfReads).toBe(2);
+});
+test("a thread read with no readable timestamp is reported unknown and never counted as a repeat", async () => {
+	const read = (id: string) => ({ type: "tool_use", id, name: "mcp__x__t3_thread_read", input: { threadId: "t1" } });
+	const h = await measure(
+		[
+			row({ type: "assistant", message: { usage: { input_tokens: 1 }, content: [read("a"), read("b")] } }),
+			assistant(1, [read("c")], "2026-11-10T13:00:00Z"),
+			assistant(1, [read("d")], "2026-11-10T13:01:00Z"),
+		],
+		session,
+	);
+	expect(h.unknown).toContain("read timestamp missing");
+	expect(h.threadRereads).toBe(1);
 });
 const degraded = (active: () => string, now: () => number) => () =>
 	measure(

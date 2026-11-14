@@ -13,12 +13,12 @@
  * Judgement the checks cannot do (choosing new work) stays in a full sweep every six hours.
  */
 import { spawn } from "node:child_process";
-import { CONF, principal, selfCommand } from "./config.ts";
-import { IDLE_PARENTS, parseIdleParents, type IdleParentsConfig } from "./idle-parents.ts";
+import { CONF, selfCommand } from "./config.ts";
+import { IDLE_PARENTS, type IdleParentsConfig, parseIdleParents } from "./idle-parents.ts";
 import { cfg } from "./layout.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
-import { type Finding, type ItemSource, type SourceOutcome } from "./source.ts";
+import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
+import type { Finding, ItemSource, SourceOutcome } from "./source.ts";
 import type { ItemMode } from "./store.ts";
 
 export const SWEEP_MS = 2 * 3600_000;
@@ -152,6 +152,36 @@ export type SweepCheck = {
 export type SweepConfig = { schemaVersion?: number; checks: SweepCheck[]; idleParents: IdleParentsConfig };
 const MODES: readonly string[] = ["silenced", "shadow", "live"];
 
+/** Pure: a check's name: well formed, not taken, not the built-in one. `names` gains it. */
+function checkName(c: Partial<SweepCheck>, i: number, names: Set<string>): string {
+	if (!c || typeof c.name !== "string" || !/^[\w.-]{1,40}$/.test(c.name))
+		throw Error(`sweep.json: check ${i + 1} needs a name of letters, digits, dot, dash or underscore`);
+	if (names.has(c.name)) throw Error(`sweep.json: two checks are named ${c.name}`);
+	if (c.name === IDLE_PARENTS)
+		throw Error(
+			`sweep.json: "${IDLE_PARENTS}" is the built-in idle-parents check; tune it with "idleParents", not a check`,
+		);
+	names.add(c.name);
+	return c.name;
+}
+
+/** Pure: one entry of sweep.json's checks, or the first thing wrong with it. */
+function parseCheck(c: Partial<SweepCheck>, i: number, names: Set<string>): SweepCheck {
+	const name = checkName(c, i, names);
+	if (!Array.isArray(c.command) || !c.command.length || !c.command.every((x) => typeof x === "string"))
+		throw Error(`sweep.json: check ${name} needs "command": ["program", "arg", ...]`);
+	if (c.timeoutMs !== undefined && (!Number.isFinite(c.timeoutMs) || c.timeoutMs <= 0))
+		throw Error(`sweep.json: check ${name} timeoutMs must be positive`);
+	if (c.mode !== undefined && !MODES.includes(c.mode))
+		throw Error(`sweep.json: check ${name} mode must be silenced, shadow or live`);
+	return {
+		name,
+		command: c.command,
+		...(c.timeoutMs ? { timeoutMs: c.timeoutMs } : {}),
+		...(c.mode ? { mode: c.mode } : {}),
+	};
+}
+
 /** Pure: the checks a parsed sweep.json lists. */
 export function parseSweepConfig(raw: unknown): SweepConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("sweep.json: expected a JSON object");
@@ -162,28 +192,7 @@ export function parseSweepConfig(raw: unknown): SweepConfig {
 	if (!Array.isArray(o.checks)) throw Error('sweep.json: need {"checks": [{"name", "command": [...]}]}');
 	const idleParents = parseIdleParents(o.idleParents);
 	const names = new Set<string>();
-	const checks = o.checks.map((c: Partial<SweepCheck>, i) => {
-		if (!c || typeof c.name !== "string" || !/^[\w.-]{1,40}$/.test(c.name))
-			throw Error(`sweep.json: check ${i + 1} needs a name of letters, digits, dot, dash or underscore`);
-		if (names.has(c.name)) throw Error(`sweep.json: two checks are named ${c.name}`);
-		if (c.name === IDLE_PARENTS)
-			throw Error(
-				`sweep.json: "${IDLE_PARENTS}" is the built-in idle-parents check; tune it with "idleParents", not a check`,
-			);
-		names.add(c.name);
-		if (!Array.isArray(c.command) || !c.command.length || !c.command.every((x) => typeof x === "string"))
-			throw Error(`sweep.json: check ${c.name} needs "command": ["program", "arg", ...]`);
-		if (c.timeoutMs !== undefined && (!Number.isFinite(c.timeoutMs) || c.timeoutMs <= 0))
-			throw Error(`sweep.json: check ${c.name} timeoutMs must be positive`);
-		if (c.mode !== undefined && !MODES.includes(c.mode))
-			throw Error(`sweep.json: check ${c.name} mode must be silenced, shadow or live`);
-		return {
-			name: c.name,
-			command: c.command,
-			...(c.timeoutMs ? { timeoutMs: c.timeoutMs } : {}),
-			...(c.mode ? { mode: c.mode } : {}),
-		};
-	});
+	const checks = o.checks.map((c: Partial<SweepCheck>, i) => parseCheck(c, i, names));
 	return { schemaVersion: SCHEMA_VERSION, checks, idleParents };
 }
 
@@ -203,6 +212,58 @@ export function idleParentsConfig(conf = CONF): IdleParentsConfig {
 }
 
 const FINDING_FIELDS = new Set(["dedupKey", "text", "repeatIntervalMs", "maxNotifications", "baseline", "subject"]);
+/** Pure: a finding's shape and field names: an object, with no field this build does not know. */
+function checkFindingFields(x: Record<string, unknown>, n: number): void {
+	if (!x || typeof x !== "object" || Array.isArray(x)) throw Error(`finding ${n} is not an object`);
+	for (const k of Object.keys(x)) if (!FINDING_FIELDS.has(k)) throw Error(`finding ${n} has an unknown field "${k}"`);
+}
+
+/** Pure: a finding's repeat interval and notification cap, which go together. */
+function checkFindingRepeat(x: Record<string, unknown>, n: number): void {
+	if (
+		x.repeatIntervalMs !== undefined &&
+		(typeof x.repeatIntervalMs !== "number" || !Number.isFinite(x.repeatIntervalMs) || x.repeatIntervalMs < 0)
+	)
+		throw Error(`finding ${n}: repeatIntervalMs must be a number of milliseconds, 0 or more`);
+	if (
+		x.maxNotifications !== undefined &&
+		(typeof x.maxNotifications !== "number" ||
+			!Number.isInteger(x.maxNotifications) ||
+			x.maxNotifications < 1 ||
+			x.repeatIntervalMs === undefined)
+	)
+		throw Error(`finding ${n}: maxNotifications must be a whole number, 1 or more, and goes with repeatIntervalMs`);
+}
+
+/** Pure: a finding's subject, or undefined when it names none. */
+function findingSubject(x: Record<string, unknown>, n: number): { kind: string; id: string } | undefined {
+	const subject = x.subject as { kind?: unknown; id?: unknown } | undefined;
+	if (subject === undefined) return undefined;
+	if (typeof subject !== "object" || typeof subject?.kind !== "string" || typeof subject?.id !== "string")
+		throw Error(`finding ${n}: subject must be {"kind", "id"}`);
+	return { kind: subject.kind, id: subject.id };
+}
+
+/** Pure: one finding of a check's output, or the first thing wrong with it. */
+function parseFinding(x: Record<string, unknown>, i: number): Finding {
+	const n = i + 1;
+	checkFindingFields(x, n);
+	if (typeof x.dedupKey !== "string" || !x.dedupKey || typeof x.text !== "string" || !x.text)
+		throw Error(`finding ${n} needs a string dedupKey and text`);
+	checkFindingRepeat(x, n);
+	if (x.baseline !== undefined && typeof x.baseline !== "boolean")
+		throw Error(`finding ${n}: baseline must be true or false`);
+	const subject = findingSubject(x, n);
+	return {
+		dedupKey: x.dedupKey.slice(0, 200),
+		text: x.text.slice(0, 400),
+		...(x.repeatIntervalMs !== undefined ? { repeatIntervalMs: x.repeatIntervalMs as number } : {}),
+		...(x.maxNotifications !== undefined ? { maxNotifications: x.maxNotifications as number } : {}),
+		...(x.baseline === true ? { baseline: true } : {}),
+		...(subject ? { subject } : {}),
+	};
+}
+
 /**
  * Pure: the findings a check printed. A finding is `{dedupKey, text, repeatIntervalMs?, maxNotifications?, baseline?, subject?}`. A field this
  * build does not know is refused, never ignored: a check that still asks for something this build no longer does must read
@@ -211,42 +272,7 @@ const FINDING_FIELDS = new Set(["dedupKey", "text", "repeatIntervalMs", "maxNoti
 export function parseCheckOutput(out: string): Finding[] {
 	const raw = JSON.parse(out.trim() || "[]") as unknown;
 	if (!Array.isArray(raw)) throw Error("its output is not a JSON array");
-	return raw.map((x: Record<string, unknown>, i): Finding => {
-		const n = i + 1;
-		if (!x || typeof x !== "object" || Array.isArray(x)) throw Error(`finding ${n} is not an object`);
-		for (const k of Object.keys(x)) if (!FINDING_FIELDS.has(k)) throw Error(`finding ${n} has an unknown field "${k}"`);
-		if (typeof x.dedupKey !== "string" || !x.dedupKey || typeof x.text !== "string" || !x.text)
-			throw Error(`finding ${n} needs a string dedupKey and text`);
-		if (
-			x.repeatIntervalMs !== undefined &&
-			(typeof x.repeatIntervalMs !== "number" || !Number.isFinite(x.repeatIntervalMs) || x.repeatIntervalMs < 0)
-		)
-			throw Error(`finding ${n}: repeatIntervalMs must be a number of milliseconds, 0 or more`);
-		if (
-			x.maxNotifications !== undefined &&
-			(typeof x.maxNotifications !== "number" ||
-				!Number.isInteger(x.maxNotifications) ||
-				x.maxNotifications < 1 ||
-				x.repeatIntervalMs === undefined)
-		)
-			throw Error(`finding ${n}: maxNotifications must be a whole number, 1 or more, and goes with repeatIntervalMs`);
-		if (x.baseline !== undefined && typeof x.baseline !== "boolean")
-			throw Error(`finding ${n}: baseline must be true or false`);
-		const subject = x.subject as { kind?: unknown; id?: unknown } | undefined;
-		if (
-			subject !== undefined &&
-			(typeof subject !== "object" || typeof subject?.kind !== "string" || typeof subject?.id !== "string")
-		)
-			throw Error(`finding ${n}: subject must be {"kind", "id"}`);
-		return {
-			dedupKey: x.dedupKey.slice(0, 200),
-			text: x.text.slice(0, 400),
-			...(x.repeatIntervalMs !== undefined ? { repeatIntervalMs: x.repeatIntervalMs as number } : {}),
-			...(x.maxNotifications !== undefined ? { maxNotifications: x.maxNotifications as number } : {}),
-			...(x.baseline === true ? { baseline: true } : {}),
-			...(subject ? { subject: { kind: subject.kind as string, id: subject.id as string } } : {}),
-		};
-	});
+	return raw.map((x: Record<string, unknown>, i) => parseFinding(x, i));
 }
 
 /** One configured check as an item source: the command's findings are the source's items. */
@@ -256,7 +282,8 @@ export function checkSource(c: SweepCheck, run: typeof exec = exec): ItemSource 
 		...(c.mode ? { mode: c.mode } : {}),
 		run: async () => {
 			const [cmd, ...args] = c.command;
-			return parseCheckOutput(await run(cmd!, args, undefined, c.timeoutMs ?? 30_000));
+			if (cmd === undefined) throw Error(`check ${c.name} has no command: parseSweepConfig refuses an empty one`);
+			return parseCheckOutput(await run(cmd, args, undefined, c.timeoutMs ?? 30_000));
 		},
 	};
 }

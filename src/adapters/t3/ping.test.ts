@@ -268,7 +268,7 @@ describe("every send error is classified before the commit, and only a confirmed
 						if (at === "projection") throw Error("projection read timed out");
 						return failedProj;
 					}
-					if (at === "dispatch-refused") throw Error("rpc failure: " + JSON.stringify({ _tag: "Failure" }));
+					if (at === "dispatch-refused") throw Error(`rpc failure: ${JSON.stringify({ _tag: "Failure" })}`);
 					if (at === "dispatch-timeout") throw Error("send timed out after 10000 ms");
 					if (at === "dispatch-dropped") throw Error("socket closed");
 					return {};

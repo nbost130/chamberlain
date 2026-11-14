@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { failedRead, skipEvent, type InstructionRead } from "./history";
+import { failedRead, type InstructionRead, skipEvent } from "./history";
 
 describe("skipEvent", () => {
 	const read = (state: InstructionRead["state"]): InstructionRead => ({ items: [], state, byMachine: false });

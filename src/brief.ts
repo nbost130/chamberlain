@@ -11,18 +11,18 @@
  * runs the desk allowlist hook, the ask command the desk allowlist accepts (`deskAskCommand`: DESK_ASK_PATH, else this build's own), and
  * the morning sources in alert-desk.json (src/core/alert-desk.ts `renderDeskPrompt`).
  */
-import { readFileSync, existsSync } from "node:fs";
-import { defaultStore } from "./core/default-store.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { adapterEntry, loadServers } from "./adapters/index.ts";
 import { readAfk } from "./core/afk.ts";
 import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/alert-desk.ts";
 import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, principal, REPO, selfCommand } from "./core/config.ts";
+import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
-import { renderStartPrompt } from "./core/sweep.ts";
 import { loadOperatingRules } from "./core/rules.ts";
 import { rulingsBriefText } from "./core/rulings.ts";
 import { homeServer } from "./core/servers.ts";
-import { adapterEntry, loadServers } from "./adapters/index.ts";
+import { renderStartPrompt } from "./core/sweep.ts";
 import { DESK_PROMPT_FILE, START_PROMPT_FILE, WAKE_PROMPT_FILE } from "./embedded.ts";
 
 export function main(argv: string[] = process.argv.slice(2)) {

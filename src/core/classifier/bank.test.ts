@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { combine, DEFAULT_BANK, parseBank, type Facts, type Question } from "./bank.ts";
+import { combine, DEFAULT_BANK, type Facts, parseBank, type Question } from "./bank.ts";
 
 const IDS = [
 	"asks_decision",

@@ -6,8 +6,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { noAlert } from "../testing/alert.ts";
+import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";

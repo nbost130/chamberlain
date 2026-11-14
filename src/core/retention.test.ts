@@ -5,24 +5,24 @@
  * days) and 40 days (past the 30 days a delivery stays on record).
  */
 import { describe, expect, test } from "bun:test";
-import { memStore } from "../testing/store.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { deliveredRow } from "../testing/relay.ts";
+import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";
-import { createRelay } from "./relay.ts";
 import { ITEM_KEEP_MS, maintain } from "./maintain.ts";
 import {
+	type Answer,
 	askQuestion,
 	claimWake,
-	pageClaim,
 	PAGE,
+	pageClaim,
 	QUEUE,
+	type Question,
 	readClaims,
 	recordAnswerDelivered,
 	recoverClaims,
-	type Answer,
-	type Question,
 } from "./questions.ts";
+import { createRelay } from "./relay.ts";
 
 const HOUR = 3600_000,
 	DAY = 24 * HOUR;

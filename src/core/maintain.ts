@@ -15,16 +15,17 @@
  *   - Idle-thread classifier dispositions classified more than 30 days ago, except those marked right or wrong (they are the next
  *     evaluation set, and stay).
  */
-import { NOTIFICATION_LOG } from "./notification.ts";
+
 import { DELIVERED_KEEP_MS } from "./deliver.ts";
+import { NOTIFICATION_LOG } from "./notification.ts";
 import type { Store } from "./store.ts";
 
 export const ITEM_KEEP_MS = 30 * 24 * 3600_000;
 export const EVENT_KEEP_MS = 90 * 24 * 3600_000;
 /** An expired or consumed confirmation challenge is terminal; it is kept a day, so a replay still reads as "used" rather than "unknown". */
-export const CHALLENGE_KEEP_MS = 24 * 3600_000;
+const CHALLENGE_KEEP_MS = 24 * 3600_000;
 /** Item sources whose rows only record that something was done or raised; they age out. */
-export const EPHEMERAL_SOURCES = [NOTIFICATION_LOG, "alarm"] as const;
+const EPHEMERAL_SOURCES = [NOTIFICATION_LOG, "alarm"] as const;
 
 export type Maintained = {
 	delivered: number;

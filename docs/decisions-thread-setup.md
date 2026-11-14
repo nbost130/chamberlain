@@ -8,8 +8,9 @@ an orchestration:operate token.
 
 Create a thread, put its id in `~/.config/chamberlain/config.json` as `"threads": {"decisions": "<id>"}`, and send it this message as its
 first message, or again after `/clear`. Replace `<script address>` with the address inside the `<script src="...">` tag that `chamberlain web link` prints for your page (it is
-`<base>/inline.js?view=decisions&amp;k=<key>`; choose the listed base T3 can reach, or the `publicBase` when T3 is loaded over https). The key is
-in it, because the page serves nothing without it: see [web-access.md](web-access.md).
+`<base>/inline.js?view=decisions&amp;k=<view key>`; choose the listed base T3 can reach, or the `publicBase` when T3 is loaded over https). The key in it is the
+**view key**, not the page's key: it can only read the queue and answer a question, because this message is copied into the thread. Never paste the page link or the page key
+here: see [web-access.md](web-access.md).
 
 ---
 

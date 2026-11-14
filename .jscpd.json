@@ -1,0 +1,8 @@
+{
+	"threshold": 0,
+	"format": ["typescript"],
+	"reporters": ["console"],
+	"gitignore": true,
+	"absolute": false,
+	"ignore": ["**/*.test.ts", "src/testing/**", "src/test-setup.ts"]
+}

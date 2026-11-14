@@ -11,11 +11,12 @@
  *   retry=<ms>  keep trying until held or until <ms> after the start time; once held, keep retrying locally every 20 ms while holding;
  *   spawn       once held, start two long-lived children (one by Bun.spawn, one by node:child_process) and print their pids after "held".
  */
+
+import { Database } from "bun:sqlite";
 import { spawn as nodeSpawn } from "node:child_process";
 import { closeSync, openSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { Database } from "bun:sqlite";
-import { holdRelayLock, RelayDatabaseLinkedError, RelayRunningError, type RelayLock } from "../core/singleton.ts";
+import { holdRelayLock, RelayDatabaseLinkedError, type RelayLock, RelayRunningError } from "../core/singleton.ts";
 import { openStore } from "../core/sqlite-store.ts";
 
 const [db, holdMs, startAt] = [process.argv[2]!, Number(process.argv[3] ?? 1000), Number(process.argv[4] ?? 0)];

@@ -5,10 +5,10 @@
  * looks like now is composed from those rows (`questionStates`).
  */
 import { randomBytes } from "node:crypto";
-import type { Store } from "./store.ts";
 import { principal } from "./config.ts";
 import { answerWakeText, dismissedWakeText } from "./messages.ts";
 import type { Ruling } from "./rulings.ts";
+import type { ClaimRecord, EvidenceRow, Item, RelayRecord, Store } from "./store.ts";
 
 export type Kind = "only-you" | "product" | "ruling" | "idea";
 export const KINDS: Kind[] = ["only-you", "product", "ruling", "idea"];
@@ -113,7 +113,7 @@ export const alwaysUrgent = (q: Pick<Question, "secret" | "tag" | "cardRequest">
 export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean =>
 	q.urgent !== false || alwaysUrgent(q);
 /** Pure: the item with an `urgent: false` it may not have removed. Every write and every read of a question goes through it. */
-export function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
+function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
 	if (q.urgent !== false || !alwaysUrgent(q)) return q;
 	const { urgent: _dropped, ...rest } = q;
 	return rest as T;
@@ -200,6 +200,47 @@ function snoozeOf(payload: Record<string, unknown>, now: number): Snooze | undef
 	};
 }
 
+/** `{}` unless `cond`, so an optional field is left off a state rather than set to undefined. */
+const when = <T extends object>(cond: unknown, fields: T): Partial<T> => (cond ? fields : {});
+
+/** Stored evidence rows as the evidence a question shows: the file's name is its path. */
+const evidenceOf = (rows: EvidenceRow[]): Evidence[] =>
+	rows.map(
+		(e): Evidence => ({
+			type: e.type,
+			...(e.name ? { path: e.name } : {}),
+			...(e.url ? { url: e.url } : {}),
+			...(e.caption ? { caption: e.caption } : {}),
+		}),
+	);
+
+/** One question's state, composed from its item, its claim, its direct send and its evidence rows. */
+function stateOf(
+	i: Item,
+	claim: ClaimRecord | undefined,
+	ev: EvidenceRow[] | undefined,
+	relay: RelayRecord | undefined,
+	now: number,
+): QuestionState {
+	// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
+	const answered = claim !== undefined || i.status === "resolved";
+	const onCard = i.payload.answeredOnCard === true;
+	const setAside = i.payload.notNowAt;
+	const outcome = relay?.outcome;
+	const sent =
+		relay && outcome ? { outcome, t: relay.t ?? "", ...(relay.detail ? { detail: relay.detail } : {}) } : undefined;
+	const notNowAt = i.status === "acknowledged" && !answered && typeof setAside === "string" ? setAside : undefined;
+	return {
+		// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
+		...withUrgency(withoutSnoozeFields(i.payload as unknown as Question)),
+		...when(ev?.length, { evidence: evidenceOf(ev ?? []) }),
+		...outcomeOf(i.payload, claim?.answer as Answer | undefined, answered, now),
+		delivered: i.status === "resolved" && !onCard,
+		...when(notNowAt !== undefined, { notNowAt }),
+		...when(sent, { relay: sent }),
+	};
+}
+
 /**
  * Every question and where it stands, composed from the item, its claim, its direct send and its evidence. `now` is the clock a snooze
  * is read against: nothing rewrites a snoozed item when its time passes, so it is back on the active list the moment `now` reaches it.
@@ -209,38 +250,8 @@ export function questionStates(store: Store, now = Date.now()): Map<string, Ques
 	const relays = store.claims.listRelays(QUEUE);
 	const evidence = store.evidence.listAll(QUEUE);
 	const out = new Map<string, QuestionState>();
-	for (const i of store.items.list({ source: QUEUE, kind: "question" })) {
-		const q = i.payload as unknown as Question;
-		const claim = claims.get(i.dedupKey);
-		const ev = evidence.get(i.dedupKey);
-		const relay = relays.get(i.dedupKey);
-		// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
-		const answered = claim !== undefined || i.status === "resolved";
-		out.set(i.dedupKey, {
-			// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
-			...withUrgency(withoutSnoozeFields(q)),
-			...(ev?.length
-				? {
-						evidence: ev.map(
-							(e): Evidence => ({
-								type: e.type,
-								...(e.name ? { path: e.name } : {}),
-								...(e.url ? { url: e.url } : {}),
-								...(e.caption ? { caption: e.caption } : {}),
-							}),
-						),
-					}
-				: {}),
-			...outcomeOf(i.payload, claim?.answer as Answer | undefined, answered, now),
-			delivered: i.status === "resolved" && i.payload.answeredOnCard !== true,
-			...(i.status === "acknowledged" && !answered && typeof i.payload.notNowAt === "string"
-				? { notNowAt: i.payload.notNowAt }
-				: {}),
-			...(relay?.outcome
-				? { relay: { outcome: relay.outcome, t: relay.t ?? "", ...(relay.detail ? { detail: relay.detail } : {}) } }
-				: {}),
-		});
-	}
+	for (const i of store.items.list({ source: QUEUE, kind: "question" }))
+		out.set(i.dedupKey, stateOf(i, claims.get(i.dedupKey), evidence.get(i.dedupKey), relays.get(i.dedupKey), now));
 	return out;
 }
 export const getQuestion = (store: Store, id: string): QuestionState | undefined => questionStates(store).get(id);
@@ -252,7 +263,7 @@ export function notNow(store: Store, id: string, t = new Date().toISOString()) {
 
 const KIND_RANK: Record<Kind, number> = { "only-you": 0, product: 1, ruling: 2, idea: 3 };
 /** How many threads an item holds up, read from its blocks text ("blocks 3 threads", "holds 2 PRs"). */
-export const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
+const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
 
 /**
  * Pure: the active queue, ranked. A snoozed item is not in it (see `snoozed`). Non-urgent questions sit below every urgent one;
@@ -329,7 +340,7 @@ const WHY_TEXT: Record<StewardWhy, string> = {
 const SEND_UNCERTAIN =
 	"this option goes straight to the thread, but the direct send may or may not have reached the thread: check the thread before re-sending";
 /** Pure: a send detail that leaves open whether T3 took the message (the send's own deadline passed, or a crash cut it short). */
-export const sendUncertain = (detail: string) => /\bsend timed out\b|may or may not have reached/.test(detail);
+const sendUncertain = (detail: string) => /\bsend timed out\b|may or may not have reached/.test(detail);
 /**
  * Pure: a thread-routed claim's fallback wake, with how the send ended. A send that may have delivered tells the Steward
  * to check the thread before re-sending; a plain failure keeps "relay it yourself".
@@ -341,7 +352,7 @@ export function fallbackWake(message: string, detail: string): string {
 }
 
 /** Pure: the one message a thread-routed answer sends to the item's thread. It starts "Steward", as the Steward's own relay would. */
-export function threadRelayMessage(i: Question, a: Answer, relay: string): string {
+function threadRelayMessage(i: Question, a: Answer, relay: string): string {
 	const flat = (s: string) => s.replace(/\s+/g, " ").trim();
 	return [
 		`Steward, relaying ${principal()}'s answer from the decision queue (item ${i.id}; Chamberlain sent it the moment they answered).`,
@@ -518,23 +529,26 @@ export type RecoverOpts = {
 	/** Writes the wake. Default: the claim's message as an outbox row. */
 	send?: (c: Claim) => unknown;
 };
+/** Recovers one claim: true when its wake was written. A claim that is not owned, is resolved, is done or is already in the outbox is left; a failure is logged. */
+async function recoverOne(o: RecoverOpts, c: Claim): Promise<boolean> {
+	if (!o.owns(c.owner)) return false;
+	if (o.store.items.get(QUEUE, c.item)?.status === "resolved") return false;
+	try {
+		if (o.done ? o.done(c) : o.store.wakes.isDelivered(c.deliveryId)) {
+			o.delivered?.(c);
+			return false;
+		}
+		if (o.store.wakes.known(c.deliveryId)) return false;
+		o.log("claim-recovered", { item: c.item, owner: c.owner, deliveryId: c.deliveryId });
+		await (o.send ? o.send(c) : enqueueClaim(o.store, c));
+		return true;
+	} catch (e) {
+		o.log("claim-recover-error", { item: c.item, error: String(e).slice(0, 200) });
+		return false;
+	}
+}
 export async function recoverClaims(o: RecoverOpts): Promise<{ sent: string[] }> {
 	const sent: string[] = [];
-	for (const c of readClaims(o.store)) {
-		if (!o.owns(c.owner)) continue;
-		if (o.store.items.get(QUEUE, c.item)?.status === "resolved") continue;
-		try {
-			if (o.done ? o.done(c) : o.store.wakes.isDelivered(c.deliveryId)) {
-				o.delivered?.(c);
-				continue;
-			}
-			if (o.store.wakes.known(c.deliveryId)) continue;
-			o.log("claim-recovered", { item: c.item, owner: c.owner, deliveryId: c.deliveryId });
-			await (o.send ? o.send(c) : enqueueClaim(o.store, c));
-			sent.push(c.item);
-		} catch (e) {
-			o.log("claim-recover-error", { item: c.item, error: String(e).slice(0, 200) });
-		}
-	}
+	for (const c of readClaims(o.store)) if (await recoverOne(o, c)) sent.push(c.item);
 	return { sent };
 }

@@ -49,15 +49,14 @@ class El {
 		};
 	}
 	get classList() {
-		const self = this;
 		return {
 			add: (c: string) => {
-				self.className += ` ${c}`;
+				this.className += ` ${c}`;
 			},
 			toggle: (c: string, on: boolean) => {
-				const set = new Set(self.className.split(" ").filter(Boolean));
+				const set = new Set(this.className.split(" ").filter(Boolean));
 				on ? set.add(c) : set.delete(c);
-				self.className = [...set].join(" ");
+				this.className = [...set].join(" ");
 			},
 		};
 	}
@@ -94,7 +93,9 @@ class El {
 		this.attrs[k] = v;
 	}
 	addEventListener(ev: string, fn: () => unknown) {
-		(this.listeners[ev] ??= []).push(fn);
+		const list = this.listeners[ev] ?? [];
+		this.listeners[ev] = list;
+		list.push(fn);
 	}
 	all(pred: (e: El) => boolean): El[] {
 		return [...(pred(this) ? [this] : []), ...this.children.flatMap((c) => c.all(pred))];
@@ -442,19 +443,29 @@ test("the view sends the page's key from its own script address on every call, a
 	expect(calls.length).toBeGreaterThan(0);
 	expect(headers).toHaveLength(calls.length);
 	expect(headers.every((h) => h["x-decision-token"] === KEY)).toBe(true);
-	// an <img> cannot send a header, so its address carries the key; "Open the queue page" does too, and opens signed in
+	// an <img> cannot send a header, so its address carries the key
 	const imgs = dq.all((e) => e.tag === "img");
 	expect(imgs.length).toBeGreaterThan(0);
 	expect(imgs.every((i) => i.src.endsWith(`/shot.png?k=${KEY}`))).toBe(true);
 });
 
-test("a mirrored card's 'Open the queue page' link opens signed in, with the key from the script address", async () => {
+test("an evidence image the page refuses (the weak view key cannot read evidence) is replaced by a note that points to the full page", async () => {
+	const it = { ...item("x"), evidence: [{ type: "image", path: "shot.png", caption: "a shot" }] };
+	const dq = run(() => ({ items: [it] }), { src: "http://queue.test/inline.js?view=decisions&k=k-view" });
+	await settle();
+	const img = dq.all((e) => e.tag === "img")[0]!;
+	(img as unknown as { onerror: () => void }).onerror();
+	expect(dq.all((e) => e.tag === "img")).toHaveLength(0);
+	expect(dq.textContent).toContain("Image evidence shows on the full queue page.");
+});
+
+test("a mirrored card's 'Open the queue page' link carries no key: the script's key is the weak view key, and the browser's own cookie signs it in", async () => {
 	const KEY = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
 	const dq = run(() => ({ items: [], cards: [card("rm -rf build", "sig-1")] }), {
 		src: `http://queue.test/inline.js?view=decisions&k=${KEY}`,
 	});
 	await settle();
-	expect(dq.all((e) => e.tag === "a" && e.href === `http://queue.test/?k=${KEY}`)).toHaveLength(1);
+	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(1);
 });
 
 test("a view whose key was rotated says so, instead of showing an empty queue", async () => {
@@ -488,14 +499,14 @@ test("a rotation that comes on a refresh, with questions on screen, is said so i
 // ---- links out of the view: T3 Code's frame opens only http(s), so each one is the page's own address, signed with ?k= ----
 
 /** The three buttons after the thread link on a queue item: this frame cannot do them, so each opens the item on the full page, signed in. */
-const settleLinks = (id: string, key = "KEY", only: string[] = ["Snooze", "Direction", "Dismiss"]) =>
-	only.map((text) => ({ text, href: `http://queue.test/item/${id}?k=${key}`, target: "_blank" }));
+const settleLinks = (id: string, only: string[] = ["Snooze", "Direction", "Dismiss"]) =>
+	only.map((text) => ({ text, href: `http://queue.test/item/${id}`, target: "_blank" }));
 
 describe("links out of the view", () => {
 	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
 	const anchors = (dq: El) =>
 		dq.all((e) => e.tag === "a").map((a) => ({ text: a.textContent, href: a.href, target: a.target }));
-	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s), both signed in", async () => {
+	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s), neither carries a key (the view key cannot sign a browser in)", async () => {
 		const c = {
 			...card("make", "sig-1"),
 			server: "mac",
@@ -506,8 +517,8 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [], cards: [c] }), { src: SRC });
 		await settle();
 		expect(anchors(dq)).toEqual([
-			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
-			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12?k=KEY", target: "_blank" },
+			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12", target: "_blank" },
 		]);
 	});
 	test("a question asked with chamberlain ask links to its thread too", async () => {
@@ -521,7 +532,7 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [q] }), { src: SRC });
 		await settle();
 		expect(anchors(dq)).toEqual([
-			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
 			...settleLinks("Q-ctx1"),
 		]);
 	});
@@ -531,8 +542,8 @@ describe("links out of the view", () => {
 			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
 			await settle();
 			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([
-				["Open the thread", "http://queue.test/open/mac/t2?k=KEY"],
-				["Snooze", "http://queue.test/item/Q-ctx1?k=KEY"],
+				["Open the thread", "http://queue.test/open/mac/t2"],
+				["Snooze", "http://queue.test/item/Q-ctx1"],
 			]);
 		}
 	});
@@ -543,7 +554,7 @@ describe("links out of the view", () => {
 		await settle();
 		const hrefs = anchors(dq).map((a) => a.href);
 		expect(anchors(dq).map((a) => a.text)).toEqual(["Snooze", "Direction", "Dismiss", "Open the queue page"]);
-		expect(hrefs[3]).toBe("http://queue.test/?k=KEY");
+		expect(hrefs[3]).toBe("http://queue.test/");
 		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
 	});
 });
@@ -576,8 +587,8 @@ describe("the thread link inside T3's phone app", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: APP, target: "" },
-			...settleLinks("Q-ctx1", "KEY", ["Snooze"]),
-			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
+			...settleLinks("Q-ctx1", ["Snooze"]),
+			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
 			{ text: "Open the thread", href: APP, target: "" },
 		]);
 	});
@@ -594,7 +605,7 @@ describe("the thread link inside T3's phone app", () => {
 			const dq = run(() => ({ items: [q] }), { src: SRC, window });
 			await settle();
 			expect(anchors(dq)).toEqual([
-				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
 				...settleLinks("Q-ctx1"),
 			]);
 		}
@@ -632,7 +643,7 @@ describe("the thread link inside T3's phone app", () => {
 			expect([app, anchors(dq).map((a) => a.href)]).toEqual([
 				app,
 				[
-					"http://queue.test/open/mithrandir/t1?k=KEY",
+					"http://queue.test/open/mithrandir/t1",
 					...settleLinks("Q-ctx1").map((a) => a.href),
 					...settleLinks("Q-ctx2").map((a) => a.href),
 				],
@@ -705,8 +716,8 @@ describe("the Snoozed section in the Decisions view", () => {
 		expect(row.textContent).toContain("Snoozed Q-snz1");
 		expect(row.textContent).toContain("returns ");
 		expect(row.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
-			["Open the thread", "http://queue.test/open/main/t1?k=KEY"],
-			["Un-snooze", "http://queue.test/item/Q-snz1?k=KEY"],
+			["Open the thread", "http://queue.test/open/main/t1"],
+			["Un-snooze", "http://queue.test/item/Q-snz1"],
 		]);
 		expect(row.all((e) => e.tag === "button")).toEqual([]);
 		expect(calls.every((c) => c.method === "GET")).toBe(true);

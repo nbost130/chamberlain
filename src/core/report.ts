@@ -4,13 +4,14 @@
  * quiet window, then any background work or child threads, for up to REPORT_HOLD_MS. Past that it goes anyway: a hung
  * task must not swallow a report.
  */
-import { setting } from "./layout.ts";
+
 import { reportStillDue, type ThreadState } from "./decide.ts";
-import { skipEvent, type InstructionRead } from "./history.ts";
+import { type InstructionRead, skipEvent } from "./history.ts";
+import { setting } from "./layout.ts";
 
 export const REPORT_HOLD_MS = 60 * 60_000;
 /** The hold in force: `reportHoldMs` (CHAMBERLAIN_REPORT_HOLD_MS, else config.json), else the default above. */
-export const reportHoldMs = (): number => setting("reportHoldMs") ?? REPORT_HOLD_MS;
+const reportHoldMs = (): number => setting("reportHoldMs") ?? REPORT_HOLD_MS;
 const POLL_MS = 30_000;
 
 /** Pure: how long a report must still wait. Zero means now. */
@@ -37,12 +38,34 @@ export type ReportOutcome =
 	| { wake: true; key: string; work: string; running: number; oldCard: boolean }
 	| { wake: false; event: string };
 
-export async function settleReport(w: ReportWatch): Promise<ReportOutcome> {
-	const left = async () => {
-		if (w.now() < w.quietUntil()) return w.quietUntil() - w.now();
-		const s = w.state();
-		return reportWait(w.quietUntil(), w.now(), s !== undefined && (s.backgroundWork > 0 || (await w.children()) > 0));
+/** How long the wait has left: the quiet window first, then the hold while the thread still has work running. */
+async function waitLeft(w: ReportWatch): Promise<number> {
+	if (w.now() < w.quietUntil()) return w.quietUntil() - w.now();
+	const s = w.state();
+	return reportWait(w.quietUntil(), w.now(), s !== undefined && (s.backgroundWork > 0 || (await w.children()) > 0));
+}
+
+/** The outcome once the wait is over: a wake when there is a key and the report is still due, a skip otherwise. Runs with no await in it. */
+function outcomeAt(
+	w: ReportWatch,
+	read: InstructionRead,
+	wakeKey: string | undefined,
+	work: string | undefined,
+	after: ThreadState | undefined,
+): ReportOutcome {
+	if (!wakeKey || !after || !reportStillDue(after, w.oldCards()))
+		return { wake: false, event: skipEvent(read, "skip-report-superseded") };
+	return {
+		wake: true,
+		key: wakeKey,
+		work: work ?? "",
+		running: after.backgroundWork,
+		oldCard: after.pendingRequestId !== null,
 	};
+}
+
+export async function settleReport(w: ReportWatch): Promise<ReportOutcome> {
+	const left = () => waitLeft(w);
 	let retried = false;
 	for (;;) {
 		for (let ms = await left(); ms > 0; ms = await left()) await w.sleep(ms);
@@ -60,15 +83,6 @@ export async function settleReport(w: ReportWatch): Promise<ReportOutcome> {
 		if ((await left()) > 0) continue;
 		// State last, with no await before the return: a new turn or card must count.
 		const after = w.state();
-		const wakeKey = key ?? idle?.key;
-		if (!wakeKey || !after || !reportStillDue(after, w.oldCards()))
-			return { wake: false, event: skipEvent(read, "skip-report-superseded") };
-		return {
-			wake: true,
-			key: wakeKey,
-			work: idle?.work ?? "",
-			running: after.backgroundWork,
-			oldCard: after.pendingRequestId !== null,
-		};
+		return outcomeAt(w, read, key ?? idle?.key, idle?.work, after);
 	}
 }

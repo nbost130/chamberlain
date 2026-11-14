@@ -27,32 +27,147 @@
  * Lines of `context` that start with "- " render as bullets on the queue page and the Decisions view; write a few short ones.
  * Prints the item ID. A secret item posts no card: its value is entered in its own thread, never on a card or the page.
  */
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
-import { CONF, STATE } from "./core/config.ts";
-import { readToken } from "./core/capability.ts";
-import { cfg } from "./core/layout.ts";
 import { homeAdapter } from "./adapters/index.ts";
 import type { Adapter, PostResult } from "./core/adapter.ts";
+import { readViewKey } from "./core/capability.ts";
+import { CONF, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
+import { cfg } from "./core/layout.ts";
 import { startup } from "./core/migrate.ts";
-import { expiresProblem, isExpired } from "./core/rulings.ts";
 import {
 	alwaysUrgent,
 	askQuestion,
+	type Evidence,
 	evidenceRoot,
 	isUrgent,
 	KINDS,
 	newItemId,
-	type Evidence,
-	type Question,
 	type Option,
+	type Question,
 } from "./core/questions.ts";
+import { expiresProblem, isExpired } from "./core/rulings.ts";
 import { findSettled, refusalLines } from "./core/settled.ts";
+import type { Store } from "./core/store.ts";
+
 export { newItemId };
 
 const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const VIDEO = new Set([".mp4", ".webm", ".mov"]);
+
+type Raw = Record<string, unknown>;
+
+/** A text field, trimmed, or undefined when it is absent, null or empty. A value that is not text is refused. */
+function optText(o: Raw, k: string): string | undefined {
+	const v = o[k];
+	if (v === undefined || v === null || v === "") return undefined;
+	if (typeof v !== "string") throw Error(`ask: "${k}" must be a string`);
+	return v.trim();
+}
+
+/** A text field that must be there. */
+function reqText(o: Raw, k: string): string {
+	const v = optText(o, k);
+	if (v === undefined) throw Error(`ask: "${k}" is required`);
+	return v;
+}
+
+/** `{}` unless `cond`, so an optional field is left off an item rather than set to undefined. */
+const when = <T extends object>(cond: unknown, fields: T): Partial<T> => (cond ? fields : {});
+
+/** Option `n`'s thread routing (its `route: "thread"` and the `relay` text the thread gets), or undefined for a steward option; a malformed one is refused. */
+function parseRouting(opt: Raw | undefined, n: number): { route: "thread"; relay: string } | undefined {
+	const route = opt?.route;
+	if (route !== undefined && route !== null && route !== "thread" && route !== "steward")
+		throw Error(`ask: option ${n} route must be "thread" or "steward"`);
+	const rawRelay = opt?.relay;
+	if (rawRelay !== undefined && rawRelay !== null && typeof rawRelay !== "string")
+		throw Error(`ask: option ${n} relay must be a string`);
+	const relay = typeof rawRelay === "string" ? rawRelay.trim() : "";
+	if (route === "thread" && !relay)
+		throw Error(`ask: option ${n} routes to the thread, so it needs relay text: the exact instruction the thread gets`);
+	// relay text only ever applies to a thread-routed option, so a steward option keeps none.
+	return route === "thread" ? { route, relay } : undefined;
+}
+
+/** Option number `i + 1`: a label, or an object with a label, an optional detail and an optional route. */
+function parseOption(x: unknown, i: number): Option {
+	const opt = typeof x === "object" && x !== null ? (x as Raw) : undefined;
+	const label = typeof x === "string" ? x : opt?.label;
+	if (typeof label !== "string" || !label.trim()) throw Error(`ask: option ${i + 1} needs a label`);
+	const detail = typeof opt?.detail === "string" ? opt.detail.trim() : undefined;
+	const routing = parseRouting(opt, i + 1);
+	return {
+		label: label.trim().replace(/\s*\(Recommended\)\s*$/i, ""),
+		...when(detail, { detail }),
+		...when(routing, { ...routing }),
+	};
+}
+
+/** The options, two to nine of them (none are needed for a secret). */
+function parseOptions(o: Raw, secret: boolean): Option[] {
+	const options = (Array.isArray(o.options) ? o.options : []).map(parseOption);
+	if (!secret && options.length < 2) throw Error("ask: give at least two options");
+	if (options.length > 9) throw Error("ask: at most nine options (keys 1-9)");
+	return options;
+}
+
+/** The preselected option's index from 0, or undefined when none is given. */
+function parseRecommended(o: Raw, count: number): number | undefined {
+	const r = o.recommended;
+	if (r === undefined || r === null) return undefined;
+	if (typeof r !== "number" || !Number.isInteger(r) || r < 0 || r >= count)
+		throw Error("ask: recommended must be an option index from 0");
+	return r;
+}
+
+/** Evidence entry number `i + 1`: an image or video with a path, or a link with an http(s) url. */
+function parseEvidenceItem(x: unknown, i: number): Evidence {
+	const e = x as Evidence;
+	if (!["image", "video", "link"].includes(e?.type))
+		throw Error(`ask: evidence ${i + 1} needs type image, video or link`);
+	if (e.type === "link") {
+		if (typeof e.url !== "string" || !/^https?:\/\//.test(e.url))
+			throw Error(`ask: evidence ${i + 1} needs an http(s) url`);
+	} else if (typeof e.path !== "string" || !e.path) throw Error(`ask: evidence ${i + 1} needs a path`);
+	return {
+		type: e.type,
+		...when(e.path, { path: e.path }),
+		...when(e.url, { url: e.url }),
+		...when(e.caption, { caption: String(e.caption) }),
+	};
+}
+
+/** A time-bound proposed ruling needs the ruling, a real date, and a date that is not past. */
+function checkProposedExpiry(proposedRuling: string | undefined, proposedExpires: string | undefined): void {
+	if (!proposedExpires) return;
+	if (!proposedRuling) throw Error("ask: proposedExpires needs a proposedRuling");
+	const problem = expiresProblem(proposedExpires);
+	if (problem) throw Error(`ask: proposedExpires ${problem}`);
+	if (isExpired({ expires: proposedExpires })) throw Error("ask: proposedExpires is already past");
+}
+
+/** An option routed to the thread needs the item's threadId, and a secret never routes to a thread. */
+function checkThreadRouting(o: Raw, options: Option[], secret: boolean): void {
+	const toThread = options.some((x) => x.route === "thread");
+	if (toThread && !optText(o, "threadId")) throw Error("ask: an option routed to the thread needs the item's threadId");
+	if (secret && toThread)
+		throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
+}
+
+/**
+ * Whether `urgent: false` stays on the item. An approval or a secret never waits: the demotion is ignored, said through `warn`, and the
+ * question goes out urgent.
+ */
+function keepsDemotion(o: Raw, secret: boolean, tag: string | undefined, warn: (line: string) => void): boolean {
+	if (o.urgent !== false) return false;
+	if (!alwaysUrgent({ secret, ...(tag ? { tag } : {}) })) return true;
+	warn(
+		`ask: "urgent": false ignored: ${secret || /secret/i.test(tag ?? "") ? "a secret" : "an approval"} is always urgent, so it is filed and posted as urgent`,
+	);
+	return false;
+}
 
 /**
  * A checked item from the Steward's JSON, or the first thing wrong with it. `warn` hears what was changed rather than
@@ -64,112 +179,63 @@ export function parseAsk(
 	createdAt = new Date().toISOString(),
 	warn: (line: string) => void = (l) => console.error(l),
 ): Question {
-	const o = raw as Record<string, unknown>;
+	const o = raw as Raw;
 	if (!o || typeof o !== "object") throw Error("ask: expected a JSON object");
-	const str = (k: string, required = true) => {
-		const v = o[k];
-		if (v === undefined || v === null || v === "") {
-			if (required) throw Error(`ask: "${k}" is required`);
-			return undefined;
-		}
-		if (typeof v !== "string") throw Error(`ask: "${k}" must be a string`);
-		return v.trim();
-	};
-	const kind = str("kind") as Question["kind"];
+	const kind = reqText(o, "kind") as Question["kind"];
 	if (!KINDS.includes(kind)) throw Error(`ask: kind must be one of ${KINDS.join(", ")}`);
 	const secret = o.secret === true;
-	const options = (Array.isArray(o.options) ? o.options : []).map((x, i): Option => {
-		const label = typeof x === "string" ? x : (x as Option)?.label;
-		if (typeof label !== "string" || !label.trim()) throw Error(`ask: option ${i + 1} needs a label`);
-		const detail =
-			typeof x === "object" && typeof (x as Option).detail === "string" ? (x as Option).detail!.trim() : undefined;
-		const route = typeof x === "object" ? (x as Option).route : undefined;
-		if (route !== undefined && route !== null && route !== "thread" && route !== "steward")
-			throw Error(`ask: option ${i + 1} route must be "thread" or "steward"`);
-		const rawRelay = typeof x === "object" ? (x as Option).relay : undefined;
-		if (rawRelay !== undefined && rawRelay !== null && typeof rawRelay !== "string")
-			throw Error(`ask: option ${i + 1} relay must be a string`);
-		const relay = typeof rawRelay === "string" ? rawRelay.trim() : "";
-		if (route === "thread" && !relay)
-			throw Error(
-				`ask: option ${i + 1} routes to the thread, so it needs relay text: the exact instruction the thread gets`,
-			);
-		// relay text only ever applies to a thread-routed option, so a steward option keeps none.
-		return {
-			label: label.trim().replace(/\s*\(Recommended\)\s*$/i, ""),
-			...(detail ? { detail } : {}),
-			...(route === "thread" ? { route, relay } : {}),
-		};
-	});
-	if (!secret && options.length < 2) throw Error("ask: give at least two options");
-	if (options.length > 9) throw Error("ask: at most nine options (keys 1-9)");
-	let recommended: number | undefined;
-	if (o.recommended !== undefined && o.recommended !== null) {
-		if (
-			!Number.isInteger(o.recommended) ||
-			(o.recommended as number) < 0 ||
-			(o.recommended as number) >= options.length
-		)
-			throw Error("ask: recommended must be an option index from 0");
-		recommended = o.recommended as number;
-	}
-	const evidence = (Array.isArray(o.evidence) ? o.evidence : []).map((x, i): Evidence => {
-		const e = x as Evidence;
-		if (!["image", "video", "link"].includes(e?.type))
-			throw Error(`ask: evidence ${i + 1} needs type image, video or link`);
-		if (e.type === "link") {
-			if (typeof e.url !== "string" || !/^https?:\/\//.test(e.url))
-				throw Error(`ask: evidence ${i + 1} needs an http(s) url`);
-		} else if (typeof e.path !== "string" || !e.path) throw Error(`ask: evidence ${i + 1} needs a path`);
-		return {
-			type: e.type,
-			...(e.path ? { path: e.path } : {}),
-			...(e.url ? { url: e.url } : {}),
-			...(e.caption ? { caption: String(e.caption) } : {}),
-		};
-	});
-	const proposedRuling = str("proposedRuling", false);
-	const proposedExpires = str("proposedExpires", false);
-	if (proposedExpires) {
-		if (!proposedRuling) throw Error("ask: proposedExpires needs a proposedRuling");
-		const problem = expiresProblem(proposedExpires);
-		if (problem) throw Error(`ask: proposedExpires ${problem}`);
-		if (isExpired({ expires: proposedExpires })) throw Error("ask: proposedExpires is already past");
-	}
-	if (options.some((x) => x.route === "thread") && !str("threadId", false))
-		throw Error("ask: an option routed to the thread needs the item's threadId");
-	if (secret && options.some((x) => x.route === "thread"))
-		throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
+	const options = parseOptions(o, secret);
+	const recommended = parseRecommended(o, options.length);
+	const evidence = (Array.isArray(o.evidence) ? o.evidence : []).map(parseEvidenceItem);
+	const proposedRuling = optText(o, "proposedRuling");
+	const proposedExpires = optText(o, "proposedExpires");
+	checkProposedExpiry(proposedRuling, proposedExpires);
+	checkThreadRouting(o, options, secret);
 	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
-	const notSettled = str("notSettled", false);
-	const tag = str("tag", false);
-	// An approval or a secret never waits: the demotion is ignored, said on stderr, and the question goes out urgent.
-	const demoted = o.urgent === false && alwaysUrgent({ secret, ...(tag ? { tag } : {}) });
-	if (demoted)
-		warn(
-			`ask: "urgent": false ignored: ${secret || /secret/i.test(tag ?? "") ? "a secret" : "an approval"} is always urgent, so it is filed and posted as urgent`,
-		);
-	const item: Question = {
+	const notSettled = optText(o, "notSettled");
+	const tag = optText(o, "tag");
+	const keepDemotion = keepsDemotion(o, secret, tag, warn);
+	return {
 		id,
 		kind,
-		title: str("title")!,
-		context: str("context", false) ?? "",
+		title: reqText(o, "title"),
+		context: optText(o, "context") ?? "",
 		options,
-		...(recommended !== undefined ? { recommended } : {}),
-		...(proposedRuling ? { proposedRuling } : {}),
-		...(proposedExpires ? { proposedExpires } : {}),
-		...(evidence.length ? { evidence } : {}),
-		thread: str("thread")!,
-		server: str("server")!,
-		...(str("threadId", false) ? { threadId: str("threadId", false) } : {}),
-		...(str("blocks", false) ? { blocks: str("blocks", false) } : {}),
-		...(tag ? { tag } : {}),
-		...(secret ? { secret: true } : {}),
-		...(o.urgent === false && !demoted ? { urgent: false as const } : {}),
-		...(notSettled ? { notSettled } : {}),
+		...when(recommended !== undefined, { recommended }),
+		...when(proposedRuling, { proposedRuling }),
+		...when(proposedExpires, { proposedExpires }),
+		...when(evidence.length, { evidence }),
+		thread: reqText(o, "thread"),
+		server: reqText(o, "server"),
+		...when(optText(o, "threadId"), { threadId: optText(o, "threadId") }),
+		...when(optText(o, "blocks"), { blocks: optText(o, "blocks") }),
+		...when(tag, { tag }),
+		...when(secret, { secret: true }),
+		...when(keepDemotion, { urgent: false as const }),
+		...when(notSettled, { notSettled }),
 		createdAt,
 	};
-	return item;
+}
+
+/** One piece of evidence: a link as it is, a file copied into `dir` under a safe, unique name (`used` holds the names taken) with its path rewritten to that name. */
+function stageOne(e: Evidence, i: number, dir: string, used: Set<string>): Evidence {
+	if (e.type === "link") return e;
+	if (e.path === undefined) throw Error(`ask: evidence ${i + 1} needs a path`);
+	const src = e.path.replace(/^~(?=\/)/, process.env.HOME ?? "");
+	if (!existsSync(src) || !lstatSync(src).isFile())
+		throw Error(`ask: evidence ${i + 1} is not a regular file: ${e.path}`);
+	const ext = extname(src).toLowerCase();
+	if (!(e.type === "image" ? IMAGE : VIDEO).has(ext))
+		throw Error(`ask: evidence ${i + 1} must be ${e.type === "image" ? "png, jpg, gif or webp" : "mp4, webm or mov"}`);
+	let name =
+		basename(src)
+			.replace(/[^A-Za-z0-9._-]/g, "_")
+			.replace(/^\.+/, "") || `file${ext}`;
+	if (used.has(name)) name = `${i + 1}-${name}`;
+	used.add(name);
+	mkdirSync(dir, { recursive: true, mode: 0o700 });
+	copyFileSync(src, `${dir}/${name}`);
+	return { ...e, path: name };
 }
 
 /**
@@ -180,27 +246,7 @@ export function stageEvidence(item: Question, state = STATE): Question {
 	if (!item.evidence?.length) return item;
 	const dir = `${evidenceRoot(state)}/${item.id}`;
 	const used = new Set<string>();
-	const evidence = item.evidence.map((e, i) => {
-		if (e.type === "link") return e;
-		const src = e.path!.replace(/^~(?=\/)/, process.env.HOME!);
-		if (!existsSync(src) || !lstatSync(src).isFile())
-			throw Error(`ask: evidence ${i + 1} is not a regular file: ${e.path}`);
-		const ext = extname(src).toLowerCase();
-		if (!(e.type === "image" ? IMAGE : VIDEO).has(ext))
-			throw Error(
-				`ask: evidence ${i + 1} must be ${e.type === "image" ? "png, jpg, gif or webp" : "mp4, webm or mov"}`,
-			);
-		let name =
-			basename(src)
-				.replace(/[^A-Za-z0-9._-]/g, "_")
-				.replace(/^\.+/, "") || `file${ext}`;
-		if (used.has(name)) name = `${i + 1}-${name}`;
-		used.add(name);
-		mkdirSync(dir, { recursive: true, mode: 0o700 });
-		copyFileSync(src, `${dir}/${name}`);
-		return { ...e, path: name };
-	});
-	return { ...item, evidence };
+	return { ...item, evidence: item.evidence.map((e, i) => stageOne(e, i, dir, used)) };
 }
 
 /** The queue page's base URL from web.json, or undefined when the page is not configured (then no inline view). */
@@ -231,71 +277,55 @@ export async function queueUp(base: string, timeoutMs = 3000): Promise<boolean> 
 	}
 }
 
-/**
- * Shows a question where the operator reads, through the adapter: the pinned view when the page answers and has a key, else a one-line
- * notice. The daemon uses it too, when a snoozed urgent question returns (src/core/snooze.ts). `say` hears why a view was not posted.
- */
-export async function postQuestion(
-	item: Question,
-	adapter: Adapter,
-	say: (line: string) => void = (l) => console.error(l),
-): Promise<PostResult> {
-	const base = queueBase();
-	const up = base !== undefined && (await queueUp(base));
-	// The view's links carry the page's key. The page makes it when it starts, so a page that answers has one; one that cannot be read
-	// (a wrong mode) or is missing gets the notice, with the reason on stderr, never a link that would not work.
-	let key: string | undefined;
-	if (up) {
-		try {
-			key = readToken(CONF);
-		} catch (e) {
-			say(
-				`the page's key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
-			);
-		}
-		if (!key) say("the page has no key yet: run `chamberlain web link`; posting a notice instead of the view");
-	}
-	const inline = up && key !== undefined;
-	return adapter.post(item, { queueUrl: inline ? base : undefined, capability: inline ? key : undefined });
+/** Refuses (exit 2, one line per match) a question the principal has already settled. */
+function refuseIfSettled(store: Store, q: Question): void {
+	const { matches, skipped } = findSettled(store, { title: q.title, context: q.context, thread: q.thread });
+	for (const k of skipped) console.error(`ask.ts: the settled check could not read ${k}`);
+	if (!matches.length) return;
+	console.error(
+		refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join("\n"),
+	);
+	process.exit(2);
 }
 
-export async function main(argv: string[] = process.argv.slice(2)) {
-	startup();
-	const arg = argv[0];
-	if (!arg) {
-		console.error("usage: ask.ts '<json>' | ask.ts - < item.json");
-		process.exit(2);
+/** The view key for the view's script address, or undefined, with the reason on stderr: a key that cannot be read (a wrong mode) or is missing never makes a link that would not work. */
+function viewKeyOrNotice(): string | undefined {
+	let key: string | undefined;
+	try {
+		key = readViewKey(CONF);
+	} catch (e) {
+		console.error(
+			`the view key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
+		);
 	}
-	const raw = JSON.parse(arg === "-" ? await Bun.stdin.text() : arg);
-	const parsed = parseAsk(raw, newItemId());
-	const store = defaultStore();
-	if (!parsed.notSettled) {
-		const { matches, skipped } = findSettled(store, {
-			title: parsed.title,
-			context: parsed.context,
-			thread: parsed.thread,
-		});
-		for (const k of skipped) console.error(`ask.ts: the settled check could not read ${k}`);
-		if (matches.length) {
-			console.error(
-				refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join(
-					"\n",
-				),
-			);
-			process.exit(2);
-		}
-	}
-	const item = stageEvidence(parsed);
-	askQuestion(store, item, Date.parse(item.createdAt));
-	if (item.secret) {
-		console.log(`${item.id} (secret: on the page as a link to its thread; no card)`);
-		return;
-	}
-	// A non-urgent question is on the page and nowhere else: the post is the only notification a new question sends.
-	if (!isUrgent(item)) {
-		console.log(`${item.id} (on the queue page, not urgent: no notification sent)`);
-		return;
-	}
+	if (!key)
+		console.error(
+			"the page has no view key yet: start the page (chamberlain web); posting a notice instead of the view",
+		);
+	return key;
+}
+
+/** The queue page's address and key for the card's inline view, each undefined unless the page answers now and has a key. */
+async function inlineView(): Promise<{ queueUrl: string | undefined; capability: string | undefined }> {
+	const base = queueBase();
+	const up = base !== undefined && (await queueUp(base));
+	// The view's script address carries the VIEW key, never the page's key (a post is copied into the thread). The page makes it when it
+	// starts, so a page that answers has one.
+	const key = up ? viewKeyOrNotice() : undefined;
+	const inline = up && key !== undefined;
+	return { queueUrl: inline ? base : undefined, capability: inline ? key : undefined };
+}
+
+/**
+ * Shows a question where the operator reads, through the adapter: the pinned view when the page answers and has a key, else a one-line
+ * notice. The daemon uses it too, when a snoozed urgent question returns (src/core/snooze.ts).
+ */
+export async function postQuestion(item: Question, adapter: Adapter): Promise<PostResult> {
+	return adapter.post(item, await inlineView());
+}
+
+/** Posts the question where the operator reads and says where it went. */
+async function postAndReport(item: Question): Promise<void> {
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 	const card = await postQuestion(item, adapter);
 	if (!card.ok) {
@@ -308,6 +338,31 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	// The index counts from 0; echo the label so a 1-based slip is seen at once (2026-11-11: five questions preselected the wrong option).
 	if (item.recommended !== undefined)
 		console.log(`recommended (preselected): ${item.options[item.recommended]?.label}`);
+}
+
+export async function main(argv: string[] = process.argv.slice(2)) {
+	startup();
+	const arg = argv[0];
+	if (!arg) {
+		console.error("usage: ask.ts '<json>' | ask.ts - < item.json");
+		process.exit(2);
+	}
+	const raw = JSON.parse(arg === "-" ? await Bun.stdin.text() : arg);
+	const parsed = parseAsk(raw, newItemId());
+	const store = defaultStore();
+	if (!parsed.notSettled) refuseIfSettled(store, parsed);
+	const item = stageEvidence(parsed);
+	askQuestion(store, item, Date.parse(item.createdAt));
+	if (item.secret) {
+		console.log(`${item.id} (secret: on the page as a link to its thread; no card)`);
+		return;
+	}
+	// A non-urgent question is on the page and nowhere else: the post is the only notification a new question sends.
+	if (!isUrgent(item)) {
+		console.log(`${item.id} (on the queue page, not urgent: no notification sent)`);
+		return;
+	}
+	await postAndReport(item);
 }
 
 if (import.meta.main)

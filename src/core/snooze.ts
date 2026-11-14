@@ -9,8 +9,9 @@
  * item once, so an urgent one can be shown where the operator reads again. A snooze ends four ways: its time passes, the principal
  * un-snoozes, an answer, direction or dismissal settles the item (the page clears it), or the card behind a pointer resolves.
  */
+import type { Adapter, PostResult } from "./adapter.ts";
 import { heldForItem, heldId, heldOpen, noteHeld } from "./afk.ts";
-import { QUEUE, type QuestionState, questionStates } from "./questions.ts";
+import { isUrgent, plainQuestion, QUEUE, type Question, type QuestionState, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
 /** The longest a snooze may last: a year. A mistyped year would hide an item for good. */
@@ -103,4 +104,38 @@ export function returnDueSnoozes(store: Store, now = Date.now()): QuestionState[
 		back.push(question);
 	}
 	return back;
+}
+
+export type ReturnDeps = {
+	store: Store;
+	now: number;
+	/** A dry daemon records the return and posts nothing. */
+	dry: boolean;
+	log: (event: string, data?: Record<string, unknown>) => void;
+	/** The adapter that shows a question where the operator reads. */
+	adapter: Adapter;
+	post: (item: Question, adapter: Adapter) => Promise<PostResult>;
+};
+
+/**
+ * The daemon's tick for snoozes: each question whose time has come is recorded once (`returnDueSnoozes`), and an urgent one is shown where the
+ * operator reads again, as a new question is. A question that can wait comes back silently. A notice that fails is logged and never retried:
+ * the question is on the active list either way.
+ */
+export async function announceReturns(d: ReturnDeps): Promise<void> {
+	try {
+		for (const q of returnDueSnoozes(d.store, d.now)) {
+			const notify = isUrgent(q) && !d.dry;
+			d.log("snooze-returned", { id: q.id, notified: notify });
+			if (!notify) continue;
+			await d.post(plainQuestion(q), d.adapter).then(
+				(r) => {
+					if (!r.ok) d.log("snooze-post-failed", { id: q.id, detail: r.detail.slice(0, 200) });
+				},
+				(e) => d.log("snooze-post-failed", { id: q.id, detail: String(e).slice(0, 200) }),
+			);
+		}
+	} catch (e) {
+		d.log("snooze-return-error", { error: String(e).slice(0, 200) });
+	}
 }

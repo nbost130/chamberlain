@@ -8,8 +8,10 @@ import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
 	addInForce,
-	expiresAt,
+	type Clock,
+	confirmRuling,
 	expiredNow,
+	expiresAt,
 	inForceNow,
 	isExpired,
 	propose,
@@ -19,9 +21,7 @@ import {
 	retireRuling,
 	rulingsBriefText,
 	rulingsText,
-	confirmRuling,
 	updateRulings,
-	type Clock,
 } from "./rulings.ts";
 import { openStore } from "./sqlite-store.ts";
 

@@ -66,7 +66,8 @@ const BROWSER_SCHEMES = new Set([
 export const isAppLink = (u: unknown): u is string => {
 	if (typeof u !== "string" || u.length > 1100) return false;
 	const m = /^([a-z][a-z0-9+.-]{0,31}):\/\/[A-Za-z0-9._~:%/-]{1,1024}$/.exec(u);
-	return !!m && !BROWSER_SCHEMES.has(m[1]!);
+	const scheme = m?.[1];
+	return scheme !== undefined && !BROWSER_SCHEMES.has(scheme);
 };
 const prefix = (m: Record<string, string> | undefined, server: string) =>
 	m && Object.hasOwn(m, server) && typeof m[server] === "string" && m[server] ? m[server] : undefined;
@@ -112,6 +113,8 @@ export function createLinker(d: LinkerDeps): Linker {
 	};
 }
 
+const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
 /**
  * Pure: the page `/open` serves when the request is not a tap (`Sec-Fetch-User` absent: a reload, a link another app handed the
  * browser, a browser older than Safari 16.4). It goes on to `target` by itself (a meta refresh: Chrome on Android and desktop browsers
@@ -120,8 +123,7 @@ export function createLinker(d: LinkerDeps): Linker {
  * from the page's own stylesheet.
  */
 export function openPage(target: string, label: string): string {
-	const esc = (s: string) =>
-		s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+	const esc = (s: string) => s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 	const app = !isHttp(target);
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="0;url=${esc(target)}"><title>Opening the thread</title><link rel="stylesheet" href="/app.css"></head><body class="open-page"><main class="open-box"><h1>Opening ${esc(label)}…</h1><p><a class="open-go" href="${esc(target)}">Open ${esc(label)}</a></p><p class="open-why">${app ? "Nothing opened? Tap the button: some browsers (Safari on iPhone) open an app only from a tap. If it still does nothing, the app is not installed on this device." : "Nothing opened? Tap the button."}</p></main></body></html>`;
 }

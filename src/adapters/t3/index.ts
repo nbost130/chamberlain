@@ -17,9 +17,9 @@ import { t3StateDbPath } from "./settings.ts";
 import { t3Probe } from "./steward.ts";
 import { t3TitleSetter } from "./title.ts";
 import { t3Transcript } from "./transcript.ts";
-import { T3Link } from "./watch.ts";
-import { webhookWake } from "./wake.ts";
 import { createT3Waiting } from "./waiting.ts";
+import { webhookWake } from "./wake.ts";
+import { T3Link } from "./watch.ts";
 
 /** The wake's server line: how the woken thread reaches this server with the ordinary t3_* tools. */
 export const t3ServerLine = (srv: { name: string; environmentId?: string }): string =>
@@ -35,6 +35,25 @@ export const defaultT3Server = (): ServerEntry => ({
 	tokenFile: "read-token",
 });
 
+/** Every optional capability the T3 adapter implements. */
+const T3_CAPABILITIES: readonly OptionalCapability[] = [
+	"answer",
+	"listWaiting",
+	"setTitle",
+	"transcriptPath",
+	"inspect",
+	"send",
+	"stewardProbe",
+	"compact",
+	"snapshot",
+	"alertDesk",
+	"handoffInstruction",
+	"threadLinks",
+];
+
+/** Idle when no thread id is known yet; otherwise what the thread's queue in T3's state database says. */
+const threadGate = (id: string | undefined): Gate => (id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle");
+
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
 	const link = new T3Link(env, srv);
@@ -42,27 +61,10 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const waiting = createT3Waiting({ server: srv, conf: env.conf, log: env.log, linker });
 	const wake = webhookWake(() => env.readPrivate("wake-url"));
 	const compactWake = webhookWake(() => env.readPrivate("compact-url"));
-	const isBusy = (): Gate => {
-		const id = env.steward();
-		return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
-	};
-	const capabilities: OptionalCapability[] = [
-		"answer",
-		"listWaiting",
-		"setTitle",
-		"transcriptPath",
-		"inspect",
-		"send",
-		"stewardProbe",
-		"compact",
-		"snapshot",
-		"alertDesk",
-		"handoffInstruction",
-		"threadLinks",
-	];
+	const isBusy = (): Gate => threadGate(env.steward());
 	return {
 		id: "t3",
-		capabilities,
+		capabilities: [...T3_CAPABILITIES],
 		watch: (sink, signal) => link.watch(sink, signal),
 		wake,
 		isBusy,
@@ -89,10 +91,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		// The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained.
 		alertDesk: {
 			wake: webhookWake(() => env.readPrivate("desk-wake-url")),
-			isBusy: (): Gate => {
-				const id = env.readPrivate("desk-thread");
-				return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
-			},
+			isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
 		},
 		threadLinks: (threadId) => linker.links(threadId),
 		serverLine: () => t3ServerLine(srv),

@@ -4,10 +4,10 @@
  */
 import { CONF } from "./config.ts";
 import { cfg } from "./layout.ts";
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
+import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
 
 /** The adapter a server entry names when it names none: every server was T3 Code before adapters existed. */
-export const DEFAULT_ADAPTER = "t3";
+const DEFAULT_ADAPTER = "t3";
 
 export type ServerEntry = {
 	/** A short name used in wakes, queue items and logs: "main", "laptop". */
@@ -31,11 +31,11 @@ export type ServerEntry = {
 
 /** Pure: the entries of a parsed servers.json. Throws on a newer schema or a malformed entry. */
 export function parseServers(raw: unknown): ServerEntry[] {
-	const list =
-		raw && typeof raw === "object" && !Array.isArray(raw)
-			? (checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion),
-				(raw as { servers?: unknown }).servers)
-			: undefined;
+	let list: unknown;
+	if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+		checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion);
+		list = (raw as { servers?: unknown }).servers;
+	}
 	if (!Array.isArray(list)) throw Error('servers.json: need {"schemaVersion": 2, "servers": [{name, adapter, ...}]}');
 	const names = new Set<string>();
 	for (const x of list as Partial<ServerEntry>[]) {

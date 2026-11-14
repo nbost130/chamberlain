@@ -15,6 +15,7 @@
  */
 import { looksLikeAsk, looksLikeStall } from "../decide.ts";
 import { type Bank, DATA_PREAMBLE } from "./bank.ts";
+import { runPiped } from "./spawn.ts";
 import type { SentState } from "./state.ts";
 
 export const PROVIDERS = ["none", "rules", "jev", "haiku"] as const;
@@ -49,7 +50,7 @@ export class ProviderError extends Error {
 /** A model id as a provider may report it: a short token of letters, digits and `._:/-`. Anything else is refused, never stored. */
 export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 /** Pure: the reported model, checked; absent means the configured one. Throws (with the call's usage) for anything else. */
-export function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
+function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
 	if (reported === undefined || reported === null || reported === "") return configured;
 	if (typeof reported !== "string" || !MODEL_ID.test(reported))
 		throw new ProviderError(`${who} reported a model id that is not one`, usage);
@@ -100,7 +101,7 @@ export function rulesProvider(): Provider {
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_DEFAULT_MODEL = "jev-1.14.0";
 /** Input price, USD per million tokens (TypeSafe models page, Jev 1.14). Output is free. Used for any pinned Jev model. */
-export const JEV_USD_PER_MTOK = 0.042;
+const JEV_USD_PER_MTOK = 0.042;
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 export type JevOptions = {
@@ -123,6 +124,69 @@ export const jevBody = (state: SentState, bank: Bank, model: string) => ({
 	),
 });
 
+type JevReply = { answers?: Record<string, { noul?: unknown }>; model?: unknown; usage?: { input_tokens?: unknown } };
+
+/** The one request for a thread. A failure to reach Jev, a timeout and a non-2xx status each throw a fixed phrase, never a body. */
+async function jevRequest(
+	doFetch: FetchLike,
+	o: JevOptions,
+	key: string,
+	state: SentState,
+	bank: Bank,
+): Promise<Response> {
+	let r: Response;
+	try {
+		r = await doFetch(JEV_URL, {
+			method: "POST",
+			signal: AbortSignal.timeout(o.timeoutMs),
+			headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+			body: JSON.stringify(jevBody(state, bank, o.model)),
+		});
+	} catch (e) {
+		const name = (e as { name?: string })?.name;
+		throw Error(
+			name === "TimeoutError" || name === "AbortError"
+				? `Jev did not answer within ${o.timeoutMs} ms`
+				: "Jev could not be reached",
+		);
+	}
+	if (!r.ok) {
+		await r.body?.cancel().catch(() => {});
+		throw Error(`Jev answered HTTP ${r.status}`);
+	}
+	return r;
+}
+
+/** The reply's JSON, which must be an object. */
+async function jevReply(r: Response): Promise<JevReply> {
+	let j: JevReply;
+	try {
+		j = (await r.json()) as JevReply;
+	} catch {
+		throw Error("Jev's answer is not JSON");
+	}
+	if (!j || typeof j !== "object") throw Error("Jev's answer is not an object");
+	return j;
+}
+
+/** What the call cost: Jev's input tokens at its price. Read first, so a billed call whose answers are then refused still counts against the budget. */
+function jevUsage(j: JevReply): Usage {
+	const tokens = j.usage?.input_tokens;
+	const inputTokens = typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0 ? tokens : undefined;
+	return inputTokens !== undefined ? { inputTokens, costUsd: (inputTokens * JEV_USD_PER_MTOK) / 1e6 } : {};
+}
+
+/** The probability each question's head gave, checked; a refusal carries the call's usage. */
+function jevAnswers(j: JevReply, bank: Bank, usage: Usage): Record<string, number> {
+	if (!j.answers || typeof j.answers !== "object") throw new ProviderError("Jev's answer has no answers", usage);
+	const heads = j.answers as Record<string, { noul?: unknown }>;
+	try {
+		return validAnswers(bank, Object.fromEntries(bank.map((q) => [q.id, heads[q.id]?.noul])));
+	} catch (e) {
+		throw new ProviderError((e as Error).message, usage);
+	}
+}
+
 export function jevProvider(o: JevOptions): Provider {
 	const doFetch: FetchLike = o.fetch ?? ((u, i) => fetch(u, i));
 	return {
@@ -132,46 +196,9 @@ export function jevProvider(o: JevOptions): Provider {
 			const key = o.key();
 			if (!key) throw Error("no TypeSafe API key (jev.keyFile in the config directory's secrets)");
 			const t0 = performance.now();
-			let r: Response;
-			try {
-				r = await doFetch(JEV_URL, {
-					method: "POST",
-					signal: AbortSignal.timeout(o.timeoutMs),
-					headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-					body: JSON.stringify(jevBody(state, bank, o.model)),
-				});
-			} catch (e) {
-				const name = (e as { name?: string })?.name;
-				throw Error(
-					name === "TimeoutError" || name === "AbortError"
-						? `Jev did not answer within ${o.timeoutMs} ms`
-						: "Jev could not be reached",
-				);
-			}
-			if (!r.ok) {
-				await r.body?.cancel().catch(() => {});
-				throw Error(`Jev answered HTTP ${r.status}`);
-			}
-			let j: { answers?: Record<string, { noul?: unknown }>; model?: unknown; usage?: { input_tokens?: unknown } };
-			try {
-				j = (await r.json()) as typeof j;
-			} catch {
-				throw Error("Jev's answer is not JSON");
-			}
-			if (!j || typeof j !== "object") throw Error("Jev's answer is not an object");
-			// Usage first: a billed call whose answers are then refused still counts against the budget.
-			const tokens = j.usage?.input_tokens;
-			const inputTokens = typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0 ? tokens : undefined;
-			const usage: Usage =
-				inputTokens !== undefined ? { inputTokens, costUsd: (inputTokens * JEV_USD_PER_MTOK) / 1e6 } : {};
-			if (!j.answers || typeof j.answers !== "object") throw new ProviderError("Jev's answer has no answers", usage);
-			const heads = j.answers as Record<string, { noul?: unknown }>;
-			let answers: Record<string, number>;
-			try {
-				answers = validAnswers(bank, Object.fromEntries(bank.map((q) => [q.id, heads[q.id]?.noul])));
-			} catch (e) {
-				throw new ProviderError((e as Error).message, usage);
-			}
+			const j = await jevReply(await jevRequest(doFetch, o, key, state, bank));
+			const usage = jevUsage(j);
+			const answers = jevAnswers(j, bank, usage);
 			return {
 				answers,
 				model: modelOf(j.model, o.model, usage, "Jev"),
@@ -189,18 +216,12 @@ export type CliRunner = (
 	o: { stdin: string; env: Record<string, string | undefined>; timeoutMs: number },
 ) => Promise<{ code: number | null; stdout: string }>;
 
-export const spawnCli: CliRunner = async (argv, o) => {
-	const p = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "ignore", env: o.env, timeout: o.timeoutMs });
-	p.stdin.write(o.stdin);
-	await p.stdin.end();
-	const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-	return { code: p.signalCode ? null : code, stdout };
-};
+const spawnCli: CliRunner = (argv, o) => runPiped(argv, o.stdin, o.timeoutMs, o.env);
 
 export type HaikuOptions = { command: string; model: string; timeoutMs: number; run?: CliRunner };
 
 /** Pure: the system prompt: the bank, every question with its yes and no, and the one reply shape. */
-export const haikuSystem = (bank: Bank): string =>
+const haikuSystem = (bank: Bank): string =>
 	"You label one message from an AI agent's chat thread. Answer each question independently with your probability (0 to 1) that the answer is yes.\n\n" +
 	bank.map((q) => `- ${q.id}: ${DATA_PREAMBLE} ${q.ask}\n  YES: ${q.yes}\n  NO: ${q.no}`).join("\n") +
 	"\n\nReply with only a JSON object mapping each question id to a number, nothing else.";
@@ -224,6 +245,82 @@ export const haikuArgv = (o: Pick<HaikuOptions, "command" | "model">, bank: Bank
 	"json",
 ];
 
+type HaikuReply = {
+	result?: unknown;
+	total_cost_usd?: unknown;
+	usage?: Record<string, unknown>;
+	modelUsage?: Record<string, unknown>;
+};
+
+/** The CLI's stdout for one thread. A run that cannot start, a timeout and a non-zero exit each throw a fixed phrase, never output. */
+async function haikuRun(
+	run: CliRunner,
+	o: HaikuOptions,
+	state: SentState,
+	bank: Bank,
+	env: Record<string, string | undefined>,
+): Promise<string> {
+	let r: Awaited<ReturnType<CliRunner>>;
+	try {
+		r = await run(haikuArgv(o, bank), { stdin: JSON.stringify({ state }), env, timeoutMs: o.timeoutMs });
+	} catch {
+		throw Error(`${o.command} could not be run`);
+	}
+	if (r.code !== 0)
+		throw Error(
+			r.code === null ? `${o.command} did not finish within ${o.timeoutMs} ms` : `${o.command} exited ${r.code}`,
+		);
+	return r.stdout;
+}
+
+/** The CLI's JSON output, which must be an object. */
+function haikuReply(command: string, stdout: string): HaikuReply {
+	let j: HaikuReply;
+	try {
+		j = JSON.parse(stdout);
+	} catch {
+		throw Error(`${command} printed something that is not JSON`);
+	}
+	if (!j || typeof j !== "object") throw Error(`${command} printed JSON that is not an object`);
+	return j;
+}
+
+const nonNegative = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+
+/** What the call cost, from the CLI's own report. Read first: a call whose reply is then refused was still spent. */
+function haikuUsage(j: HaikuReply): Usage {
+	const u = j.usage && typeof j.usage === "object" ? j.usage : {};
+	const tokens =
+		nonNegative(u.input_tokens) + nonNegative(u.cache_creation_input_tokens) + nonNegative(u.cache_read_input_tokens);
+	return {
+		...(tokens ? { inputTokens: tokens } : {}),
+		...(typeof j.total_cost_usd === "number" && Number.isFinite(j.total_cost_usd) && j.total_cost_usd >= 0
+			? { costUsd: j.total_cost_usd }
+			: {}),
+	};
+}
+
+/** The first flat `{...}` in the model's reply, parsed, or undefined when there is none or it is not JSON. */
+function haikuObject(result: unknown): unknown {
+	const m = typeof result === "string" ? result.match(/\{[^{}]*\}/) : null;
+	try {
+		return m ? JSON.parse(m[0]) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The probability the model gave each question, checked; a refusal carries the call's usage. */
+function haikuAnswers(j: HaikuReply, bank: Bank, usage: Usage): Record<string, number> {
+	const parsed = haikuObject(j.result);
+	if (parsed === undefined) throw new ProviderError("the model's reply holds no JSON object of answers", usage);
+	try {
+		return validAnswers(bank, parsed);
+	} catch (e) {
+		throw new ProviderError((e as Error).message, usage);
+	}
+}
+
 export function haikuProvider(o: HaikuOptions): Provider {
 	const run = o.run ?? spawnCli;
 	return {
@@ -233,52 +330,9 @@ export function haikuProvider(o: HaikuOptions): Provider {
 			const env: Record<string, string | undefined> = { ...process.env };
 			delete env.ANTHROPIC_API_KEY;
 			const t0 = performance.now();
-			let r: Awaited<ReturnType<CliRunner>>;
-			try {
-				r = await run(haikuArgv(o, bank), { stdin: JSON.stringify({ state }), env, timeoutMs: o.timeoutMs });
-			} catch {
-				throw Error(`${o.command} could not be run`);
-			}
-			if (r.code !== 0)
-				throw Error(
-					r.code === null ? `${o.command} did not finish within ${o.timeoutMs} ms` : `${o.command} exited ${r.code}`,
-				);
-			let j: {
-				result?: unknown;
-				total_cost_usd?: unknown;
-				usage?: Record<string, unknown>;
-				modelUsage?: Record<string, unknown>;
-			};
-			try {
-				j = JSON.parse(r.stdout);
-			} catch {
-				throw Error(`${o.command} printed something that is not JSON`);
-			}
-			if (!j || typeof j !== "object") throw Error(`${o.command} printed JSON that is not an object`);
-			// Usage first: a call whose reply is then refused was still spent.
-			const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
-			const u = j.usage && typeof j.usage === "object" ? j.usage : {};
-			const tokens = n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
-			const usage: Usage = {
-				...(tokens ? { inputTokens: tokens } : {}),
-				...(typeof j.total_cost_usd === "number" && Number.isFinite(j.total_cost_usd) && j.total_cost_usd >= 0
-					? { costUsd: j.total_cost_usd }
-					: {}),
-			};
-			const m = typeof j.result === "string" ? j.result.match(/\{[^{}]*\}/) : null;
-			let parsed: unknown;
-			try {
-				parsed = m ? JSON.parse(m[0]) : undefined;
-			} catch {
-				parsed = undefined;
-			}
-			if (parsed === undefined) throw new ProviderError("the model's reply holds no JSON object of answers", usage);
-			let answers: Record<string, number>;
-			try {
-				answers = validAnswers(bank, parsed);
-			} catch (e) {
-				throw new ProviderError((e as Error).message, usage);
-			}
+			const j = haikuReply(o.command, await haikuRun(run, o, state, bank, env));
+			const usage = haikuUsage(j);
+			const answers = haikuAnswers(j, bank, usage);
 			const reported = j.modelUsage && typeof j.modelUsage === "object" ? Object.keys(j.modelUsage) : [];
 			// Every reported model is checked; the first is recorded.
 			const models = reported.map((id) => modelOf(id, o.model, usage, o.command));

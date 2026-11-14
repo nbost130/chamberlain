@@ -5,11 +5,11 @@ import { join, relative } from "node:path";
 import {
 	createJudge,
 	defaultJudgeConfig,
+	type JudgeRunner,
 	judgeOff,
 	parseJudgeConfig,
 	readJudgeConfig,
 	scrubForJudge,
-	type JudgeRunner,
 } from "./judge.ts";
 
 const verdicts = ["retry_later", "do_not_retry", "ask_principal"] as const;
@@ -66,6 +66,46 @@ describe("judge configuration", () => {
 			expect(r.error).toMatch(/judge\.json/);
 			expect(r.config).toEqual(defaultJudgeConfig());
 		}
+	});
+});
+
+describe("judge configuration errors", () => {
+	test("each bad file names the first thing wrong with it", () => {
+		const errorOf = (raw: unknown) => parseJudgeConfig(JSON.stringify(raw)).error;
+		const ok = { a: { command: ["x"] } };
+		expect(errorOf({ backends: { "a b": { command: ["x"] } } })).toBe(
+			'judge.json: backend name "a b" must be letters, digits, ".", "_" or "-"',
+		);
+		expect(errorOf({ backends: { a: { command: [] } } })).toBe(
+			'judge.json: backend "a": command must be a non-empty list of strings',
+		);
+		expect(errorOf({ backends: { a: { command: ["x", ""] } } })).toBe(
+			'judge.json: backend "a": command must be a non-empty list of strings',
+		);
+		expect(errorOf({ backends: { a: null } })).toBe(
+			'judge.json: backend "a": command must be a non-empty list of strings',
+		);
+		expect(errorOf({ backends: ok, triggers: { nope: { backend: "a" } } })).toBe('judge.json: unknown trigger "nope"');
+		expect(errorOf({ backends: ok, triggers: { "stalled-recovery": {} } })).toBe(
+			'judge.json: trigger "stalled-recovery": backend must name a backend',
+		);
+		expect(errorOf({ backends: ok, triggers: { "stalled-recovery": { backend: "a b" } } })).toBe(
+			'judge.json: trigger "stalled-recovery": backend must name a backend',
+		);
+		expect(errorOf({ triggers: { "stalled-recovery": { backend: "gpt" } } })).toBe(
+			'judge.json: trigger "stalled-recovery": backend "gpt" is not in "backends"',
+		);
+	});
+	test("a good file adds its backends, then points its triggers at them", () => {
+		const { config, error } = parseJudgeConfig(
+			JSON.stringify({
+				backends: { a: { command: ["x", "-y"] } },
+				triggers: { "stalled-recovery": { backend: "a" } },
+			}),
+		);
+		expect(error).toBeUndefined();
+		expect(config.backends.a).toEqual({ command: ["x", "-y"] });
+		expect(config.triggers["stalled-recovery"]).toEqual({ backend: "a" });
 	});
 });
 

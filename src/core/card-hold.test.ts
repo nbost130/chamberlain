@@ -6,8 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
 import type { WaitingItem } from "./adapter.ts";
+import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
 import {
 	CARD_UNVERIFIED,
 	cardKey,
@@ -392,6 +392,31 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		]) {
 			expect((await reconcileCardHolds(store, async () => bad as never)).closed).toEqual([]);
 		}
+		expect(heldOpen(store)).toHaveLength(1);
+	});
+	test("a card whose thread neither its hold nor a question names is listed without one, is never read, and stays open", async () => {
+		const store = memStore();
+		const { item } = holdCard(store, cardWaitOf(approval, AT));
+		const h = store.items.list({ source: "held" })[0]!;
+		const { item: _i, card: _c, ...old } = h.payload as Record<string, unknown>;
+		store.items.observe({
+			source: "held",
+			kind: "hold",
+			dedupKey: h.dedupKey,
+			mode: "silenced",
+			payload: { ...old, card: { server: "main", requestId: "req-a1" } },
+			now: Date.now(),
+		});
+		store.items.resolve("queue", item, Date.now());
+		expect(openCards(store)).toEqual([{ server: "main", requestId: "req-a1", holds: [{ id: h.dedupKey, seq: 1 }] }]);
+		let reads = 0;
+		const r = await reconcileCardHolds(store, async () => {
+			reads++;
+			return { ok: true as const, waiting: new Set<string>(), resolved: new Set(["req-a1"]) };
+		});
+		expect(reads).toBe(0);
+		expect(r.closed).toEqual([]);
+		expect(r.unverified.map((u) => u.reason)).toEqual(["neither its hold nor its question names its thread"]);
 		expect(heldOpen(store)).toHaveLength(1);
 	});
 	test("a hold written before `card` existed takes its thread from its pointer question", async () => {

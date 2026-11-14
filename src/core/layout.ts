@@ -31,23 +31,22 @@ import {
 	lstatSync,
 	mkdirSync,
 	openSync,
-	readFileSync,
 	readdirSync,
+	readFileSync,
 	renameSync,
 	statSync,
-	writeFileSync,
 	writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import { authorityProblem, isPrivateFile, modeText } from "./private.ts";
-import { SchemaTooNewError, checkVersion } from "./schema.ts";
+import { authorityProblem, isPrivateFile, modeText, privateFile, readPrivate } from "./private.ts";
+import { checkVersion, SchemaTooNewError } from "./schema.ts";
 import { parseSettings, parseSettledMatch } from "./settings-parse.ts";
 import { configDir } from "./state-dir.ts";
 
 export const CONFIG_FILE = "config.json";
 export const SECRETS_DIR = "secrets";
 /** config.json carries its own version, apart from the legacy files' (src/core/schema.ts): it began at 1 with this layout. */
-export const CONFIG_SCHEMA_VERSION = 1;
+const CONFIG_SCHEMA_VERSION = 1;
 const DEFAULT_CONF = configDir(process.env, process.env.HOME ?? "");
 
 /** A config.json that cannot be used: not JSON, the wrong shape, or a mode that lets someone else change it. */
@@ -60,7 +59,7 @@ export class ConfigFileError extends Error {
 
 // ---- the keys ------------------------------------------------------------------------------------------
 
-type ScalarKind = "string" | "posnum" | "nonneg" | "posint" | "boolean" | "list";
+export type ScalarKind = "string" | "posnum" | "nonneg" | "posint" | "boolean" | "list";
 /** The scalar keys, each with the kind of value it takes. Each one has an environment override (`envName`). */
 export const SCALARS = {
 	principal: "string",
@@ -100,7 +99,6 @@ export const SECTIONS = [
 	"operatingRules",
 	"judge",
 ] as const;
-export type SectionKey = (typeof SECTIONS)[number];
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
 /** Bookkeeping the migration writes: when, and from which legacy files. Not a setting. */
@@ -125,57 +123,74 @@ export const LEGACY_THREAD_FILES: Record<ThreadKey, string> = {
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
+/** For each kind of scalar: what a value must be (as the error says it) and whether it is. */
+const SCALAR_RULES: Record<ScalarKind, { what: string; ok: (v: unknown) => boolean }> = {
+	string: { what: "a non-empty string", ok: (v) => typeof v === "string" && !!v.trim() },
+	boolean: { what: "true or false", ok: (v) => typeof v === "boolean" },
+	list: {
+		what: "a list of non-empty strings",
+		ok: (v) => Array.isArray(v) && !v.some((x) => typeof x !== "string" || !x.trim()),
+	},
+	posnum: { what: "a positive number", ok: (v) => typeof v === "number" && Number.isFinite(v) && v > 0 },
+	nonneg: { what: "a number, 0 or more", ok: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 },
+	posint: { what: "a whole number, 1 or more", ok: (v) => typeof v === "number" && Number.isInteger(v) && v >= 1 },
+};
+
 function checkScalar(key: string, kind: ScalarKind, v: unknown): void {
-	const bad = (what: string) => {
-		throw new ConfigFileError(`config.json: "${key}" must be ${what}`);
-	};
 	if (v === null) return;
-	if (kind === "string" && (typeof v !== "string" || !v.trim())) bad("a non-empty string");
-	if (kind === "boolean" && typeof v !== "boolean") bad("true or false");
-	if (kind === "list" && (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !x.trim())))
-		bad("a list of non-empty strings");
-	if (kind === "posnum" && (typeof v !== "number" || !Number.isFinite(v) || v <= 0)) bad("a positive number");
-	if (kind === "nonneg" && (typeof v !== "number" || !Number.isFinite(v) || v < 0)) bad("a number, 0 or more");
-	if (kind === "posint" && (typeof v !== "number" || !Number.isInteger(v) || v < 1)) bad("a whole number, 1 or more");
+	const rule = SCALAR_RULES[kind];
+	if (!rule.ok(v)) throw new ConfigFileError(`config.json: "${key}" must be ${rule.what}`);
+}
+
+/** Pure: the document's own version, when it has one: a non-negative integer no newer than this build reads. */
+function checkSchemaVersion(v: unknown): void {
+	if (v === undefined) return;
+	if (typeof v !== "number" || !Number.isInteger(v) || v < 0)
+		throw new ConfigFileError(`config.json: schemaVersion must be a non-negative integer, got ${JSON.stringify(v)}`);
+	if (v > CONFIG_SCHEMA_VERSION) throw new SchemaTooNewError(CONFIG_FILE, v, CONFIG_SCHEMA_VERSION);
+}
+
+/** Pure: a section of config.json is null (none), a list (servers) or an object, and a settledMatch parses. */
+function checkSection(k: string, val: unknown): void {
+	if (val === null) return;
+	if (k === "servers" ? !Array.isArray(val) : !isObject(val))
+		throw new ConfigFileError(`config.json: "${k}" must be ${k === "servers" ? "a list" : "an object"}`);
+	if (k === "settledMatch") {
+		try {
+			parseSettledMatch(val, "config.json");
+		} catch (e) {
+			throw new ConfigFileError((e as Error).message);
+		}
+	}
+}
+
+/** Pure: one top-level key: a scalar of its kind, a section of its shape, bookkeeping, or refused as unknown. */
+function checkKey(raw: Record<string, unknown>, k: string): void {
+	if (Object.hasOwn(SCALARS, k)) checkScalar(k, SCALARS[k as ScalarKey], raw[k]);
+	else if ((SECTIONS as readonly string[]).includes(k)) checkSection(k, raw[k]);
+	else if (!(BOOKKEEPING as readonly string[]).includes(k))
+		throw new ConfigFileError(
+			`config.json: unknown key "${k}" (keys: ${[...Object.keys(SCALARS), ...SECTIONS].join(", ")})`,
+		);
+}
+
+/** Pure: the thread ids of a `threads` object: a known member each, null or a non-empty string. */
+function checkThreads(t: unknown): void {
+	if (!isObject(t)) return;
+	for (const [k, val] of Object.entries(t)) {
+		if (!(THREADS as readonly string[]).includes(k))
+			throw new ConfigFileError(`config.json: "threads" has an unknown key "${k}" (keys: ${THREADS.join(", ")})`);
+		if (val !== null && (typeof val !== "string" || !val.trim()))
+			throw new ConfigFileError(`config.json: "threads.${k}" must be a non-empty thread id`);
+	}
 }
 
 /** Pure: a parsed config.json checked, or the first thing wrong with it. A key this build does not know is refused, never ignored. */
 export function parseConfigDoc(raw: unknown): Record<string, unknown> {
 	if (!isObject(raw)) throw new ConfigFileError("config.json: expected a JSON object");
-	const v = raw.schemaVersion;
-	if (v !== undefined) {
-		if (typeof v !== "number" || !Number.isInteger(v) || v < 0)
-			throw new ConfigFileError(`config.json: schemaVersion must be a non-negative integer, got ${JSON.stringify(v)}`);
-		if (v > CONFIG_SCHEMA_VERSION) throw new SchemaTooNewError(CONFIG_FILE, v, CONFIG_SCHEMA_VERSION);
-	}
-	for (const k of Object.keys(raw)) {
-		if (Object.hasOwn(SCALARS, k)) checkScalar(k, SCALARS[k as ScalarKey], raw[k]);
-		else if ((SECTIONS as readonly string[]).includes(k)) {
-			const val = raw[k];
-			if (val === null) continue;
-			if (k === "servers" ? !Array.isArray(val) : !isObject(val))
-				throw new ConfigFileError(`config.json: "${k}" must be ${k === "servers" ? "a list" : "an object"}`);
-			if (k === "settledMatch") {
-				try {
-					parseSettledMatch(val, "config.json");
-				} catch (e) {
-					throw new ConfigFileError((e as Error).message);
-				}
-			}
-		} else if (!(BOOKKEEPING as readonly string[]).includes(k))
-			throw new ConfigFileError(
-				`config.json: unknown key "${k}" (keys: ${[...Object.keys(SCALARS), ...SECTIONS].join(", ")})`,
-			);
-	}
-	const t = raw.threads;
-	if (isObject(t)) {
-		for (const [k, val] of Object.entries(t)) {
-			if (!(THREADS as readonly string[]).includes(k))
-				throw new ConfigFileError(`config.json: "threads" has an unknown key "${k}" (keys: ${THREADS.join(", ")})`);
-			if (val !== null && (typeof val !== "string" || !val.trim()))
-				throw new ConfigFileError(`config.json: "threads.${k}" must be a non-empty thread id`);
-		}
-	}
+	checkSchemaVersion(raw.schemaVersion);
+	for (const k of Object.keys(raw)) checkKey(raw, k);
+	checkThreads(raw.threads);
 	return raw;
 }
 
@@ -280,17 +295,7 @@ function legacyThread(conf: string, member: ThreadKey): string | undefined {
 	return readLegacyText(conf, LEGACY_THREAD_FILES[member]);
 }
 function readLegacyText(conf: string, name: string): string | undefined {
-	if (!readable(conf, name, false)) return undefined;
-	try {
-		const p = `${conf}/${name}`;
-		const st = statSync(p);
-		if (!isPrivateFile(st))
-			throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
-		return readFileSync(p, "utf8").trim() || undefined;
-	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw e;
-	}
+	return readable(conf, name, false) ? privateFile(conf, name) : undefined;
 }
 
 /** The legacy settings.json as config keys, or undefined. */
@@ -319,39 +324,30 @@ const LEGACY_SECTION_FILES: Record<string, { file: string; how: "private" | "aut
 };
 const SETTINGS_KEYS = ["principal", "t3Dir", "t3StateDb", "alertCmd", "compactTokens", "settledMatch"];
 
+/** The value of one of the keys the legacy settings.json supplied, or undefined. */
+function legacySettingsValue(conf: string, key: string): Legacy | undefined {
+	const s = legacySettings(conf);
+	return s && Object.hasOwn(s, key) ? { value: s[key], file: "settings.json" } : undefined;
+}
+
+/** The list a legacy servers.json holds, or the refusal that says what it should look like. */
+function legacyServers(raw: unknown, file: string): Legacy {
+	const list = isObject(raw) ? raw.servers : undefined;
+	if (!Array.isArray(list)) throw Error('servers.json: need {"schemaVersion": 2, "servers": [{name, adapter, ...}]}');
+	return { value: list, file };
+}
+
 /** The value a legacy file holds for a config key, or undefined. */
 export function legacyValue(conf: string, key: string): Legacy | undefined {
-	if (SETTINGS_KEYS.includes(key)) {
-		const s = legacySettings(conf);
-		return s && Object.hasOwn(s, key) ? { value: s[key], file: "settings.json" } : undefined;
-	}
+	if (SETTINGS_KEYS.includes(key)) return legacySettingsValue(conf, key);
 	const spec = LEGACY_SECTION_FILES[key];
 	if (!spec) return undefined;
 	const doc = legacyJson(conf, spec.file, spec.how);
 	if (!doc) return undefined;
 	const raw = doc.raw;
 	if (spec.strip || key === "servers") checkVersion(spec.file, isObject(raw) ? raw.schemaVersion : undefined);
-	if (key === "servers") {
-		const list = isObject(raw) ? raw.servers : undefined;
-		if (!Array.isArray(list)) throw Error('servers.json: need {"schemaVersion": 2, "servers": [{name, adapter, ...}]}');
-		return { value: list, file: spec.file };
-	}
+	if (key === "servers") return legacyServers(raw, spec.file);
 	return { value: spec.strip ? withoutVersion(raw) : raw, file: spec.file, ...(doc.trust ? { trust: doc.trust } : {}) };
-}
-
-/** The names of legacy files that exist in the config directory: what a migration reads and a cleanup may remove. */
-export function legacyFilesPresent(conf: string): string[] {
-	const names = [
-		"settings.json",
-		"servers.json",
-		"web.json",
-		"sweep.json",
-		"alert-desk.json",
-		"operating-rules.json",
-		"judge.json",
-		...Object.values(LEGACY_THREAD_FILES),
-	];
-	return names.filter((n) => existsSync(`${conf}/${n}`));
 }
 
 // ---- what the migration moved ------------------------------------------------------------------------------
@@ -377,7 +373,7 @@ export const NON_SECRET_HOME: Record<string, string> = {
 export const homeOfOld = (name: string): string => NON_SECRET_HOME[name] ?? `${SECRETS_DIR}/${name}`;
 
 /** The names config.json says the migration moved. A config.json that cannot be read lists none. */
-export function migratedNames(conf: string): Set<string> {
+function migratedNames(conf: string): Set<string> {
 	try {
 		const m = readConfigFile(conf)?.migrated;
 		return new Set(
@@ -458,7 +454,7 @@ const noticed = new Set<string>();
  * One line in the events log, once per process and file, when a legacy file was read in place of config.json or secrets/. Without a log
  * (a command-line tool) the notice waits until one is attached and is dropped if none ever is.
  */
-export function deprecated(conf: string, file: string, key: string, replacement: string): void {
+function deprecated(conf: string, file: string, key: string, replacement: string): void {
 	const id = `${conf}\0${file}`;
 	if (noticed.has(id)) return;
 	noticed.add(id);
@@ -530,6 +526,16 @@ export function thread(conf: string, member: ThreadKey): string | undefined {
 	return old;
 }
 
+/** The number an environment variable holds for a numeric key, or undefined when it is blank, not finite, or out of the kind's range. */
+export function envNumber(raw: string, kind: "posnum" | "nonneg" | "posint"): number | undefined {
+	const n = Number(raw);
+	if (raw.trim() === "" || !Number.isFinite(n)) return undefined;
+	if (kind === "posnum" && n <= 0) return undefined;
+	if (kind === "nonneg" && n < 0) return undefined;
+	if (kind === "posint" && (!Number.isInteger(n) || n < 1)) return undefined;
+	return n;
+}
+
 /** The string, number, boolean (`1` or `0`) or list an environment variable holds for a scalar key, or undefined when it is unset or unusable. */
 function fromEnv<K extends ScalarKey>(key: K, env: Record<string, string | undefined>): ScalarValue<K> | undefined {
 	const raw = env[envName(key)];
@@ -542,12 +548,7 @@ function fromEnv<K extends ScalarKey>(key: K, env: Record<string, string | undef
 			.split(",")
 			.map((s) => s.trim())
 			.filter(Boolean) as ScalarValue<K>;
-	const n = Number(raw);
-	if (raw.trim() === "" || !Number.isFinite(n)) return undefined;
-	if (kind === "posnum" && n <= 0) return undefined;
-	if (kind === "nonneg" && n < 0) return undefined;
-	if (kind === "posint" && (!Number.isInteger(n) || n < 1)) return undefined;
-	return n as ScalarValue<K>;
+	return envNumber(raw, kind) as ScalarValue<K> | undefined;
 }
 
 /** A scalar setting: its environment variable, then config.json, then the legacy settings.json, else undefined (the caller's default). */
@@ -578,17 +579,7 @@ const insideSecrets = (name: string) => name !== "" && !name.startsWith("/") && 
  * deprecation notice. A file that is not a private regular file (mode exactly 0600) throws: a token or URL anyone can read is refused, not used.
  */
 export function readSecret(conf: string, name: string): string | undefined {
-	const tryRead = (p: string): string | undefined | null => {
-		try {
-			const st = statSync(p);
-			if (!isPrivateFile(st))
-				throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
-			return readFileSync(p, "utf8").trim() || undefined;
-		} catch (e) {
-			if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-			throw e;
-		}
-	};
+	const tryRead = (p: string): string | undefined | null => readPrivate(p, name);
 	if (!insideSecrets(name)) return undefined; // a name that climbs out of the directory (`..`, an absolute path) names no secret
 	const v = tryRead(`${conf}/${SECRETS_DIR}/${name}`);
 	if (v !== null) return v;

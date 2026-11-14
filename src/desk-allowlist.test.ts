@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { readFileSync } from "node:fs";
 import { deskAskCommand, renderDeskPrompt } from "./core/alert-desk.ts";
 import { selfCommand, setCompiled } from "./core/config.ts";
 import { parseShapes } from "./core/desk-shapes.ts";
@@ -248,7 +247,7 @@ describe("each widened argument is refused", () => {
 			"| journalctl",
 			"journalctl -u ~root",
 			"journalctl -u a\\ b",
-			"journalctl --since=${IFS}x",
+			`journalctl --since=\${IFS}x`,
 		])
 			refused(t);
 	});

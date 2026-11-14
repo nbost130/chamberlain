@@ -8,24 +8,24 @@ import { rightsUnchanged } from "./decide.ts";
 import {
 	fullStamp,
 	invalidateRights,
+	LEGACY_STAMP,
 	loadRightsSent,
 	needsRights,
 	openRightsSent,
 	parseRightsSent,
-	recordOf,
 	RIGHTS_SENT_KEY,
-	rightsFor,
+	recordOf,
+	rightsEpoch,
 	rightsFirstId,
 	rightsFirstKey,
 	rightsFirstMessage,
+	rightsFor,
 	rightsGap,
 	rightsHash,
-	rightsEpoch,
 	rightsHighWater,
 	rightsStamp,
 	rightsStateKey,
 	saveRightsSent,
-	LEGACY_STAMP,
 } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 
@@ -131,6 +131,41 @@ describe("a record that can't be trusted sends them in full", () => {
 			{ hash: rightsHash(STEWARD, RULES), used: -1 },
 		])
 			expect(parseRightsSent(bad)).toBeUndefined();
+	});
+});
+
+describe("parseRightsSent: every optional field is checked on its own", () => {
+	const hash = rightsHash(STEWARD, RULES);
+	test("a field of the wrong type, or a used that is not a finite non-negative number, refuses the whole record", () => {
+		for (const over of [
+			{ steward: 5 },
+			{ session: false },
+			{ at: {} },
+			{ used: Number.NaN },
+			{ used: Number.POSITIVE_INFINITY },
+			{ epoch: 2 ** 60 },
+		])
+			expect([over, parseRightsSent({ hash, ...over })]).toEqual([over, undefined]);
+	});
+	test("a record that is not a plain object is refused, and a 64-hex hash is required in lower case", () => {
+		expect(parseRightsSent(undefined)).toBeUndefined();
+		expect(parseRightsSent(0)).toBeUndefined();
+		expect(parseRightsSent({ hash: hash.toUpperCase() })).toBeUndefined();
+	});
+	test("empty text fields are dropped, a zero used and a zero epoch are kept", () => {
+		expect(parseRightsSent({ hash, at: "", steward: "", session: "", used: 0, epoch: 0 })).toEqual({
+			hash,
+			used: 0,
+			epoch: 0,
+		});
+		expect(parseRightsSent({ hash, at: AT, steward: STEWARD, session: "s1", used: 5, epoch: 3 })).toEqual({
+			hash,
+			used: 5,
+			at: AT,
+			steward: STEWARD,
+			session: "s1",
+			epoch: 3,
+		});
 	});
 });
 
