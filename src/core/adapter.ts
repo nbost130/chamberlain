@@ -176,7 +176,17 @@ export type RunLook = {
 };
 
 /** A thread's last finished assistant message: its id, its text, and when it finished (ISO). */
-export type LastAssistant = { id: string; text: string; at: string };
+/**
+ * A thread's last finished assistant message. `previous` is the user message before it, from the same read, with who wrote it: `human`
+ * (the operator) or `agent` (another agent or a tool sending into the thread); absent when there is none or the adapter cannot say. The
+ * idle-thread classifier reads it (src/core/classifier/); nothing else does.
+ */
+export type LastAssistant = {
+	id: string;
+	text: string;
+	at: string;
+	previous?: { by: "human" | "agent"; text: string };
+};
 
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */

@@ -1,6 +1,7 @@
 # Thread-state classifier for idle parent threads (design)
 
-Status: **proposed**. No code yet. This document is the design and the evaluation behind it.
+Status: **implemented**, off by default (`provider: "none"`); `autoNudge` and `autoSettle` remain designed only. This document is the
+design and the evaluation behind it; the settings as built are in [`../CONFIGURATION.md`](../CONFIGURATION.md#the-idle-thread-classifier).
 
 ## What it is for
 

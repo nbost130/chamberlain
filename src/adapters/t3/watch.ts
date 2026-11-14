@@ -175,13 +175,23 @@ export class T3Link {
 		lastAssistant: async (threadId) => {
 			if (!this.rpc) return undefined;
 			const p = await this.projection(threadId);
-			const last = [...(p.turnItems ?? [])]
-				.reverse()
-				.find((i) => i.type === "assistant_message" && i.status === "completed");
+			const items = p.turnItems ?? [];
+			const last = [...items].reverse().find((i) => i.type === "assistant_message" && i.status === "completed");
 			const id = last?.itemId ?? last?.id;
-			return last && typeof id === "string" && typeof last.updatedAt === "string"
-				? { id, text: String(last.text ?? ""), at: last.updatedAt }
-				: undefined;
+			if (!last || typeof id !== "string" || typeof last.updatedAt !== "string") return undefined;
+			// The user message before it, and who wrote it: T3 marks the operator's own messages createdBy "user".
+			const before = items
+				.slice(0, items.lastIndexOf(last))
+				.reverse()
+				.find((i) => i.type === "user_message" && String(i.text ?? "").trim());
+			return {
+				id,
+				text: String(last.text ?? ""),
+				at: last.updatedAt,
+				...(before
+					? { previous: { by: before.createdBy === "user" ? "human" : "agent", text: String(before.text) } }
+					: {}),
+			};
 		},
 		runningSubagents: async (threadId) => {
 			if (!this.rpc) return 0;

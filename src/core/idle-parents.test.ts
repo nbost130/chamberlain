@@ -1,13 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { normalizeThread, type LastAssistant, type ThreadInput } from "./adapter.ts";
+import type { Classified } from "./classifier/classify.ts";
 import {
+	classTag,
+	digestText,
 	EXCERPT_CHARS,
 	IDLE_PARENTS_DEFAULTS,
 	IDLE_PARENTS_SOURCE,
 	excerptOf,
 	idleKey,
 	idlePrior,
+	idleText,
+	type IdleClassification,
 	idleParentCandidate,
 	idleParentFindings,
 	idleParentsSource,
@@ -18,6 +23,7 @@ import {
 	type IdleThread,
 	type IdleThreadSource,
 } from "./idle-parents.ts";
+import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
 import { runSource } from "./source.ts";
 import { parseSweepConfig } from "./sweep.ts";
 
@@ -83,6 +89,7 @@ const rec = (id: string, minutesIdle: number, text = "All done.", server = "main
 		lastMessage: text,
 		lastMessageHash: messageHash(l),
 		looksLikeAsk: /go|\?/.test(text),
+		previous: { from: "none", text: "" },
 	};
 };
 const sel = (threads: IdleThread[], unreadable: IdleSelection["unreadable"] = []): IdleSelection => ({
@@ -93,7 +100,13 @@ const CFG = IDLE_PARENTS_DEFAULTS;
 
 describe("the idle-parents config", () => {
 	test("defaults: on, every 15 minutes, idle for 30 minutes, 10 threads", () => {
-		const d = { enabled: true, intervalMinutes: 15, thresholdMinutes: 30, maxThreads: 10 };
+		const d = {
+			enabled: true,
+			intervalMinutes: 15,
+			thresholdMinutes: 30,
+			maxThreads: 10,
+			classifier: CLASSIFIER_DEFAULTS,
+		};
 		expect(parseIdleParents(undefined)).toEqual(d);
 		expect(parseIdleParents({})).toEqual(d);
 	});
@@ -103,6 +116,7 @@ describe("the idle-parents config", () => {
 			intervalMinutes: 5,
 			thresholdMinutes: 90,
 			maxThreads: 3,
+			classifier: CLASSIFIER_DEFAULTS,
 		}));
 	test("bad values and unknown keys are refused, never ignored", () => {
 		expect(() => parseIdleParents([])).toThrow("expected an object");
@@ -170,6 +184,7 @@ describe("selectIdleThreads: the one selection, as plain records", () => {
 					lastMessage: l.text,
 					lastMessageHash: messageHash(l),
 					looksLikeAsk: true,
+					previous: { from: "none", text: "" },
 				},
 			],
 			unreadable: [],
@@ -381,5 +396,152 @@ describe("through the item system: one report per thread and last message", () =
 		expect(ids(await tick(store, all, cfg))).toEqual(["ask", "p1"]);
 		expect(ids(await tick(store, all, cfg))).toEqual(["p2"]);
 		expect((await tick(store, all, cfg)).notified).toEqual([]);
+	});
+});
+
+describe("selectIdleThreads: who wrote the message before the last one", () => {
+	test("a human's message, an agent's, or none, from the same read", async () => {
+		const withPrev = (id: string, previous?: LastAssistant["previous"]) => ({
+			th: { id, title: `Thread ${id}`, status: "idle" },
+			last: { ...last(`m-${id}`, 90, "Half of it is done."), ...(previous ? { previous } : {}) },
+		});
+		const r = await selectIdleThreads(
+			[
+				source([
+					withPrev("h", { by: "human", text: "which tabs use the memory?" }),
+					withPrev("a", { by: "agent", text: "continue" }),
+					withPrev("n"),
+				]),
+			],
+			NOW,
+			{ thresholdMinutes: 30 },
+		);
+		const prev = Object.fromEntries(r.threads.map((t) => [t.threadId, t.previous]));
+		expect(prev).toEqual({
+			h: { from: "human", text: "which tabs use the memory?" },
+			a: { from: "agent", text: "continue" },
+			n: { from: "none", text: "" },
+		});
+	});
+});
+
+describe("the findings with a classifier", () => {
+	const cls = (mode: "shadow" | "live", by: Record<string, Classified>): IdleClassification => ({
+		mode,
+		day: "2026-11-14",
+		byKey: new Map(Object.entries(by)),
+	});
+	const esc: Classified = { action: "escalate", reasons: [{ id: "asks_decision", p: 0.98 }] };
+	const ndg: Classified = { action: "nudge", reasons: [{ id: "partial_answer", p: 0.97 }] };
+	const stl: Classified = { action: "settle", reasons: [{ id: "work_finished", p: 0.96 }] };
+	const ign: Classified = { action: "ignore", reasons: [] };
+	const unk: Classified = { action: "unknown", reasons: [], error: "Jev answered HTTP 503" };
+	const threads = [
+		rec("e", 540, "Say go and I'll start it."),
+		rec("n", 566, "I can't say which ones account for it."),
+		rec("s", 900, "Merged and deployed."),
+		rec("i", 60, "The watch stays on."),
+		rec("u", 30, "Something."),
+		rec("x", 1000, "Not classified at all."),
+	];
+	const by = (t: IdleThread) => idleKey(t);
+	const all = {
+		[by(threads[0]!)]: esc,
+		[by(threads[1]!)]: ndg,
+		[by(threads[2]!)]: stl,
+		[by(threads[3]!)]: ign,
+		[by(threads[4]!)]: unk,
+	};
+
+	test("shadow: the report is exactly as without a classifier", () =>
+		expect(idleParentFindings(sel(threads), CFG, [], cls("shadow", all))).toEqual(
+			idleParentFindings(sel(threads), CFG),
+		));
+
+	test("live: escalate, then nudge, then unknown (including unclassified), by idle time; ignore and settle are not reported", () => {
+		const f = idleParentFindings(sel(threads), CFG, [], cls("live", all));
+		expect(f.map((x) => x.dedupKey)).toEqual([
+			by(threads[0]!),
+			by(threads[1]!),
+			by(threads[5]!),
+			by(threads[4]!),
+			"settled-digest:2026-11-14",
+		]);
+		expect(f[0]!.text).toStartWith(
+			'[ESCALATE asks_decision 0.98] thread "Thread e" on main (threadId e), idle 540 min. Last message: ',
+		);
+		expect(f[1]!.text).toStartWith("[NUDGE partial_answer 0.97] thread");
+		// Unknown and unclassified read exactly as without the classifier: a failure never silences or changes the report.
+		expect(f[2]!.text).toBe(idleText(threads[5]!));
+		expect(f[3]!.text).toBe(idleText(threads[4]!));
+	});
+
+	test("the tag lists every question that fired, strongest first", () =>
+		expect(
+			classTag({
+				action: "escalate",
+				reasons: [
+					{ id: "asks_decision", p: 0.981 },
+					{ id: "needs_principal_task", p: 0.6 },
+				],
+			}),
+		).toBe("[ESCALATE asks_decision 0.98, needs_principal_task 0.60]"));
+
+	test("live: the settled threads go into one digest line a day, not one line each", () => {
+		const f = idleParentFindings(sel(threads), CFG, [], cls("live", all));
+		const digest = f.find((x) => x.dedupKey === "settled-digest:2026-11-14")!;
+		expect(digest.text).toBe(
+			'1 idle thread looks finished (the classifier\'s settle; not reported one by one): "Thread s" on main.',
+		);
+		// Already sent today: not again, however many settle.
+		const prior = [{ dedupKey: "settled-digest:2026-11-14", text: digest.text, resolved: true }];
+		expect(
+			idleParentFindings(sel(threads), CFG, prior, cls("live", all)).some((x) => x.dedupKey.startsWith("settled")),
+		).toBe(false);
+		// Many: the first twelve by name, then a count.
+		const many = Array.from({ length: 15 }, (_, i) => rec(`s${i}`, 100 + i));
+		const text = digestText(many);
+		expect(text).toStartWith("15 idle threads look finished");
+		expect(text).toEndWith(", and 3 more.");
+		// No settled thread: no digest.
+		expect(
+			idleParentFindings(sel([threads[0]!]), CFG, [], cls("live", all)).some((x) => x.dedupKey.startsWith("settled")),
+		).toBe(false);
+	});
+
+	test("live: the cap counts only reported threads, in the live order", () => {
+		const f = idleParentFindings(sel(threads), { maxThreads: 1 }, [], cls("live", all));
+		expect(f.map((x) => x.dedupKey)).toEqual([by(threads[0]!), "settled-digest:2026-11-14"]);
+	});
+
+	test("the source runs the classifier between the selection and the findings, and only when it is given one", async () => {
+		const store = memStore();
+		const seen: IdleThread[][] = [];
+		const findings = await runSource(
+			store,
+			idleParentsSource({
+				cfg: CFG,
+				select: async () => sel(threads.slice(0, 3)),
+				prior: () => idlePrior(store),
+				classify: async (ts) => {
+					seen.push([...ts]);
+					return cls("live", all);
+				},
+			}),
+			{ now: NOW },
+		);
+		expect(seen[0]!.map((t) => t.threadId)).toEqual(["e", "n", "s"]);
+		expect(findings.notified.map((i) => String(i.payload.text).slice(0, 9))).toEqual([
+			"[ESCALATE",
+			"[NUDGE pa",
+			"1 idle th",
+		]);
+	});
+
+	test("excerpts and titles cut through an emoji stay well formed", () => {
+		expect(excerptOf(`${"x".repeat(10)}🙂${"y".repeat(299)}`).isWellFormed()).toBe(true);
+		expect(idleText(rec("t", 60, `🙂${"y".repeat(299)}`)).isWellFormed()).toBe(true);
+		const t = { ...rec("t", 60), title: `${"a".repeat(78)}🙂🙂` };
+		expect(idleText(t).isWellFormed()).toBe(true);
 	});
 });
