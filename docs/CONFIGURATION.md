@@ -38,7 +38,7 @@ One file per secret, in the T3 adapter's names. A `tokenFile` or `operateTokenFi
 | `compact-url` | optional | Webhook whose task prompt is `/compact`. Without it the daemon only alarms that the Steward is over its size. |
 | `desk-wake-url` | Alert Desk | The webhook bound to the Alert Desk thread. Without it the desk is off. |
 | `web-token` | the page: made on its first start | The page's capability token: 32 random bytes. Every request to the page must hold it. `chamberlain web link` prints the page link that carries it (it is never put in a Decisions post), `chamberlain web rotate-token` replaces it. See [web-access.md](web-access.md). |
-| `view-key` | the page: made on its first start | The view key: 32 random bytes, the only key a Decisions post carries. It is accepted only for what an inline frame may do (three reads and a plain answer) and never for a cookie, a page load, evidence, a card or a ruling. A start or `web rotate-token` never replaces it. See [web-access.md](web-access.md). |
+| `view-key` | the page: made on its first start | The view key: 32 random bytes, the only key a Decisions post carries. It is accepted only for its allowlist (three reads, an answer, and snooze, direction and dismiss on a queue item: `src/web/view-key.ts`) and never for a cookie, a page load, evidence, a card, a ruling or un-snooze. A start or `web rotate-token` never replaces it. See [web-access.md](web-access.md). |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `chamberlain switch-steward` during a hand-off; the old URL is kept for one-rename rollback. |
 
 After a migration a secret is read only from `secrets/`: a file written at the old path is never read (the daemon logs `config-legacy-reappeared`). Only a secret the migration never moved is still read from the config directory, with one `config-deprecated` line in the events log.
@@ -181,7 +181,7 @@ sit with the crumbs), Snooze, Direction and Dismiss. A secret and a card pointer
 - **Dismiss** ("already handled / no longer needed") asks first, takes the note box's text if there is any, closes the question and its hold, and sends the Steward a short wake that says dismissed. It is
   recorded as dismissed, not answered: it never counts as an answer or a ruling, and `ask` and `afk hold` never find it when they look for what is settled.
 
-The Decisions view in T3 shows the same row as links that open the question on the full page, because the view may read and plain-answer a question and nothing else ([SECURITY.md](SECURITY.md)); its Snoozed section is read-only.
+The Decisions view in T3 does these in place with the view key, which may answer, snooze, direct and dismiss a question and nothing else ([SECURITY.md](SECURITY.md)): little buttons along the card's bottom edge, one tap each, no confirmation and no page change. Each option is a button; **Snooze** is one tap for **1 hour** (the default for the view; the full page has the other choices); **Dismiss** is one tap; **Direction** opens a note field in the same card and Send is the next tap. The card then says what happened, or shows the error and keeps its buttons. Un-snooze stays a link to the full page, and a question's optional note on an option answer is written on the full page.
 
 **Thread links.** Every card that comes from a thread links to it. The link is the adapter's (`threadLinks` and `mirrorLinks` above
 override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the

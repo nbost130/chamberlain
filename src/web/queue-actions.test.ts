@@ -444,7 +444,13 @@ describe("who may snooze, direct and dismiss: the same key and Origin checks as 
 					await s.call("POST", path("Q-aaaa"), { origin: "null", key: s.token, body }),
 				],
 				["an inline frame holding no key", await s.call("POST", path("Q-aaaa"), { origin: "null", body })],
-				["an inline frame's preflight", await s.call("OPTIONS", path("Q-aaaa"), { origin: "null" })],
+				// The Decisions view's key may snooze, direct and dismiss (view-key.test.ts), so a frame's preflight for those is the grant-nothing 204.
+				...(route === "unsnooze"
+					? ([["an inline frame's preflight", await s.call("OPTIONS", path("Q-aaaa"), { origin: "null" })]] as [
+							string,
+							Response,
+						][])
+					: []),
 				["a GET", await s.call("GET", path("Q-aaaa"), { origin: ORIGIN, key: s.token })],
 			];
 			for (const [why, r] of refused) expect([why, r.status >= 400]).toEqual([why, true]);

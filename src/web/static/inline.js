@@ -1,8 +1,9 @@
 // The decision queue for T3's inline chat frames. The Steward renders only a two-line shell that loads this file, so
 // showing the queue costs it almost nothing; questions come live from /api/queue. Theme comes from T3's CSS variables.
-// An inline frame has little authority, and the SERVER enforces it (inlineVerdict in app.ts): it may GET /api/queue, /api/recent and
-// /api/rulings, and POST a plain question answer (a choice and a note). It never answers a card or an approval, never saves a ruling,
-// and never reads one item on its own. This file does not try: those are done on the full queue page.
+// This view holds only the VIEW key, and the SERVER enforces what that may do (src/web/view-key.ts): it may GET /api/queue, /api/recent and
+// /api/rulings, and POST an item's answer (a choice and a note), snooze, direction and dismiss, and nothing else. The buttons along each card's
+// bottom edge do those four in place: one tap is one request, no confirmation, no page change. It never answers a card or an approval, never
+// saves a ruling, never un-snoozes and never reads one item on its own: those are done on the full queue page, which the links open.
 (() => {
 	const SRC = new URL(document.currentScript.src);
 	// A phone lays out a page with no viewport tag at desktop width and shrinks it to fit, so the view reads tiny.
@@ -56,6 +57,7 @@
 .dq-link{display:inline-flex;align-items:center;align-self:flex-start;min-height:40px;padding:0 2px;font-size:13px;color:var(--primary);text-decoration:underline;text-underline-offset:3px}
 .dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:0 14px;border-top:1px solid var(--border);margin-top:2px;padding-top:2px}.dq-actions .dq-link{font-size:12px;color:var(--muted-foreground);text-decoration:none;min-height:36px}.dq-actions .dq-link:hover{color:var(--foreground)}
 .dq-snoozed{border:1px solid var(--border);border-radius:var(--radius);font-size:13px}.dq-snoozed>summary{cursor:pointer;list-style:none;padding:10px 12px;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--muted-foreground)}.dq-snoozed>summary::-webkit-details-marker{display:none}.dq-snoozed>summary::after{content:"›";float:right;transition:transform .15s}.dq-snoozed[open]>summary::after{transform:rotate(90deg)}.dq-snoozed .dq-row{padding:10px 12px}
+.dq-btns{gap:8px;padding-top:10px}.dq-btn{font:inherit;font-size:13px;font-weight:500;background:none;border:1px solid var(--border);color:var(--foreground);border-radius:var(--radius);padding:8px 12px;min-height:40px}.dq-btn.rec{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn:disabled,.dq-btn:disabled.rec{opacity:.5}.dq-dir{display:flex;flex-direction:column;gap:8px}
 .dq-go:disabled{opacity:.5}.dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
 	const healthCss = `.dq-health{padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;--health-tone:var(--success)}
 .dq-health-summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:6px 10px}.dq-health-summary::-webkit-details-marker{display:none}.dq-health-summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:10px}.dq-health-chevron{font-size:14px;color:var(--muted-foreground);transition:transform .15s}.dq-health[open]>.dq-health-summary .dq-health-chevron{transform:rotate(90deg)}.dq-health[open]>.dq-health-summary{border-bottom:1px solid var(--border)}
@@ -118,7 +120,10 @@
 	const count = el("span", "dq-count", "…");
 	const reload = el("button", "dq-reload", "Refresh"); reload.type = "button";
 	const list = el("div");
-	head.append(count, reload); wrap.append(head, list); root.replaceChildren(wrap);
+// How many cards still wait, so a tap that settles one updates the count at once; `refresh` re-reads the queue (the Decisions view sets it).
+let remaining = 0;
+let refresh = () => {};
+head.append(count, reload); wrap.append(head, list); root.replaceChildren(wrap);
 
 	async function load() {
 		list.replaceChildren(el("div", "dq-empty", "Loading the queue…"));
@@ -126,7 +131,8 @@
 		try {
 			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 			const items = q.items || [];
-			count.textContent = `${items.length} waiting`;
+remaining = items.length;
+count.textContent = `${items.length} waiting`;
 			if (!items.length) { list.replaceChildren(el("div", "dq-empty", "Nothing waiting. The queue is clear.")); return; }
 			const box = el("div"); box.style.cssText = "display:flex;flex-direction:column;gap:12px";
 			for (const it of items) box.append(card(it));
@@ -144,12 +150,12 @@
 			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 			const it = (q.items || []).find((x) => x.id === ITEM);
 			if (it) { count.textContent = "open"; list.replaceChildren(card(it)); return; }
-			// A snoozed question is not answered and not on the active list: say when it returns. It is un-snoozed on the full queue page.
+			// A snoozed question is not answered and not on the active list: say when it returns. It is un-snoozed on the full queue page (the view key cannot).
 			const later = (q.snoozed || []).find((x) => x.id === ITEM);
 			if (later) {
 				count.textContent = "snoozed";
 				const c = el("div", "dq-card");
-				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`), actions(later, false));
+				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`), fullPage(later, "Un-snooze"));
 				list.replaceChildren(c);
 				return;
 			}
@@ -204,16 +210,77 @@
 		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open) : null;
 	};
 
-	// Little quiet buttons along a card's bottom edge, in the queue page's order: Open the thread, Snooze, Direction, Dismiss. The last three change state,
-	// which the server refuses to this frame (inlineVerdict in app.ts), so each opens the item on the full queue page, where it works. A secret and a
-	// card pointer are settled in their own thread: they get the thread link and Snooze.
-	const actions = (it, settles) => {
+	// A card the view cannot act on (a snoozed question, shown on its own): the thread link and one link to the full queue page.
+	const fullPage = (it, text) => {
 		const row = el("div", "dq-actions");
 		const own = threadLink(it);
 		if (own) row.append(own);
-		for (const name of settles ? ["Snooze", "Direction", "Dismiss"] : ["Snooze"]) row.append(linkOut(name, `/item/${encodeURIComponent(it.id)}`));
+		row.append(linkOut(text, `/item/${encodeURIComponent(it.id)}`));
 		return row;
 	};
+
+	// One tap on Snooze puts the question off for this long. It comes back by itself and is shown again if urgent. The full page offers the others.
+	const SNOOZE_TAP_MS = 3600000;
+	const btn = (text, cls, onTap) => { const b = el("button", `dq-btn${cls ? ` ${cls}` : ""}`, text); b.type = "button"; b.addEventListener("click", onTap); return b; };
+
+	// The little buttons along a card's bottom edge, which act in place: each option, Snooze, Dismiss, Direction, then the thread link. One tap is one
+	// request: no confirmation, no second button, no page change. Direction needs a note, so it opens a field in the same card and Send is the one tap
+	// after it. A secret and a card pointer are settled in their own thread: they get Snooze and the thread link. The card then says what happened
+	// (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
+	function panel(it, c, settles) {
+		const msg = el("div", "dq-msg");
+		const row = el("div", "dq-actions dq-btns");
+		const dir = el("div", "dq-dir"); dir.style.display = "none";
+		const note = el("textarea"); note.placeholder = "Direction for the thread (no option chosen)"; note.rows = 2; note.setAttribute("aria-label", "Direction for the thread");
+		const sendDir = el("button", "dq-go", "Send direction"); sendDir.type = "button";
+		dir.append(note, sendDir);
+		const taps = [];
+		let sending = false;
+		const lock = (on) => { sending = on; note.disabled = on; sendDir.disabled = on; for (const b of taps) b.disabled = on; };
+		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
+		function done(text, extra) {
+			c.dataset.answered = "1"; dir.remove();
+			const own = threadLink(it);
+			row.replaceChildren(...(own ? [own] : []), ...extra);
+			tell("dq-ok", text);
+			remaining = Math.max(0, remaining - 1);
+			count.textContent = ITEM ? "done" : remaining ? `${remaining} waiting` : DASH ? "clear" : "0 waiting";
+			refresh();
+		}
+		async function send(action, body, said) {
+			if (sending) return;
+			lock(true); tell("", "Sending…");
+			try {
+				const r = await authFetch(`${BASE}/api/items/${encodeURIComponent(it.id)}/${action}`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) });
+				let b = {};
+				// EMPTY_CATCH_OK: the body only adds detail; r.ok and r.status already say whether it was recorded.
+				try { b = await r.json(); } catch { b = {}; }
+				if (r.ok) done(said(b), action === "snooze" ? [linkOut("Un-snooze", `/item/${encodeURIComponent(it.id)}`)] : []);
+				else { tell("dq-bad", b.error || `HTTP ${r.status}`); lock(false); }
+			} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); lock(false); }
+		}
+		const answered = (o) => (r) => `Answered: ${r.choice || o.label}. ${r.to === "thread" ? "Sent to its thread." : "Recorded; the wake to the Steward is queued."}`;
+		if (settles) {
+			(it.options || []).forEach((o, i) => {
+				const b = btn(o.label, i === it.recommended ? "rec" : "", () => send("answer", { choice: i }, answered(o)));
+				if (i === it.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
+				taps.push(b);
+			});
+		}
+		taps.push(btn("Snooze", "", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, (r) => `Snoozed. It returns ${returnsAt(r.until)}.`)));
+		if (settles) {
+			taps.push(btn("Dismiss", "", () => send("dismiss", {}, () => "Dismissed. It is off the queue and nothing was answered.")));
+			taps.push(btn("Direction", "", () => { dir.style.display = dir.style.display === "none" ? "" : "none"; if (dir.style.display === "") note.focus?.(); }));
+		}
+		sendDir.addEventListener("click", () => {
+			const text = note.value.trim();
+			if (!text) { tell("dq-bad", "Write your direction first. It goes to the Steward with no option chosen."); return; }
+			send("direction", { note: text }, () => "Direction sent. The Steward reads your note; no option was chosen.");
+		});
+		const own = threadLink(it);
+		row.append(...taps, ...(own ? [own] : []));
+		return settles ? [dir, msg, row] : [msg, row];
+	}
 
 	function card(it) {
 		const c = el("div", "dq-card");
@@ -229,10 +296,10 @@
 			// The server says `ended` once no secret box waits in the thread (it timed out, or was cancelled or answered): never point at a box that is gone.
 			if (it.secretRequest === "ended") c.append(el("div", "dq-msg dq-expired", "Request expired. Its secret box is closed: ask the thread to reopen it."));
 			else c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here."));
-			c.append(actions(it, false));
+			c.append(...panel(it, c, false));
 			return c;
-			}
-			if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); c.append(actions(it, false)); return c; }
+		}
+		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); c.append(...panel(it, c, false)); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
@@ -246,35 +313,9 @@
 			if (t) c.append(t);
 			return c;
 		}
-		let choice = Number.isInteger(it.recommended) ? it.recommended : -1;
-		const go = el("button", "dq-go"); go.type = "button";
-		const label = () => { go.disabled = choice < 0; go.textContent = choice < 0 ? "Pick an option" : `Answer ${it.options[choice].label}`; };
-		const rows = (it.options || []).map((o, i) => {
-			const row = el("label", "dq-opt");
-			const radio = el("input"); radio.type = "radio"; radio.name = `o-${it.id}`; radio.checked = i === choice;
-			const txt = el("div"); const l = el("div", "dq-l", o.label);
-			if (i === it.recommended) l.append(el("span", "dq-rec", "RECOMMENDED"));
-			txt.append(l); if (o.detail) txt.append(el("div", "dq-d", o.detail));
-			row.append(radio, txt); if (i === choice) row.classList.add("sel");
-			radio.addEventListener("change", () => { choice = i; rows.forEach((r, j) => r.classList.toggle("sel", j === i)); label(); });
-			c.append(row); return row;
-		});
-		const note = el("textarea"); note.placeholder = "Note to the thread (optional)"; note.rows = 1; note.setAttribute("aria-label", "Note to the thread");
-		const msg = el("div", "dq-msg");
-		label();
-		go.addEventListener("click", async () => {
-			go.disabled = true; msg.className = "dq-msg"; msg.textContent = "Sending…";
-			try {
-				// A choice and a note, and nothing else: the server refuses any other field from a frame.
-				const r = await authFetch(`${BASE}/api/items/${encodeURIComponent(it.id)}/answer`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice, note: note.value }) });
-				let b = {};
-				// EMPTY_CATCH_OK: the body only adds detail; r.ok and r.status already say whether the answer delivered.
-				try { b = await r.json(); } catch { b = {}; }
-				if (r.ok) { c.dataset.answered = "1"; msg.className = "dq-msg dq-ok"; msg.textContent = b.to === "thread" ? `Answered: ${b.choice || ""}. Sent to its thread.` : `Answered: ${b.choice || ""}. Recorded; the wake to the Steward is queued.`; go.textContent = "Done"; for (const row of rows) row.querySelector("input").disabled = true; note.disabled = true; }
-				else { msg.className = "dq-msg dq-bad"; msg.textContent = b.error || `HTTP ${r.status}`; go.disabled = false; }
-			} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; go.disabled = false; }
-		});
-		c.append(note, go, msg, actions(it, true));
+		// What each option means, as the card showed it before the options became buttons: the buttons carry the labels, this carries the detail.
+		for (const o of it.options || []) if (o.detail) c.append(el("div", "dq-d", `${o.label}: ${o.detail}`));
+		c.append(...panel(it, c, true));
 		return c;
 	}
 	if (DASH) { dash(); return; }
@@ -330,7 +371,8 @@
 				away.style.display = gone.length ? "" : "none";
 				away.replaceChildren(...gone.map((u) => el("div", "", `${u.server[0].toUpperCase()}${u.server.slice(1)} not reachable since ${hm(u.since)} (asleep?). What waits there may be missing or out of date; it shows when ${u.server} wakes.`)));
 				const items = [...(q.items || []), ...(q.cards || []).map(fromCard)];
-				count.textContent = items.length ? `${items.length} waiting` : "clear";
+				remaining = items.length;
+count.textContent = items.length ? `${items.length} waiting` : "clear";
 				const ids = new Set(items.map((i) => i.id));
 				for (const [id, c] of cards) if (!ids.has(id) && !c.dataset.answered) { c.remove(); cards.delete(id); }
 				for (const it of items) {
@@ -380,6 +422,8 @@
 			} catch (e) { bad(panes.Recent, e); }
 		}
 		const show = () => (tab === "Waiting" ? waiting() : tab === "Rulings" ? rulings() : recent());
+// A tap that settled a card re-reads the queue, so the Snoozed section and the count follow at once.
+refresh = waiting;
 		reload.addEventListener("click", show);
 		paint();
 		waiting();

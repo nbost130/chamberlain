@@ -1,7 +1,7 @@
 # Decisions thread: setup message
 
 The pinned Decisions thread shows the decision queue as one live view with Waiting, Rulings and Recent tabs. It
-never shows a card, so nothing in it blocks. Each question carries a quiet row of links along its bottom: Open the thread, then Snooze, Direction and Dismiss. The last three change state, which this view may not do, so each opens the question on the full queue page, where it works. Snoozed questions are listed in a collapsed Snoozed section, with when each returns. `chamberlain ask` posts every new question there, and only there
+never shows a card, so nothing in it blocks. Each question carries a row of small buttons along its bottom edge that act in place, one tap each, with no confirmation and no page change: each option, Snooze (1 hour), Dismiss and Direction (it opens a note field in the card; Send is the next tap), then the Open the thread link. The card then says what happened, or shows the error. Un-snooze, and anything else, opens the full queue page. Snoozed questions are listed in a collapsed Snoozed section, with when each returns. `chamberlain ask` posts every new question there, and only there
 (`threads.decisions` in `~/.config/chamberlain/config.json` names the thread): the live view when the queue page is up, or a one-line
 notice when it is down. The page keeps the title at "Decisions · N waiting" once `decisionsServer` in the `web` section of `config.json` names
 an orchestration:operate token.
@@ -9,7 +9,7 @@ an orchestration:operate token.
 Create a thread, put its id in `~/.config/chamberlain/config.json` as `"threads": {"decisions": "<id>"}`, and send it this message as its
 first message, or again after `/clear`. Replace `<script address>` with the address inside the `<script src="...">` tag that `chamberlain web link` prints for your page (it is
 `<base>/inline.js?view=decisions&amp;k=<view key>`; choose the listed base T3 can reach, or the `publicBase` when T3 is loaded over https). The key in it is the
-**view key**, not the page's key: it can only read the queue and answer a question, because this message is copied into the thread. Never paste the page link or the page key
+**view key**, not the page's key: it can only read the queue and answer, snooze, direct or dismiss a question, because this message is copied into the thread. Never paste the page link or the page key
 here: see [web-access.md](web-access.md).
 
 ---

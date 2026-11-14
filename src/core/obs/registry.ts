@@ -91,6 +91,8 @@ const FAILURE = f(
 	"kind",
 );
 const ORIGIN = f(T.enm("page", "batch", "card", "daemon", "reconciler"), "by");
+/** The key a write on the page was made with (`KeyUsed`, src/core/questions.ts): the page's own, or the Decisions view's. Absent on a record from before it. */
+const KEY_USED = f(T.enm("page", "view"), "key");
 const WAKE_ACTION = f(T.enm("none", "findings", "full"), "wake");
 
 const e = (
@@ -204,13 +206,15 @@ export const EVENTS = {
 	"recover-error": failure(),
 	"relayed-to-thread": e("info", { item: ITEM }),
 	"relay-record-failed": e("warn", { item: ITEM, err: ERR }),
-	answered: e("info", { item: ITEM_FROM_ID, choice: int(), by: ORIGIN }),
+	answered: e("info", { item: ITEM_FROM_ID, choice: int(), by: ORIGIN, key: KEY_USED }),
+	directed: e("info", { item: ITEM_FROM_ID, key: KEY_USED }),
+	dismissed: e("info", { item: ITEM_FROM_ID, key: KEY_USED }),
 	"wake-queued": e("info", { item: ITEM_FROM_ID }),
 	"card-confirmation-issued": e("info", { item: ITEM_FROM_ID }),
 	"card-confirmation-refused": e("warn", { item: ITEM_FROM_ID }),
 	"ruling-changed": e("info"),
-	snoozed: e("info", { item: ITEM_FROM_ID }),
-	unsnoozed: e("info", { item: ITEM_FROM_ID }),
+	snoozed: e("info", { item: ITEM_FROM_ID, key: KEY_USED }),
+	unsnoozed: e("info", { item: ITEM_FROM_ID, key: KEY_USED }),
 	"snooze-returned": e("info", { item: ITEM_FROM_ID, notified: bool() }),
 	"snooze-post-failed": e("warn", { item: ITEM_FROM_ID }),
 	"snooze-return-error": failure(),
@@ -297,6 +301,7 @@ export const EVENTS = {
 		choice: int(),
 		recommended: bool(),
 		by: ORIGIN,
+		key: KEY_USED,
 		wait_ms: ms(),
 		ruled: bool(),
 	}),

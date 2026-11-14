@@ -26,6 +26,7 @@ import {
 	enqueueClaim,
 	fallbackWake,
 	finishRelay,
+	type KeyUsed,
 	notNow,
 	PAGE,
 	pageClaim,
@@ -58,6 +59,7 @@ import type { Store } from "../core/store.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { createItemActions, ITEM_ACTIONS, takenReply, unsettleable } from "./queue-actions.ts";
 import { type Linker, openPage } from "./thread-links.ts";
+import { type Authority, authorityOf, keyUsed, mayDo, viewKeyVerdict } from "./view-key.ts";
 import { checkCard, needsConfirmation, type SendToThread, type Waiting } from "./waiting.ts";
 
 export type AppDeps = {
@@ -464,7 +466,7 @@ function recordedReply(ctx: Ctx, i: QuestionState, claim: Claim, by: "page" | "b
 	const a = claim.answer;
 	if (!a) throw Error(`the page's claim on ${i.id} carries no answer`);
 	ledgerEvents(ctx.d.store).answered(i.id, a);
-	ctx.d.log("answered", { id: i.id, choice: a.choice, by, ruling: a.ruling?.id });
+	ctx.d.log("answered", { id: i.id, choice: a.choice, by, key: a.key, ruling: a.ruling?.id });
 	if (claim.relay) ctx.track(follow(ctx, claim));
 	return {
 		status: 200,
@@ -480,7 +482,7 @@ function recordedReply(ctx: Ctx, i: QuestionState, claim: Claim, by: "page" | "b
 	};
 }
 
-function answerNow(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", inline: boolean): Reply {
+function answerNow(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", inline: boolean, key: KeyUsed): Reply {
 	const bad = inline ? inlineRefusal(body) : undefined;
 	if (bad) return bad;
 	const found = answerableItem(ctx, id);
@@ -500,6 +502,7 @@ function answerNow(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", i
 		label: chosen.value,
 		...(note ? { note } : {}),
 		by,
+		key,
 		t: new Date().toISOString(),
 		deliveryId: answerDeliveryId(i.id),
 	};
@@ -509,8 +512,15 @@ function answerNow(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", i
 }
 
 /** Records the principal's answer once. A second answer to the same item is refused, so it can never send a second wake. */
-function answer(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", inline = false): Promise<Reply> {
-	return ctx.serial(() => answerNow(ctx, id, body, by, inline));
+function answer(
+	ctx: Ctx,
+	id: string,
+	body: AnswerIn,
+	by: "page" | "batch",
+	inline = false,
+	key: KeyUsed = "page",
+): Promise<Reply> {
+	return ctx.serial(() => answerNow(ctx, id, body, by, inline, key));
 }
 
 /** One item of a batch, answered with its recommendation. Undefined when it was answered, else why it was skipped. */
@@ -702,13 +712,14 @@ function notNowRoute(ctx: Ctx, id: string): Promise<Response> {
 }
 
 /**
- * Snooze, un-snooze, direction and dismiss change state, so they are the full page's alone: `inlineVerdict` refuses them to a frame, and this is the
- * second lock on the same door (an `inline` request is a frame's, or one that holds only a view key or no origin).
+ * Snooze, un-snooze, direction and dismiss change state. The full page does all four; the view key does snooze, direction and dismiss and not
+ * un-snooze; any other key from a frame or with no Origin none (`mayDo`). The origin and key gates refuse the rest first, and this is the second
+ * lock on the same door. The change is recorded with the key it was made with.
  */
-function itemActionRoute(ctx: Ctx, id: string, action: string, body: Record<string, unknown>, inline: boolean) {
-	if (inline)
-		return fail(403, "refused: snooze, direction and dismiss are done on the full page, not in an inline frame");
-	return ctx.items.run(id, action, body).then((r) => json(r.body, r.status));
+function itemActionRoute(ctx: Ctx, id: string, action: string, body: Record<string, unknown>, authority: Authority) {
+	if (!mayDo(authority, action))
+		return fail(403, `refused: ${action} is done on the full page, not with the key an inline view holds`);
+	return ctx.items.run(id, action, body, keyUsed(authority)).then((r) => json(r.body, r.status));
 }
 
 /** The change a ruling action makes. Undefined for an action that is not one. */
@@ -752,16 +763,27 @@ async function apiPost(
 	url: URL,
 	parts: string[],
 	body: Record<string, unknown>,
-	inline: boolean,
+	authority: Authority,
 ): Promise<Response> {
 	if (parts[1] === "cards" && parts[2] && (parts[3] === "answer" || parts[3] === "confirm") && parts.length === 4)
-		return cardsRoute(ctx, req, parts[2], parts[3], body, inline);
+		return cardsRoute(ctx, req, parts[2], parts[3], body, authority !== "full");
 	if (parts[1] === "items" && parts[2] && parts[3] === "answer") {
-		const r = await answer(ctx, parts[2], body as unknown as AnswerIn, "page", inline);
+		const r = await answer(
+			ctx,
+			parts[2],
+			body as unknown as AnswerIn,
+			"page",
+			authority !== "full",
+			keyUsed(authority),
+		);
 		return json(r.body, r.status);
 	}
 	if (parts[1] === "items" && parts[2] && parts.length === 4 && ITEM_ACTIONS.has(String(parts[3])))
-		return itemActionRoute(ctx, parts[2], String(parts[3]), body, inline);
+		return itemActionRoute(ctx, parts[2], String(parts[3]), body, authority);
+	// Everything below changes more than the view key's list (./view-key.ts) allows: the full page's alone. The second lock behind the origin
+	// and key gates, so a route added to a list by mistake still does not reach one of these.
+	if (authority !== "full")
+		return fail(403, "refused: this needs the page's own link, not the key an inline view holds");
 	if (parts[1] === "items" && parts[2] && parts[3] === "not-now") return notNowRoute(ctx, parts[2]);
 	if (url.pathname === "/api/accept-all") {
 		const r = await acceptAll(ctx, body.ids);
@@ -771,14 +793,14 @@ async function apiPost(
 	return fail(404, "not found");
 }
 
-async function api(ctx: Ctx, req: Request, url: URL, inline: boolean): Promise<Response> {
+async function api(ctx: Ctx, req: Request, url: URL, authority: Authority): Promise<Response> {
 	const parts = pathParts(url.pathname);
 	const read = req.method === "GET" ? apiRead(ctx, url, parts) : undefined;
 	if (read) return read;
 	if (req.method !== "POST") return fail(404, "not found");
 	const body = (await req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
 	if (!body || typeof body !== "object") return fail(400, "expected a JSON body");
-	return apiPost(ctx, req, url, parts, body, inline);
+	return apiPost(ctx, req, url, parts, body, authority);
 }
 
 // ---- the pages ----------------------------------------------------------------------------------------
@@ -838,6 +860,20 @@ const tapped = (req: Request) => req.headers.get("sec-fetch-user") === "?1";
 /** Who a request says it is: whether it comes from an inline frame, and whether that frame may do what it asked. */
 type Gate = { inline: boolean; allowed: boolean; origin: string | null; sameOrigin: boolean };
 
+/**
+ * A null-origin frame's request against the list of the key it holds: the view key's (./view-key.ts), or the old inline list for any other
+ * (the page key from a frame stays exactly as it was). A preflight carries no key, so it is answered when either list has the route: it grants
+ * nothing, and the request it clears is checked again with its key.
+ */
+function frameVerdict(d: AppDeps, req: Request, pathname: string): "ok" | "refuse" {
+	const onViewList = viewKeyVerdict(req.method, pathname) !== "refuse";
+	const onPageList = inlineVerdict(req.method, pathname) !== "refuse";
+	if (req.method === "OPTIONS") return onViewList || onPageList ? "ok" : "refuse";
+	const key = req.headers.get(TOKEN_HEADER);
+	const viewKeyOnly = !d.capability.accepts(key) && d.capability.acceptsView(key);
+	return (viewKeyOnly ? onViewList : onPageList) ? "ok" : "refuse";
+}
+
 /** Checks Host and Origin: a refusal (or the answer to a preflight) as a Response, or the request's Gate. */
 function checkOrigin(d: AppDeps, req: Request, url: URL): Response | Gate {
 	// The page binds to one address. A Host it doesn't know is a rebinding attempt or a mistake.
@@ -849,11 +885,14 @@ function checkOrigin(d: AppDeps, req: Request, url: URL): Response | Gate {
 	// approval, read one item, or change anything else. A page on any other origin is refused outright, whatever it sends.
 	const inline = origin === "null";
 	if (origin !== null && !inline && !sameOrigin) return withSecurity(fail(403, "refused: cross-origin request"));
-	const verdict = inline ? inlineVerdict(req.method, url.pathname) : undefined;
+	const verdict = inline ? frameVerdict(d, req, url.pathname) : undefined;
 	// A null-origin request outside the list is refused whatever it is. (Static files carry no Origin when a frame loads them.)
 	if (inline && verdict === "refuse" && (url.pathname.startsWith("/api/") || req.method !== "GET"))
 		return withSecurity(
-			fail(403, "refused: an inline frame may read the queue, recent answers and rulings, and answer a question"),
+			fail(
+				403,
+				"refused: an inline frame may read the queue, recent answers and rulings, and answer, snooze, direct or dismiss a question",
+			),
 		);
 	const allowed = inline && verdict !== "refuse";
 	// A preflight cannot carry the token, so it is answered; it grants nothing, and the request it clears is checked below.
@@ -903,7 +942,8 @@ function capabilityProof(d: AppDeps, req: Request, url: URL, gate: Gate) {
 
 /**
  * Inline authority only: a null-origin frame, or a request whose only proof is a header and which has no cookie, no link and no own origin.
- * The same three reads and plain answer; anything else is refused whatever its path, so the key a post carries cannot read an item or its
+ * The page key gets the same three reads and plain answer as ever, the view key the longer list in ./view-key.ts (those and snooze, direction and
+ * dismiss); anything else is refused whatever its path, so the key a post carries cannot read an item or its
  * evidence, answer a card or an approval, save a ruling or accept a batch. A refusal here is a 403, not a 401: the key is valid.
  * A null-origin frame's own page-key requests stay exactly as they were (refused for the API; its other GETs pass), except the /open route,
  * which a frame has no use for and which did not exist when that rule was written. The view key is held to the list on every path and from
@@ -923,8 +963,13 @@ function restrictedRefusal(
 	const shellRead =
 		req.method === "GET" && proof.byPageKeyHeader && (isShell(url.pathname) || (isOpen(url.pathname) && !inline));
 	if (!restricted || shellRead || !(!inline || proof.byViewKey || isOpen(url.pathname))) return undefined;
-	const v = inlineVerdict(req.method, url.pathname);
-	if (v === "read" || v === "answer") return undefined;
+	if (proof.byViewKey) {
+		const v = viewKeyVerdict(req.method, url.pathname);
+		if (v !== "refuse" && v !== "preflight") return undefined;
+	} else {
+		const v = inlineVerdict(req.method, url.pathname);
+		if (v === "read" || v === "answer") return undefined;
+	}
 	return withSecurity(
 		fail(
 			403,
@@ -1033,7 +1078,8 @@ async function handle(ctx: Ctx, req: Request): Promise<Response> {
 	if (proof.byLink && (isShell(url.pathname) || isOpen(url.pathname))) return linkRedirect(d, req, url);
 	if (req.method === "POST" && !postAllowed(req, gate)) return withSecurity(fail(403, "refused"));
 	if (url.pathname.startsWith("/api/")) {
-		const r = withSecurity(await api(ctx, req, url, gate.inline || !proof.full));
+		const authority = authorityOf(gate.inline || !proof.full, proof.byViewKey);
+		const r = withSecurity(await api(ctx, req, url, authority));
 		return gate.allowed ? inlineCors(r) : r;
 	}
 	return servePage(ctx, req, url);

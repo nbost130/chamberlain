@@ -11,7 +11,15 @@
  */
 import type { Adapter, PostResult } from "./adapter.ts";
 import { heldForItem, heldId, heldOpen, noteHeld } from "./afk.ts";
-import { isUrgent, plainQuestion, QUEUE, type Question, type QuestionState, questionStates } from "./questions.ts";
+import {
+	isUrgent,
+	type KeyUsed,
+	plainQuestion,
+	QUEUE,
+	type Question,
+	type QuestionState,
+	questionStates,
+} from "./questions.ts";
 import type { Store } from "./store.ts";
 
 /** The longest a snooze may last: a year. A mistyped year would hide an item for good. */
@@ -42,18 +50,22 @@ function noteHolds(store: Store, id: string, text: string, now: Date) {
 	for (const h of heldOpen(store)) if (heldForItem(h, id)) noteHeld(store, heldId(h), text, now);
 }
 
-/** Snoozes an open item until `until` (an ISO time, already checked), replacing any earlier snooze. Its holds stay open and are told when it returns. */
-export function snoozeQuestion(store: Store, id: string, until: string, now = Date.now()) {
+/**
+ * Snoozes an open item until `until` (an ISO time, already checked), replacing any earlier snooze. Its holds stay open and are told when it returns.
+ * `key` is the key the snooze was made with, recorded with it (the page's, or the Decisions view's).
+ */
+export function snoozeQuestion(store: Store, id: string, until: string, now = Date.now(), key: KeyUsed = "page") {
 	store.tx(() => {
 		store.items.patch(QUEUE, id, {
 			snoozedUntil: until,
 			snoozedAt: new Date(now).toISOString(),
+			snoozedKey: key,
 			snoozeReturned: undefined,
 		});
 		noteHolds(
 			store,
 			id,
-			`Snoozed on the queue until ${until.slice(0, 16)}Z. This hold stays open: the item is not answered.`,
+			`Snoozed on the queue${key === "view" ? " (from the Decisions view)" : ""} until ${until.slice(0, 16)}Z. This hold stays open: the item is not answered.`,
 			new Date(now),
 		);
 	});
@@ -61,7 +73,12 @@ export function snoozeQuestion(store: Store, id: string, until: string, now = Da
 
 /** Clears an item's snooze and says nothing: the answer, direction and dismissal paths use it, because settling an item ends its snooze. */
 export const clearSnooze = (store: Store, id: string) =>
-	store.items.patch(QUEUE, id, { snoozedUntil: undefined, snoozedAt: undefined, snoozeReturned: undefined });
+	store.items.patch(QUEUE, id, {
+		snoozedUntil: undefined,
+		snoozedAt: undefined,
+		snoozedKey: undefined,
+		snoozeReturned: undefined,
+	});
 
 /** Ends a snooze at once: the item is on the active list. */
 export function unsnoozeQuestion(store: Store, id: string, now = Date.now()) {

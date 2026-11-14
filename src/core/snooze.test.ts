@@ -113,7 +113,7 @@ describe("snooze", () => {
 		snoozeQuestion(store, "Q-snz1", iso(NOW + 2 * HOUR), NOW);
 		const q = stateOf(store, "Q-snz1");
 		expect(q.status).toBe("open");
-		expect(q.snooze).toEqual({ until: iso(NOW + 2 * HOUR), at: iso(NOW), active: true, returned: false });
+		expect(q.snooze).toEqual({ until: iso(NOW + 2 * HOUR), at: iso(NOW), key: "page", active: true, returned: false });
 		expect(ranked(questionStates(store, NOW).values()).map((i) => i.id)).toEqual(["Q-other"]);
 		expect(snoozed(questionStates(store, NOW).values()).map((i) => i.id)).toEqual(["Q-snz1"]);
 		// it is not answered: no claim, no wake, nothing batch-accepts it, and it is still a question an answer can settle

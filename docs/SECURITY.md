@@ -38,15 +38,23 @@ it is deliberately conservative.
   script address (`inline.js?...&k=<key>`); a `null`-origin request without a valid key is refused (`401`), and a cookie or a `?k=` on
   an API call does not stand in for it. **The key in that address is the view key (`secrets/view-key`), never the page's token.** A post is
   copied into the thread's messages, its `html_render` input and the provider transcript, where anyone who can read the thread can read it,
-  so it is the weakest secret the install has: it is accepted only for what an inline frame may do, from any `Origin` or none, and never for a
+  so it is the weakest secret the install has: it is accepted only for the **view key's list** (below), from any `Origin` or none, and never for a
   cookie, a page load, a `?k=` link, evidence, a card or a ruling. `chamberlain ask` refuses to send a post whose text holds the page's token.
-  The **page's** token in the header gets the same limit from a request with **no `Origin`** (curl, an agent's fetch) or from a null-origin
-  frame; full authority is the signed cookie, the header on a **same-origin** request, or `?k=` on a page load. The server limits a frame, by
-  route and by field (not the page's own script, which an attacker would not run): such a request
-  may `GET /api/queue`, `/api/recent` and `/api/rulings`, and `POST /api/items/<id>/answer` with a `choice` and an optional `note`
-  and **no other field**. It **cannot** snooze, un-snooze, direct or dismiss an item (`POST /api/items/<id>/snooze|unsnooze|direction|dismiss`
-  are the full page's alone: full authority, the guard header and a JSON body, as an answer to a card needs; any other key gets a 403 and
-  writes nothing). It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
+  **The view key's list is one explicit allowlist in code (`src/web/view-key.ts`): seven routes and no more.** Three reads: `GET /api/queue`,
+  `/api/recent` and `/api/rulings`. Four writes, each on one queue item, so the pinned Decisions view acts in place: `POST /api/items/<id>/answer`
+  (a `choice` and an optional `note` and **no other field**), `/snooze`, `/direction` and `/dismiss`. Each is recorded as the same write from the page is,
+  plus **which key made it** (`key: "view"` or `key: "page"` on the claim's answer, on the snooze, on the logged event and on the ledger row of an answer;
+  a record from before this reads as the page). Every other route refuses the view key (`403`, nothing written), from any `Origin` or none:
+  **un-snooze**, not-now, batch-accept, every ruling route (save, confirm, edit, once, retire, and a `saveRuling` or `rulingWording` field on an answer),
+  the question-card and approval routes and their confirmation step, one item's own read, evidence, every page load and a cookie. The web API has no
+  settings or key-management route for it to reach (key rotation is `chamberlain web rotate-token`, on the machine). Three locks hold the list: the origin
+  gate (T3's null-origin frame and its preflight), the key gate (`restrictedRefusal`) and the check inside each write route, which takes the
+  request's authority (`full`, `view` or `restricted`, `mayDo`) and not a flag, so a route added to a list by mistake still does not reach an admin route.
+  **The page's** token in the header gets only the older, shorter list from a request with **no `Origin`** (curl, an agent's fetch) or from a
+  null-origin frame: the three reads and a plain answer (`inlineVerdict`, unchanged), and **not** the view key's three other writes. Full authority is the
+  signed cookie, the header on a **same-origin** request, or `?k=` on a page load, and it keeps every route it had. The server limits a frame by route
+  and by field (not the page's own script, which an attacker would not run). **Un-snooze** needs the page's full authority; snooze, direction and dismiss take
+  it or the view key, never the page key from a frame or with no `Origin` (each also needs the guard header and a JSON body). Neither key can save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
   nothing), answer a mirrored card or an approval (refused, however exact the fingerprint), read one item on its own
   (`GET /api/items/<id>` is refused), read an item's evidence (a request with no `Origin` or the view key; a null-origin frame's evidence
   reads are as before), batch-accept, or change anything else. Cards, approvals and rulings are done on the full page.

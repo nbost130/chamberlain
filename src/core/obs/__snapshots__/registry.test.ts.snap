@@ -109,11 +109,18 @@ relay-record-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES
 answered.item: item <- id
 answered.choice: int
 answered.by: enum(page|batch|card|daemon|reconciler) <- by
+answered.key: enum(page|view) <- key
+directed.item: item <- id
+directed.key: enum(page|view) <- key
+dismissed.item: item <- id
+dismissed.key: enum(page|view) <- key
 wake-queued.item: item <- id
 card-confirmation-issued.item: item <- id
 card-confirmation-refused.item: item <- id
 snoozed.item: item <- id
+snoozed.key: enum(page|view) <- key
 unsnoozed.item: item <- id
+unsnoozed.key: enum(page|view) <- key
 snooze-returned.item: item <- id
 snooze-returned.notified: bool
 snooze-post-failed.item: item <- id
@@ -183,6 +190,7 @@ question.answered.item: item <- item
 question.answered.choice: int
 question.answered.recommended: bool
 question.answered.by: enum(page|batch|card|daemon|reconciler) <- by
+question.answered.key: enum(page|view) <- key
 question.answered.wait_ms: ms
 question.answered.ruled: bool
 hold.closed.open_ms: ms
