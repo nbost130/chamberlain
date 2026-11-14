@@ -1,6 +1,6 @@
 {
 	"name": "chamberlain",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Watches your T3 Code threads and wakes the Steward, an agent thread, only when something needs it. Zero model calls by default.",
 	"type": "module",
 	"license": "MIT",
