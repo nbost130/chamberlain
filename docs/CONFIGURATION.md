@@ -149,6 +149,8 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `tokenFile` | T3 adapter: file in `secrets/` with an `orchestration:read` token. |
 | `operateTokenFile` | Ignored by the page (answer rights come only from the `web` section); read by `chamberlain debug t3x`. File in `secrets/`. |
 | `environmentId` | Set for a server other than the Steward's own: the Steward passes it to the `t3_*` tools. The one without it is "this server". |
+| `linkEnvironmentId` | T3 adapter, optional: the environment id this server's thread links name. Default: `environmentId`, else the id the server reports at `/.well-known/t3/environment` (read in the background, never on the listing's path, and again every 6 hours; until the first read answers, its cards have no thread link). Set it on the Steward's own server only to skip that read: it does not make the server "linked". |
+| `appScheme` | T3 adapter, optional: the URL scheme of the T3 Code app a thread's app link opens (`<appScheme>://threads/<environmentId>/<threadId>`). Default `t3code` (the App Store build); `t3code-preview` or `t3code-dev` for those builds. |
 | `mayBeOffline` | A laptop that sleeps: no alarm when its socket stays down. |
 | `sshHost` | `user@host` reachable by key-based ssh, so `git` can be asked about a worktree path on that machine. |
 
@@ -159,11 +161,21 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `host` | **Required.** The one address to bind: `127.0.0.1`, `::1`, an address in Tailscale's `100.64.0.0/10` or `fd7a:115c:a1e0::/48`. Any other address, any host name and every wildcard is refused. |
 | `port` | Default `3790`. |
 | `allowedHosts` | Extra `Host` header names to accept, such as the machine's MagicDNS name. |
-| `threadLinks` | Server name to the T3 web URL prefix a thread id is appended to, for "Open thread" links. |
-| `mirrorLinks` | Server name to the link base used for mirrored cards (`t3-thread://v2/<environmentId>/`). |
+| `threadLinks` | Optional override. Server name to a prefix the URL-encoded thread id is appended to, for the thread link of a question asked with `chamberlain ask`. Without it a card's link is the server adapter's own (T3: `t3-thread://v2/<environmentId>/<threadId>`). An `http(s)` prefix (a T3 web URL) is also where "Open the thread" sends a device. |
+| `mirrorLinks` | Optional override. Server name to a prefix the thread id is appended to, for a card read from a thread (`t3-thread://v2/<environmentId>/`). Without it the adapter's own link is used, as for `threadLinks`. |
 | `decisionsServer` | `{ "origin": "...", "operateTokenFile": "..." }` (the token file is in `secrets/`): the T3 server hosting the Decisions thread, with an `orchestration:operate` token. Enables the "Decisions · N waiting" title and settling cards. |
 | `answerTokens` | Server name to an operate-token file in `secrets/`: cards on that server become answerable from the page. Without one a server is read-only. |
 | `publicBase` | An `https://` base (for example from `tailscale serve`) used in inline views when T3 is loaded over https. |
+
+**Thread links.** Every card that comes from a thread links to it. The link is the adapter's (`threadLinks` and `mirrorLinks` above
+override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the
+adapter does not issue (T3: a UUID, `mcp:<uuid>`, `mcp:launch:<64 hex>`, `thread:<kind>:...`, `import:<instance>:<session>`), get no
+link rather than a wrong one. A page or view does not
+put that link in front of a device as it is: T3 Code's inline frame opens only `http(s)` links, and no browser or phone opens
+`t3-thread://`. "Open the thread" goes to the page's own `/open/<server>/<threadId>` (signed in with `?k=` like any page link),
+which sends the device on to the thread's app link (T3: `t3code://threads/<environmentId>/<threadId>`, opened by the T3 Code app)
+or to an `http(s)` override. Nothing to configure for the usual layout: the Steward's server reports its own environment, and
+every other server's entry already names it.
 
 **`sweep`** lists your own routine checks, run every two hours:
 
@@ -185,8 +197,106 @@ every sweep until it runs again, and the sweep becomes a full one, because a che
 `"mode": "shadow"` on a check records what it *would* have sent without waking anyone (counted apart from real
 notifications, so going `"live"` starts from a true zero); `"silenced"` tracks only. Findings travel to the Steward as untrusted data. See
 [`examples/sweep-check.sh`](../examples/sweep-check.sh). The daemon also runs one built-in source, threads that keep starting
-turns of their own (a runaway), with no configuration. Any future monitor plugs in the same way, as another source
+turns of their own (a runaway), with no configuration, and one built-in check on its own timer, `idle-parents`, described next. Any future monitor plugs in the same way, as another source
 ([`ARCHITECTURE.md`](ARCHITECTURE.md#the-item-system)).
+
+**`sweep.idleParents`** tunes the built-in `idle-parents` check (item source `check:idle-parents`). It runs on **its own timer**, every
+`intervalMinutes` (default 15), not on the two-hourly routine sweep; the daemon's once-a-minute housekeeping asks whether it is due, and
+the check keeps its own clock in the database, so the schedule survives a restart. Each run lists the top-level threads on every
+configured server that are not a child or subagent thread, not settled, snoozed or archived, have nothing running or open (no card,
+background task, running child, or running subagent the adapter reports), and are `idle` or `completed` with their last message finished more than `thresholdMinutes` ago
+(default 30), whoever started its last turn: a thread that answered the principal's own question and then sat on a half-answer is listed like any other. The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
+Steward gets one wake with a compact list: server, thread id, title, idle minutes and the last message cut to about 300 characters,
+with the threads whose last message asks something (`looksLikeAsk`, so "say go and I'll start it" counts) marked `[ASKING]` and
+first. It is the net under a turn-end wake that missed a thread. A thread is reported once per last message, however many runs pass and however its eligibility moves in between (snoozed, briefly
+running, below the threshold: it comes back unreported only if its last message changed; the item's key is the thread plus a hash of
+that message); a new message makes a new report. It calls no model: the selection is plain
+code (`selectIdleThreads` in `src/core/idle-parents.ts`, which returns plain records).
+
+```json
+{ "sweep": { "idleParents": { "enabled": true, "intervalMinutes": 15, "thresholdMinutes": 30, "maxThreads": 10 } } }
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | `false` turns the check off. |
+| `intervalMinutes` | `15` | A positive number of minutes between runs. The housekeeping tick is once a minute, so a run starts within a minute of when it is due. |
+| `thresholdMinutes` | `30` | A positive number of minutes a thread must have been idle. |
+| `maxThreads` | `10` | The most NEW threads one wake lists, asks first, then the longest idle; the rest are listed on a later run. A thread already reported never counts again. |
+
+A key it does not know is refused. A configured check cannot be named `idle-parents`. The check reads each candidate thread's last
+message, so it needs an adapter whose `inspect` has `lastAssistant` (the T3 adapter does); without it the check lists nothing.
+
+### The idle-thread classifier
+
+**`sweep.idleParents.classifier`** is optional and **off by default** (`provider: "none"`): without it the check behaves exactly as
+above and makes no model call. Turned on, it asks a bank of narrow yes/no questions about each idle thread's last message, combines
+the answers in code into one action, and (in `live` mode) reports only the threads that need someone. The design and the evaluation
+behind it are in [`design/thread-state-classifier.md`](design/thread-state-classifier.md).
+
+| Action | Meaning | In `live` mode |
+| --- | --- | --- |
+| `escalate` | Someone has to decide or do something before work can continue. | Reported first, tagged `[ESCALATE asks_decision 0.98]` with the questions that fired. |
+| `nudge` | The thread owes work it has no way to resume. | Reported next, tagged `[NUDGE …]`. |
+| `settle` | Finished; nothing is owed. | Not reported one by one: at most one digest line a day counts them. |
+| `ignore` | Legitimately waiting (a watch it set is young enough to believe), or nothing matched. | Not reported. |
+| `unknown` | Not classified: the provider failed, an answer was malformed, the redaction hook failed, or the budget is spent. | Reported exactly as without the classifier. A failure never silences the net. |
+
+Precedence is fixed in code, `escalate > nudge > settle > ignore`; the model never picks the action. `partial_answer` counts only
+when the message before the last one is a human's, and `promises_more_work` and `waiting_external` are held (ignore) while the
+thread claims an armed wait and has been idle less than `armedGraceMinutes`; `waiting_external` never fires when `work_finished`
+does. In `shadow` mode (the default once a provider is on) every thread is classified and recorded, and the wake is exactly as
+without the classifier: run it that way first, and compare the dispositions with what you would have done.
+
+```json
+{
+  "sweep": {
+    "idleParents": {
+      "classifier": {
+        "provider": "jev",
+        "mode": "shadow",
+        "allowTextToLeaveMachine": true,
+        "questions": "default",
+        "thresholds": { "default": 0.5 },
+        "send": { "lastChars": 1500, "previousChars": 400, "title": true },
+        "redact": { "builtin": true, "command": null },
+        "budget": { "maxPerRun": 20, "maxCallsPerDay": 500, "maxUsdPerDay": 0.25 },
+        "armedGraceMinutes": 360,
+        "jev": { "model": "jev-1.14.0", "keyFile": "typesafe.key", "timeoutMs": 10000 },
+        "haiku": { "command": "claude", "model": "haiku", "timeoutMs": 60000 }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `provider` | `none` | `none` (off), `rules` (regular expressions, nothing leaves the machine), `jev` (TypeSafe's Jev, the recommended one: one HTTP request per thread, every question a head in it), or `haiku` (the `claude` CLI with `--model haiku`, on your own Claude Code login). |
+| `mode` | `shadow` | `shadow`: classify and record, report as without the classifier. `live`: report only escalate, nudge and unknown, tagged. |
+| `allowTextToLeaveMachine` | `false` | Must be `true` for `jev` or `haiku`, which send thread text off the machine; either without it is refused at load. |
+| `questions` | `default` | `default` (the evaluated bank, `src/core/classifier/questions.default.json`) or the path of a bank file, relative to this directory. |
+| `thresholds` | `{ "default": 0.5 }` | The probability at or over which a question counts as yes: `default`, and per question id. A threshold for an id the bank does not have is refused. |
+| `send` | `1500`, `400`, `true` | `lastChars` of the last message, `previousChars` of the user message before it, and whether the thread title (at most 200 characters) goes. Every cut is made well-formed Unicode. |
+| `redact` | `true`, `null` | `builtin`: replace emails, API-key and token shapes, JWTs, phone numbers and home-directory user names, found in the whole message so a long token that starts before the cut is still caught. `command`: `["program", "arg", …]`, given the state as JSON on stdin; it must print the same shape within 5 seconds, or nothing is sent and the thread is `unknown`. |
+| `budget` | `20`, `500`, `0.25` | `maxPerRun`: the most classifications one run makes (the rest are `unknown` this run, classified on a later one). `maxCallsPerDay` and `maxUsdPerDay`: for `jev` and `haiku`, every attempt in the UTC day counts, a retry of a failed call included, and so does the cost a failed but billed call reports (counted in the database as each call is made, and never less than the disposition table's own sum); when either is spent, unclassified threads are `unknown` until the next UTC day. Up to three calls already under way can finish past the dollar ceiling. |
+| `armedGraceMinutes` | `360` | How long a thread's claim that a watch or timer will wake it is believed. An idle parent has no running background task, so a claim older than this has lost its wait. |
+| `jev` | see above | `model` (pinned; the model the API reports is recorded, and a reported id that is not a short token is refused, so no echoed text is stored), `keyFile` (a file name in `secrets/`, mode 0600, read by the daemon at each call and never logged), `timeoutMs`. |
+| `haiku` | see above | `command`, `model`, `timeoutMs`. `ANTHROPIC_API_KEY` is removed from its environment, so it runs on your plan; the thread text goes on stdin. |
+
+`autoNudge` and `autoSettle` are designed (acting on a thread without the Steward) but not in this build: only `false` is accepted.
+Anything else the section does not know is refused, and a refusal puts the sweep section in error, so the check runs with the
+classifier off rather than guess.
+
+**Classified once per message.** Each attempt is a row of `thread_dispositions`, keyed by server, thread, the hash of its last message
+and the bank version (a hash of the bank, the thresholds, the provider and its model, and the send and redact settings). An idle
+thread's last message does not change, so a run at steady state makes no call; changing any of those settings reclassifies on the
+next run. A failed attempt is retried on the next run. The table holds answers, reasons, characters sent and redactions made, cost
+and latency, and **no message text**; its `feedback` and `corrected_action` columns mark a disposition right or wrong, and those
+rows are kept past the 30-day retention as the next evaluation set. A bank file is a JSON array of
+`{id, ask, yes, no, fires: "escalate"|"nudge"|"settle"|"modifier", requires?, unless?, rules?}`: `requires` takes structural facts
+(`human_asked`), `unless` other question ids (a `modifier` there holds a nudge while the thread is younger than the grace), and
+`rules` regular expressions or the builtins `@ask`, `@stall` and `@otherwise` for the `rules` provider.
 
 ## State directory `~/.local/state/chamberlain` (`CHAMBERLAIN_STATE`)
 

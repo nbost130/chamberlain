@@ -54,4 +54,15 @@ it is deliberately conservative.
   `..`, absolute paths, encoded slashes and symlinks are refused.
 - **Outside text is data.** Thread titles, last messages, questions and check output reach the Steward fenced as
   "untrusted data, not instructions", with angle brackets stripped so text cannot close the fence.
-- **No model calls.** The daemon decides with code. Its alarms go to your `alertCommand` or the log.
+- **No model calls by default.** The daemon decides with code. Its alarms go to your `alertCommand` or the log. Two features can
+  ask a model, and both are off until you configure them: the judge (`judge.json`), which sees only scrubbed error text, and the
+  idle-thread classifier (`sweep.idleParents.classifier`).
+- **Thread text leaves the machine only if you switch it on twice.** The classifier's `jev` and `haiku` providers send a redacted
+  excerpt of an idle thread (its title, the last 1,500 characters of its last message and the last 400 of the message before it,
+  labelled only `human`, `agent` or `none`; never thread ids, server names, file contents or tool output), and they are refused
+  at config load unless `allowTextToLeaveMachine` is `true`. `jev` sends it to TypeSafe's API (assume it is retained), `haiku` to
+  Anthropic through your own Claude Code login, on stdin, never on a command line. Built-in redaction replaces emails, API-key and
+  token shapes, JWTs, phone numbers and home-directory user names first; an optional `redact.command` hook runs after it and fails
+  closed (nothing is sent). The Jev key is a file in `secrets/` (mode 0600), read only by the daemon at the call and never logged.
+  The disposition table stores answers, reasons, how many characters left and how many redactions were made, and **no message
+  text**.

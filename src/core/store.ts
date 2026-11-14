@@ -319,6 +319,58 @@ export interface ChallengeStore {
 	prune(before: number): number;
 }
 
+// ---- the idle-thread classifier's dispositions (migration 13) ------------------------------------
+
+/** What the classifier decided for one idle thread. `unknown` is a classification that failed: reported as if unclassified. */
+export type DispositionAction = "escalate" | "nudge" | "settle" | "ignore" | "unknown";
+/** A cache key: one thread, one last message, one bank version. */
+export type DispositionKey = { server: string; threadId: string; messageHash: string; bankVersion: string };
+/**
+ * One row of `thread_dispositions`. It holds no message text: `answers` (question id to probability) and `reasons` (the ids that
+ * decided the action) explain the decision, and the text stays in the thread.
+ */
+export type Disposition = DispositionKey & {
+	classifiedAt: number;
+	provider: "rules" | "jev" | "haiku";
+	model: string | null;
+	mode: "shadow" | "live";
+	action: DispositionAction;
+	reasons: string[];
+	answers: Record<string, number>;
+	idleMinutes: number;
+	sentChars: number;
+	redactions: number;
+	inputTokens: number | null;
+	costUsd: number | null;
+	latencyMs: number | null;
+	/** Set exactly when `action` is unknown. */
+	error: string | null;
+	feedback: "right" | "wrong" | null;
+	correctedAction: Exclude<DispositionAction, "unknown"> | null;
+};
+export type DispositionWrite = Omit<Disposition, "feedback" | "correctedAction">;
+export interface DispositionStore {
+	get(k: DispositionKey): Disposition | undefined;
+	/** Writes one classification attempt: a new row, or the row for its key replaced, keeping any feedback it had. */
+	put(d: DispositionWrite): void;
+	/** A cached row decided again from its stored answers (the idle time moved, or the combine settings changed). No new call. */
+	redecide(
+		k: DispositionKey,
+		o: {
+			action: Exclude<DispositionAction, "unknown">;
+			reasons: string[];
+			idleMinutes: number;
+			mode: "shadow" | "live";
+		},
+	): void;
+	/** Calls made since `since` (ms) by these providers, and what they cost: the daily budget is summed from here. */
+	usage(since: number, providers: readonly string[]): { calls: number; usd: number };
+	/** Marks a disposition right or wrong, with the action it should have had. False when there is no such row. */
+	feedback(k: DispositionKey, feedback: "right" | "wrong", corrected?: Exclude<DispositionAction, "unknown">): boolean;
+	/** Deletes rows classified before `before`, except rows with feedback (the next evaluation set). */
+	prune(before: number): number;
+}
+
 // ---- the event log and small state --------------------------------------------------------------
 
 /** One line of the daemon's log: `t` and `event` and, when set, `src`, then whatever fields the event carried. */
@@ -406,6 +458,7 @@ export interface Store {
 	readonly state: StateStore;
 	readonly sequence: SequenceStore;
 	readonly usage: UsageStore;
+	readonly dispositions: DispositionStore;
 }
 
 /** The database file's name in the state directory. */

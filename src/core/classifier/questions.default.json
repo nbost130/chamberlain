@@ -1,0 +1,73 @@
+[
+	{
+		"id": "asks_decision",
+		"ask": "Does `last_message` ask the reader (a human or a supervising agent) to decide, approve, confirm, review, merge or say go before some piece of work can continue? Most finished messages ask nothing.",
+		"yes": "It asks a question that needs an answer, asks for approval or a go, or says work is waiting on the reader's decision, review, approval or merge. Examples: 'say go and I'll start it', 'should I open a fix PR?', 'waiting on your r+', 'needs your merge decision', 'I can re-run it next if you want'.",
+		"no": "It asks nothing that blocks work. A report that only lists recommendations, or says a decision 'stays with you' at some later date, is no.",
+		"fires": "escalate",
+		"rules": ["@ask"]
+	},
+	{
+		"id": "needs_principal_task",
+		"ask": "Does `last_message` ask the human to personally do something only a person can do: test on their own device, sign in, change an account or permission setting, provide a secret, or check something on their own screen?",
+		"yes": "Examples: 'only a test on your phone can settle them', 'the app needs that permission, and changing it is yours to do', 'confirm the settings page shows green'.",
+		"no": "No such task. Approving, merging or deciding alone is no.",
+		"fires": "escalate",
+		"rules": ["\\b(on your (phone|device|screen)|sign in|log in|only you can|yours to do|your (phone|device) test)\\b"]
+	},
+	{
+		"id": "repeated_failure",
+		"ask": "Does `last_message` say the same failure happened again after more than one attempt to fix it, or that its writer is stuck and cannot make progress?",
+		"yes": "The same error or failing check recurs across attempts, or the writer says it is stuck or giving up.",
+		"no": "No failure, a single failure, or a failure that was then fixed.",
+		"fires": "escalate",
+		"rules": ["\\b(fail(ed|s)? again|same (error|failure)|(third|fourth|fifth) (attempt|run|try)|stuck|giving up)\\b"]
+	},
+	{
+		"id": "partial_answer",
+		"ask": "`previous_message` is what was said just before `last_message`. Does `last_message` say that part of what was asked is still unanswered, unchecked or not yet worked out?",
+		"yes": "Example: 'I haven't yet mapped those processes to tabs, so I can't say which ones account for it.'",
+		"no": "What was asked is fully answered, or nothing was asked.",
+		"fires": "nudge",
+		"requires": ["human_asked"],
+		"rules": [
+			"\\b(haven'?t|have not|didn'?t|did not) (yet )?(checked|mapped|looked|confirmed|verified|found)\\b|\\bcan'?t (yet )?say\\b"
+		]
+	},
+	{
+		"id": "promises_more_work",
+		"ask": "Does `last_message` say its writer will itself do more work later, on its own, without first needing an answer from the reader?",
+		"yes": "Examples: 'I'll confirm when it merges', 'once the gate is green I'll commit and open a PR', 'I'll keep it a draft until X merges, then retarget it'.",
+		"no": "It promises no further work, or the further work happens only if the reader says go or answers a question.",
+		"fires": "nudge",
+		"unless": ["claims_armed_wait"],
+		"rules": ["@stall"]
+	},
+	{
+		"id": "waiting_external",
+		"ask": "Does `last_message` say its writer is waiting for something outside the conversation to happen before it continues: a CI run, a merge queue, a running job, another agent's work, or a third party's review?",
+		"yes": "Something outside is still pending and the writer means to act after it.",
+		"no": "Nothing outside is pending, or the only thing it waits for is the reader's own answer or approval.",
+		"fires": "nudge",
+		"unless": ["work_finished", "claims_armed_wait"],
+		"rules": [
+			"\\b(waiting (on|for)|still running|in (the )?(merge |bors )?queue|in progress|hasn'?t (merged|finished) yet)\\b"
+		]
+	},
+	{
+		"id": "claims_armed_wait",
+		"ask": "Does `last_message` say that a watch, timer, scheduled job or background wait is set up that will wake or resume its writer automatically?",
+		"yes": "It names such a mechanism, e.g. 'the watch stays on until it lands', 'a background wait is registered and wakes this thread'.",
+		"no": "No automatic wake-up is mentioned. Only saying 'I'm waiting' or 'I'll check later' is no.",
+		"fires": "modifier",
+		"rules": ["\\b(watch (stays|is) on|armed wait|background wait|wakes? (me|this thread)|timer|scheduled)\\b"]
+	},
+	{
+		"id": "work_finished",
+		"ask": "Does `last_message` report that its writer's assigned task is finished, so the writer owes no more work on it? A finished task may still hand its result to someone else to review or merge.",
+		"yes": "The task is done: the report, answer, fix or PR is delivered.",
+		"no": "The writer says it is still working, waiting to continue, partway through, or has not yet done something it set out to do.",
+		"fires": "settle",
+		"rules": ["@otherwise"]
+	}
+]

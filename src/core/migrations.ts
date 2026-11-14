@@ -421,13 +421,53 @@ BEGIN SELECT RAISE(ABORT, 'the store sequence only increases'); END;
 	},
 	{
 		version: 13,
+		name: "idle-thread classifier dispositions",
+		sql: `
+-- The idle-thread classifier's cache (docs/design/thread-state-classifier.md). It answers only "have we already classified this exact
+-- message with this exact bank?": the key is the thread, the hash of its last message, and the bank version (a hash of the bank, the
+-- thresholds, the provider and its model, and the send and redact settings). It is NOT a second dedupe: the item system alone decides
+-- what notifies (the idle-parents finding is keyed by thread and message hash, as before).
+-- No message text is stored. answers ({question id: probability}) and reasons (the question ids that decided the action) explain a
+-- decision; the text is in the thread. sent_chars and redactions record what left the machine. feedback and corrected_action let the
+-- Steward or the operator mark a disposition right or wrong: those rows are the next evaluation set, and housekeeping keeps them.
+-- action 'unknown' (with error set) is a classification that failed; it is retried on a later run, and never silences the report.
+-- Additive only: nothing existing changes. A build that knows only migrations up to 12 refuses this database.
+CREATE TABLE thread_dispositions (
+	server TEXT NOT NULL,
+	thread_id TEXT NOT NULL,
+	message_hash TEXT NOT NULL,
+	bank_version TEXT NOT NULL,
+	classified_at INTEGER NOT NULL,
+	provider TEXT NOT NULL CHECK (provider IN ('rules', 'jev', 'haiku')),
+	model TEXT,
+	mode TEXT NOT NULL CHECK (mode IN ('shadow', 'live')),
+	action TEXT NOT NULL CHECK (action IN ('escalate', 'nudge', 'settle', 'ignore', 'unknown')),
+	reasons TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(reasons)),
+	answers TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(answers)),
+	idle_minutes INTEGER NOT NULL,
+	sent_chars INTEGER NOT NULL DEFAULT 0 CHECK (sent_chars >= 0),
+	redactions INTEGER NOT NULL DEFAULT 0 CHECK (redactions >= 0),
+	input_tokens INTEGER,
+	cost_usd REAL,
+	latency_ms INTEGER,
+	error TEXT,
+	feedback TEXT CHECK (feedback IS NULL OR feedback IN ('right', 'wrong')),
+	corrected_action TEXT CHECK (corrected_action IS NULL OR corrected_action IN ('escalate', 'nudge', 'settle', 'ignore')),
+	PRIMARY KEY (server, thread_id, message_hash, bank_version),
+	CHECK ((action = 'unknown') = (error IS NOT NULL))
+);
+CREATE INDEX thread_dispositions_by_time ON thread_dispositions (classified_at);
+`,
+	},
+	{
+		version: 14,
 		name: "the Steward's token usage per wake",
 		sql: `
 -- What the Steward spent on each wake, read from its own Claude Code transcript (src/core/steward-tokens.ts), for the optional token metric
 -- (config key stewardTokens). One row per transcript segment, keyed by the Steward's session and the wake's delivery id (or, for a wake from
 -- before delivery ids and any other prompt, the prompt row's uuid). The four columns of the API's usage object are summed over the segment's
 -- distinct model requests. No text is kept: a key, a kind and numbers. Rows are upserted, so a backfill run twice writes the same rows.
--- Additive only: nothing existing changes. A build that knows only migrations up to 12 refuses this database.
+-- Additive only: nothing existing changes. A build that knows only migrations up to 13 refuses this database.
 CREATE TABLE steward_wake_usage (
 	session TEXT NOT NULL,
 	wake_key TEXT NOT NULL,

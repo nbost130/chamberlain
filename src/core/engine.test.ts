@@ -19,6 +19,9 @@ import { askQuestion, claimWake, getQuestion, pageClaim, questionStates } from "
 import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
 import type { Judge } from "./judge.ts";
 import { withDeliveryId } from "./deliver.ts";
+import { DEFAULT_BANK } from "./classifier/bank.ts";
+import type { Provider } from "./classifier/providers.ts";
+import type { SentState } from "./classifier/state.ts";
 import { createEngine, type EngineDeps } from "./engine.ts";
 import type { HeldItem } from "./hold.ts";
 import type { Store } from "./store.ts";
@@ -45,6 +48,7 @@ function rig(
 		housekeeping?: boolean;
 		gh?: EngineDeps["gh"];
 		ask?: EngineDeps["ask"];
+		classifierProvider?: EngineDeps["classifierProvider"];
 	} = {},
 ) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
@@ -69,6 +73,7 @@ function rig(
 		housekeeping: o.housekeeping ?? false,
 		gh: o.gh,
 		ask: o.ask,
+		...(o.classifierProvider ? { classifierProvider: o.classifierProvider } : {}),
 		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 		log: (event, data) => events.push({ event, ...data }),
 		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -341,6 +346,45 @@ describe("a turn end waits for the Steward to be free", () => {
 		r.fake.emit({ kind: "state", thread: thread("t5", "completed") });
 		await r.until("the skip", () => r.events.some((e) => e.event === "skip-turn-ended"));
 		expect(r.fake.wakes).toEqual([]);
+	});
+
+	describe("a thread the principal drove (the Steward never instructed it) still wakes the Steward on an ask, and only on an ask", () => {
+		const principalDriven = (r: ReturnType<typeof rig>, id: string, lastMessage: string) => {
+			r.fake.threads.set(id, {
+				lastMessage,
+				instruction: {
+					items: [{ type: "user_message", id: "u1", text: "fix it", createdBy: "user", creationSource: "web" }],
+					state: "complete",
+					byMachine: false,
+				},
+			});
+			r.fake.emit({ kind: "state", thread: thread(id, "running") });
+			r.fake.emit({ kind: "state", thread: thread(id, "completed") });
+		};
+		// The real miss: the go-line was only in the spoken closing line.
+		const SIGN_OFF =
+			"The token is in place.\n\n🗣️ The breaker still needs its endpoint built; say go and I'll start it.";
+
+		test("a go-phrase in the closing line wakes it as a handed-back question, not skipped", async () => {
+			const r = rig({ steward: "steward-1" });
+			principalDriven(r, "t5", SIGN_OFF);
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("finished and handed a question back");
+			expect(r.events.some((e) => e.event === "skip-turn-ended")).toBe(false);
+		});
+		test("a go-phrase that also says 'I'll start' is an ask, not a stall", async () => {
+			const r = rig({ steward: "steward-1" });
+			principalDriven(r, "t5", "The endpoint is not built yet. Say go and I'll start it.");
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("finished and handed a question back");
+			expect(r.fake.wakes[0]!.message).not.toContain("stalled");
+		});
+		test("a plain finish on the same thread is still skipped", async () => {
+			const r = rig({ steward: "steward-1" });
+			principalDriven(r, "t5", "All done and verified.\n\n🗣️ Done.");
+			await r.until("the skip", () => r.events.some((e) => e.event === "skip-turn-ended"));
+			expect(r.fake.wakes).toEqual([]);
+		});
 	});
 
 	test("a wake the webhook refuses stays pending, its attempt counted, and goes on a later pass, once", async () => {
@@ -681,6 +725,324 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		await r.engine.tick();
 		await r.quiet();
 		expect(r.fake.wakes).toHaveLength(1);
+	});
+
+	describe("the idle-parents timer: its own schedule, apart from the routine sweep", () => {
+		const idleRig = (conf?: object, classifierProvider?: EngineDeps["classifierProvider"]) => {
+			const r = rig({ housekeeping: true, steward: "stew", ...(classifierProvider ? { classifierProvider } : {}) });
+			if (conf) r.priv("sweep.json", JSON.stringify(conf));
+			/** A last message that finished `min` minutes before the engine's clock. */
+			const ago = (min: number, text: string, id = "m1") => ({
+				id,
+				text,
+				at: new Date(r.clock.t - min * 60_000).toISOString(),
+			});
+			const seen = (id: string, status: string, over: Partial<ThreadInput>, last = ago(180, "All done.")) => {
+				r.fake.threads.set(id, { lastAssistant: last });
+				r.fake.emit({ kind: "state", thread: thread(id, status, over) });
+			};
+			const runs = () => r.events.filter((e) => e.event === "idle-parents").length;
+			const sweeps = () => r.events.filter((e) => e.event === "sweep").length;
+			/** Time passes for the engine's own clock; the message ages move with it. */
+			const pass = (min: number) => {
+				r.clock.t += min * 60_000;
+			};
+			return { r, ago, seen, runs, sweeps, pass };
+		};
+
+		test("idle top-level threads reach the Steward, asks first, and the rest are filtered out", async () => {
+			const { r, ago, seen } = idleRig();
+			// The real miss: it ended on a go-phrase, with no card and no open PR.
+			seen(
+				"ask",
+				"idle",
+				{},
+				ago(240, "The token is in.\n\n🗣️ The breaker still needs its endpoint; say go and I'll start it."),
+			);
+			seen("plain", "completed", {}, ago(120, "Finished the report."));
+			seen("fresh", "idle", {}, ago(10, "Just now."));
+			seen("edge", "idle", {}, ago(29, "Just under the threshold."));
+			seen("child", "idle", { parentThreadId: "ask" });
+			seen("settled", "idle", { settled: true });
+			seen("snoozed", "idle", { snoozed: true });
+			seen("working", "running", {});
+			seen("stew", "idle", {});
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the idle wake", () => r.fake.wakes.length === 1);
+			const msg = r.fake.wakes[0]!.message;
+			expect(msg).toContain("[chamberlain] idle threads: 2 top-level threads finished and went quiet");
+			expect(msg).toContain('[ASKING] thread "Thread ask" on fake (threadId ask), idle 240 min.');
+			expect(msg).toContain('thread "Thread plain" on fake (threadId plain), idle 120 min.');
+			expect(msg.indexOf("threadId ask")).toBeLessThan(msg.indexOf("threadId plain"));
+			for (const id of ["fresh", "edge", "child", "settled", "snoozed", "working", "stew"])
+				expect(msg).not.toContain(`threadId ${id})`);
+		});
+
+		test("it fires on its own interval, not the routine sweep's, and dedupe holds across ticks", async () => {
+			const { r, ago, seen, runs, sweeps, pass } = idleRig();
+			seen("ask", "idle", {}, ago(240, "Say go and I'll start it."));
+			seen("plain", "completed", {}, ago(120, "Finished the report."));
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the first wake", () => r.fake.wakes.length === 1);
+			expect([runs(), sweeps()]).toEqual([1, 1]);
+			// Fourteen minutes later it is not due; a tick does not run it.
+			pass(14);
+			await r.engine.tick();
+			expect([runs(), sweeps()]).toEqual([1, 1]);
+			// Sixteen minutes in it is due on its own, while the two-hourly sweep is not. Nothing new: no wake.
+			pass(2);
+			await r.engine.tick();
+			expect([runs(), sweeps()]).toEqual([2, 1]);
+			await r.quiet();
+			expect(r.fake.wakes).toHaveLength(1);
+			// Many more ticks and intervals, the same last messages: still one wake.
+			for (let n = 0; n < 4; n++) {
+				pass(16);
+				await r.engine.tick();
+			}
+			expect(runs()).toBe(6);
+			await r.quiet();
+			expect(r.fake.wakes).toHaveLength(1);
+			// One thread says something new: the next due tick reports that thread alone.
+			r.fake.threads.set("plain", { lastAssistant: ago(40, "Merged it.", "m2") });
+			pass(16);
+			await r.engine.tick();
+			await r.until("the second wake", () => r.fake.wakes.length === 2);
+			expect(r.fake.wakes[1]!.message).toContain("Merged it.");
+			expect(r.fake.wakes[1]!.message).not.toContain("threadId ask)");
+			expect(r.fake.wakes[1]!.message).toContain("1 top-level thread finished");
+			// The interval survives a restart: it is the check's own clock in the database.
+			expect(r.store.state.get("idle-parents-clock")).toMatchObject({ lastAt: r.clock.t });
+		});
+
+		test("a thread the principal started the last turn on is reported too: selection never looks at who instructed it", async () => {
+			const { r, ago } = idleRig();
+			const principalSaid = (minAgo: number) => ({
+				type: "user_message",
+				id: "u1",
+				text: "what is the state of the migration?",
+				createdBy: "user",
+				creationSource: "web",
+				updatedAt: new Date(r.clock.t - minAgo * 60_000).toISOString(),
+			});
+			// The answer to the principal's own question, ended on a half-answer, and then nothing for hours.
+			r.fake.threads.set("chat", {
+				instruction: { items: [principalSaid(200)], state: "complete", byMachine: false },
+				lastAssistant: ago(190, "Part of it is done; the rest needs a look at the logs."),
+			});
+			r.fake.emit({ kind: "state", thread: thread("chat", "idle") });
+			// The same thread, answered just over the threshold ago, is reported at 31 minutes and not at 29.
+			r.fake.threads.set("recent", {
+				instruction: { items: [principalSaid(45)], state: "complete", byMachine: false },
+				lastAssistant: ago(31, "Here is the answer."),
+			});
+			r.fake.emit({ kind: "state", thread: thread("recent", "completed") });
+			r.fake.threads.set("justnow", {
+				instruction: { items: [principalSaid(35)], state: "complete", byMachine: false },
+				lastAssistant: ago(29, "Here is the answer."),
+			});
+			r.fake.emit({ kind: "state", thread: thread("justnow", "completed") });
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the idle wake", () => r.fake.wakes.length === 1);
+			const msg = r.fake.wakes[0]!.message;
+			expect(msg).toContain('thread "Thread chat" on fake (threadId chat), idle 190 min.');
+			expect(msg).toContain("(threadId recent), idle 31 min.");
+			expect(msg).not.toContain("threadId justnow)");
+			// The turn-ended skip for such a thread is untouched: a live chat turn still wakes nobody.
+			r.fake.emit({ kind: "state", thread: thread("live", "running") });
+			r.fake.threads.set("live", {
+				instruction: { items: [principalSaid(1)], state: "complete", byMachine: false },
+				lastMessage: "Answered.",
+			});
+			r.fake.emit({ kind: "state", thread: thread("live", "completed") });
+			await r.until("the skip", () => r.events.some((e) => e.event === "skip-turn-ended"));
+			expect(r.fake.wakes).toHaveLength(1);
+		});
+
+		test("a parent with a running subagent that only the inspector knows of gets no finding and no wake (a review finding)", async () => {
+			const { r, ago, runs } = idleRig();
+			r.fake.threads.set("parent", { lastAssistant: ago(90, "Handed the work to a subagent."), subagents: 1 });
+			r.fake.emit({ kind: "state", thread: thread("parent", "idle") });
+			await r.quiet();
+			await r.engine.tick();
+			await r.quiet();
+			expect(runs()).toBe(1);
+			expect(r.fake.wakes).toEqual([]);
+			expect(r.store.items.list({ source: "check:idle-parents" })).toEqual([]);
+			// When the subagent finishes, the same parent is reported at its next run.
+			r.fake.threads.set("parent", { lastAssistant: ago(90, "Handed the work to a subagent."), subagents: 0 });
+			r.clock.t += 16 * 60_000;
+			await r.engine.tick();
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("threadId parent)");
+		});
+
+		test("a thread snoozed for one run and back with the same last message is not reported a second time (a review finding)", async () => {
+			const { r, ago, seen, pass } = idleRig();
+			seen("a", "idle", {}, ago(120, "Say go and I'll start it."));
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the first wake", () => r.fake.wakes.length === 1);
+			for (const snoozed of [true, false, true, false]) {
+				pass(16);
+				r.fake.emit({ kind: "state", thread: thread("a", "idle", { snoozed }) });
+				await r.engine.tick();
+			}
+			await r.quiet();
+			expect(r.fake.wakes).toHaveLength(1);
+		});
+
+		test("the interval and the threshold are configurable", async () => {
+			const { r, ago, seen, runs, pass } = idleRig({ idleParents: { intervalMinutes: 5, thresholdMinutes: 100 } });
+			seen("old", "idle", {}, ago(130, "Old news."));
+			seen("mid", "idle", {}, ago(60, "Not idle enough."));
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("threadId old)");
+			expect(r.fake.wakes[0]!.message).not.toContain("threadId mid)");
+			pass(4);
+			await r.engine.tick();
+			expect(runs()).toBe(1);
+			pass(1);
+			await r.engine.tick();
+			expect(runs()).toBe(2);
+		});
+
+		describe("with the classifier", () => {
+			const IDS = DEFAULT_BANK.map((q) => q.id);
+			const no = Object.fromEntries(IDS.map((id) => [id, 0.02]));
+			/** A fake Jev: answers from the last message's words; counts calls; can be made to fail. */
+			const fakeJev = (fail = false) => {
+				const sent: SentState[] = [];
+				const provider: Provider = {
+					name: "jev",
+					model: "jev-1.14.0",
+					classify: async (state) => {
+						sent.push(state);
+						if (fail) throw Error("Jev answered HTTP 503");
+						const m = state.last_message;
+						const answers = /say go/i.test(m)
+							? { ...no, asks_decision: 0.98 }
+							: /I'll confirm/i.test(m)
+								? { ...no, promises_more_work: 0.91 }
+								: { ...no, work_finished: 0.96 };
+						return { answers, model: "jev-1.14.0", inputTokens: 1700, costUsd: 0.00007, latencyMs: 100 };
+					},
+				};
+				return { sent, make: () => provider };
+			};
+			const classifier = (mode: string) => ({
+				idleParents: { classifier: { provider: "jev", allowTextToLeaveMachine: true, mode } },
+			});
+			const three = (
+				seen: (id: string, s: string, o: object, l: { id: string; text: string; at: string }) => void,
+				ago: (m: number, t: string, id?: string) => { id: string; text: string; at: string },
+			) => {
+				seen("ask", "idle", {}, ago(540, "The token is in. Say go and I'll start it."));
+				seen("promise", "idle", {}, ago(400, "Opened the PR; I'll confirm when it merges."));
+				seen("done", "completed", {}, ago(300, "Merged and deployed. Nothing more is owed."));
+			};
+
+			test("live: escalate and nudge are reported, tagged; the finished one only in the digest line; then the cache makes no call", async () => {
+				const jev = fakeJev();
+				const { r, ago, seen, pass } = idleRig(classifier("live"), jev.make);
+				three(seen, ago);
+				await r.quiet();
+				await r.engine.tick();
+				await r.until("the idle wake", () => r.fake.wakes.length === 1);
+				const msg = r.fake.wakes[0]!.message;
+				expect(msg).toContain("A classifier sorted them");
+				// Two threads are reported; the digest line is not counted as one.
+				expect(msg).toContain("[chamberlain] idle threads: 2 top-level threads finished");
+				expect(msg).toContain(
+					'[ESCALATE asks_decision 0.98] thread "Thread ask" on fake (threadId ask), idle 540 min.',
+				);
+				expect(msg).toContain(
+					'[NUDGE promises_more_work 0.91] thread "Thread promise" on fake (threadId promise), idle 400 min.',
+				);
+				expect(msg).not.toContain("threadId done)");
+				expect(msg).toContain(
+					'1 idle thread looks finished (the classifier\'s settle; not reported one by one): "Thread done" on fake.',
+				);
+				expect(msg.indexOf("threadId ask")).toBeLessThan(msg.indexOf("threadId promise"));
+				expect(jev.sent).toHaveLength(3);
+				// What was sent: never a thread id or a server name.
+				for (const s of jev.sent) expect(JSON.stringify(s)).not.toMatch(/"(ask|promise|done)"|fake/);
+				// Many runs later, the same messages: no call and no wake.
+				for (let n = 0; n < 3; n++) {
+					pass(16);
+					await r.engine.tick();
+				}
+				await r.quiet();
+				expect(jev.sent).toHaveLength(3);
+				expect(r.fake.wakes).toHaveLength(1);
+				expect(r.events.filter((e) => e.event === "classifier").at(-1)).toMatchObject({ calls: 0, cached: 3 });
+			});
+
+			test("shadow: the wake is exactly as without the classifier, and the dispositions are recorded", async () => {
+				const plain = idleRig();
+				three(plain.seen, plain.ago);
+				await plain.r.quiet();
+				await plain.r.engine.tick();
+				await plain.r.until("the plain wake", () => plain.r.fake.wakes.length === 1);
+				const jev = fakeJev();
+				const { r, ago, seen } = idleRig(classifier("shadow"), jev.make);
+				three(seen, ago);
+				await r.quiet();
+				await r.engine.tick();
+				await r.until("the shadow wake", () => r.fake.wakes.length === 1);
+				const norm = (m: string) => m.replace(/idle-parents:\d+/g, "idle-parents:<at>");
+				expect(norm(r.fake.wakes[0]!.message)).toBe(norm(plain.r.fake.wakes[0]!.message));
+				expect(jev.sent).toHaveLength(3);
+				expect(r.store.dispositions.usage(0, ["jev"]).calls).toBe(3);
+			});
+
+			test("live with Jev down: every thread is reported exactly as without the classifier", async () => {
+				const plain = idleRig();
+				three(plain.seen, plain.ago);
+				await plain.r.quiet();
+				await plain.r.engine.tick();
+				await plain.r.until("the plain wake", () => plain.r.fake.wakes.length === 1);
+				const jev = fakeJev(true);
+				const { r, ago, seen } = idleRig(classifier("live"), jev.make);
+				three(seen, ago);
+				await r.quiet();
+				await r.engine.tick();
+				await r.until("the wake", () => r.fake.wakes.length === 1);
+				const block = (m: string) => m.slice(m.indexOf("<<<"), m.indexOf(">>>"));
+				expect(block(r.fake.wakes[0]!.message)).toBe(block(plain.r.fake.wakes[0]!.message));
+				expect(r.events.some((e) => e.event === "idle-parents" && !("error" in e))).toBe(true);
+			});
+
+			test("off by default, and a sender without allowTextToLeaveMachine is refused: no call is ever made", async () => {
+				for (const conf of [undefined, { idleParents: { classifier: { provider: "jev" } } }]) {
+					const jev = fakeJev();
+					const { r, ago, seen } = idleRig(conf, jev.make);
+					three(seen, ago);
+					await r.quiet();
+					await r.engine.tick();
+					await r.until("the wake", () => r.fake.wakes.length === 1);
+					expect(r.fake.wakes[0]!.message).toContain("[ASKING]");
+					expect(jev.sent).toEqual([]);
+					expect(r.store.dispositions.usage(0, ["jev", "haiku", "rules"]).calls).toBe(0);
+				}
+			});
+		});
+
+		test("it can be switched off in the sweep section", async () => {
+			const { r, seen, ago, runs } = idleRig({ idleParents: { enabled: false } });
+			seen("a", "idle", {}, ago(180, "Say go."));
+			await r.quiet();
+			await r.engine.tick();
+			await r.quiet();
+			expect(r.fake.wakes).toEqual([]);
+			expect(runs()).toBe(0);
+			expect(r.store.items.list({ source: "check:idle-parents" })).toEqual([]);
+		});
 	});
 
 	test("an approval held for the operator's return: the record that it was seen and the hold are one transaction", async () => {

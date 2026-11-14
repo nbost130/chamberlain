@@ -1,5 +1,5 @@
 /** Runs the Decisions view (static/inline.js) against a tiny in-memory DOM, to check what a refresh shows. */
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 class El {
@@ -480,4 +480,58 @@ test("a rotation that comes on a refresh, with questions on screen, is said so i
 	for (const f of refresh.listeners.click ?? []) await f(); // a second refresh does not stack a second banner
 	await settle();
 	expect(dq.all((e) => e.className.split(" ").includes("dq-locked"))).toHaveLength(1);
+});
+
+// ---- links out of the view: T3 Code's frame opens only http(s), so each one is the page's own address, signed with ?k= ----
+
+describe("links out of the view", () => {
+	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
+	const anchors = (dq: El) =>
+		dq.all((e) => e.tag === "a").map((a) => ({ text: a.textContent, href: a.href, target: a.target }));
+	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s), both signed in", async () => {
+		const c = {
+			...card("make", "sig-1"),
+			server: "mac",
+			threadId: "mcp:launch:ab12",
+			link: "t3-thread://v2/env-mac/mcp:launch:ab12",
+			open: "/open/mac/mcp%3Alaunch%3Aab12",
+		};
+		const dq = run(() => ({ items: [], cards: [c] }), { src: SRC });
+		await settle();
+		expect(anchors(dq)).toEqual([
+			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12?k=KEY", target: "_blank" },
+		]);
+	});
+	test("a question asked with chamberlain ask links to its thread too", async () => {
+		const q = {
+			...item("x"),
+			server: "mithrandir",
+			threadId: "t1",
+			link: "t3-thread://v2/env-home/t1",
+			open: "/open/mithrandir/t1",
+		};
+		const dq = run(() => ({ items: [q] }), { src: SRC });
+		await settle();
+		expect(anchors(dq)).toEqual([
+			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+		]);
+	});
+	test("a secret or a card pointer, answered in its thread, links to that thread", async () => {
+		const base = { ...item("x"), open: "/open/mac/t2" };
+		for (const extra of [{ secret: true }, { cardRequest: { requestId: "r" } }]) {
+			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
+			await settle();
+			expect(anchors(dq).map((a) => a.href)).toEqual(["http://queue.test/open/mac/t2?k=KEY"]);
+		}
+	});
+	test("no /open path, no thread link: never a raw t3-thread:// or other custom-scheme href, which the frame cannot open", async () => {
+		const c = { ...card("make", "sig-1"), link: "t3-thread://v2/env/t" };
+		const q = { ...item("x"), link: "t3-thread://v2/env/t", open: "t3code://threads/env/t" };
+		const dq = run(() => ({ items: [q], cards: [c] }), { src: SRC });
+		await settle();
+		const hrefs = anchors(dq).map((a) => a.href);
+		expect(hrefs).toEqual(["http://queue.test/?k=KEY"]);
+		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
+	});
 });

@@ -347,7 +347,7 @@ describe("hold refs, notes and the CLI", () => {
 		const store = open(dir);
 		expect(heldOpen(store)).toHaveLength(0);
 		store.close();
-	});
+	}, 60_000); // starts eight CLI processes one after another: 5.1 s seen under load, so the 5 s default flakes
 
 	test("fix 3: a real wait that merely says 'no action' or 'nothing' somewhere passes", () => {
 		const dir = scratch();

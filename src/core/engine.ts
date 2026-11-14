@@ -51,15 +51,17 @@ import {
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
+import type { ClassifyDeps } from "./classifier/classify.ts";
+import { createIdleParents } from "./engine-idle.ts";
+import type { IdleThreadSource } from "./idle-parents.ts";
 import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
 import {
 	decide,
+	endKind,
 	idleKey,
 	lastInstruction,
 	idleWorkLine,
 	LIVE,
-	looksLikeAsk,
-	looksLikeStall,
 	principalWroteWithin,
 	questionText,
 	reportKey,
@@ -159,6 +161,8 @@ export type EngineDeps = {
 	alert?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => void;
 	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
 	judge?: Judge;
+	/** The idle-thread classifier's provider (src/core/classifier/). Default: the one `sweep.idleParents.classifier` names. Tests pass a fake. */
+	classifierProvider?: ClassifyDeps["provider"];
 	/** Reads GitHub for the held-ledger reconciler (src/core/gh.ts). Undefined: holds that name a PR, issue or branch are not checked. */
 	gh?: GhRead;
 };
@@ -304,6 +308,25 @@ export function createEngine(d: EngineDeps) {
 			return busy.filter((_, i) => keep[i]);
 		}
 
+		/** This server as a source of threads for the idle-parents selection (src/core/idle-parents.ts). */
+		idleSource(): IdleThreadSource {
+			return {
+				server: this.srv.name,
+				connected: this.connected,
+				threads: this.states.values(),
+				liveChildren: (id) => this.liveChildren(id),
+				...(this.inspect ? { runningSubagents: (id: string) => this.inspect!.runningSubagents(id) } : {}),
+				...(this.inspect?.lastAssistant ? { lastAssistant: (id) => this.inspect!.lastAssistant!(id) } : {}),
+				readFailed: (threadId, e) =>
+					log("read-failed", {
+						server: this.srv.name,
+						threadId,
+						what: "last assistant message",
+						error: String(e).slice(0, 200),
+					}),
+			};
+		}
+
 		/** A thread running away keeps taking turns of its own. Counted at the turn's end, when who started it can be read. A machine's turn isn't one. */
 		countTurn(th: ThreadState, read: InstructionRead) {
 			if (read.byMachine || th.parentThreadId !== null) return;
@@ -445,8 +468,9 @@ export function createEngine(d: EngineDeps) {
 					this.liveChildren(live.id) > 0 ||
 					(await this.subagents(live.id).catch(this.readFailed("subagents", live.id, 0))) > 0;
 				excerpt = await this.lastMessage(c.thread.id).catch(this.readFailed("last message", live.id, ""));
-				stalled = !looksLikeAsk(excerpt) && looksLikeStall(excerpt);
-				if (children || (!looksLikeAsk(excerpt) && !stalled)) {
+				const kind = endKind(excerpt);
+				stalled = kind === "stall";
+				if (children || kind === "plain") {
 					// Each finished turn restarts the window: the wake belongs to the last turn, not the first.
 					const due = reportOf(reportKey(read.items, read.byMachine, notified)) ?? (await this.idleWork(live, read));
 					// A failed read can't say the turn has nothing to report, so it goes on to the read after the wait.
@@ -927,6 +951,22 @@ export function createEngine(d: EngineDeps) {
 	}).check;
 
 	const sweep = createSweep({ store, log, outbox, conf, privateFile, sweepPromptFile: d.sweepPromptFile, watchers });
+	// Its own timer, apart from the routine sweep's. Threads that are Chamberlain's own, or the operator's exclude list, are never idle parents.
+	const idleParents = createIdleParents({
+		store,
+		log,
+		outbox,
+		conf,
+		sources: () => watchers.map((w) => w.idleSource()),
+		skip: () =>
+			new Set(
+				[...EXCLUDE, privateFile("steward-thread"), privateFile("decisions-thread"), privateFile("desk-thread")].filter(
+					(x): x is string => Boolean(x),
+				),
+			),
+		...(d.relay?.now ? { now: d.relay.now } : {}),
+		...(d.classifierProvider ? { provider: d.classifierProvider } : {}),
+	});
 
 	const heartbeat = createHeartbeat({
 		store,
@@ -1112,6 +1152,7 @@ export function createEngine(d: EngineDeps) {
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
 			if (usageTick)
 				checks.push(usageTick().catch((e) => log("steward-usage-error", { error: String(e).slice(0, 200) })));
+			checks.push(idleParents.tick().catch((e) => log("idle-parents-error", { error: String(e).slice(0, 200) })));
 			checks.push(
 				sweep.tick().catch((e) => {
 					log("sweep-error", { error: String(e) });

@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for looking at Chamberlain. It is a small codebase with a strong opinion: **no model calls in the daemon**, and
-every wake delivered once. Changes that keep both are welcome.
+Thanks for looking at Chamberlain. It is a small codebase with a strong opinion: **no model calls in the daemon** unless the
+operator opts in (the judge, and the idle-thread classifier, are both off until configured), and every wake delivered once. Changes that keep both are welcome.
 
 ## Set up
 

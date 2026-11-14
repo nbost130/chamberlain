@@ -167,6 +167,79 @@ describe("readCards: per card item, never all or nothing; only a terminal status
 	});
 });
 
+describe("T3 lastAssistant: the last finished assistant message with its id and time", () => {
+	const msg = (itemId: string, text: string, updatedAt: string, status = "completed") => ({
+		type: "assistant_message",
+		itemId,
+		status,
+		text,
+		updatedAt,
+	});
+	test("it is the newest completed assistant message, not a later one still streaming or a user message", async () => {
+		const l = link(async () => ({
+			turnItems: [
+				msg("a1", "first", "2026-11-14T01:00:00.000Z"),
+				msg("a2", "second", "2026-11-14T02:00:00.000Z"),
+				msg("a3", "partial", "2026-11-14T03:00:00.000Z", "streaming"),
+				{ type: "user_message", itemId: "u1", text: "go", updatedAt: "2026-11-14T04:00:00.000Z" },
+			],
+		}));
+		expect(await l.inspector.lastAssistant!("th-1")).toEqual({
+			id: "a2",
+			text: "second",
+			at: "2026-11-14T02:00:00.000Z",
+		});
+	});
+	test("previous: the last non-empty user message before it, human when T3 says createdBy user, else agent", async () => {
+		const user = (itemId: string, text: string, createdBy?: string) => ({
+			type: "user_message",
+			itemId,
+			text,
+			updatedAt: "2026-11-14T00:00:00.000Z",
+			...(createdBy ? { createdBy } : {}),
+		});
+		const read = async (turnItems: unknown[]) =>
+			(await link(async () => ({ turnItems })).inspector.lastAssistant!("th-1"))?.previous;
+		expect(
+			await read([
+				user("u1", "older", "user"),
+				user("u2", "which tabs?", "user"),
+				msg("a1", "half", "2026-11-14T02:00:00.000Z"),
+			]),
+		).toEqual({ by: "human", text: "which tabs?" });
+		expect(await read([user("u1", "continue", "orchestrator"), msg("a1", "ok", "2026-11-14T02:00:00.000Z")])).toEqual({
+			by: "agent",
+			text: "continue",
+		});
+		expect(await read([user("u1", "no author"), msg("a1", "ok", "2026-11-14T02:00:00.000Z")])).toEqual({
+			by: "agent",
+			text: "no author",
+		});
+		// A user message AFTER the last finished answer is not the one it answered; a blank one is passed over.
+		expect(
+			await read([
+				user("u1", "the question", "user"),
+				user("u2", "   ", "user"),
+				msg("a1", "answer", "2026-11-14T02:00:00.000Z"),
+				user("u3", "later", "user"),
+			]),
+		).toEqual({ by: "human", text: "the question" });
+		expect(await read([msg("a1", "alone", "2026-11-14T02:00:00.000Z")])).toBeUndefined();
+	});
+	test("no assistant message, no time, or no socket reads as nothing, and a malformed projection throws", async () => {
+		expect(await link(async () => ({ turnItems: [] })).inspector.lastAssistant!("th-1")).toBeUndefined();
+		expect(
+			await link(async () => ({
+				turnItems: [{ type: "assistant_message", itemId: "a", status: "completed", text: "x" }],
+			})).inspector.lastAssistant!("th-1"),
+		).toBeUndefined();
+		const down = link(async () => ({ turnItems: [] }));
+		down.rpc = undefined;
+		expect(await down.inspector.lastAssistant!("th-1")).toBeUndefined();
+		await expect(link(async () => ({})).inspector.lastAssistant!("th-1")).rejects.toThrow("malformed projection");
+	});
+});
+
 describe("T3 waiting read: ok: true only for a projection in the expected shape over a live socket", () => {
 	test("a malformed {} projection, and every other malformed projection shape, is ok: false", async () => {
 		expect((await link(async () => ({})).inspector.waiting("th-1")).ok).toBe(false);

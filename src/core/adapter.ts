@@ -19,6 +19,7 @@
  *   - no `alertDesk`       alerts are not routed to a desk thread: the inbox is never drained
  *   - no `handoffInstruction`  a HAND OFF verdict is put to the operator as a question; the daemon does not start the hand-off itself
  *   - no `transcriptPath`  Steward health reports "unavailable"
+ *   - no `threadLinks`     a card links to its thread only where the page's config names a link prefix for its server
  */
 import type { Gate } from "./hold.ts";
 import type { WakeTransport } from "./deliver.ts";
@@ -175,9 +176,27 @@ export type RunLook = {
 	waiting: boolean;
 };
 
+/** A thread's last finished assistant message: its id, its text, and when it finished (ISO). */
+/**
+ * A thread's last finished assistant message. `previous` is the user message before it, from the same read, with who wrote it: `human`
+ * (the operator) or `agent` (another agent or a tool sending into the thread); absent when there is none or the adapter cannot say. The
+ * idle-thread classifier reads it (src/core/classifier/); nothing else does.
+ */
+export type LastAssistant = {
+	id: string;
+	text: string;
+	at: string;
+	previous?: { by: "human" | "agent"; text: string };
+};
+
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
 	lastMessage(threadId: string): Promise<string>;
+	/**
+	 * The thread's last finished assistant message with its own id and the time it finished (ISO), or undefined when there is none.
+	 * The idle-parents sweep check (src/core/idle-parents.ts) reads it. Absent: that check cannot see this adapter's threads.
+	 */
+	lastAssistant?(threadId: string): Promise<LastAssistant | undefined>;
 	/** What the thread is waiting on now. Never rejects; only an `ok: true` read may be believed (see `WaitingRead`). */
 	waiting(threadId: string): Promise<WaitingRead>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
@@ -223,6 +242,23 @@ export type WaitingCard = {
 	command?: string;
 	/** Fingerprint of the card exactly as the backend holds it. An answer must carry the one the operator saw. */
 	sig: string;
+};
+
+/**
+ * Links to one thread on one server. Each is absent when it cannot be made exactly (the backend has not said which environment
+ * the server is, say): no link is better than one that opens the wrong thread or nothing.
+ */
+export type ThreadLinks = {
+	/**
+	 * The backend's own reference to the thread, as its messages write one (T3: `t3-thread://v2/<environmentId>/<threadId>`).
+	 * It opens inside the backend's own client, where it is written in a message; a browser or a phone's OS does not know it.
+	 */
+	ref?: string;
+	/**
+	 * A link a phone or computer hands to the backend's app to open the thread there (T3: `t3code://threads/<environmentId>/<threadId>`).
+	 * The page sends a device to it through its own http(s) route, `/open/<server>/<threadId>`: an embedded frame may open only http(s).
+	 */
+	app?: string;
 };
 
 export type ListWaitingOptions = {
@@ -289,7 +325,8 @@ export type OptionalCapability =
 	| "compact"
 	| "snapshot"
 	| "alertDesk"
-	| "handoffInstruction";
+	| "handoffInstruction"
+	| "threadLinks";
 
 /**
  * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
@@ -356,6 +393,12 @@ export interface Adapter {
 	 * the hand-off to the operator: the daemon asks them instead.
 	 */
 	handoffInstruction?(): string;
+	/**
+	 * Links to one of this server's threads (`ThreadLinks`), or `undefined` when `threadId` is not an id this backend issues: then
+	 * nothing links to it, not even a prefix from the page's config. Synchronous and never slow: an adapter that must look something
+	 * up first (T3 asks its server which environment it is) answers with what it knows now and looks it up in the background.
+	 */
+	threadLinks?(threadId: string): ThreadLinks | undefined;
 
 	// -- wording --
 
@@ -429,6 +472,7 @@ type CapabilityMethod = {
 	snapshot: "snapshot";
 	alertDesk: "alertDesk";
 	handoffInstruction: "handoffInstruction";
+	threadLinks: "threadLinks";
 };
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
@@ -451,6 +495,7 @@ export function conformance(a: Adapter): string[] {
 		snapshot: a.snapshot,
 		alertDesk: a.alertDesk,
 		handoffInstruction: a.handoffInstruction,
+		threadLinks: a.threadLinks,
 	};
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);

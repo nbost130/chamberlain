@@ -27,6 +27,8 @@ import type {
 	ChallengeVerdict,
 	ClaimRecord,
 	DecisionRow,
+	Disposition,
+	DispositionKey,
 	EventQuery,
 	EvidenceRow,
 	HeldItem,
@@ -898,6 +900,94 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		current: () => one("SELECT value FROM store_sequence WHERE id = 1")!.value as number,
 	};
 
+	// ---- the classifier's dispositions (migration 13) ---------------------------------------------------
+	const KEY_WHERE = "server = ? AND thread_id = ? AND message_hash = ? AND bank_version = ?";
+	const keyArgs = (k: DispositionKey) => [k.server, k.threadId, k.messageHash, k.bankVersion];
+	const toDisposition = (r: Row): Disposition => ({
+		server: r.server as string,
+		threadId: r.thread_id as string,
+		messageHash: r.message_hash as string,
+		bankVersion: r.bank_version as string,
+		classifiedAt: r.classified_at as number,
+		provider: r.provider as Disposition["provider"],
+		model: (r.model as string | null) ?? null,
+		mode: r.mode as Disposition["mode"],
+		action: r.action as Disposition["action"],
+		reasons: parse<string[]>(r.reasons) ?? [],
+		answers: parse<Record<string, number>>(r.answers) ?? {},
+		idleMinutes: r.idle_minutes as number,
+		sentChars: r.sent_chars as number,
+		redactions: r.redactions as number,
+		inputTokens: (r.input_tokens as number | null) ?? null,
+		costUsd: (r.cost_usd as number | null) ?? null,
+		latencyMs: (r.latency_ms as number | null) ?? null,
+		error: (r.error as string | null) ?? null,
+		feedback: (r.feedback as Disposition["feedback"]) ?? null,
+		correctedAction: (r.corrected_action as Disposition["correctedAction"]) ?? null,
+	});
+	const dispositions: Store["dispositions"] = {
+		get: (k) => {
+			const r = one(`SELECT * FROM thread_dispositions WHERE ${KEY_WHERE}`, ...keyArgs(k));
+			return r ? toDisposition(r) : undefined;
+		},
+		put(d) {
+			run(
+				`INSERT INTO thread_dispositions (server, thread_id, message_hash, bank_version, classified_at, provider, model, mode, action,
+					reasons, answers, idle_minutes, sent_chars, redactions, input_tokens, cost_usd, latency_ms, error)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (server, thread_id, message_hash, bank_version) DO UPDATE SET classified_at = excluded.classified_at,
+					provider = excluded.provider, model = excluded.model, mode = excluded.mode, action = excluded.action,
+					reasons = excluded.reasons, answers = excluded.answers, idle_minutes = excluded.idle_minutes,
+					sent_chars = excluded.sent_chars, redactions = excluded.redactions, input_tokens = excluded.input_tokens,
+					cost_usd = excluded.cost_usd, latency_ms = excluded.latency_ms, error = excluded.error`,
+				...keyArgs(d),
+				d.classifiedAt,
+				d.provider,
+				d.model,
+				d.mode,
+				d.action,
+				JSON.stringify(d.reasons),
+				JSON.stringify(d.answers),
+				Math.floor(d.idleMinutes),
+				d.sentChars,
+				d.redactions,
+				d.inputTokens,
+				d.costUsd,
+				d.latencyMs,
+				d.error,
+			);
+		},
+		redecide(k, o) {
+			run(
+				`UPDATE thread_dispositions SET action = ?, reasons = ?, idle_minutes = ?, mode = ? WHERE ${KEY_WHERE} AND action != 'unknown'`,
+				o.action,
+				JSON.stringify(o.reasons),
+				Math.floor(o.idleMinutes),
+				o.mode,
+				...keyArgs(k),
+			);
+		},
+		usage(since, providers) {
+			if (!providers.length) return { calls: 0, usd: 0 };
+			const r = one(
+				`SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS usd FROM thread_dispositions
+				WHERE classified_at >= ? AND provider IN (${providers.map(() => "?").join(",")})`,
+				since,
+				...providers,
+			)!;
+			return { calls: r.n as number, usd: r.usd as number };
+		},
+		feedback: (k, feedback, corrected) =>
+			run(
+				`UPDATE thread_dispositions SET feedback = ?, corrected_action = ? WHERE ${KEY_WHERE}`,
+				feedback,
+				corrected ?? null,
+				...keyArgs(k),
+			).changes > 0,
+		prune: (before) =>
+			run("DELETE FROM thread_dispositions WHERE classified_at < ? AND feedback IS NULL", before).changes,
+	};
+
 	// ---- the Steward's token usage per wake ----------------------------------------------------------------
 	const usage: Store["usage"] = {
 		upsert(rows: WakeUsage[]) {
@@ -992,6 +1082,7 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		state,
 		sequence,
 		usage,
+		dispositions,
 	};
 }
 

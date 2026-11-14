@@ -93,7 +93,10 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   `lastMessage` and `runningSubagents` may reject (the core logs it and goes on); `instruction` never rejects, it returns a
   state (`complete`, `truncated`, `failed`) that says whether "nothing to report" can be believed, and `waiting` never
   rejects either (below). Without `inspect` the core has no way to know who instructed a thread, so a turn end is reported
-  once per turn instead of only for work the Steward sent.
+  once per turn instead of only for work the Steward sent. `lastAssistant` is optional (the last finished assistant message
+  with its id and finish time, or nothing; optionally also `previous`, the user message before it and whether a human or an agent
+  wrote it, which only the idle-thread classifier reads): the `idle-parents` check reads it, and without it that check lists nothing
+  for this adapter's threads.
 - **`waiting` returns a `WaitingRead`, and it reports only what it saw.** `{ ok: true, cards, resolved, ignored }` says the
   backend was connected for the whole read and answered in the shape you expect. It is NOT a complete list of the thread's
   cards: a backend may return a bounded window of the thread's history, and T3 does (`orchestration.getThreadProjection`
@@ -143,6 +146,14 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
   gate. With it the core drains the alert inbox into wakes for the `desk` receiver and the one relay sends them to this transport, through its one serial queue (docs/alert-desk.md). The T3 adapter
   reads the `desk-wake-url` secret and `threads.desk` (`readPrivate("desk-wake-url")`, `readPrivate("desk-thread")`); without the URL `wake.ready()` is false and nothing is drained.
+- **`threadLinks(threadId)`** returns `{ ref?, app? }` for one of the server's threads, synchronously, or `undefined` when the id is
+  not one the backend issues (then nothing links to it, not even a config prefix): `ref` is the backend's own
+  reference as its messages write it (T3: `t3-thread://v2/<environmentId>/<threadId>`), `app` a link a device's OS hands to the
+  backend's app (T3: `t3code://threads/<environmentId>/<threadId>`). Leave either out when it cannot be made exactly: no link is
+  better than one to the wrong thread. An adapter that has to look something up (T3 reads its server's environment id) answers
+  with what it knows and does the lookup in the background; it must never make `listWaiting` wait for it. The page uses `ref` as a card's `link` and sends "Open the thread" through its own
+  `http(s)` route `/open/<server>/<threadId>` to `app`, because an embedded frame may open only `http(s)`. In `listWaiting`, set
+  each card's `link` from the page's `linkBase` when it gives one, else from `ref`.
 - **Wording**: `serverLine()` and `approvalHint` adapt the sentences a wake says about the server and about approvals.
 
 ## Testing an adapter
