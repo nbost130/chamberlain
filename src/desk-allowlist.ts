@@ -38,55 +38,71 @@ const SECRET_NAME =
 
 // ---- tokenizing --------------------------------------------------------------------------------------
 
+type Lex = {
+	/** The commands so far, split at each unquoted `|`; `part` is the last of them. */
+	parts: string[][];
+	part: string[];
+	cur: string;
+	inTok: boolean;
+	q: "" | "'" | '"';
+};
+
+/** Ends the token being read, if one has begun. */
+function endToken(s: Lex): void {
+	if (s.inTok) s.part.push(s.cur);
+	s.cur = "";
+	s.inTok = false;
+}
+
+/** One character inside quotes: the fault, or undefined once it is taken. Nothing expands in single quotes; in double quotes `$`, a backtick and a backslash do. */
+function quotedChar(s: Lex, c: string): string | undefined {
+	if (s.q === "'") {
+		if (c === "'") s.q = "";
+		else s.cur += c;
+		return undefined;
+	}
+	if (c === '"') s.q = "";
+	else if (c === "$" || c === "`" || c === "\\") return "a $, backtick or backslash inside double quotes expands";
+	else s.cur += c;
+	return undefined;
+}
+
+const SHELL_SYNTAX = /[;&<>(){}$`\\*?[\]!~#\n\r]/;
+
+/** One character outside quotes, with the one after it: the fault, or undefined once it is taken. */
+function bareChar(s: Lex, c: string, next: string | undefined): string | undefined {
+	if (c === "'" || c === '"') {
+		s.q = c;
+		s.inTok = true;
+	} else if (c === " " || c === "\t") {
+		endToken(s);
+	} else if (c === "|") {
+		if (next === "|") return "|| chains commands";
+		endToken(s);
+		s.part = [];
+		s.parts.push(s.part);
+	} else if (SHELL_SYNTAX.test(c)) {
+		return `an unquoted ${JSON.stringify(c)} is shell syntax (chaining, redirection, expansion or a glob)`;
+	} else {
+		s.cur += c;
+		s.inTok = true;
+	}
+	return undefined;
+}
+
 /** Splits on unquoted `|` and tokenizes each part, or says what is wrong. Quoted text is literal; an unquoted metacharacter is refused. */
 function tokenize(cmd: string): { parts: string[][] } | { error: string } {
-	const parts: string[][] = [[]];
-	let cur = "",
-		inTok = false,
-		q: "" | "'" | '"' = "";
-	const push = () => {
-		if (inTok) parts[parts.length - 1]!.push(cur);
-		cur = "";
-		inTok = false;
-	};
+	const first: string[] = [];
+	const s: Lex = { parts: [first], part: first, cur: "", inTok: false, q: "" };
 	for (let i = 0; i < cmd.length; i++) {
-		const c = cmd[i]!;
-		if (q === "'") {
-			if (c === "'") q = "";
-			else cur += c;
-			continue;
-		}
-		if (q === '"') {
-			if (c === '"') q = "";
-			else if (c === "$" || c === "`" || c === "\\")
-				return { error: "a $, backtick or backslash inside double quotes expands" };
-			else cur += c;
-			continue;
-		}
-		if (c === "'" || c === '"') {
-			q = c;
-			inTok = true;
-			continue;
-		}
-		if (c === " " || c === "\t") {
-			push();
-			continue;
-		}
-		if (c === "|") {
-			if (cmd[i + 1] === "|") return { error: "|| chains commands" };
-			push();
-			parts.push([]);
-			continue;
-		}
-		if (/[;&<>(){}$`\\*?[\]!~#\n\r]/.test(c))
-			return { error: `an unquoted ${JSON.stringify(c)} is shell syntax (chaining, redirection, expansion or a glob)` };
-		cur += c;
-		inTok = true;
+		const c = cmd.charAt(i);
+		const fault = s.q ? quotedChar(s, c) : bareChar(s, c, cmd[i + 1]);
+		if (fault !== undefined) return { error: fault };
 	}
-	if (q) return { error: "an unclosed quote" };
-	push();
-	if (parts.some((p) => p.length === 0)) return { error: "an empty command around a pipe" };
-	return { parts };
+	if (s.q) return { error: "an unclosed quote" };
+	endToken(s);
+	if (s.parts.some((p) => p.length === 0)) return { error: "an empty command around a pipe" };
+	return { parts: s.parts };
 }
 
 // ---- flag specs --------------------------------------------------------------------------------------
@@ -120,33 +136,46 @@ const REF = /^[A-Za-z0-9._/@~^{}-]{1,100}$/;
 function parse(args: string[], spec: Spec, what: string): Parsed | Verdict {
 	const pos: string[] = [];
 	const flag: Record<string, string | true> = {};
-	for (let i = 0; i < args.length; i++) {
-		const a = args[i]!;
+	const rest = [...args];
+	for (let a = rest.shift(); a !== undefined; a = rest.shift()) {
 		if (!a.startsWith("-")) {
 			if (!spec.positional?.test(a))
 				return no(`${what}: the argument ${JSON.stringify(a.slice(0, 40))} is not allowed`);
 			pos.push(a);
 			continue;
 		}
-		const eq = a.startsWith("--") ? a.indexOf("=") : -1;
-		const name = eq > 0 ? a.slice(0, eq) : a;
-		const rule = spec.flags[name];
-		if (rule === undefined) return no(`${what}: the flag ${name} is not on the allowlist`);
-		const key = spec.same?.[name] ?? name;
-		if (key in flag) return no(`${what}: the flag ${key} is given more than once`);
-		if (rule === "bool") {
-			if (eq > 0) return no(`${what}: ${name} takes no value`);
-			flag[key] = true;
-			continue;
-		}
-		const value = eq > 0 ? a.slice(eq + 1) : args[++i];
-		if (value === undefined || !(typeof rule === "function" ? rule(value) : rule.test(value)))
-			return no(`${what}: the value of ${name} is not allowed`);
-		flag[key] = value;
+		const fault = takeFlag(a, rest, spec, what, flag);
+		if (fault) return fault;
 	}
 	if (spec.max !== undefined && pos.length > spec.max) return no(`${what}: too many arguments`);
 	if (spec.min !== undefined && pos.length < spec.min) return no(`${what}: missing an argument`);
 	return { pos, flag };
+}
+
+/** One flag argument `a`, recorded in `flag`: a value written `--name=value` comes with it, any other is taken from the front of `rest`. Returns the fault, if any. */
+function takeFlag(
+	a: string,
+	rest: string[],
+	spec: Spec,
+	what: string,
+	flag: Record<string, string | true>,
+): Verdict | undefined {
+	const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+	const name = eq > 0 ? a.slice(0, eq) : a;
+	const rule = spec.flags[name];
+	if (rule === undefined) return no(`${what}: the flag ${name} is not on the allowlist`);
+	const key = spec.same?.[name] ?? name;
+	if (key in flag) return no(`${what}: the flag ${key} is given more than once`);
+	if (rule === "bool") {
+		if (eq > 0) return no(`${what}: ${name} takes no value`);
+		flag[key] = true;
+		return undefined;
+	}
+	const value = eq > 0 ? a.slice(eq + 1) : rest.shift();
+	if (value === undefined || !(typeof rule === "function" ? rule(value) : rule.test(value)))
+		return no(`${what}: the value of ${name} is not allowed`);
+	flag[key] = value;
+	return undefined;
 }
 const isVerdict = (x: Parsed | Verdict): x is Verdict => "ok" in x;
 
