@@ -68,7 +68,16 @@ export const cardWaitOf = (
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const flat = (s: string) => s.replace(/\s+/g, " ").trim();
 
-const WHAT: Record<string, { noun: string; tag: string; asks: string; hold: string }> = {
+type WaitWords = { noun: string; tag: string; asks: string; hold: string };
+/** The words for a command approval, which is also what any kind not listed in WHAT is called. */
+const APPROVAL_REQUEST: WaitWords = {
+	noun: "command approval",
+	tag: "Approval",
+	asks: "approval to run a command or use a permission",
+	hold: "command or permission approval",
+};
+
+const WHAT: Record<string, WaitWords> = {
 	secret_request: {
 		noun: "secret",
 		tag: "Secret",
@@ -81,14 +90,9 @@ const WHAT: Record<string, { noun: string; tag: string; asks: string; hold: stri
 		asks: "approval to link two machines",
 		hold: "approval to link two machines",
 	},
-	approval_request: {
-		noun: "command approval",
-		tag: "Approval",
-		asks: "approval to run a command or use a permission",
-		hold: "command or permission approval",
-	},
+	approval_request: APPROVAL_REQUEST,
 };
-const kindOf = (type: string) => WHAT[type] ?? WHAT.approval_request!;
+const kindOf = (type: string) => WHAT[type] ?? APPROVAL_REQUEST;
 
 /** Pure: the hold's one-line text: the card's kind and the adapter's label. */
 export const holdText = (w: Pick<CardWait, "type" | "label">) =>

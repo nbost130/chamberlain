@@ -28,7 +28,7 @@ import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleto
 
 /** json: one document. jsonl: one record per line. servers: servers.json. */
 export type Kind = "json" | "jsonl" | "servers";
-type Step = (data: any) => any;
+type Step = (data: unknown) => unknown;
 type Dir = "conf" | "state";
 export type StoredFile = { dir: Dir; name: string; kind: Kind };
 
