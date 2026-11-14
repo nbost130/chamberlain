@@ -8,7 +8,9 @@ import {
 	answerWake,
 	askQuestion,
 	batchable,
+	type Claim,
 	claimWake,
+	finishRelay,
 	getQuestion,
 	notNow,
 	pageClaim,
@@ -18,6 +20,8 @@ import {
 	ranked,
 	readClaim,
 	recordAnswerDelivered,
+	recoverClaims,
+	startRelay,
 	wokenBy,
 } from "./questions.ts";
 import type { Store } from "./store.ts";
@@ -106,6 +110,111 @@ describe("a question is an item of the one item system", () => {
 		const store = queue([item("Q-abcd1"), "answer"]);
 		recordAnswerDelivered(store, "answer:item:Q-zzzz9");
 		expect(store.items.get(QUEUE, "Q-abcd1")?.status).toBe("triggered");
+	});
+});
+
+describe("questionStates: the parts of one question's state", () => {
+	test("a question set aside says so", () => {
+		const store = queue([item("Q-abcd1"), "not-now"], item("Q-abcd2"));
+		expect(getQuestion(store, "Q-abcd1")).toMatchObject({ status: "open", notNowAt: "2026-11-09T12:00:00.000Z" });
+		expect(getQuestion(store, "Q-abcd2")).not.toHaveProperty("notNowAt");
+		claimWake(store, pageClaim(item("Q-abcd1"), answerOf("Q-abcd1")));
+		expect(getQuestion(store, "Q-abcd1")).toMatchObject({ status: "answered" });
+	});
+	test("a question closed on its card is answered-on-card and never counts as delivered", () => {
+		const store = queue(item("Q-abcd1"));
+		store.items.resolve(QUEUE, "Q-abcd1", Date.now(), { answeredOnCard: true });
+		expect(getQuestion(store, "Q-abcd1")).toMatchObject({ status: "answered-on-card", delivered: false });
+	});
+	test("a direct send shows its outcome once it has one: delivered, or failed with its detail; a send not finished shows nothing", () => {
+		const store = queue(item("Q-abcd1"), item("Q-abcd2"), item("Q-abcd3"));
+		expect(startRelay(store, "Q-abcd1")).toBe(true);
+		finishRelay(store, "Q-abcd1", "delivered");
+		expect(startRelay(store, "Q-abcd2")).toBe(true);
+		finishRelay(store, "Q-abcd2", "failed", "send timed out");
+		expect(startRelay(store, "Q-abcd3")).toBe(true);
+		const relayOf = (id: string) => getQuestion(store, id)?.relay;
+		expect(relayOf("Q-abcd1")).toEqual({ outcome: "delivered", t: expect.any(String) });
+		expect(relayOf("Q-abcd2")).toEqual({ outcome: "failed", t: expect.any(String), detail: "send timed out" });
+		expect(getQuestion(store, "Q-abcd3")).not.toHaveProperty("relay");
+		expect(getQuestion(store, "Q-abcd1")).not.toHaveProperty("evidence");
+	});
+});
+
+describe("recoverClaims: which claims it sends", () => {
+	const claim = (id: string, owner: string): Claim => ({
+		owner,
+		item: id,
+		deliveryId: `answer:item:${id}`,
+		message: `wake ${id}`,
+		t: "2026-11-09T13:00:00.000Z",
+	});
+	const deliver = (store: Store, deliveryId: string) => {
+		store.wakes.enqueue({ deliveryId, message: "m", queuedAt: 1 });
+		const row = store.wakes.find(deliveryId);
+		store.wakes.beginAttempt(row?.id ?? -1, 2);
+		store.wakes.finish(row?.id ?? -1, "delivered", 3);
+	};
+	const rig = () => {
+		const store = queue(
+			item("Q-own01"),
+			item("Q-oth01"),
+			item("Q-res01"),
+			item("Q-del01"),
+			item("Q-kno01"),
+			item("Q-err01"),
+		);
+		for (const [id, owner] of [
+			["Q-own01", "me"],
+			["Q-oth01", "you"],
+			["Q-res01", "me"],
+			["Q-del01", "me"],
+			["Q-kno01", "me"],
+			["Q-err01", "me"],
+		] as const)
+			claimWake(store, claim(id, owner));
+		store.items.resolve(QUEUE, "Q-res01", Date.now());
+		deliver(store, "answer:item:Q-del01");
+		store.wakes.enqueue({ deliveryId: "answer:item:Q-kno01", message: "pending", queuedAt: 1 });
+		return store;
+	};
+	test("an owned, unresolved claim whose wake the outbox does not know is written, under its one delivery id; the rest are left", async () => {
+		const store = rig();
+		const log: [string, unknown][] = [];
+		const delivered: string[] = [];
+		const r = await recoverClaims({
+			store,
+			owns: (o) => o === "me",
+			log: (e, d) => log.push([e, d]),
+			delivered: (c) => delivered.push(c.item),
+			send: (c) => {
+				if (c.item === "Q-err01") throw Error("outbox down");
+			},
+		});
+		expect(r.sent).toEqual(["Q-own01"]);
+		expect(delivered).toEqual(["Q-del01"]);
+		expect(log).toEqual([
+			["claim-recovered", { item: "Q-own01", owner: "me", deliveryId: "answer:item:Q-own01" }],
+			["claim-recovered", { item: "Q-err01", owner: "me", deliveryId: "answer:item:Q-err01" }],
+			["claim-recover-error", { item: "Q-err01", error: "Error: outbox down" }],
+		]);
+	});
+	test("with no send of its own it queues the claim's message; a done function of its own decides what is finished", async () => {
+		const store = rig();
+		const r = await recoverClaims({ store, owns: (o) => o === "me", log: () => {} });
+		expect(r.sent).toEqual(["Q-own01", "Q-err01"]);
+		expect(store.wakes.find("answer:item:Q-own01")).toMatchObject({ message: "wake Q-own01" });
+		const done: string[] = [];
+		const again = await recoverClaims({
+			store: rig(),
+			owns: () => true,
+			log: () => {},
+			done: (c) => c.item === "Q-oth01",
+			delivered: (c) => done.push(c.item),
+			send: () => {},
+		});
+		expect(done).toEqual(["Q-oth01"]);
+		expect(again.sent).toEqual(["Q-own01", "Q-err01"]);
 	});
 });
 
