@@ -81,6 +81,8 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 		dry: process.env.CHAMBERLAIN_DRY === "1",
 		// Stalled-thread recovery is OFF until `recover` (CHAMBERLAIN_RECOVER=1 or config.json, src/core/recover.ts): merging it changes nothing until it is turned on.
 		recover: setting("recover", CONF) === true,
+		// The Steward's token usage per wake is OFF until `stewardTokens` (CHAMBERLAIN_STEWARD_TOKENS=1 or config.json, src/core/steward-tokens.ts).
+		stewardTokens: setting("stewardTokens", CONF) === true,
 		exclude: setting("exclude", CONF) ?? [],
 		log,
 		sweepPromptFile: SWEEP_PROMPT_FILE,

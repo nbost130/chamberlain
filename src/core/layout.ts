@@ -77,6 +77,7 @@ export const SCALARS = {
 	maxAttempts: "posint",
 	gh: "string",
 	healthFormatPattern: "string",
+	stewardTokens: "boolean",
 } as const satisfies Record<string, ScalarKind>;
 export type ScalarKey = keyof typeof SCALARS;
 type ScalarValue<K extends ScalarKey> = (typeof SCALARS)[K] extends "boolean"

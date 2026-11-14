@@ -44,6 +44,7 @@ import type {
 	RightsStamp,
 	Store,
 	WakeRow,
+	WakeUsage,
 } from "./store.ts";
 
 /** The database was written by a newer Chamberlain than this build. */
@@ -985,6 +986,83 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 			run("DELETE FROM thread_dispositions WHERE classified_at < ? AND feedback IS NULL", before).changes,
 	};
 
+	// ---- the Steward's token usage per wake ----------------------------------------------------------------
+	const usage: Store["usage"] = {
+		upsert(rows: WakeUsage[]) {
+			tx(() => {
+				for (const r of rows)
+					run(
+						`INSERT INTO steward_wake_usage (session, wake_key, kind, variant, delivery_id, started_at, ended_at, requests, input_tokens,
+							cache_read_input_tokens, cache_creation_input_tokens, output_tokens, context_start, context_end, context_peak, compactions)
+						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						ON CONFLICT (session, wake_key) DO UPDATE SET kind = excluded.kind, variant = excluded.variant, delivery_id = excluded.delivery_id,
+							started_at = excluded.started_at, ended_at = excluded.ended_at, requests = excluded.requests, input_tokens = excluded.input_tokens,
+							cache_read_input_tokens = excluded.cache_read_input_tokens, cache_creation_input_tokens = excluded.cache_creation_input_tokens,
+							output_tokens = excluded.output_tokens, context_start = excluded.context_start, context_end = excluded.context_end,
+							context_peak = excluded.context_peak, compactions = excluded.compactions`,
+						r.session,
+						r.wakeKey,
+						r.kind,
+						r.variant ?? null,
+						r.deliveryId ?? null,
+						r.startedAt,
+						r.endedAt,
+						r.requests,
+						r.inputTokens,
+						r.cacheReadInputTokens,
+						r.cacheCreationInputTokens,
+						r.outputTokens,
+						r.contextStart ?? null,
+						r.contextEnd ?? null,
+						r.contextPeak ?? null,
+						r.compactions,
+					);
+			});
+		},
+		list(q = {}) {
+			const where: string[] = [],
+				p: unknown[] = [];
+			if (q.since !== undefined) {
+				where.push("started_at >= ?");
+				p.push(q.since);
+			}
+			if (q.session !== undefined) {
+				where.push("session = ?");
+				p.push(q.session);
+			}
+			const opt = (v: unknown) => (v === null || v === undefined ? undefined : (v as number));
+			return all(
+				`SELECT * FROM steward_wake_usage ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY started_at, session, wake_key`,
+				...p,
+			).map((r) => {
+				const w: WakeUsage = {
+					session: r.session as string,
+					wakeKey: r.wake_key as string,
+					kind: r.kind as string,
+					startedAt: r.started_at as number,
+					endedAt: r.ended_at as number,
+					requests: r.requests as number,
+					inputTokens: r.input_tokens as number,
+					cacheReadInputTokens: r.cache_read_input_tokens as number,
+					cacheCreationInputTokens: r.cache_creation_input_tokens as number,
+					outputTokens: r.output_tokens as number,
+					compactions: r.compactions as number,
+				};
+				if (r.variant !== null) w.variant = r.variant as string;
+				if (r.delivery_id !== null) w.deliveryId = r.delivery_id as string;
+				for (const [key, col] of [
+					["contextStart", "context_start"],
+					["contextEnd", "context_end"],
+					["contextPeak", "context_peak"],
+				] as const) {
+					const v = opt(r[col]);
+					if (v !== undefined) w[key] = v;
+				}
+				return w;
+			});
+		},
+	};
+
 	return {
 		path,
 		tx,
@@ -1001,6 +1079,7 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		events,
 		state,
 		sequence,
+		usage,
 		dispositions,
 	};
 }
