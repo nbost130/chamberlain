@@ -31,11 +31,11 @@ export type ServerEntry = {
 
 /** Pure: the entries of a parsed servers.json. Throws on a newer schema or a malformed entry. */
 export function parseServers(raw: unknown): ServerEntry[] {
-	const list =
-		raw && typeof raw === "object" && !Array.isArray(raw)
-			? (checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion),
-				(raw as { servers?: unknown }).servers)
-			: undefined;
+	let list: unknown;
+	if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+		checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion);
+		list = (raw as { servers?: unknown }).servers;
+	}
 	if (!Array.isArray(list)) throw Error('servers.json: need {"schemaVersion": 2, "servers": [{name, adapter, ...}]}');
 	const names = new Set<string>();
 	for (const x of list as Partial<ServerEntry>[]) {

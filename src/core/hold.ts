@@ -40,12 +40,13 @@ export function composeWake(
 	items: HeldItem[],
 	now: number,
 ): { deliveryId: string; message: string; members: string[]; kept: string[]; folded: number } {
-	if (items.length === 1)
+	const [only] = items;
+	if (only && items.length === 1)
 		return {
-			deliveryId: items[0]!.deliveryId,
-			message: items[0]!.message,
-			members: [items[0]!.deliveryId],
-			kept: [items[0]!.deliveryId],
+			deliveryId: only.deliveryId,
+			message: only.message,
+			members: [only.deliveryId],
+			kept: [only.deliveryId],
 			folded: 0,
 		};
 	const sorted = [...items].sort((a, b) => a.queuedAt - b.queuedAt);
@@ -59,7 +60,7 @@ export function composeWake(
 	const kept: HeldItem[] = [];
 	for (const i of sorted) {
 		const k = key(i);
-		const keeper = k ? latest.get(k)! : i;
+		const keeper = (k ? latest.get(k) : undefined) ?? i;
 		if (keeper === i) kept.push(i);
 		else folds.set(keeper, [...(folds.get(keeper) ?? []), i]);
 	}
