@@ -436,14 +436,14 @@ describe("the outage breaker", () => {
 
 describe("the queue items", () => {
 	test("the breaker's alarm is one only-you item with at least two options and short bullet context", () => {
-		const i = breakerItem("stream_closed", 3, 10 * MIN, { thread: "Thread one", server: "mac", threadId: "t1" }) as any;
+		const i = breakerItem("stream_closed", 3, 10 * MIN, { thread: "Thread one", server: "laptop", threadId: "t1" }) as any;
 		expect(i.kind).toBe("only-you");
 		expect(i.options.length).toBeGreaterThanOrEqual(2);
 		expect(i.context.split("\n").every((l: string) => l.startsWith("- "))).toBe(true);
 		expect(i.title).toContain("stream_closed");
 	});
 	test("a verdict item names the judge and routes everything to the Steward", () => {
-		const i = verdictItem("capacity", "needs a different model", "haiku", { thread: "Thread one", server: "mac", threadId: "t1" }) as any;
+		const i = verdictItem("capacity", "needs a different model", "haiku", { thread: "Thread one", server: "laptop", threadId: "t1" }) as any;
 		expect(i.context).toContain("haiku judge: needs a different model");
 		expect(i.options.every((o: any) => o.route === undefined)).toBe(true);
 	});
@@ -467,7 +467,7 @@ describe("wording", () => {
 });
 
 describe("outcomeOf: how a Handling reads for the wake and the queue", () => {
-	const where = { thread: "Thread one", server: "mac", threadId: "t1" };
+	const where = { thread: "Thread one", server: "laptop", threadId: "t1" };
 	test("a scheduled retry and a duplicate stop the wake", () => {
 		expect(outcomeOf({ action: "retry-scheduled", kind: "stream_closed", at: 1 }, where)).toEqual({ stop: true });
 		expect(outcomeOf({ action: "duplicate" }, where)).toEqual({ stop: true });
@@ -499,7 +499,7 @@ describe("outcomeOf: how a Handling reads for the wake and the queue", () => {
 });
 
 
-describe("fix round 1: a thread is read again right before the ping", () => {
+describe("a thread is read again right before the ping", () => {
 	test("a card opened during the reads stops the retry (the state is read after the last await, not before)", async () => {
 		const x = rig({ look: async (id) => { /* the read is slow, and a card opens while it runs */ x.states.set(id, t({ id, latestRunId: "run-1", pendingRequestId: "req-late" })); return { latestRunId: "run-1", latestStatus: "failed", active: false, waiting: false }; } });
 		await x.fail("t1", { runId: "run-1", ...STREAM });
@@ -547,7 +547,7 @@ describe("fix round 1: a thread is read again right before the ping", () => {
 	});
 });
 
-describe("fix round 1: recovery state survives a restart", () => {
+describe("recovery state survives a restart", () => {
 	test("a retry already sent is not sent again as a first ping: the next failure goes to the judge", async () => {
 		const store = memoryRecoverStore();
 		const a = rig({ store });
@@ -629,7 +629,7 @@ describe("fix round 1: recovery state survives a restart", () => {
 	});
 });
 
-describe("fix round 1: failures are counted per thread over a longer horizon", () => {
+describe("failures are counted per thread over a longer horizon", () => {
 	test("four failures spread over hours send one ping: the second reaches the judge, the rest are held for the Steward", async () => {
 		const x = rig();
 		expect((await x.fail("t1", { runId: "run-1", ...STREAM })).action).toBe("retry-scheduled");
@@ -658,7 +658,7 @@ describe("fix round 1: failures are counted per thread over a longer horizon", (
 	});
 });
 
-describe("fix round 1: the judge's brief scrubs and caps class and code too", () => {
+describe("the judge's brief scrubs and caps class and code too", () => {
 	test("a class or code carrying a path, an email or a long token reaches the judge scrubbed and clipped", () => {
 		const evil = "provider /home/someone/secret a@b.co " + "k".repeat(80);
 		const b = judgeBrief("capacity", { runId: "1", class: evil, code: evil, message: "m" }, { runId: "2", class: "ok", code: "ok", message: "m" }, 4 * MIN);
@@ -668,7 +668,7 @@ describe("fix round 1: the judge's brief scrubs and caps class and code too", ()
 	});
 });
 
-describe("fix round 2: write-ahead, and a retry message id that is the same after a restart", () => {
+describe("write-ahead, and a retry message id that is the same after a restart", () => {
 	/** A store that stops persisting at the moment of a crash, as a dead process would. */
 	const crashable = () => { const inner = memoryRecoverStore(); const dead = { v: false }; const store: RecoverStore = { load: () => inner.load(), save: (s) => { if (!dead.v) inner.save(s); } }; return { inner, dead, store }; };
 	const failStream = (runId: string) => ({ runId, message: "The provider event stream closed unexpectedly." });
@@ -748,7 +748,7 @@ describe("fix round 2: write-ahead, and a retry message id that is the same afte
 	});
 });
 
-describe("fix round 3: fault injection over every crash and failure point of the recovery sequence", () => {
+describe("fault injection over every crash and failure point of the recovery sequence", () => {
 	/**
 	 * One stall (run-1 fails, a retry is due), then a fault at one point of the sequence, then, where the row says so, a restart, then the
 	 * next failure (run-2). Every row is checked against the same invariants:

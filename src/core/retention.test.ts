@@ -1,5 +1,5 @@
 /**
- * Undelivered work is never dropped for its age (audit finding B2). A wake that has not been delivered is the only record that
+ * Undelivered work is never dropped for its age. A wake that has not been delivered is the only record that
  * something needs the Steward, so it stays until it is delivered or explicitly cancelled; retention (maintain.ts) prunes only
  * terminal rows. Every test moves a fake clock: 25 hours (past the old one-day expiry), 8 days (past the old claim cutoff of 7
  * days) and 40 days (past the 30 days a delivery stays on record).

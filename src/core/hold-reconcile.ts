@@ -99,7 +99,7 @@ export function threadViewAcross(snaps: MachineSnapshot[], id: string, server?: 
 		if (t) return classifyThread(t);
 		return own.partial ? { state: "unknown" } : { state: "gone", saw: `gone from ${server}'s fresh snapshot` };
 	}
-	// A snapshot that answered but is not whole, or has an unreadable record, could hold a second listing of this thread (reviewer N1).
+	// A snapshot that answered but is not whole, or has an unreadable record, could hold a second listing of this thread.
 	if (snaps.some((s) => s.healthy && (!s.complete || s.partial))) return { state: "unknown" };
 	const listed = good.flatMap((s) => { const t = s.get(id); return t ? [t] : []; });
 	return listed.length === 1 ? classifyThread(listed[0]!) : { state: "unknown" };

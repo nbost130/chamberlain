@@ -32,7 +32,7 @@ describe("lookOf: the projection read right before a ping", () => {
 	test("no runs: no newest run", () => expect(lookOf([], [])).toEqual({ active: false, waiting: false }));
 });
 
-describe("fix round 2: the failure carries the run's ordinal", () => {
+describe("the failure carries the run's ordinal", () => {
 	test("failureOf reports the failed run's ordinal, and none when T3 names none", () => {
 		expect(failureOf([run("r1", 981, "failed")], [])?.ordinal).toBe(981);
 		expect(failureOf([{ id: "r1", status: "failed" }], [])?.ordinal).toBeUndefined();

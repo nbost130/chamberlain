@@ -15,8 +15,8 @@ import { findSettled } from "./settled.ts";
 import { openStore } from "./sqlite-store.ts";
 
 const AT = { thread: "Deploy pipeline", server: "main", threadId: "th-1" };
-const SECRET = "plain-SENTINEL-not-a-key";
-const secretCard: WaitingItem = { type: "secret_request", requestId: "req-s1", label: "STRIPE_KEY", questions: [{ question: `paste it: ${SECRET}`, options: [{ label: SECRET, description: SECRET }] }] };
+const SENTINEL = "plain-SENTINEL-text-never-shown";
+const secretCard: WaitingItem = { type: "secret_request", requestId: "req-s1", label: "STRIPE_KEY", questions: [{ question: `paste it: ${SENTINEL}`, options: [{ label: SENTINEL, description: SENTINEL }] }] };
 const approval: WaitingItem = { type: "approval_request", requestId: "req-a1", label: "bun run deploy", questions: [{ question: "run it?" }] };
 
 describe("(d) one pointer question per card, and the hold behind it", () => {

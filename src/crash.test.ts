@@ -243,7 +243,7 @@ describe("relay path: the real daemon dies at each step of sending a row, and it
 		expect(outbox(w)).toEqual([{ delivery_id: DELIVERY, status: "dead_letter", attempts: 3 }]);
 	}, TIMEOUT);
 
-	test("killed after the count, before the POST, on every start: three attempts, ZERO POSTs, a dead letter nothing delivered (S3)", async () => {
+	test("killed after the count, before the POST, on every start: three attempts, ZERO POSTs, a dead letter nothing delivered", async () => {
 		const w = await left("attempt-counted");
 		for (const n of [2, 3]) { await diedAt(w.spawn(daemonArgs, "attempt-counted"), "attempt-counted"); expect(outbox(w)).toEqual([{ delivery_id: DELIVERY, status: "pending", attempts: n }]); }
 		await daemon(w, () => outbox(w)[0]!.status === "dead_letter");

@@ -1,5 +1,5 @@
 /**
- * The synthetic-wake tool is a producer: it inserts an outbox row and never talks to the webhook. A reviewer found it POSTing directly, so
+ * The synthetic-wake tool is a producer: it inserts an outbox row and never talks to the webhook. It once POSTed directly, so
  * that with the relay holding the lock and a POST outstanding, two tool runs made three concurrent requests. These tests run the real tool
  * as real processes against a real relay (a real `flock`, the real T3 transport) and a webhook that records how many requests are in flight.
  */
@@ -74,7 +74,7 @@ describe("synthetic-wake only inserts an outbox row", () => {
 		expect(rows[0]!.message).toContain("Everything else, ask.");
 	});
 
-	test("reviewer scenario: with the relay holding the lock and a POST outstanding, two tool runs add no request; the webhook never sees two at once", async () => {
+	test("with the relay holding the lock and a POST outstanding, two tool runs add no request; the webhook never sees two at once", async () => {
 		const hook = webhook({ hold: true });
 		const w = world(hook.url);
 		const store = openStore(dbPath(w.state));

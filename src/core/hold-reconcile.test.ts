@@ -309,7 +309,7 @@ describe("pass 2: refs", () => {
 		expect(whats(store)).toEqual(["h"]);
 	});
 
-	// Fix 1 (round 2). Must fail on 4f1718e: a thread on an offline server read as gone because another server's snapshot lacked it.
+	// a thread on an offline server read as gone because another server's snapshot lacked it.
 	test("fix 1: a thread is gone only when its OWN server is named and that server's fresh, complete snapshot lacks it", () => {
 		const a = machine("main", { "th-1": facts() });
 		const second = machine("second", {}, { healthy: false, complete: false });
@@ -323,24 +323,24 @@ describe("pass 2: refs", () => {
 		expect(threadViewAcross([machine("a", { "th-1": facts() }), machine("b", { "th-1": facts({ archived: true }) })], "th-1")).toEqual({ state: "unknown" });
 	});
 
-	test("N1: a hold that names no server stays unknown when any snapshot that answered has an unreadable record or is incomplete", async () => {
-		// Mac lists th-1 archived; Main lists th-1 too, but that record cannot be read.
-		const [mac, mith] = await takeSnapshots([
-			{ name: "mac", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts({ archived: true }) }] }) },
-			{ name: "main", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts(), pendingRequestId: {} } as never, { id: "th-9", ...facts() }] }) },
+	test("a hold that names no server stays unknown when any snapshot that answered has an unreadable record or is incomplete", async () => {
+		// The laptop lists th-1 archived; the server lists th-1 too, but that record cannot be read.
+		const [laptop, server] = await takeSnapshots([
+			{ name: "laptop", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts({ archived: true }) }] }) },
+			{ name: "server", fetch: async () => ({ complete: true, threads: [{ id: "th-1", ...facts(), pendingRequestId: {} } as never, { id: "th-9", ...facts() }] }) },
 		]);
-		expect(mith).toMatchObject({ healthy: true, complete: true, partial: true });
-		expect(threadViewAcross([mac!, mith!], "th-1")).toEqual({ state: "unknown" });
+		expect(server).toMatchObject({ healthy: true, complete: true, partial: true });
+		expect(threadViewAcross([laptop!, server!], "th-1")).toEqual({ state: "unknown" });
 		// An incomplete snapshot that answered could hold the copy too.
-		expect(threadViewAcross([mac!, machine("main", {}, { complete: false })], "th-1")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([laptop!, machine("server", {}, { complete: false })], "th-1")).toEqual({ state: "unknown" });
 		// Named server: a readable record still counts; absence from a snapshot with an unreadable record does not.
-		expect(threadViewAcross([mac!, mith!], "th-9", "main")).toEqual({ state: "live" });
-		expect(threadViewAcross([mac!, mith!], "th-gone", "main")).toEqual({ state: "unknown" });
-		expect(threadViewAcross([mac!, mith!], "th-1", "mac")).toEqual({ state: "gone", saw: "archived" });
+		expect(threadViewAcross([laptop!, server!], "th-9", "server")).toEqual({ state: "live" });
+		expect(threadViewAcross([laptop!, server!], "th-gone", "server")).toEqual({ state: "unknown" });
+		expect(threadViewAcross([laptop!, server!], "th-1", "laptop")).toEqual({ state: "gone", saw: "archived" });
 		// Through the pass: the server-less hold stays open.
 		const store = memStore();
 		hold(store, { thread: "unnamed", ref: { threadId: "th-1" } });
-		expect((await run(store, undefined, async () => [mac!, mith!])).closed).toBe(0);
+		expect((await run(store, undefined, async () => [laptop!, server!])).closed).toBe(0);
 		expect(whats(store)).toEqual(["unnamed"]);
 	});
 
@@ -370,7 +370,7 @@ describe("pass 2: refs", () => {
 		expect((await pass(at(77, 0))).closed).toBe(0);
 	});
 
-	// Fix 2 (round 2). Must fail on 4f1718e: the recorded id was overwritten by the second sighting, so the replay closed the hold.
+	// the recorded id was overwritten by the second sighting, so the replay closed the hold.
 	test("fix 2: the replay (77,1) then (99,1) then (99,0) does not close, and the recorded id is never rewritten", async () => {
 		const path = "repos/o/r/git/matching-refs/heads/feat/x?per_page=100";
 		const at = (id: number, count: number) => fakeGh({ "repos/o/r": { id, full_name: "o/r" }, [path]: count });

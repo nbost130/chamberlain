@@ -1,4 +1,4 @@
-/** The T3 adapter reads its tokens under the same exact-0600 rule as the core (audit finding M4; see src/core/modes.test.ts). */
+/** The T3 adapter reads its tokens under the same exact-0600 rule as the core (see src/core/modes.test.ts). */
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

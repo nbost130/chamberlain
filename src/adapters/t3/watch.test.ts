@@ -42,7 +42,7 @@ describe("readCards: per card item, never all or nothing; only a terminal status
 			expect([status, type, readCards([{ ...approval, type, status }], "th-1")]).toEqual([status, type, { ok: true, cards: [], resolved: ["a1"], ignored: [] }]);
 		}
 	});
-	test("a type that merely contains 'link' is not a card and can never resolve one (reviewer's hyperlink probe)", () => {
+	test("a type that merely contains 'link' is not a card and can never resolve one", () => {
 		for (const type of ["hyperlink", "link_preview", "Link", "unlinked_request_note", "linkrequest"]) {
 			expect([type, readCards([{ type, id: "a1", threadId: "th-1", status: "completed" }], "th-1").resolved]).toEqual([type, []]);
 		}
@@ -54,7 +54,7 @@ describe("readCards: per card item, never all or nothing; only a terminal status
 		expect(readCards([approval], "th-1")).toEqual({ ok: true, cards: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }], resolved: [], ignored: [] });
 		for (const status of ["idle", "pending", "running"]) expect(readCards([{ ...approval, status }], "th-1")).toEqual({ ok: true, cards: [], resolved: [], ignored: [] });
 	});
-	test("the reviewer's listing (no status), and every unknown or malformed status or request id, is ignored with a reason, never resolved", () => {
+	test("a listing with no status, and every unknown or malformed status or request id, is ignored with a reason, never resolved", () => {
 		const cases: [Record<string, unknown>, string][] = [
 			[{ status: undefined }, "has no status"], [{ status: 1 }, "has no status"], [{ status: "" }, "has no status"],
 			[{ status: "expired" }, "unknown status"], [{ status: "resolved" }, "unknown status"], [{ status: "Completed" }, "unknown status"],

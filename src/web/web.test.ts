@@ -414,7 +414,7 @@ describe("bind address", () => {
 	];
 	// Forms some resolvers read as an address, which an IP literal check must not let through as something else.
 	const AMBIGUOUS = ["00.0.0.0", "0", "0x0", "0x7f000001", "127.1", "127.000.000.001", "0177.0.0.1", "2130706433", "127.0.0.1:3790", "fe80::1%eth0", "::1%lo", "1::2::3", "12345::1", "::ffff:1.2.3", "::ffff:256.0.0.1"];
-	const OUTSIDE = ["8.8.8.8", "192.168.1.5", "10.0.0.1", "127.0.0.2", "100.63.255.255", "100.128.0.1", "fe80::1", "fd7a:115c:a1e1::1", "fd7a:115c:a1df::1", "2001:db8::1", "::ffff:8.8.8.8", "::ffff:192.168.1.5", "0:0:0:0:0:ffff:c0a8:105", "::2"];
+	const OUTSIDE = ["198.51.100.7", "192.168.1.5", "10.0.0.1", "127.0.0.2", "100.63.255.255", "100.128.0.1", "fe80::1", "fd7a:115c:a1e1::1", "fd7a:115c:a1df::1", "2001:db8::1", "::ffff:198.51.100.7", "::ffff:192.168.1.5", "0:0:0:0:0:ffff:c0a8:105", "::2"];
 	test("refuses every spelling of the unspecified address, and a missing one", () => {
 		for (const bad of [undefined, "", "  ", ...UNSPECIFIED]) expect(() => checkBind(bad)).toThrow();
 		expect(() => parseConfig({})).toThrow(/no bind address/);

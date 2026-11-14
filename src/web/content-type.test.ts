@@ -1,5 +1,5 @@
 /**
- * The POST guard accepts the JSON media type and nothing that merely starts with it (re-audit finding R4). A cross-site form cannot send
+ * The POST guard accepts the JSON media type and nothing that merely starts with it. A cross-site form cannot send
  * `application/json`, so the guard is only as strict as the match: a prefix match let `application/jsonxxx` through.
  */
 import { describe, expect, test } from "bun:test";

@@ -209,7 +209,7 @@ describe("one item system", () => {
  * The third rule, and the structure behind "one relay": the relay (src/core/relay.ts) is the ONLY module that calls a wake transport (the
  * adapter's `wake` and `compact`), and it cannot be built without the held one-relay lock (`RelayDeps.lock`, checked at run time against
  * the handles `holdRelayLock` made). The page, `ask.ts` and every command-line tool therefore reach the Steward only by writing outbox rows.
- * A reviewer once found a tool that POSTed to the webhook beside the relay; these scans fail if one comes back. As with the rules above,
+ * A tool once POSTed to the webhook beside the relay; these scans fail if one comes back. As with the rules above,
  * a scan finds only what it knows to look for: each line below is one way a second sender could appear, and the behavioural test is
  * src/adapters/t3/synthetic-wake.test.ts (a real relay mid-POST and two real tool runs: the webhook never sees two requests at once).
  */
@@ -378,13 +378,13 @@ describe("one relay: the only code that calls a wake transport", () => {
 		expect(defs.sort()).toEqual(["core/singleton.ts", "testing/lock.ts", "testing/relay.ts"]);
 	});
 
-	test("a transport destructured out of its object is caught (the reviewer's probe: const {send} = backend.wake; send(...))", () => {
+	test("a transport destructured out of its object is caught (const {send} = backend.wake; send(...))", () => {
 		const probe = "const {send} = backend.wake; await send(id,text);";
 		expect(senderViolations("cli/new.ts", probe)).not.toEqual([]);
 		expect(senderViolations("cli/new.ts", "const { wake } = backend; const { send } = wake;")).not.toEqual([]);
 	});
 
-	test("a computed import of the test helper is caught (the reviewer's probe: import(\"../testing/\" + \"relay.ts\"))", () => {
+	test("a computed import of the test helper is caught (import(\"../testing/\" + \"relay.ts\"))", () => {
 		const probe = 'const m = await import("../testing/" + "relay.ts"); m["test"+"Relay"](store,wake);';
 		expect(testingViolations("cli/new.ts", probe)).not.toEqual([]);
 		expect(dynamicImportViolations("cli/new.ts", probe)).not.toEqual([]);
@@ -443,7 +443,7 @@ describe("one relay: the only code that calls a wake transport", () => {
 		// A `file:///` URL in a string is not a comment: the import after it is still read.
 		expect(specifiers('const u = "file:///x/y.ts"; import { a } from "./b.ts";')).toEqual(["./b.ts"]);
 		expect(stripComments('const u = "https://x.test/a"; // gone\nconst v = 1;')).toBe('const u = "https://x.test/a"; \nconst v = 1;');
-		// The reviewer's computed import of the helper: refused as an import into testing/ AND as a dynamic import with a computed argument.
+		// A computed import of the helper: refused as an import into testing/ AND as a dynamic import with a computed argument.
 		const smuggled = 'const m = await import("../testing/" + "relay.ts"); m["test" + "Relay"](store, wake);';
 		expect(testingViolations("cli/new.ts", smuggled)).toHaveLength(1);
 		expect(dynamicImportViolations("cli/new.ts", smuggled)).toHaveLength(1);

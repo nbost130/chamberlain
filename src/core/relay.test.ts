@@ -1,9 +1,8 @@
 /**
- * The transactional outbox and its one relay. Each reviewer probe from the delivery re-audits is a test here, against the design that
- * replaced the leases: R1 (accepted POSTs that never land, across successive holders), R2 (a digest rebuilt under a new id on takeover),
- * R3 (a clock jump taking a live holder's lease), and the four that followed (attempt reservations spent across boots, a refusal erasing
- * an unknown outcome's history, a retry beside a live POST, a cancelled digest with no tombstone). Where a probe needed two holders, the
- * design has one relay; "a restart" is a fresh relay over the same database, one after another.
+ * The transactional outbox and its one relay. Each failure found in the delivery design is a test here: accepted POSTs that never land (across
+ * successive holders), a digest rebuilt under a new id on takeover, a clock jump taking a live holder's lease, attempt reservations spent across
+ * boots, a refusal erasing an unknown outcome's history, a retry beside a live POST, and a cancelled digest with no tombstone. Where a case needed
+ * two holders, the design has one relay; "a restart" is a fresh relay over the same database, one after another.
  */
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -123,7 +122,7 @@ describe("the relay sends each row with its attempt committed first", () => {
 	});
 });
 
-describe("what the delivery guarantee says, and what it does not (S3: attempts, the cap, latency, order)", () => {
+describe("what the delivery guarantee says, and what it does not (attempts, the cap, latency, order)", () => {
 	test("an attempt is not a POST: three attempts spent by crashes between the count and the POST dead-letter a row nothing ever sent, and the alarm says so", async () => {
 		const r = rig();
 		r.outbox.deliver("m", "w1");
@@ -196,7 +195,7 @@ describe("what the delivery guarantee says, and what it does not (S3: attempts, 
 	});
 });
 
-describe("an accepted POST whose delivered commit fails is never POSTed again by its relay (R1)", () => {
+describe("an accepted POST whose delivered commit fails is never POSTed again by its relay", () => {
 	test("however many passes run while the commit fails, one POST; the commit lands when it can", async () => {
 		const r = rig();
 		let full = true;
@@ -239,7 +238,7 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 		raw.close(); s.close();
 	});
 
-	test("the reviewer's probe: restart after restart, each accepted and none landing, gives exactly maxAttempts POSTs and then a dead letter", async () => {
+	test("restart after restart, each accepted and none landing, gives exactly maxAttempts POSTs and then a dead letter", async () => {
 		const r = rig();
 		r.outbox.deliver("x", "cap");
 		for (let i = 0; i < 6; i++) { await r.relay(r.broken).pass(); r.clock.t += 600_001; }
@@ -275,7 +274,7 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 	});
 });
 
-describe("a digest is frozen when it is composed (R2)", () => {
+describe("a digest is frozen when it is composed", () => {
 	test("composition binds the held items to one row; an item held later is never added, and a retry sends the same id and text", async () => {
 		const r = rig();
 		r.sweep("a"); r.sweep("b");
@@ -425,7 +424,7 @@ describe("the operator's retry and cancel", () => {
 		expect(r.store.wakes.isDelivered("a")).toBe(false);
 	});
 
-	test("S2: a cancelled member is refused after retention prunes its row: cancel, prune, then enqueue and hold are both refused (one row ever, never enqueued again)", async () => {
+	test("a cancelled member is refused after retention prunes its row: cancel, prune, then enqueue and hold are both refused (one row ever, never enqueued again)", async () => {
 		const r = rig();
 		r.sweep("a"); r.sweep("b");
 		r.w.answer = async () => { throw Error("unknown"); };
@@ -447,7 +446,7 @@ describe("the operator's retry and cancel", () => {
 		expect(r.store.wakes.isDelivered("a")).toBe(false);
 	});
 
-	test("S2: a delivered id is refused after retention too, and a tombstone can be neither changed nor deleted", async () => {
+	test("a delivered id is refused after retention too, and a tombstone can be neither changed nor deleted", async () => {
 		const path = `${scratch()}/tomb.db`;
 		const store = openStore(path);
 		try {
@@ -466,7 +465,7 @@ describe("the operator's retry and cancel", () => {
 		} finally { store.close(); }
 	});
 
-	test("S2: opening a database from before the tombstones backfills one per delivered or cancelled id, digest members included", () => {
+	test("opening a database from before the tombstones backfills one per delivered or cancelled id, digest members included", () => {
 		const path = `${scratch()}/v6.db`;
 		const raw = new Database(path);
 		raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
@@ -677,7 +676,7 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.events.some((e) => e.event === "rights-first")).toBe(false);
 	});
 
-	test("finding 1: the prerequisite went, the row failed, the Steward changed before the retry: the row is refused until the NEW state's prerequisite is delivered", async () => {
+	test("the prerequisite went, the row failed, the Steward changed before the retry: the row is refused until the NEW state's prerequisite is delivered", async () => {
 		const r = world();
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		const F1 = rightsFirstId("w1", r.key());
@@ -722,7 +721,7 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.record()).toMatchObject({ hash: H1 });
 	});
 
-	test("finding 3: a digest whose members quote the rights marker and pointer lines is delivered with every member byte for byte", async () => {
+	test("a digest whose members quote the rights marker and pointer lines is delivered with every member byte for byte", async () => {
 		const r = world();
 		r.store.state.set(RIGHTS_SENT_KEY, { steward: "steward-1", session: "s1", hash: H1 });
 		const block = `x\n${BLOCK}\nAway mode is off.`;
@@ -790,7 +789,7 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(await r.relay().pass()).toEqual([rightsFirstId("w3", r.key(), 2), "w3"]);
 	});
 
-	test("finding 2, in process: a crash after the prerequisite was queued sends it, then the row, once each, and writes the record", async () => {
+	test("a crash after the prerequisite was queued sends it, then the row, once each, and writes the record", async () => {
 		const r = world();
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		const F = rightsFirstId("w1", r.key());
@@ -800,7 +799,7 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.record()).toEqual({ steward: "steward-1", session: "s1", hash: H1, epoch: 0 });
 	});
 
-	test("finding 2, in process: a crash after the prerequisite's delivered commit sends only the row: the record was written with it", async () => {
+	test("a crash after the prerequisite's delivered commit sends only the row: the record was written with it", async () => {
 		const r = world();
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		r.w.answer = async (id) => (id === "w1" ? { ok: false, status: 503 } : { ok: true, status: 202 });
@@ -918,7 +917,7 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 		return { ...r, record, prereq, fullInFlight, until };
 	}
 
-	test("the reviewer's interleaving: a full wake in flight, the compaction asked for, the full wake lands, the next wake: it gets a prerequisite", async () => {
+	test("interleaving: a full wake in flight, the compaction asked for, the full wake lands, the next wake: it gets a prerequisite", async () => {
 		const r = world();
 		const f = r.fullInFlight();
 		r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });

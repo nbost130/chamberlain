@@ -4,7 +4,7 @@
  * scenarios run with real processes (src/testing/hold-relay.ts), because an in-process test cannot tell a lock that belongs to the process
  * from one that belongs to the open file, or a lock on a path from one on the directory.
  *
- * Every holder here is a real process that does what the reviewer's reproducer did to the old `fcntl` lock (flag `twice`): once it holds
+ * Every holder here is a real process that does what the reproducer did to the old `fcntl` lock (flag `twice`): once it holds
  * the lock, it tries again in the same process and opens and closes other descriptors to the database and its directory. Under POSIX `fcntl` locks that
  * released the holder's lock; under `flock` it must not.
  */
@@ -42,7 +42,7 @@ const refusedFor = async (db: string, o: StartOpts = {}) => await starter(db, 10
 const kill = async (h: { p: ReturnType<typeof Bun.spawn> }) => { h.p.kill("SIGKILL"); await h.p.exited; };
 
 describe("one relay per state directory", () => {
-	test("reviewer scenario 1: a refused second acquisition in the holder's own process does not release its lock; a child is still refused", async () => {
+	test("a refused second acquisition in the holder's own process does not release its lock; a child is still refused", async () => {
 		const dir = scratch();
 		const db = `${dir}/chamberlain.db`;
 		const store = openStore(db); // as in the daemon, the database is open through SQLite in the holding process
@@ -60,7 +60,7 @@ describe("one relay per state directory", () => {
 		expect(await refusedFor(db)).toBe("held");
 	}, 20_000);
 
-	test("reviewer scenario 2: deleting, replacing or renaming paths around the state directory does not let a second relay in", async () => {
+	test("deleting, replacing or renaming paths around the state directory does not let a second relay in", async () => {
 		const root = scratch();
 		const state = `${root}/state`;
 		mkdirSync(state);

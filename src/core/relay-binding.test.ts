@@ -1,6 +1,6 @@
 /**
  * The relay's lock handle is bound to its database. A handle is not just "some lock was taken": it records the device and inode of the
- * directory it locked and of the database file in it, and `createRelay` refuses it unless that is the file the store opened. A reviewer's probe built a relay over `actual.db` on a lock
+ * directory it locked and of the database file in it, and `createRelay` refuses it unless that is the file the store opened. A probe once built a relay over `actual.db` on a lock
  * held on `unrelated.db`, with nothing locking `actual.db`: a second daemon could then have locked it and relayed beside the first.
  */
 import { afterEach, describe, expect, test } from "bun:test";

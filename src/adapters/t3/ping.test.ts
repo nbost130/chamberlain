@@ -33,7 +33,7 @@ describe("createRpcPing", () => {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-ping-`);
 	mkdirSync(root, { recursive: true });
 	writeFileSync(`${root}/op-token`, "OPSECRET", { mode: 0o600 });
-	const server = { name: "mac", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
+	const server = { name: "laptop", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
 	const fakeConn = (runs: { id: string; status: string }[], sent: Record<string, unknown>[], fail?: string) => async () => ({
 		ws: { close() {} },
 		request: async (m: string, p: unknown) => { if (m === "orchestration.getThreadProjection") return { runs }; if (fail) throw Error(fail); sent.push(p as Record<string, unknown>); return {}; },
@@ -41,7 +41,7 @@ describe("createRpcPing", () => {
 	test("a daemon ping is one agent/server message.dispatch that starts a run on a failed thread", async () => {
 		const sent: Record<string, unknown>[] = [];
 		const ping = createRpcPing({ server, conf: root, connect: fakeConn([{ id: "r1", status: "failed" }], sent) as never });
-		expect(await ping("t1", "retry", "recover:r1", "daemon")).toEqual({ ok: true, detail: "sent to mac:t1" });
+		expect(await ping("t1", "retry", "recover:r1", "daemon")).toEqual({ ok: true, detail: "sent to laptop:t1" });
 		expect(sent[0]).toMatchObject({ type: "message.dispatch", threadId: "t1", text: "retry", createdBy: "agent", creationSource: "server", dispatchMode: { type: "queue_after_active" } });
 	});
 	test("a server without an operate token is refused", async () => {
@@ -69,7 +69,7 @@ describe("there is one send path", () => {
 	});
 });
 
-describe("fix round 1: the daemon's ping never steers a run and never writes into a waiting thread", () => {
+describe("the daemon's ping never steers a run and never writes into a waiting thread", () => {
 	const failed = [{ id: "r1", ordinal: 1, status: "failed" }];
 	test("daemonPingRefusal: only a thread whose newest run failed, with nothing going and nothing waiting, may be pinged", () => {
 		expect(daemonPingRefusal({ runs: failed, turnItems: [] })).toBeUndefined();
@@ -81,7 +81,7 @@ describe("fix round 1: the daemon's ping never steers a run and never writes int
 	});
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-ping2-`);
 	writeFileSync(`${root}/op-token`, "OPSECRET", { mode: 0o600 });
-	const server = { name: "mac", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
+	const server = { name: "laptop", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
 	const conn = (proj: Record<string, unknown>, sent: unknown[]) => async () => ({ ws: { close() {} }, request: async (m: string, p: unknown) => { if (m === "orchestration.getThreadProjection") return proj; sent.push(p); return {}; } });
 	test("a daemon ping into a thread that is waiting or running is refused at the transport, and nothing is dispatched", async () => {
 		for (const proj of [{ runs: failed, turnItems: [{ status: "waiting" }] }, { runs: [{ id: "r2", ordinal: 2, status: "running" }], turnItems: [] }]) {
@@ -100,10 +100,10 @@ describe("fix round 1: the daemon's ping never steers a run and never writes int
 	});
 });
 
-describe("fix round 2: the daemon's ping is always queued, never a steer", () => {
+describe("the daemon's ping is always queued, never a steer", () => {
 	const root2 = mkdtempSync(`${tmpdir()}/ping-r2-`);
 	writeFileSync(`${root2}/op-token`, "OPSECRET", { mode: 0o600 });
-	const server = { name: "mac", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
+	const server = { name: "laptop", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
 	const root = root2;
 	test("messageCommand with the daemon identity can only be built in queue mode, whatever else is passed", () => {
 		for (const o of [{}, { activeRunId: "r1" }, { activeRunId: "r1", start: true }, { start: true }]) {
@@ -141,10 +141,10 @@ describe("fix round 2: the daemon's ping is always queued, never a steer", () =>
 	});
 });
 
-describe("fix round 3: every send error is classified before the commit, and only a confirmed acceptance is sent", () => {
+describe("every send error is classified before the commit, and only a confirmed acceptance is sent", () => {
 	const dir = mkdtempSync(`${tmpdir()}/ping-r3-`);
 	writeFileSync(`${dir}/op-token`, "OPSECRET", { mode: 0o600 });
-	const server = { name: "mac", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
+	const server = { name: "laptop", origin: "http://x", tokenFile: "t", operateTokenFile: "op-token" };
 	const root = dir;
 	const failedProj = { runs: [{ id: "r1", ordinal: 1, status: "failed" }], turnItems: [] };
 	/** A connection that fails at one stage. */

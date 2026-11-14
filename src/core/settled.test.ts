@@ -94,7 +94,7 @@ describe("title overlap (rule 3)", () => {
 	test("ignoreWords count on the title-overlap path too, case-insensitively: an ignored product name never carries a match", () => {
 		const store = memStore();
 		answered(store, "Q-ign01", "Acme deployment");
-		// The reviewer's case: with "Acme" ignored, the settled two-word title is one word, so it settles nothing new.
+		// The case: with "Acme" ignored, the settled two-word title is one word, so it settles nothing new.
 		for (const ignoreWords of [["Acme"], ["ACME"], ["acme"]]) expect(find(store, { title: "Acme deployment database rollback?" }, { ignoreWords }).matches).toEqual([]);
 		// Without the setting it is the documented phrase match, so the ignore is what changed it.
 		expect(find(store, { title: "Acme deployment database rollback?" }).matches.map((m) => m.id)).toEqual(["Q-ign01"]);

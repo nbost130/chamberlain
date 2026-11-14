@@ -9,7 +9,7 @@
  * flock(2): "on some systems, such as the modern BSDs, flock() and fcntl(2) locks do interact with one another". macOS's own flock(2) page
  * is silent, so the behaviour was probed on macOS 26 (Darwin arm64): a `flock` on the database is refused (EWOULDBLOCK) while any SQLite
  * connection holds a shared lock on it, the daemon's own connection in the same process included, and while a `flock` is held SQLite's
- * writers get "database is locked". On Linux the two kinds are independent, which is why only the Mac showed it. SQLite never takes a lock on a directory, so a lock on the directory meets none of SQLite's on either system
+ * writers get "database is locked". On Linux the two kinds are independent, which is why only macOS showed it. SQLite never takes a lock on a directory, so a lock on the directory meets none of SQLite's on either system
  * (src/core/singleton.test.ts checks this on the platform it runs on).
  *
  * Why `flock` and not POSIX `fcntl` record locks: a `flock` lock belongs to the OPEN FILE DESCRIPTION, not to the process. So

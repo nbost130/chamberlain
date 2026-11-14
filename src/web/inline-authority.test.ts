@@ -1,5 +1,5 @@
 /**
- * What an inline frame may NOT do (audit finding B4), enforced by the server on the route and on the request's fields. An inline frame
+ * What an inline frame may NOT do, enforced by the server on the route and on the request's fields. An inline frame
  * is a sandboxed page whose origin is "null"; any page on the principal's devices can send such a request, so the page's own script is
  * not the control. The server allows exactly: GET /api/queue, /api/recent, /api/rulings, and POST a plain question answer (a choice
  * and an optional note). Every refusal below is tested against the same request from the full page, which is still allowed.

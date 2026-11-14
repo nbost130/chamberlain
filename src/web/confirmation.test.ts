@@ -1,5 +1,5 @@
 /**
- * The approval confirm step is the server's (audit finding B5). Answering an approval or a goal proposal takes two requests: one that
+ * The approval confirm step is the server's. Answering an approval or a goal proposal takes two requests: one that
  * returns a single-use, expiring challenge bound to the card's fingerprint, the chosen decision and the browser session, and one that
  * consumes it. A request that skips the first, replays it, presents it late or for something else is refused, whatever sent it.
  */

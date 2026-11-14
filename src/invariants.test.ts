@@ -1,5 +1,5 @@
 /**
- * The "one item system" guarantee, tested by what the system DOES rather than how its source is spelled (audit finding M3).
+ * The "one item system" guarantee, tested by what the system DOES rather than how its source is spelled.
  * src/architecture.test.ts scans for known second mechanisms; a scan can only find what it knows to look for, and it let an in-memory
  * card-answer map with an expiry through. These tests are the backstop: each states an invariant about the database and breaks the
  * way a second, in-memory mechanism would. Two "processes" are two connections to one database file (as the daemon and the page are);

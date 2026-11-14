@@ -1,5 +1,5 @@
 /**
- * The config migration's exclusion is the kernel's, never a clock's. A reviewer found the old one, a lock file that any other process
+ * The config migration's exclusion is the kernel's, never a clock's. The old one was a lock file that any other process
  * broke after 120 seconds: a migration slower than that could be entered twice, and its owner could unlink its successor's lock. These
  * tests run real processes (src/testing/migrate-worker.ts) with a slow migration injected, and read a journal of who was inside and when.
  * To make the old age-based lock break at once, every lock artefact it could have left is back-dated by ten minutes.

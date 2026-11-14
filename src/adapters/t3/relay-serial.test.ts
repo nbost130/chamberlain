@@ -1,6 +1,6 @@
 /**
  * One POST at a time: the relay sends every request to the Steward's webhook, a wake or a compaction, through one serial queue, so the
- * webhook never has two requests in flight. A reviewer's probe saw an ordinary wake and a compaction in flight at once (a peak of 2),
+ * webhook never has two requests in flight. A probe once saw an ordinary wake and a compaction in flight at once (a peak of 2),
  * because `tick()` starts the relay's pass and the Steward check together and the compaction was sent outside the pass's chain.
  *
  * The receiver here is a real HTTP server and the transport is the real `webhookWake`, so what is measured is what the webhook would see.

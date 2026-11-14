@@ -224,7 +224,7 @@ describe("hold refs, notes and the CLI", () => {
 		expect(() => noteHeld(store, id, "late")).toThrow("no open held item");
 	});
 
-	// Fix 3 (round 2). Must fail on 4f1718e: "no action from builders" in a real hold's text was refused.
+	// "no action from builders" in a real hold's text was refused.
 	test("fix 3: hold refuses an FYI that opens the thread or the text, with a non-zero exit, and points at decided.ts", () => {
 		const dir = scratch();
 		for (const [thread, what] of [["FYI", "build passed"], ["CI", "FYI only: build passed"], ["CI", "  ...For your information, the deploy finished"], ["CI", "no action needed, all green"], ["CI", "Nothing needed from the operator"], ["[FYI] Billing", "migration ran"], ["Notes", "nothing required"], ["Notes", "(FYI) done"]]) {

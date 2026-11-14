@@ -160,8 +160,8 @@ describe("a failed direct send falls back to the Steward", () => {
 	});
 });
 
-describe("fix round 1", () => {
-	test("M1: when the send can't be taken (the relays table refuses the row), the Steward's answer wake still goes, saying the direct send failed", async () => {
+describe("answers routed straight to the thread", () => {
+	test("when the send can't be taken (the relays table refuses the row), the Steward's answer wake still goes, saying the direct send failed", async () => {
 		const s = setup();
 		s.add(routed("Q-abcd"));
 		// A database that refuses the relays row (as a full disk would): taking the direct send throws.
@@ -181,7 +181,7 @@ describe("fix round 1", () => {
 		expect(s.posts).toHaveLength(1);
 	});
 
-	test("M2: a direct delivery closes the item's hold by its item field only; an ID named in the text closes nothing", async () => {
+	test("a direct delivery closes the item's hold by its item field only; an ID named in the text closes nothing", async () => {
 		const s = setup();
 		s.add(routed("Q-abcd"));
 		appendHeld(s.store, { thread: "Mobile app", what: "palette pick", taken: "kept working on tests", item: "Q-abcd" });
@@ -193,7 +193,7 @@ describe("fix round 1", () => {
 		expect(s.logs.find((l) => l.event === "held-closed-for-item")?.data).toEqual({ item: "Q-abcd", closed: 1 });
 	});
 
-	test("M2: a failed relay leaves the hold open for the Steward to close on its wake", async () => {
+	test("a failed relay leaves the hold open for the Steward to close on its wake", async () => {
 		const s = setup({ send: () => ({ ok: false, detail: "rpc failure: no such thread" }) });
 		s.add(routed("Q-abcd"));
 		appendHeld(s.store, { thread: "Mobile app", what: "palette pick", item: "Q-abcd" });
@@ -203,7 +203,7 @@ describe("fix round 1", () => {
 		expect(heldOpen(s.store).map((h) => h.item)).toEqual(["Q-abcd"]);
 	});
 
-	test("M3: a send that timed out may have delivered, so the wake says check the thread before re-sending", async () => {
+	test("a send that timed out may have delivered, so the wake says check the thread before re-sending", async () => {
 		const s = setup({ send: () => Error("send timed out after 10000 ms") });
 		s.add(routed("Q-abcd"));
 		await s.answer("Q-abcd", { choice: 0 });
@@ -220,7 +220,7 @@ describe("fix round 1", () => {
 		expect(r.posts[0]!.message).toContain("may or may not have reached the thread");
 	});
 
-	test("M3: a plain failure keeps 'relay it yourself'", async () => {
+	test("a plain failure keeps 'relay it yourself'", async () => {
 		const s = setup({ send: () => Error("connect refused") });
 		s.add(routed("Q-abcd"));
 		await s.answer("Q-abcd", { choice: 0 });

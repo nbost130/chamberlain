@@ -434,7 +434,7 @@ describe("the Steward's own upkeep goes through the probe and the compaction tra
 	});
 });
 
-// ---- B1: a notification decision and its wake are one transaction -----------------------------------
+// ---- a notification decision and its wake are one transaction -----------------------------------
 
 /**
  * A store whose writes can be made to fail where a crash would land: after the decision has been written and before the wake's
@@ -697,7 +697,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 	});
 });
 
-describe("fix round 1: recovery is OFF unless asked for, and the production launcher asks only with CHAMBERLAIN_RECOVER=1", () => {
+describe("recovery is OFF unless asked for, and the production launcher asks only with CHAMBERLAIN_RECOVER=1", () => {
 	test("an engine built without `recover` keeps the plain failed wake and retries nothing", async () => {
 		const r = rig();
 		r.fake.threads.set("t1", { failure: { runId: "run-1", class: "unknown", message: "The provider event stream closed unexpectedly." } });
@@ -862,7 +862,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		rightsThenRow(r, row);
 	});
 
-	test("the reviewer's probe: a full wake in flight, the compaction asked for, the full wake lands: the next wake carries the full rights, never a bare pointer", async () => {
+	test("a full wake in flight, the compaction asked for, the full wake lands: the next wake carries the full rights, never a bare pointer", async () => {
 		const r = rig({ steward: "steward-1", compactAt: 5000 });
 		r.fake.probe = { readable: true, contextTokens: 1000 };
 		let release!: () => void, started = false;
@@ -918,7 +918,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		expect(r.events.some((e) => e.event === "rights-first")).toBe(false);
 	});
 
-	test("finding 1: the rights went, the row failed, the Steward changed before the retry: the row waits for the NEW Steward's rights, then goes as queued", async () => {
+	test("the rights went, the row failed, the Steward changed before the retry: the row waits for the NEW Steward's rights, then goes as queued", async () => {
 		const { r, row } = await pointerQueued();
 		r.priv("steward-thread", "steward-2");
 		r.fake.setWakeStatus((id) => (id === row.deliveryId ? 503 : 202));

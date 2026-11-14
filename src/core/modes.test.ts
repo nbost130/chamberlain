@@ -1,5 +1,5 @@
 /**
- * File modes fail closed (audit finding M4). A secret or config file is a regular file with mode EXACTLY 0600 (0700, 0400 and the like are
+ * File modes fail closed. A secret or config file is a regular file with mode EXACTLY 0600 (0700, 0400 and the like are
  * refused: "no group or other bits" was the old, looser rule); the config and state directories are exactly 0700; and a database whose mode
  * cannot be made 0600 stops the process at start with a clear message, where a failed chmod used to be swallowed.
  */
