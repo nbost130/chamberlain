@@ -340,8 +340,8 @@ describe("main: the inline view's key", () => {
 		mkdirSync(`${d}/conf/secrets`, { recursive: true, mode: 0o700 });
 		chmodSync(`${d}/conf`, 0o700);
 		if (web) writeFileSync(`${d}/conf/web.json`, JSON.stringify(web), { mode: 0o600 });
-		if (token) writeFileSync(`${d}/conf/secrets/web-token`, token.text, { mode: token.mode });
-		if (token) chmodSync(`${d}/conf/secrets/web-token`, token.mode);
+		if (token) writeFileSync(`${d}/conf/secrets/view-key`, token.text, { mode: token.mode });
+		if (token) chmodSync(`${d}/conf/secrets/view-key`, token.mode);
 		return d;
 	}
 	async function run(d: string, ...args: string[]) {
@@ -395,7 +395,7 @@ describe("main: the inline view's key", () => {
 		await withPage(async (port) => {
 			const r = await ask(scratch({ host: "127.0.0.1", port }));
 			expect(r.err).toContain(
-				"the page has no key yet: run `chamberlain web link`; posting a notice instead of the view",
+				"the page has no view key yet: start the page (chamberlain web); posting a notice instead of the view",
 			);
 			expect(r.err).toContain("ask: the Decisions thread is not set (threads.decisions in config.json)");
 			expect(r.code).toBe(1);
@@ -405,11 +405,11 @@ describe("main: the inline view's key", () => {
 		await withPage(async (port) => {
 			const r = await ask(scratch({ host: "127.0.0.1", port }, { text: "k".repeat(43), mode: 0o644 }));
 			expect(r.err).toContain(
-				"the page's key could not be read (web-token must be a private regular file with mode exactly 0600",
+				"the view key could not be read (view-key must be a private regular file with mode exactly 0600",
 			);
 			expect(r.err).toContain("posting a notice instead of the view");
 			// An unreadable key also leaves no key, so the second notice follows the first.
-			expect(r.err).toContain("the page has no key yet");
+			expect(r.err).toContain("the page has no view key yet");
 			expect(r.code).toBe(1);
 		});
 	});

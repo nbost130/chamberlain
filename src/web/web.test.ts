@@ -98,7 +98,12 @@ function setup(opts: { status?: (n: number) => number; root?: string; relay?: bo
 			}),
 		);
 	const get = (path: string, headers: Record<string, string> = {}) =>
-		app.fetch(new Request(`http://${HOST}${path}`, { headers: { host: HOST, ...headers } }));
+		app.fetch(
+			new Request(`http://${HOST}${path}`, {
+				// a navigation: openCapability accepts everything, and a request with no cookie and no Origin would be a bare header call
+				headers: { host: HOST, "sec-fetch-site": "none", ...headers },
+			}),
+		);
 	const add = (i: Question) => askQuestion(store, i);
 	// Only wakes the webhook accepted count; the T3 relay sees a 503 as not received.
 	const delivered = () => posts.filter((_, k) => (opts.status ? opts.status(k + 1) : 202) < 300);

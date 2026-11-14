@@ -30,7 +30,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { homeAdapter } from "./adapters/index.ts";
-import { readToken } from "./core/capability.ts";
+import { readViewKey } from "./core/capability.ts";
 import { CONF, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { cfg } from "./core/layout.ts";
@@ -287,17 +287,20 @@ function refuseIfSettled(store: Store, q: Question): void {
 	process.exit(2);
 }
 
-/** The page's key for the view's links, or undefined, with the reason on stderr: a key that cannot be read (a wrong mode) or is missing never makes a link that would not work. */
-function readViewKey(): string | undefined {
+/** The view key for the view's script address, or undefined, with the reason on stderr: a key that cannot be read (a wrong mode) or is missing never makes a link that would not work. */
+function viewKeyOrNotice(): string | undefined {
 	let key: string | undefined;
 	try {
-		key = readToken(CONF);
+		key = readViewKey(CONF);
 	} catch (e) {
 		console.error(
-			`the page's key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
+			`the view key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
 		);
 	}
-	if (!key) console.error("the page has no key yet: run `chamberlain web link`; posting a notice instead of the view");
+	if (!key)
+		console.error(
+			"the page has no view key yet: start the page (chamberlain web); posting a notice instead of the view",
+		);
 	return key;
 }
 
@@ -305,8 +308,9 @@ function readViewKey(): string | undefined {
 async function inlineView(): Promise<{ queueUrl: string | undefined; capability: string | undefined }> {
 	const base = queueBase();
 	const up = base !== undefined && (await queueUp(base));
-	// The view's links carry the page's key. The page makes it when it starts, so a page that answers has one.
-	const key = up ? readViewKey() : undefined;
+	// The view's script address carries the VIEW key, never the page's key (a post is copied into the thread). The page makes it when it
+	// starts, so a page that answers has one.
+	const key = up ? viewKeyOrNotice() : undefined;
 	const inline = up && key !== undefined;
 	return { queueUrl: inline ? base : undefined, capability: inline ? key : undefined };
 }

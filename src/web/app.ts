@@ -855,13 +855,19 @@ function staticResponse(d: AppDeps, req: Request, url: URL): Response | undefine
 }
 
 /**
- * The capability. Three ways to show it, none of them from a frame that is not ours:
- *   the header (an inline frame, or a tool);
+ * The capability. Four ways to show it, none of them from a frame that is not ours:
  *   the cookie (a browser that opened a link; never for a null origin, which holds no cookie of ours);
- *   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address).
+ *   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address);
+ *   the page key in the header, FROM THE PAGE'S OWN ORIGIN;
+ *   the header with anything else: the page key from an inline frame or from a request with no Origin at all (curl, an agent), or the
+ *   view key (the weak secret a Decisions post carries) from anywhere. Those get inline authority only: inlineVerdict, nothing more.
+ * `full` is the first three: everything the page can do. Without it a request is restricted.
  */
-function capabilityProof(d: AppDeps, req: Request, url: URL, inline: boolean) {
-	const byHeader = d.capability.accepts(req.headers.get(TOKEN_HEADER));
+function capabilityProof(d: AppDeps, req: Request, url: URL, gate: Gate) {
+	const { inline, sameOrigin } = gate;
+	const headerKey = req.headers.get(TOKEN_HEADER);
+	const byPageKeyHeader = d.capability.accepts(headerKey);
+	const byViewKey = !byPageKeyHeader && d.capability.acceptsView(headerKey);
 	// A cookie reaches an item's evidence only from the page's own origin (or a direct navigation): another PORT on the same host is "same-site", not
 	// "same-origin", and must not be able to embed the evidence images with the owner's cookie. The header and ?k= are explicit and unaffected.
 	const fetchSite = req.headers.get("sec-fetch-site");
@@ -873,7 +879,40 @@ function capabilityProof(d: AppDeps, req: Request, url: URL, inline: boolean) {
 		(isShell(url.pathname) || isOpen(url.pathname) || url.pathname.startsWith("/evidence/"));
 	const linkKey = url.searchParams.get(TOKEN_PARAM);
 	const byLink = linkable && linkKey !== null && d.capability.accepts(linkKey);
-	return { byHeader, byCookie, byLink };
+	const full = byCookie || byLink || (byPageKeyHeader && sameOrigin);
+	return { byPageKeyHeader, byViewKey, byCookie, byLink, full };
+}
+
+/**
+ * Inline authority only: a null-origin frame, or a request whose only proof is a header and which has no cookie, no link and no own origin.
+ * The same three reads and plain answer; anything else is refused whatever its path, so the key a post carries cannot read an item or its
+ * evidence, answer a card or an approval, save a ruling or accept a batch. A refusal here is a 403, not a 401: the key is valid.
+ * A null-origin frame's own page-key requests stay exactly as they were (refused for the API; its other GETs pass), except the /open route,
+ * which a frame has no use for and which did not exist when that rule was written. The view key is held to the list on every path and from
+ * every origin, evidence included.
+ * The page's own static shell (`/`, `/rulings`, `/item/<id>`) carries no data and is served to the page key in a header, as it always was: a
+ * browser loads it by navigation (cookie, or `?k=`), and a tool may fetch it. What the limit protects is the API, evidence and every write.
+ * /open (a tap on a thread link) is the same kind of GET: a redirect to the thread's app link, which /api/queue already hands to an inline
+ * frame (a card's `app`), so it adds nothing. A null-origin frame has no use for it, so only a request that is not one may.
+ */
+function restrictedRefusal(
+	req: Request,
+	url: URL,
+	proof: ReturnType<typeof capabilityProof>,
+	inline: boolean,
+): Response | undefined {
+	const restricted = inline || !proof.full;
+	const shellRead =
+		req.method === "GET" && proof.byPageKeyHeader && (isShell(url.pathname) || (isOpen(url.pathname) && !inline));
+	if (!restricted || shellRead || !(!inline || proof.byViewKey || isOpen(url.pathname))) return undefined;
+	const v = inlineVerdict(req.method, url.pathname);
+	if (v === "read" || v === "answer") return undefined;
+	return withSecurity(
+		fail(
+			403,
+			"refused: this key may read the queue, recent answers and rulings, and answer a question; the rest needs the page's own link",
+		),
+	);
 }
 
 /** A request with no valid key: a page load gets the static "needs its link" page, everything else a plain 401. */
@@ -969,12 +1008,14 @@ async function handle(ctx: Ctx, req: Request): Promise<Response> {
 	if (gate instanceof Response) return gate;
 	const served = staticResponse(d, req, url);
 	if (served) return served;
-	const proof = capabilityProof(d, req, url, gate.inline);
-	if (!proof.byHeader && !proof.byCookie && !proof.byLink) return unauthorized(req, url, gate.allowed);
+	const proof = capabilityProof(d, req, url, gate);
+	if (!proof.full && !proof.byPageKeyHeader && !proof.byViewKey) return unauthorized(req, url, gate.allowed);
+	const refused = restrictedRefusal(req, url, proof, gate.inline);
+	if (refused) return refused;
 	if (proof.byLink && (isShell(url.pathname) || isOpen(url.pathname))) return linkRedirect(d, req, url);
 	if (req.method === "POST" && !postAllowed(req, gate)) return withSecurity(fail(403, "refused"));
 	if (url.pathname.startsWith("/api/")) {
-		const r = withSecurity(await api(ctx, req, url, gate.inline));
+		const r = withSecurity(await api(ctx, req, url, gate.inline || !proof.full));
 		return gate.allowed ? inlineCors(r) : r;
 	}
 	return servePage(ctx, req, url);

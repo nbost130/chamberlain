@@ -122,11 +122,24 @@ try {
 			"the page made its capability token (43 characters, mode 0600)",
 			token.length === 43 && (statSync(tokenFile).mode & 0o777) === 0o600,
 		);
+		const viewFile = join(conf, "secrets", "view-key");
+		const viewKey = existsSync(viewFile) ? readFileSync(viewFile, "utf8").trim() : "";
+		check(
+			"the page made its view key too (43 characters, mode 0600, not the page key)",
+			viewKey.length === 43 && viewKey !== token && (statSync(viewFile).mode & 0o777) === 0o600,
+		);
+		// a header-only request with no Origin is inline authority: it reads the queue, and nothing else
 		const key = { "x-decision-token": token };
 		const nokey = await fetch(`${base}/api/queue`);
 		check("GET /api/queue with no key is 401", nokey.status === 401, `status ${nokey.status}`);
 		const nullNoKey = await fetch(`${base}/api/queue`, { headers: { origin: "null" } });
 		check("a null-origin GET /api/queue with no key is 401", nullNoKey.status === 401, `status ${nullNoKey.status}`);
+		const noOriginItem = await fetch(`${base}/api/items/Q-abcd`, { headers: { "x-decision-token": viewKey } });
+		check(
+			"the view key with no Origin cannot read one item (403)",
+			noOriginItem.status === 403,
+			`status ${noOriginItem.status}`,
+		);
 		const wrong = await fetch(`${base}/api/queue`, { headers: { "x-decision-token": `${token.slice(0, -1)}x` } });
 		check("a wrong key is 401", wrong.status === 401, `status ${wrong.status}`);
 		const locked = await fetch(`${base}/`);
@@ -147,7 +160,8 @@ try {
 			"`chamberlain web link` prints the page link and the inline script address with the key",
 			link.exitCode === 0 &&
 				link.stdout.toString().includes(`/?k=${token}`) &&
-				link.stdout.toString().includes(`inline.js?view=decisions&amp;k=${token}`),
+				link.stdout.toString().includes(`inline.js?view=decisions&amp;k=${viewKey}`) &&
+				!link.stdout.toString().includes(`inline.js?view=decisions&amp;k=${token}`),
 			`exit ${link.exitCode}: ${link.stderr}`,
 		);
 		const files: [string, string, string][] = [

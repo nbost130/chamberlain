@@ -8,18 +8,28 @@ import { requireTestEnv } from "../core/test-env.ts";
  */
 export function openCapability(): Capability {
 	requireTestEnv("openCapability");
-	return { accepts: () => true, acceptsCookie: () => true, grant: () => "dq_cap=test; Path=/" };
+	return {
+		accepts: () => true,
+		acceptsView: () => false,
+		acceptsCookie: () => true,
+		grant: () => "dq_cap=test; Path=/",
+	};
 }
 
 /** A real capability over a token the test holds, and the clock it moves: `{ token }` can be reassigned to rotate it. */
-export function memoryCapability(token: string | undefined, clock: { now: number } = { now: Date.now() }) {
-	const state = { token };
+export function memoryCapability(
+	token: string | undefined,
+	clock: { now: number } = { now: Date.now() },
+	viewKey?: string,
+) {
+	const state = { token, viewKey };
 	return {
 		state,
 		clock,
 		capability: makeCapability(
 			() => state.token,
 			() => clock.now,
+			() => state.viewKey,
 		),
 	};
 }

@@ -16,6 +16,8 @@ import { createApp } from "./app.ts";
 import type { SendToThread } from "./waiting.ts";
 
 const HOST = "127.0.0.1:3790";
+/** The page's own origin: its own scripts send it, and it is what gives a request the page's full authority (a request with no Origin is restricted). */
+const ORIGIN = `http://${HOST}`;
 const dirs: string[] = [];
 afterEach(() => {
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -57,13 +59,19 @@ function setup(opts: { wrap?: (s: Store) => Store; send?: SendToThread } = {}) {
 		app.fetch(
 			new Request(`http://${HOST}${path}`, {
 				method,
-				headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1", ...headers },
+				headers: {
+					host: HOST,
+					origin: ORIGIN,
+					"content-type": "application/json",
+					"x-decision-queue": "1",
+					...headers,
+				},
 				...(body === undefined ? {} : { body: JSON.stringify(body) }),
 			}),
 		);
 	const post = (path: string, body: unknown) => call("POST", path, body);
 	const get = (path: string, headers: Record<string, string> = {}) =>
-		app.fetch(new Request(`http://${HOST}${path}`, { headers: { host: HOST, ...headers } }));
+		app.fetch(new Request(`http://${HOST}${path}`, { headers: { host: HOST, origin: ORIGIN, ...headers } }));
 	const asked = (q: Question) => askQuestion(real, q);
 	return { real, store, app, logs, post, get, call, asked };
 }

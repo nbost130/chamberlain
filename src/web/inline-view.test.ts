@@ -443,19 +443,29 @@ test("the view sends the page's key from its own script address on every call, a
 	expect(calls.length).toBeGreaterThan(0);
 	expect(headers).toHaveLength(calls.length);
 	expect(headers.every((h) => h["x-decision-token"] === KEY)).toBe(true);
-	// an <img> cannot send a header, so its address carries the key; "Open the queue page" does too, and opens signed in
+	// an <img> cannot send a header, so its address carries the key
 	const imgs = dq.all((e) => e.tag === "img");
 	expect(imgs.length).toBeGreaterThan(0);
 	expect(imgs.every((i) => i.src.endsWith(`/shot.png?k=${KEY}`))).toBe(true);
 });
 
-test("a mirrored card's 'Open the queue page' link opens signed in, with the key from the script address", async () => {
+test("an evidence image the page refuses (the weak view key cannot read evidence) is replaced by a note that points to the full page", async () => {
+	const it = { ...item("x"), evidence: [{ type: "image", path: "shot.png", caption: "a shot" }] };
+	const dq = run(() => ({ items: [it] }), { src: "http://queue.test/inline.js?view=decisions&k=k-view" });
+	await settle();
+	const img = dq.all((e) => e.tag === "img")[0]!;
+	(img as unknown as { onerror: () => void }).onerror();
+	expect(dq.all((e) => e.tag === "img")).toHaveLength(0);
+	expect(dq.textContent).toContain("Image evidence shows on the full queue page.");
+});
+
+test("a mirrored card's 'Open the queue page' link carries no key: the script's key is the weak view key, and the browser's own cookie signs it in", async () => {
 	const KEY = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
 	const dq = run(() => ({ items: [], cards: [card("rm -rf build", "sig-1")] }), {
 		src: `http://queue.test/inline.js?view=decisions&k=${KEY}`,
 	});
 	await settle();
-	expect(dq.all((e) => e.tag === "a" && e.href === `http://queue.test/?k=${KEY}`)).toHaveLength(1);
+	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(1);
 });
 
 test("a view whose key was rotated says so, instead of showing an empty queue", async () => {
@@ -492,7 +502,7 @@ describe("links out of the view", () => {
 	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
 	const anchors = (dq: El) =>
 		dq.all((e) => e.tag === "a").map((a) => ({ text: a.textContent, href: a.href, target: a.target }));
-	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s), both signed in", async () => {
+	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s), neither carries a key (the view key cannot sign a browser in)", async () => {
 		const c = {
 			...card("make", "sig-1"),
 			server: "mac",
@@ -503,8 +513,8 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [], cards: [c] }), { src: SRC });
 		await settle();
 		expect(anchors(dq)).toEqual([
-			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
-			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12?k=KEY", target: "_blank" },
+			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12", target: "_blank" },
 		]);
 	});
 	test("a question asked with chamberlain ask links to its thread too", async () => {
@@ -518,7 +528,7 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [q] }), { src: SRC });
 		await settle();
 		expect(anchors(dq)).toEqual([
-			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
 		]);
 	});
 	test("a secret or a card pointer, answered in its thread, links to that thread", async () => {
@@ -526,7 +536,7 @@ describe("links out of the view", () => {
 		for (const extra of [{ secret: true }, { cardRequest: { requestId: "r" } }]) {
 			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
 			await settle();
-			expect(anchors(dq).map((a) => a.href)).toEqual(["http://queue.test/open/mac/t2?k=KEY"]);
+			expect(anchors(dq).map((a) => a.href)).toEqual(["http://queue.test/open/mac/t2"]);
 		}
 	});
 	test("no /open path, no thread link: never a raw t3-thread:// or other custom-scheme href, which the frame cannot open", async () => {
@@ -535,7 +545,7 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [q], cards: [c] }), { src: SRC });
 		await settle();
 		const hrefs = anchors(dq).map((a) => a.href);
-		expect(hrefs).toEqual(["http://queue.test/?k=KEY"]);
+		expect(hrefs).toEqual(["http://queue.test/"]);
 		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
 	});
 });
@@ -568,7 +578,7 @@ describe("the thread link inside T3's phone app", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: APP, target: "" },
-			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
+			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
 			{ text: "Open the thread", href: APP, target: "" },
 		]);
 	});
@@ -585,7 +595,7 @@ describe("the thread link inside T3's phone app", () => {
 			const dq = run(() => ({ items: [q] }), { src: SRC, window });
 			await settle();
 			expect(anchors(dq)).toEqual([
-				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
 			]);
 		}
 	});
@@ -619,7 +629,7 @@ describe("the thread link inside T3's phone app", () => {
 				},
 			);
 			await settle();
-			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1?k=KEY"]]);
+			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1"]]);
 		}
 	});
 });
