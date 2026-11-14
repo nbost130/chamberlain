@@ -16,6 +16,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { SECRETS_DIR, ensureSecretsDir, readSecret } from "./layout.ts";
+import { RelayLockUnavailableError, holdFlock } from "./singleton.ts";
 
 /** The secret's name in `secrets/`. */
 export const TOKEN_FILE = "web-token";
@@ -91,38 +92,47 @@ export function readToken(conf: string): string | undefined {
 }
 
 /**
- * The token, made now if the install has none: published atomically (a complete file, hard-linked into place, so two starting processes get the same one), mode 0600. A file that
- * exists but holds less than a token (empty after a crash, or written by hand) is an error, never silently replaced: rotate it.
+ * The token, made now if the install has none: published atomically (a complete file, hard-linked into place, so two starting processes get the same one), mode 0600. It NEVER
+ * replaces a file that exists: one that stays empty or short (a crash, or written by hand) is an error that says to run `chamberlain web rotate-token`.
  */
-export function ensureToken(conf: string): string {
+export function ensureToken(conf: string, seam: { afterMiss?: () => void } = {}): string {
 	const dir = ensureSecretsDir(conf);
 	const p = `${dir}/${TOKEN_FILE}`;
 	const have = readSecret(conf, TOKEN_FILE);
-	if (have) {
-		if (have.length < MIN_TOKEN_CHARS)
-			throw Error(
-				`${SECRETS_DIR}/${TOKEN_FILE} holds fewer than ${MIN_TOKEN_CHARS} characters: run \`chamberlain web rotate-token\``,
-			);
-		return have;
+	if (have) return checked(have);
+	seam.afterMiss?.(); // a test seam: where a concurrent process can publish its token, after our read found none
+	if (!statSafe(p)) {
+		// Published whole or not at all: the token is written to a file of its own and HARD-LINKED to its name, which fails if the name exists. A
+		// process that finds the name therefore finds a complete token, and two processes starting together end up with the same one.
+		const token = newToken();
+		const tmp = `${dir}/${TOKEN_FILE}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+		writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
+		try {
+			linkSync(tmp, p);
+			return token;
+		} catch (e) {
+			if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; // someone else got there first: take theirs, below
+		} finally {
+			rmSync(tmp, { force: true });
+		}
 	}
-	if (statSafe(p)) return rotateToken(conf); // there, but empty (a crash before the change to atomic creation): replace it
-	// Published whole or not at all: the token is written to a file of its own and HARD-LINKED to its name, which fails if the name exists. A
-	// process that finds the name therefore always finds a complete token, and two processes starting together end up with the same one.
-	const token = newToken();
-	const tmp = `${dir}/${TOKEN_FILE}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
-	writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
-	try {
-		linkSync(tmp, p);
-		return token;
-	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-		const raced = readSecret(conf, TOKEN_FILE);
-		if (raced && raced.length >= MIN_TOKEN_CHARS) return raced;
-		throw Error(`${SECRETS_DIR}/${TOKEN_FILE} appeared but holds no token: run \`chamberlain web rotate-token\``);
-	} finally {
-		rmSync(tmp, { force: true });
+	// The file exists, made by another process or left by one that crashed. ensureToken NEVER replaces it (rotating over a winner's file hands the
+	// loser a token the disk no longer holds): read it, a few times if it is momentarily empty, and if it stays unusable say so. Only
+	// `chamberlain web rotate-token` replaces a token.
+	for (let i = 0; i < 20; i++) {
+		const t = readSecret(conf, TOKEN_FILE);
+		if (t) return checked(t);
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
 	}
+	throw Error(`${SECRETS_DIR}/${TOKEN_FILE} exists but holds no token: run \`chamberlain web rotate-token\``);
 }
+const checked = (t: string): string => {
+	if (t.length < MIN_TOKEN_CHARS)
+		throw Error(
+			`${SECRETS_DIR}/${TOKEN_FILE} holds fewer than ${MIN_TOKEN_CHARS} characters: run \`chamberlain web rotate-token\``,
+		);
+	return t;
+};
 const statSafe = (p: string) => {
 	try {
 		return statSync(p);
@@ -134,11 +144,22 @@ const statSafe = (p: string) => {
 /** Replaces the token with a new one, through a temporary file and a rename (a reader sees the old file or the new one, never half). Returns it. */
 export function rotateToken(conf: string): string {
 	const dir = ensureSecretsDir(conf);
-	const token = newToken();
-	const tmp = `${dir}/${TOKEN_FILE}.tmp-${process.pid}`;
-	writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
-	renameSync(tmp, `${dir}/${TOKEN_FILE}`);
-	return token;
+	// Under the config directory's lock, so two rotations (or a rotation and a migration) cannot interleave; on a platform with no flock it goes ahead without.
+	let lock: { release(): void } | undefined;
+	try {
+		lock = holdFlock(conf, { waitMs: 10_000 });
+	} catch (e) {
+		if (!(e instanceof RelayLockUnavailableError)) throw e;
+	}
+	try {
+		const token = newToken();
+		const tmp = `${dir}/${TOKEN_FILE}.tmp-${process.pid}`;
+		writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
+		renameSync(tmp, `${dir}/${TOKEN_FILE}`);
+		return token;
+	} finally {
+		lock?.release();
+	}
 }
 
 /**

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
+	linkSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -59,11 +60,12 @@ describe("the token", () => {
 		expect(ensureToken(c)).toBe(t);
 		expect(readToken(c)).toBe(t);
 	});
-	test("an empty file left by a crash is replaced, a short one made by hand is an error, and a loose one is refused", () => {
+	test("an empty file left by a crash is an error that says to rotate, and is never replaced; a short one made by hand is too; a loose one is refused", () => {
 		const c = conf();
 		mkdirSync(`${c}/secrets`, { mode: 0o700 });
 		writeFileSync(`${c}/secrets/${TOKEN_FILE}`, "", { mode: 0o600 });
-		expect(ensureToken(c)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+		expect(() => ensureToken(c)).toThrow("rotate-token");
+		expect(readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8")).toBe(""); // untouched
 		writeFileSync(`${c}/secrets/${TOKEN_FILE}`, "short\n", { mode: 0o600 });
 		expect(() => ensureToken(c)).toThrow("rotate-token");
 		expect(readToken(c)).toBeUndefined();
@@ -72,32 +74,65 @@ describe("the token", () => {
 		chmodSync(`${c}/secrets/${TOKEN_FILE}`, 0o644);
 		expect(() => ensureToken(c)).toThrow("0600");
 	});
-	test("eight processes starting together all end up with the same, complete token", async () => {
+	test("a token published by another process between our read and our create is returned as it is: ensureToken never rotates", () => {
 		const c = conf();
+		let winner = "";
+		const got = ensureToken(c, {
+			afterMiss: () => {
+				// the concurrent winner publishes whole, exactly as ensureToken itself does (a temporary file, hard-linked into place)
+				winner = newToken();
+				mkdirSync(`${c}/secrets`, { recursive: true, mode: 0o700 });
+				writeFileSync(`${c}/secrets/w.tmp`, `${winner}\n`, { mode: 0o600 });
+				linkSync(`${c}/secrets/w.tmp`, `${c}/secrets/${TOKEN_FILE}`);
+				rmSync(`${c}/secrets/w.tmp`);
+			},
+		});
+		expect(got).toBe(winner);
+		expect(readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8").trim()).toBe(winner);
+	});
+	test("a file that is momentarily empty is read again, and the token another process writes into it is returned", async () => {
+		const c = conf();
+		mkdirSync(`${c}/secrets`, { mode: 0o700 });
+		writeFileSync(`${c}/secrets/${TOKEN_FILE}`, "", { mode: 0o600 });
+		const token = newToken();
+		const p = Bun.spawn(
+			[
+				"bun",
+				"-e",
+				`await Bun.sleep(150); require("node:fs").writeFileSync(process.argv[1], process.argv[2] + "\\n")`,
+				`${c}/secrets/${TOKEN_FILE}`,
+				token,
+			],
+			{ stdout: "pipe", stderr: "pipe" },
+		);
+		expect(ensureToken(c)).toBe(token); // blocks, reading again, until the writer has written
+		await p.exited;
+	});
+	test("eight processes released together by a barrier, over ten rounds: every one returns the token that is on disk, and none rotates it", async () => {
 		const mod = new URL("./capability.ts", import.meta.url).pathname;
-		const procs = Array.from({ length: 8 }, () =>
-			Bun.spawn(
-				[
-					"bun",
-					"-e",
-					`import { ensureToken } from ${JSON.stringify(mod)}; process.stdout.write(ensureToken(process.argv[1]));`,
-					c,
-				],
-				{ stdout: "pipe", stderr: "pipe", env: process.env },
-			),
-		);
-		const outs = await Promise.all(
-			procs.map(async (p) => ({
-				out: await new Response(p.stdout).text(),
-				err: await new Response(p.stderr).text(),
-				code: await p.exited,
-			})),
-		);
-		for (const o of outs) expect(o.code, o.err).toBe(0);
-		const onDisk = readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8").trim();
-		expect(onDisk).toMatch(/^[A-Za-z0-9_-]{43}$/);
-		expect(new Set(outs.map((o) => o.out))).toEqual(new Set([onDisk]));
-		expect(readdirSync(`${c}/secrets`)).toEqual([TOKEN_FILE]); // no temporary file is left behind
+		for (let round = 0; round < 10; round++) {
+			const c = conf();
+			const go = `${c}/../go`;
+			// Each child imports the module, then spins until the barrier file appears, so all eight call ensureToken in the same few microseconds.
+			const script = `import { existsSync } from "node:fs"; import { ensureToken } from ${JSON.stringify(mod)}; const [c, go] = process.argv.slice(1); while (!existsSync(go)); process.stdout.write(ensureToken(c));`;
+			const procs = Array.from({ length: 8 }, () =>
+				Bun.spawn(["bun", "-e", script, c, go], { stdout: "pipe", stderr: "pipe", env: process.env }),
+			);
+			await Bun.sleep(150); // let every child reach the barrier
+			writeFileSync(go, "");
+			const outs = await Promise.all(
+				procs.map(async (p) => ({
+					out: await new Response(p.stdout).text(),
+					err: await new Response(p.stderr).text(),
+					code: await p.exited,
+				})),
+			);
+			for (const o of outs) expect(o.code, `round ${round}: ${o.err}`).toBe(0);
+			const onDisk = readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8").trim();
+			expect(onDisk, `round ${round}`).toMatch(/^[A-Za-z0-9_-]{43}$/);
+			expect([...new Set(outs.map((o) => o.out))], `round ${round}`).toEqual([onDisk]);
+			expect(readdirSync(`${c}/secrets`), `round ${round}`).toEqual([TOKEN_FILE]); // no temporary file is left behind
+		}
 	});
 	test("rotating replaces it, 0600, and a running capability follows without a restart", () => {
 		const c = conf();
