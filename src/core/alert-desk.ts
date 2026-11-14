@@ -33,6 +33,7 @@ import {
 	readdirSync,
 	readSync,
 	renameSync,
+	type Stats,
 	statSync,
 	unlinkSync,
 } from "node:fs";
@@ -436,6 +437,51 @@ export function morningMessage(
 const MAX_READ = 4 * 1024 * 1024;
 /** What an oversized chunk (4 MiB with no newline in it) becomes: a line that is never an event, so it is counted as bad and skipped. */
 const OVERSIZED = "\u0000oversized";
+/** Up to `len` bytes of `fd` from `start`, fewer if the file ends first. */
+function readChunk(fd: number, start: number, len: number): Buffer {
+	const buf = Buffer.alloc(len);
+	let got = 0;
+	while (got < len) {
+		const n = readSync(fd, buf, got, len - got, start + got);
+		if (n <= 0) break;
+		got += n;
+	}
+	return buf.subarray(0, got);
+}
+
+/** True when the byte before `start` is not a newline: the cursor sits inside a line that was already counted as bad. */
+function startsMidLine(fd: number, start: number, got: number): boolean {
+	if (start <= 0 || got <= 0) return false;
+	const prev = Buffer.alloc(1);
+	return readSync(fd, prev, 0, 1, start - 1) === 1 && prev[0] !== 10;
+}
+
+/** The whole lines of `body` (which begins at file offset `base`) and the offset after the last one consumed; see readLines for the two tails. */
+function wholeLines(
+	body: Buffer,
+	base: number,
+	o: { start: number; got: number; skip: number; final: boolean; atEof: boolean },
+): { lines: string[]; end: number } {
+	const cut = body.lastIndexOf(10);
+	let end = base + (cut < 0 ? 0 : cut + 1);
+	const lines =
+		cut < 0
+			? []
+			: body
+					.subarray(0, cut + 1)
+					.toString("utf8")
+					.split("\n")
+					.filter(Boolean);
+	if (cut < 0 && o.skip === 0 && o.got >= MAX_READ) {
+		lines.push(OVERSIZED);
+		end = o.start + o.got;
+	} else if (o.final && o.atEof && end < o.start + o.got) {
+		lines.push(body.subarray(end - base).toString("utf8"));
+		end = o.start + o.got;
+	}
+	return { lines, end };
+}
+
 /**
  * Reads whole lines of `path` from `from`, at most MAX_READ bytes. `end` is the offset after the last byte consumed, so a caller that saves
  * `end` has recorded exactly what it read. A torn tail is left for the next pass, unless `final` (a retired file no writer holds any more) and
@@ -457,48 +503,20 @@ function readLines(
 	try {
 		const st = fstatSync(fd);
 		const start = st.size < from ? 0 : from;
-		const len = Math.min(MAX_READ, st.size - start);
-		const buf = Buffer.alloc(len);
-		let got = 0;
-		while (got < len) {
-			const n = readSync(fd, buf, got, len - got, start + got);
-			if (n <= 0) break;
-			got += n;
-		}
-		const chunk = buf.subarray(0, got);
+		const chunk = readChunk(fd, start, Math.min(MAX_READ, st.size - start));
+		const got = chunk.length;
 		const atEof = start + got >= st.size;
 		let skip = 0;
-		if (start > 0 && got > 0) {
-			const prev = Buffer.alloc(1);
-			if (readSync(fd, prev, 0, 1, start - 1) === 1 && prev[0] !== 10) {
-				const nl = chunk.indexOf(10);
-				if (nl < 0) {
-					// Still inside the skipped line: a full chunk (or a retired file's last bytes) is consumed; a partial one waits for its newline.
-					const consumed = got >= MAX_READ || (final && atEof);
-					return { lines: [], end: consumed ? start + got : start, size: st.size, inode: st.ino };
-				}
-				skip = nl + 1;
+		if (startsMidLine(fd, start, got)) {
+			const nl = chunk.indexOf(10);
+			if (nl < 0) {
+				// Still inside the skipped line: a full chunk (or a retired file's last bytes) is consumed; a partial one waits for its newline.
+				const consumed = got >= MAX_READ || (final && atEof);
+				return { lines: [], end: consumed ? start + got : start, size: st.size, inode: st.ino };
 			}
+			skip = nl + 1;
 		}
-		const body = chunk.subarray(skip);
-		const base = start + skip;
-		const cut = body.lastIndexOf(10);
-		let end = base + (cut < 0 ? 0 : cut + 1);
-		const lines =
-			cut < 0
-				? []
-				: body
-						.subarray(0, cut + 1)
-						.toString("utf8")
-						.split("\n")
-						.filter(Boolean);
-		if (cut < 0 && skip === 0 && got >= MAX_READ) {
-			lines.push(OVERSIZED);
-			end = start + got;
-		} else if (final && atEof && end < start + got) {
-			lines.push(body.subarray(end - base).toString("utf8"));
-			end = start + got;
-		}
+		const { lines, end } = wholeLines(chunk.subarray(skip), start + skip, { start, got, skip, final, atEof });
 		return { lines, end, size: st.size, inode: st.ino };
 	} finally {
 		closeSync(fd);
@@ -574,7 +592,7 @@ export function rotateIfDue(
 	save: () => void,
 	crash: (p: CrashPoint) => void = () => {},
 ): boolean {
-	let stat;
+	let stat: Stats;
 	try {
 		stat = statSync(inbox);
 	} catch {
@@ -626,12 +644,8 @@ export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
 	}
 }
 
-/**
- * Reads what is new in the inbox, and the next chunk of every retired file that is due, advancing `cur` and the retired offsets in memory.
- * Nothing is renamed or deleted here: the caller saves the cursor first. Events are oldest first.
- */
-export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConfig): Read {
-	const lines: string[] = [];
+/** Reads the next chunk of every retired file that is due into `lines`; returns the ones now read to their end (or gone). */
+function readRetiredFiles(cur: Cursor, now: number, lines: string[]): Retired[] {
 	const retiredRead: Retired[] = [];
 	for (const r of cur.retired) {
 		if (now < r.after) continue;
@@ -646,14 +660,26 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 		r.offset = got.end;
 		if (got.end >= got.size) retiredRead.push(r);
 	}
+	return retiredRead;
+}
+
+/** Reads what is new in the inbox itself into `lines`, advancing the cursor. */
+function readLiveInbox(cur: Cursor, inbox: string, lines: string[]): void {
 	const main = readLines(inbox, cur.inode === 0 ? 0 : cur.offset);
-	if (main) {
-		// A different file at the same path (rotated by hand, or recreated): its start is new to us.
-		const fresh = cur.inode !== 0 && cur.inode !== main.inode ? (readLines(inbox, 0) ?? main) : main;
-		lines.push(...fresh.lines);
-		cur.offset = fresh.end;
-		cur.inode = fresh.inode;
-	}
+	if (!main) return;
+	// A different file at the same path (rotated by hand, or recreated): its start is new to us.
+	const fresh = cur.inode !== 0 && cur.inode !== main.inode ? (readLines(inbox, 0) ?? main) : main;
+	lines.push(...fresh.lines);
+	cur.offset = fresh.end;
+	cur.inode = fresh.inode;
+}
+
+/** The events in `lines`, oldest first, and how many lines were not events or were older than `maxAgeMs`. */
+function parseEvents(
+	lines: string[],
+	now: number,
+	maxAgeMs: number,
+): { events: DeskEvent[]; bad: number; stale: number } {
 	let bad = 0,
 		stale = 0;
 	const events: DeskEvent[] = [];
@@ -663,14 +689,25 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 			bad++;
 			continue;
 		}
-		if (now - Date.parse(e.ts) > cfg.maxAgeMs) {
+		if (now - Date.parse(e.ts) > maxAgeMs) {
 			stale++;
 			continue;
 		}
 		events.push(e);
 	}
 	events.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-	return { events, bad, stale, retiredRead };
+	return { events, bad, stale };
+}
+
+/**
+ * Reads what is new in the inbox, and the next chunk of every retired file that is due, advancing `cur` and the retired offsets in memory.
+ * Nothing is renamed or deleted here: the caller saves the cursor first. Events are oldest first.
+ */
+export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConfig): Read {
+	const lines: string[] = [];
+	const retiredRead = readRetiredFiles(cur, now, lines);
+	readLiveInbox(cur, inbox, lines);
+	return { ...parseEvents(lines, now, cfg.maxAgeMs), retiredRead };
 }
 
 // ---- the decision, in the item system ---------------------------------------------------------------
