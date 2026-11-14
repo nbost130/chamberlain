@@ -30,7 +30,10 @@ const card = (over: Partial<WaitingCard> = {}): WaitingCard => ({
 });
 const logs: { event: string; [k: string]: unknown }[] = [];
 const pair = (fake: FakeAdapter, name = "ws"): ServerAdapter => ({ server: { name, adapter: "fake" }, adapter: fake });
-const mirror = (pairs: ServerAdapter[], extra: { links?: Record<string, string>; timeoutMs?: number } = {}) =>
+const mirror = (
+	pairs: ServerAdapter[],
+	extra: { links?: Record<string, string>; timeoutMs?: number; now?: () => number } = {},
+) =>
 	createWaiting({
 		store: memStore(),
 		servers: () => pairs,
@@ -340,5 +343,73 @@ describe("the page over an adapter without send: a thread-routed answer falls ba
 		expect(r.accepted).toHaveLength(1);
 		expect(r.accepted[0]!.message).toContain("direct send failed");
 		expect(r.accepted[0]!.message).toContain("cannot send to threads");
+	});
+});
+
+describe("secretRequest: is a secret question's box still open in its thread?", () => {
+	const T0 = Date.parse("2026-11-14T13:00:00.000Z");
+	const asked = "2026-11-14T13:00:00.000Z";
+	const ask = (over: Record<string, unknown> = {}) => ({ server: "ws", threadId: "t1", createdAt: asked, ...over });
+	const secretCard = (over: Partial<WaitingCard> = {}) =>
+		card({ type: "secret", answerable: false, options: [], requestId: "turn-item:secret-request:t1:k", ...over });
+	const setup = (cards: WaitingCard[], at = T0 + 1000) => {
+		const a = createFakeAdapter();
+		a.cards = cards;
+		let now = at;
+		const m = mirror([pair(a)], { now: () => now });
+		return { a, m, at: (t: number) => (now = t) };
+	};
+	test("open while its thread lists a waiting secret request; ended once a later read lists none", async () => {
+		const { a, m } = setup([secretCard()]);
+		await m.poll();
+		expect(m.secretRequest(ask())).toBe("open");
+		a.cards = [card()];
+		await m.poll();
+		expect(m.secretRequest(ask())).toBe("ended");
+	});
+	test("a pointer question follows its own card: another secret box in the thread does not keep it open", async () => {
+		const { m } = setup([secretCard({ requestId: "other" })]);
+		await m.poll();
+		expect(m.secretRequest(ask({ cardRequest: "turn-item:secret-request:t1:k" }))).toBe("ended");
+		expect(m.secretRequest(ask({ cardRequest: "other" }))).toBe("open");
+		expect(m.secretRequest(ask())).toBe("open");
+	});
+	test("a secret box in another thread or on another server, or a question card in this one, is not this box", async () => {
+		const { m } = setup([secretCard({ threadId: "t2" }), card({ threadId: "t1" }), secretCard({ server: "lap" })]);
+		await m.poll();
+		expect(m.secretRequest(ask())).toBe("ended");
+	});
+	test("unknown until a read that began AFTER the question was asked: a read from before it proves nothing", async () => {
+		const { m, at } = setup([], T0 - 1);
+		expect(m.secretRequest(ask())).toBeUndefined();
+		await m.poll();
+		expect(m.secretRequest(ask())).toBeUndefined();
+		at(T0);
+		await m.poll();
+		expect(m.secretRequest(ask())).toBeUndefined();
+		at(T0 + 1);
+		await m.poll();
+		expect(m.secretRequest(ask())).toBe("ended");
+	});
+	test("unknown when the server cannot be read now, keeps its last cards, or is not mirrored at all", async () => {
+		const { a, m } = setup([]);
+		await m.poll();
+		expect(m.secretRequest(ask())).toBe("ended");
+		a.listError = "down";
+		await m.poll();
+		expect(m.secretRequest(ask())).toBeUndefined();
+		const thin = createFakeAdapter({ capabilities: [] });
+		const m2 = mirror([pair(thin)], { now: () => T0 + 1000 });
+		await m2.poll();
+		expect(m2.secretRequest(ask())).toBeUndefined();
+		expect(m.secretRequest(ask({ server: "nowhere" }))).toBeUndefined();
+	});
+	test("unknown with no thread, a thread the mirror never lists, or a question time it cannot read", async () => {
+		const { m } = setup([]);
+		await m.poll();
+		expect(m.secretRequest(ask({ threadId: undefined }))).toBeUndefined();
+		expect(m.secretRequest(ask({ threadId: "skipped" }))).toBeUndefined();
+		for (const createdAt of ["", "not a date", "9999-99-99"])
+			expect([createdAt, m.secretRequest(ask({ createdAt }))]).toEqual([createdAt, undefined]);
 	});
 });

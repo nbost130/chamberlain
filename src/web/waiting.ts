@@ -76,13 +76,20 @@ export type WaitingDeps = {
 	log: (event: string, data?: Record<string, unknown>) => void;
 	/** The longest one server's read may take; tests shorten it. */
 	timeoutMs?: number;
+	/** The clock a read's start is taken from (`secretRequest` compares it with a question's age). Default Date.now; tests move it. */
+	now?: () => number;
 };
+
+/** What `secretRequest` is asked about: a secret question's thread, the card it points to (if any) and when it was asked. */
+export type SecretAsk = { server: string; threadId?: string; cardRequest?: string; createdAt: string };
 
 /** What the waiting layer remembers between polls. */
 type WaitingState = {
 	byServer: Map<string, WaitingCard[]>;
 	/** server -> when it was first found unreachable (a sleeping laptop), cleared when a read succeeds again. */
 	failing: Map<string, string>;
+	/** server -> when its last read that succeeded STARTED (ms): only a read begun after a question can say its box is gone. */
+	readAt: Map<string, number>;
 };
 type AnswerReply = { status: number; body: Record<string, unknown> };
 
@@ -98,6 +105,7 @@ const readOnlyCards = (cards: WaitingCard[], serverName: string): WaitingCard[] 
 /** Reads one server's cards. A server that can't be read keeps its last cards, and is logged once per outage. */
 async function pollServer(d: WaitingDeps, st: WaitingState, skipThreads: string[], { server, adapter }: ServerAdapter) {
 	if (!has(adapter, "listWaiting")) return;
+	const started = (d.now ?? Date.now)();
 	try {
 		const cards = await within(
 			adapter.listWaiting({ skipThreads, ...(d.links?.[server.name] ? { linkBase: d.links[server.name] } : {}) }),
@@ -105,6 +113,7 @@ async function pollServer(d: WaitingDeps, st: WaitingState, skipThreads: string[
 			"waiting-card read",
 		);
 		st.byServer.set(server.name, has(adapter, "answer") ? cards : readOnlyCards(cards, server.name));
+		st.readAt.set(server.name, started);
 		if (st.failing.delete(server.name)) d.log("mirror-recovered", { server: server.name });
 	} catch (e) {
 		if (st.failing.has(server.name)) return;
@@ -114,6 +123,32 @@ async function pollServer(d: WaitingDeps, st: WaitingState, skipThreads: string[
 		});
 		st.failing.set(server.name, new Date().toISOString());
 	}
+}
+
+/**
+ * Is the secret box a secret question points at still open in its thread? Read from what `listWaiting` lists, which for a secret is
+ * the backend's own word that the box waits on the operator now (T3 lists a secret request only while it is pending and the agent that
+ * asked is still waiting on it; a box that timed out, was cancelled, declined or saved is not listed).
+ *   - `open`: the thread lists a waiting secret request (the question's own card, when it points to one).
+ *   - `ended`: it lists none, by a read of that server that succeeded and STARTED after the question was asked.
+ *   - undefined: the reads cannot tell: no thread on the question, a server not mirrored, not yet read since the question was asked, or
+ *     unreachable now; or the thread is one the mirror never lists (the Decisions thread). The card then says what it always said.
+ * This only labels a card. It closes nothing: a card hold still closes only on its own terminal evidence (src/core/card-hold.ts).
+ */
+function secretRequest(d: WaitingDeps, st: WaitingState, q: SecretAsk): "open" | "ended" | undefined {
+	if (!q.threadId) return undefined;
+	const at = st.readAt.get(q.server);
+	const asked = Date.parse(q.createdAt);
+	if (at === undefined || st.failing.has(q.server) || !Number.isFinite(asked) || at <= asked) return undefined;
+	if (d.skipThreads().includes(q.threadId)) return undefined;
+	const waits = (st.byServer.get(q.server) ?? []).some(
+		(c) =>
+			c.type === "secret" &&
+			c.server === q.server &&
+			c.threadId === q.threadId &&
+			(!q.cardRequest || c.requestId === q.cardRequest),
+	);
+	return waits ? "open" : "ended";
 }
 
 /** The HTTP status for an adapter's refusal of an answer. */
@@ -190,7 +225,7 @@ async function answerCard(
 }
 
 export function createWaiting(d: WaitingDeps) {
-	const st: WaitingState = { byServer: new Map(), failing: new Map() };
+	const st: WaitingState = { byServer: new Map(), failing: new Map(), readAt: new Map() };
 	let polling = false;
 
 	/**
@@ -213,7 +248,9 @@ export function createWaiting(d: WaitingDeps) {
 	const unreachable = () => [...st.failing].map(([server, since]) => ({ server, since }));
 	const answer = (id: string, choice: unknown, sig: unknown) => answerCard(d, st, id, choice, sig);
 
-	return { poll, list, answer, unreachable };
+	const secret = (q: SecretAsk) => secretRequest(d, st, q);
+
+	return { poll, list, answer, unreachable, secretRequest: secret };
 }
 export type Waiting = ReturnType<typeof createWaiting>;
 

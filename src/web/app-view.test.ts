@@ -356,3 +356,21 @@ test("a card read from a thread links only through /open, never its raw link", a
 	expect(h).toContain("/open/main/t");
 	expect(h.some((x) => x.includes("outside.example") || x.startsWith("t3-thread:"))).toBe(false);
 });
+
+test("a secret question whose secret box has closed says the request expired, not to enter it", async () => {
+	const ended = await detail("c", { secret: true, secretRequest: "ended", options: [], open: "/open/s/t1" });
+	expect(ended).toContain("Request expired. Its secret box is closed: ask the thread to reopen it.");
+	expect(ended).not.toContain("Enter it in its own thread");
+	for (const state of ["open", undefined, "<b>ended</b>"]) {
+		const html = await detail("c", { secret: true, secretRequest: state, options: [] });
+		expect([state, html.includes("Enter it in its own thread")]).toEqual([state, true]);
+		expect([state, html.includes("Request expired")]).toEqual([state, false]);
+	}
+});
+
+test("the thread link opens in this tab, so a tap the app does not take leaves the queue page in place", async () => {
+	const html = await detail("c", { open: "/open/s/t1", secret: true, options: [] });
+	expect(html).toContain('<a class="open" href="/open/s/t1">Open thread</a>');
+	expect(html).toContain('<a href="/open/s/t1">Open t in T3</a>');
+	expect(html).not.toMatch(/href="\/open\/[^"]*" target=/);
+});

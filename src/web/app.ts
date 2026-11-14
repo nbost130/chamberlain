@@ -75,7 +75,7 @@ export type AppDeps = {
 	links?: Linker;
 	/** Cards waiting in other threads (src/web/waiting.ts). */
 	mirror?: Pick<import("./waiting.ts").Waiting, "list" | "answer"> &
-		Partial<Pick<import("./waiting.ts").Waiting, "unreachable">>;
+		Partial<Pick<import("./waiting.ts").Waiting, "unreachable" | "secretRequest">>;
 	/** A directory holding index.html, app.css, app.js and inline.js; or `staticFiles`. */
 	staticDir?: string;
 	/** Each static file's path by the URL path it is served at (src/embedded.ts); wins over `staticDir`. */
@@ -183,13 +183,30 @@ const linkOf = (d: AppDeps, server: string, threadId: string | undefined) => {
 	if (!threadId || !d.links) return {};
 	const link = d.links.link(server, threadId);
 	const open = d.links.openPath(server, threadId);
-	return { ...(link ? { link } : {}), ...(open ? { open } : {}) };
+	const app = d.links.appLink(server, threadId);
+	return { ...(link ? { link } : {}), ...(open ? { open } : {}), ...(app ? { app } : {}) };
 };
-const view = (d: AppDeps, i: QuestionState) => ({ ...i, ...linkOf(d, i.server, i.threadId), batchable: batchable(i) });
-/** A card read from a thread keeps the link its adapter gave; the page adds the path that opens it from a frame. */
+/**
+ * A secret question's request in its thread, as the mirror's last reads show it (./waiting.ts `secretRequest`): `ended` once no secret
+ * box waits there, so the card says the request expired instead of pointing at a box that is gone. Left out when the reads cannot tell.
+ * The question stays open either way: the thread still needs the value, and only the thread can open a new box.
+ */
+const secretOf = (d: AppDeps, i: QuestionState) => {
+	if (!i.secret || i.status !== "open") return {};
+	const s = d.mirror?.secretRequest?.(i);
+	return s ? { secretRequest: s } : {};
+};
+const view = (d: AppDeps, i: QuestionState) => ({
+	...i,
+	...linkOf(d, i.server, i.threadId),
+	...secretOf(d, i),
+	batchable: batchable(i),
+});
+/** A card read from a thread keeps the link its adapter gave; the page adds the path that opens it from a frame, and the app link. */
 const cardView = (d: AppDeps, c: WaitingCard) => {
 	const open = d.links?.openPath(c.server, c.threadId);
-	return open ? { ...c, open } : c;
+	const app = d.links?.appLink(c.server, c.threadId);
+	return open || app ? { ...c, ...(open ? { open } : {}), ...(app ? { app } : {}) } : c;
 };
 
 // ---- a thread-routed answer's direct send -------------------------------------------------------------
@@ -794,6 +811,12 @@ const locked = (inlineReply: boolean) => {
 const isShell = (p: string) => p === "/" || p === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(p);
 /** `/open/<server>/<threadId>`: sends a device on to the thread's link (./thread-links.ts). A link, like a page: `?k=` signs it in. */
 const isOpen = (p: string) => /^\/open\/[^/]+\/[^/]+$/.test(p);
+/**
+ * Did the person start this navigation with a tap or a click (`Sec-Fetch-User: ?1`, Fetch Metadata; Safari 16.4+, Chrome, Firefox)?
+ * Then `/open` answers with a redirect straight to the app: a browser follows a redirect to an app link only inside a navigation the
+ * person started (Safari on iOS drops a page's own meta refresh or script navigation to one). Anything else gets the page.
+ */
+const tapped = (req: Request) => req.headers.get("sec-fetch-user") === "?1";
 
 /** Who a request says it is: whether it comes from an inline frame, and whether that frame may do what it asked. */
 type Gate = { inline: boolean; allowed: boolean; origin: string | null; sameOrigin: boolean };
@@ -871,11 +894,13 @@ function linkRedirect(d: AppDeps, req: Request, url: URL): Response {
 	const clean = new URL(url);
 	clean.searchParams.delete(TOKEN_PARAM);
 	const secure = url.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
+	// A tapped `/open` link goes straight on to the thread's target instead (made from the path, never carrying the key).
+	const onward = isOpen(url.pathname) && tapped(req) ? openTarget(d, url.pathname) : undefined;
 	return withSecurity(
 		new Response(null, {
 			status: 303,
 			headers: {
-				location: `${clean.pathname}${clean.search}`,
+				location: typeof onward === "string" ? onward : `${clean.pathname}${clean.search}`,
 				"set-cookie": d.capability.grant(secure),
 				"cache-control": "no-store",
 			},
@@ -889,9 +914,11 @@ const postAllowed = (req: Request, g: Gate) =>
 	isJsonContentType(req.headers.get("content-type")) &&
 	!(g.origin && !g.allowed && !g.sameOrigin);
 
-/** The `/open` page: the target is made from the server name and thread id in the path, never taken from the request. */
-function openThread(ctx: Ctx, pathname: string): Response {
-	const { d } = ctx;
+/**
+ * Where `/open/<server>/<threadId>` goes: made from the server name and thread id in the path, never taken from the request.
+ * A string is the target; a Response is the refusal (a bad address, or no link for that thread).
+ */
+function openTarget(d: AppDeps, pathname: string): string | Response {
 	const [, , rawServer, rawThread] = pathname.split("/");
 	let server = "";
 	let threadId = "";
@@ -901,8 +928,21 @@ function openThread(ctx: Ctx, pathname: string): Response {
 	} catch {
 		return fail(400, "bad thread address");
 	}
-	const target = d.links?.target(server, threadId);
-	if (!target) return fail(404, "no link for this thread");
+	return d.links?.target(server, threadId) ?? fail(404, "no link for this thread");
+}
+
+/**
+ * The `/open` route. A tap gets a 303 straight to the target, so the browser hands it to the app in the same navigation (no page, no
+ * second tap). Anything else gets the page that goes on by itself and keeps a button to tap (./thread-links.ts `openPage`).
+ */
+function openThread(ctx: Ctx, pathname: string, tap: boolean): Response {
+	const { d } = ctx;
+	const target = openTarget(d, pathname);
+	if (typeof target !== "string") return target;
+	if (tap) return new Response(null, { status: 303, headers: { location: target, "cache-control": "no-store" } });
+	const [, , rawServer, rawThread] = pathname.split("/");
+	const server = decodeURIComponent(rawServer ?? "");
+	const threadId = decodeURIComponent(rawThread ?? "");
 	const title = d.mirror?.list().find((c) => c.server === server && c.threadId === threadId)?.threadTitle;
 	return new Response(openPage(target, title ? `“${title}”` : "the thread"), {
 		headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
@@ -913,7 +953,7 @@ function openThread(ctx: Ctx, pathname: string): Response {
 function servePage(ctx: Ctx, req: Request, url: URL): Response {
 	if (req.method !== "GET") return withSecurity(fail(404, "not found"));
 	if (url.pathname.startsWith("/evidence/")) return withSecurity(evidence(ctx, url));
-	if (isOpen(url.pathname)) return withSecurity(openThread(ctx, url.pathname));
+	if (isOpen(url.pathname)) return withSecurity(openThread(ctx, url.pathname, tapped(req)));
 	if (isShell(url.pathname))
 		return withSecurity(
 			new Response(Bun.file(staticPath(ctx.d, "/index.html")), {

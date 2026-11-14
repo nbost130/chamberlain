@@ -61,7 +61,23 @@ type TurnItem = {
 	requestKind?: string;
 	fullAccessOverride?: unknown;
 	options?: unknown;
+	/** A secret request's own outcome (T3: pending, saved, declined, cancelled) and the run whose agent waits on it. */
+	secretStatus?: string;
+	runId?: string | null;
 };
+type Run = { id?: string; status?: string };
+/** The run statuses T3 counts as ended (ThreadManagementService `isTerminalRunStatus`). */
+const RUN_ENDED = new Set(["completed", "failed", "cancelled", "interrupted", "rolled_back"]);
+/**
+ * Pure: does a secret request still wait on the operator, as T3 itself counts it? Its `secretStatus` (when T3 gives one) is still
+ * "pending", and the run whose agent asked has not ended (T3's shell lists a secret only while that run is live: its agent's wait, which
+ * alone can hand the value on, timed out or died with it). A run the read does not show is not counted as ended.
+ */
+export function secretWaits(i: Pick<TurnItem, "secretStatus" | "runId">, runs: readonly Run[] = []): boolean {
+	if (i.secretStatus !== undefined && i.secretStatus !== "pending") return false;
+	const run = i.runId ? runs.find((r) => r.id === i.runId) : undefined;
+	return !(run && RUN_ENDED.has(String(run.status ?? "")));
+}
 /** A thread in the shell snapshot (field names as T3 sends them; see toState in src/core/decide.ts). */
 type ShellThread = {
 	id: string;
@@ -94,10 +110,13 @@ export function cardsFrom(
 	thread: ShellThread,
 	items: TurnItem[],
 	link?: string,
+	runs: readonly Run[] = [],
 ): MirrorCard[] {
 	const out: MirrorCard[] = [];
 	for (const i of items) {
 		if (i.status !== "waiting") continue;
+		// A secret box whose request ended (its agent's wait timed out or its run is over) is no longer waiting, even if its item says so.
+		if (normalizeWaitKind(String(i.type)) === "secret_request" && !secretWaits(i, runs)) continue;
 		const card = cardFor(server, canAnswer, thread, i, link);
 		if (card) out.push(card);
 	}
@@ -365,7 +384,7 @@ type Ctx = {
 	/** server\0threadId -> the updatedAt last read and the proposal found then, so an unchanged thread isn't re-read. */
 	goalSeen: Map<string, GoalSeen>;
 };
-type Projected = { turnItems: TurnItem[]; runs?: { status?: string }[] };
+type Projected = { turnItems: TurnItem[]; runs?: Run[] };
 type GoalSeen = { updatedAt: string; proposal?: { messageId: string; goal: string } };
 type Conn = Awaited<ReturnType<typeof openWithin>>;
 const GOAL_WINDOW_MS = 7 * 24 * 3600_000;
@@ -444,7 +463,7 @@ async function questionCardsOf(ctx: Ctx, scan: Scan): Promise<MirrorCard[]> {
 	const cards: MirrorCard[] = [];
 	for (const t of threads) {
 		const p = await ctx.project(scan.rpc, t.id);
-		cards.push(...cardsFrom(ctx.s.name, scan.canAnswer, t, p.turnItems, scan.link(t)));
+		cards.push(...cardsFrom(ctx.s.name, scan.canAnswer, t, p.turnItems, scan.link(t), p.runs));
 	}
 	return cards;
 }
