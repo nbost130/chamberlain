@@ -10,7 +10,8 @@
  * the registry (src/core/obs/registry.ts), so what it carries beyond the registry's typed fields stays in the old `events` table and never reaches `obs.db`.
  */
 import type { LogEvent } from "../store.ts";
-import type { CallOptions, Obs } from "./obs.ts";
+import type { Obs } from "./obs.ts";
+import type { CallOptions } from "./obs-spec.ts";
 import type { EventName } from "./registry.ts";
 import type { Ctx } from "./row.ts";
 
@@ -37,7 +38,7 @@ export function makeLogger(obs: Obs, binding: Binding = {}, base: Record<string,
 	const at =
 		(level: "info" | "warn" | "error" | "debug"): Emit =>
 		(event, fields = {}, opts) => {
-			obs.record(level, event, fields, binding, opts);
+			obs.record(level, event, fields, { ctx: binding, opts });
 		};
 	Object.assign(call, {
 		info: at("info"),

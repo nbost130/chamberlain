@@ -7,8 +7,10 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { heldOpen } from "./core/afk.ts";
-import { claimWake, getQuestion, pageClaim, questionStates, ranked } from "./core/questions.ts";
+import { heldOpen } from "./core/afk-held.ts";
+import { getQuestion, questionStates } from "./core/questions.ts";
+import { claimWake, pageClaim } from "./core/questions-claim.ts";
+import { ranked } from "./core/questions-wake.ts";
 import { openStore } from "./core/sqlite-store.ts";
 import { dbPath, type Store } from "./core/store.ts";
 

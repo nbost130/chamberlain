@@ -4,9 +4,12 @@
  * record becomes a normalized state for the core; the same socket serves the on-demand reads (`inspect`).
  */
 import { statSync } from "node:fs";
-import type { AdapterEnv, Inspector, RunFailure, ThreadSnapshot, WaitingRead, WatchSink } from "../../core/adapter.ts";
+import type { AdapterEnv, WatchSink } from "../../core/adapter.ts";
+import type { Inspector, RunFailure, ThreadSnapshot } from "../../core/adapter-inspect.ts";
+import type { WaitingRead } from "../../core/adapter-waiting.ts";
 import { failedRead } from "../../core/history.ts";
-import { SECRETS_DIR, secretPath } from "../../core/layout.ts";
+import { secretPath } from "../../core/layout.ts";
+import { SECRETS_DIR } from "../../core/layout-schema.ts";
 import { alarms } from "../../core/messages.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { failureOf, lookOf } from "./failure.ts";

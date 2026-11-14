@@ -13,24 +13,23 @@
  */
 import {
 	type Adapter,
-	type AnswerOutcome,
-	type Inspector,
-	type LastAssistant,
 	normalizeThread,
 	type OptionalCapability,
 	type PostOptions,
 	type PostResult,
-	type RunFailure,
-	type RunLook,
-	type StewardProbe,
 	type ThreadEvent,
 	type ThreadInput,
-	type Transcript,
-	type WaitingCard,
-	type WaitingItem,
-	type WaitingRead,
 	type WatchSink,
 } from "../core/adapter.ts";
+import type {
+	Inspector,
+	LastAssistant,
+	RunFailure,
+	RunLook,
+	StewardProbe,
+	Transcript,
+} from "../core/adapter-inspect.ts";
+import type { AnswerOutcome, WaitingCard, WaitingItem, WaitingRead } from "../core/adapter-waiting.ts";
 import type { WakeTransport } from "../core/deliver.ts";
 import type { InstructionRead } from "../core/history.ts";
 import type { Gate } from "../core/hold.ts";

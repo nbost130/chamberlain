@@ -10,7 +10,7 @@
  * un-snoozes, an answer, direction or dismissal settles the item (the page clears it), or the card behind a pointer resolves.
  */
 import type { Adapter, PostResult } from "./adapter.ts";
-import { heldForItem, heldId, heldOpen, noteHeld } from "./afk.ts";
+import { heldForItem, heldId, heldOpen, noteHeld } from "./afk-held.ts";
 import { isUrgent, plainQuestion, QUEUE, type Question, type QuestionState, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 

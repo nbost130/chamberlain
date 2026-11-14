@@ -71,7 +71,7 @@ type Defaults = ClassifierConfig;
 
 /** The provider, the mode, the text-leaves-the-machine switch and the bank name: the checks that come first. */
 function parseGate(o: Obj, d: Defaults) {
-	const provider = oneOf(o, "provider", W, PROVIDERS, d.provider);
+	const provider = oneOf(o, "provider", W, { allowed: PROVIDERS, d: d.provider });
 	const mode = modeOf(o, W, d.mode);
 	const allow = bool(o, "allowTextToLeaveMachine", W, d.allowTextToLeaveMachine);
 	if (SENDS_TEXT.includes(provider) && !allow)
@@ -96,8 +96,8 @@ function parseSend(o: Obj, d: Defaults): SendConfig {
 	const sendW = `${W}.send`;
 	const so = o.send === undefined ? {} : object(o.send, sendW, ["lastChars", "previousChars", "title"]);
 	return {
-		lastChars: num(so, "lastChars", sendW, d.send.lastChars, true),
-		previousChars: num(so, "previousChars", sendW, d.send.previousChars, true, true),
+		lastChars: num(so, "lastChars", sendW, { d: d.send.lastChars, whole: true }),
+		previousChars: num(so, "previousChars", sendW, { d: d.send.previousChars, whole: true, zeroOk: true }),
 		title: bool(so, "title", sendW, d.send.title),
 	};
 }
@@ -117,9 +117,9 @@ function parseBudget(o: Obj, d: Defaults): ClassifierConfig["budget"] {
 	const budW = `${W}.budget`;
 	const bo = o.budget === undefined ? {} : object(o.budget, budW, ["maxPerRun", "maxCallsPerDay", "maxUsdPerDay"]);
 	return {
-		maxPerRun: num(bo, "maxPerRun", budW, d.budget.maxPerRun, true),
-		maxCallsPerDay: num(bo, "maxCallsPerDay", budW, d.budget.maxCallsPerDay, true),
-		maxUsdPerDay: num(bo, "maxUsdPerDay", budW, d.budget.maxUsdPerDay, false),
+		maxPerRun: num(bo, "maxPerRun", budW, { d: d.budget.maxPerRun, whole: true }),
+		maxCallsPerDay: num(bo, "maxCallsPerDay", budW, { d: d.budget.maxCallsPerDay, whole: true }),
+		maxUsdPerDay: num(bo, "maxUsdPerDay", budW, { d: d.budget.maxUsdPerDay, whole: false }),
 	};
 }
 
@@ -132,7 +132,7 @@ function parseJev(o: Obj, d: Defaults): ClassifierConfig["jev"] {
 	return {
 		model: str(jo, "model", jevW, d.jev.model),
 		keyFile,
-		timeoutMs: num(jo, "timeoutMs", jevW, d.jev.timeoutMs, true),
+		timeoutMs: num(jo, "timeoutMs", jevW, { d: d.jev.timeoutMs, whole: true }),
 	};
 }
 
@@ -142,7 +142,7 @@ function parseHaiku(o: Obj, d: Defaults): ClassifierConfig["haiku"] {
 	return {
 		command: str(ho, "command", hW, d.haiku.command),
 		model: str(ho, "model", hW, d.haiku.model),
-		timeoutMs: num(ho, "timeoutMs", hW, d.haiku.timeoutMs, true),
+		timeoutMs: num(ho, "timeoutMs", hW, { d: d.haiku.timeoutMs, whole: true }),
 	};
 }
 
@@ -170,7 +170,7 @@ export function parseClassifier(raw: unknown): ClassifierConfig {
 		send,
 		redact,
 		budget,
-		armedGraceMinutes: num(o, "armedGraceMinutes", W, d.armedGraceMinutes, false, true),
+		armedGraceMinutes: num(o, "armedGraceMinutes", W, { d: d.armedGraceMinutes, whole: false, zeroOk: true }),
 		autoNudge: false,
 		autoSettle: false,
 		jev,

@@ -3,17 +3,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../../testing/store.ts";
+import { format } from "./queue-waits.ts";
 import {
 	analyze,
 	type Delivered,
-	format,
 	fromDeliveryId,
 	pct,
 	readRuns,
 	stat,
 	type Wake,
 	wakesFrom,
-} from "./queue-waits.ts";
+} from "./queue-waits-analysis.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

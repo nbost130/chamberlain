@@ -12,18 +12,22 @@ import { noAlert } from "../testing/alert.ts";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
-import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
-import { appendHeld, heldOpen } from "./afk.ts";
+import type { OptionalCapability, ThreadInput } from "./adapter.ts";
+import type { RunFailure } from "./adapter-inspect.ts";
+import type { WaitingItem } from "./adapter-waiting.ts";
+import { appendHeld, heldOpen } from "./afk-held.ts";
 import { closeCardByHand } from "./card-hold.ts";
 import { DEFAULT_BANK } from "./classifier/bank.ts";
 import type { Provider } from "./classifier/providers.ts";
 import type { SentState } from "./classifier/state.ts";
 import type { TurnItem } from "./decide.ts";
 import { withDeliveryId } from "./deliver.ts";
-import { createEngine, type EngineDeps } from "./engine.ts";
+import { createEngine } from "./engine.ts";
+import type { EngineDeps } from "./engine-support.ts";
 import type { HeldItem } from "./hold.ts";
 import { MIGRATIONS } from "./migrations.ts";
-import { askQuestion, claimWake, getQuestion, pageClaim, questionStates } from "./questions.ts";
+import { askQuestion, getQuestion, questionStates } from "./questions.ts";
+import { claimWake, pageClaim } from "./questions-claim.ts";
 import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 
@@ -2206,7 +2210,10 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		expect(h.events.filter((e) => e.event === "alarm" && e.key === "card-unverified:fake:a1")).toHaveLength(1);
 		expect(h.open()).toEqual({ holds: 1, questions: 1 });
 		// The hand close: hold and question together; the alarm ends and is not raised again.
-		expect(closeCardByHand(h.store, "fake", "a1", "the thread was deleted")).toEqual({ questions: 1, holds: 1 });
+		expect(closeCardByHand(h.store, { server: "fake", requestId: "a1" }, "the thread was deleted")).toEqual({
+			questions: 1,
+			holds: 1,
+		});
 		expect(h.store.items.get("alarm", "card-unverified:fake:a1")?.status).toBe("resolved");
 		const before = h.events.filter((e) => e.event === "card-unverified").length;
 		await h.engine.tick();

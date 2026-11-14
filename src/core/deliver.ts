@@ -10,7 +10,8 @@
 import { crashPoint } from "./crash.ts";
 import { holdable } from "./hold.ts";
 import { setting } from "./layout.ts";
-import type { Store, WakeMeta } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { WakeMeta } from "./store-wakes.ts";
 
 /**
  * How one wake reaches the Steward. The adapter owns the transport (a webhook, a socket call); the relay owns everything around it.

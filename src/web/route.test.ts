@@ -7,19 +7,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseAsk } from "../ask.ts";
-import { appendHeld, heldOpen } from "../core/afk.ts";
-import {
-	type Answer,
-	answerRoute,
-	askQuestion,
-	claimWake,
-	getQuestion,
-	pageClaim,
-	type Question,
-	readRelay,
-	startRelay,
-} from "../core/questions.ts";
+import { parseAsk } from "../ask-parse.ts";
+import { appendHeld, heldOpen } from "../core/afk-held.ts";
+import { type Answer, askQuestion, getQuestion, type Question } from "../core/questions.ts";
+import { claimWake, pageClaim, readRelay, startRelay } from "../core/questions-claim.ts";
+import { answerRoute } from "../core/questions-wake.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
 import { openCapability } from "../testing/capability.ts";

@@ -5,20 +5,18 @@
  * Lead the citation with the ruling's ID ("R12", or "R12, R30: why") so the rulings page can count it. Free text still
  * works; it is kept, and counts toward no ruling.
  */
+
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
 import { ledgerEvents } from "./obs/ledger.ts";
-import { citedIds } from "./rulings.ts";
+import { citedIds } from "./rulings-read.ts";
 import type { DecisionRow } from "./store.ts";
 
 export type DecisionRecord = DecisionRow;
 
 /** Pure: the log line for one decision. */
 export function decisionRecord(
-	thread: string,
-	decision: string,
-	ruling: string,
-	ref: string | undefined,
+	{ thread, decision, ruling, ref }: { thread: string; decision: string; ruling: string; ref?: string },
 	t = new Date().toISOString(),
 ): DecisionRecord {
 	const ids = citedIds(ruling);
@@ -38,7 +36,7 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		console.error('usage: decided.ts "<thread>" "<what I decided>" "<ruling cited, led by its ID: R12>" ["<ref>"]');
 		process.exit(2);
 	}
-	const rec = decisionRecord(thread, decision, ruling, ref);
+	const rec = decisionRecord({ thread, decision, ruling, ref });
 	const store = defaultStore();
 	ledgerEvents(store).decision(store.decisions.append(rec), rec);
 	console.log(rec.rulingIds ? `logged, citing ${rec.rulingIds.join(", ")}` : "logged");

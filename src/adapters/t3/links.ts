@@ -8,7 +8,7 @@
  * the server itself reports at `/.well-known/t3/environment`. The home server's entry leaves `environmentId` blank on purpose (that
  * blank is what marks it home), so its id is read from the server. Until it is known there is no link, never a guessed one.
  */
-import type { ThreadLinks } from "../../core/adapter.ts";
+import type { ThreadLinks } from "../../core/adapter-waiting.ts";
 import { readEnvironment } from "./compat.ts";
 
 /** The app's URL scheme when the entry names none: the App Store build of T3 Code. Its dev and preview builds use t3code-dev and t3code-preview. */

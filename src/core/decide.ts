@@ -263,7 +263,7 @@ export function rightsInFull(sent: RightsSent | undefined, hash: string, used: n
 }
 
 /** The waiting questions and their options as plain text, clipped to what a wake should carry. */
-export function questionText(questions: import("./adapter.ts").WaitQuestion[], max = 1200): string {
+export function questionText(questions: import("./adapter-waiting.ts").WaitQuestion[], max = 1200): string {
 	const text = questions
 		.map((q) =>
 			[

@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "./core/adapter.ts";
+import type { WaitingCard } from "./core/adapter-waiting.ts";
 import { createEngine } from "./core/engine.ts";
 import { askQuestion, getQuestion, type Question } from "./core/questions.ts";
 import { evaluateSource, recordEvaluation } from "./core/source.ts";

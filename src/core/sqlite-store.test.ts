@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { NOTIFY_ONCE, repeatAtIntervals, repeatEvery } from "./notification.ts";
 import { DatabaseTooNewError, openStore } from "./sqlite-store.ts";
-import type { Challenge, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { Challenge } from "./store-wakes.ts";
 
 const open: Store[] = [];
 const dirs: string[] = [];
@@ -648,7 +649,7 @@ describe("claims: the one-wake ledger", () => {
 		expect(s.claims.startRelay("queue", "Q-aaaa1")).toBe(true);
 		expect(s.claims.startRelay("queue", "Q-aaaa1")).toBe(false);
 		expect(s.claims.readRelay("queue", "Q-aaaa1")).toEqual({ started: true });
-		s.claims.finishRelay("queue", "Q-aaaa1", "delivered", "ok");
+		s.claims.finishRelay("queue", "Q-aaaa1", { outcome: "delivered", detail: "ok" });
 		expect(s.claims.readRelay("queue", "Q-aaaa1")).toMatchObject({ started: true, outcome: "delivered", detail: "ok" });
 		expect(s.claims.listRelays("queue").get("Q-aaaa1")?.t).toBeTruthy();
 	});

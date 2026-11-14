@@ -1,4 +1,4 @@
-import type { WaitingItem, WaitQuestion } from "../../core/adapter.ts";
+import type { WaitingItem, WaitQuestion } from "../../core/adapter-waiting.ts";
 import { normalizeWaitKind } from "./state.ts";
 
 /**

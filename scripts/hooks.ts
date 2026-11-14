@@ -22,50 +22,17 @@
 // <git-common-dir>/chamberlain-hooks/bypass.log. Git has no hook after a `git push --no-verify`, and
 // LEFTHOOK=0 or excluding every job stops lefthook before any code of ours runs; CI runs the same
 // checks on every PR and is what catches those.
-
-import {
-	appendFileSync,
-	existsSync,
-	linkSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { scratchGitHome, sealedGitEnv, testRunEnv } from "./git-env.ts";
+import { git, readLines, stateDir } from "./hooks-base.ts";
+import { withLock } from "./hooks-lock.ts";
+import { inSnapshot, run, runTests, snapshotCommit, snapshotIndex } from "./hooks-run.ts";
 
 const DROPPING_VARS = ["LEFTHOOK_EXCLUDE", "LEFTHOOK_ONLY"];
-const LOCK_TIMEOUT_MS = 600_000;
 const MAX_VERIFIED = 500;
 const NO_SHA = /^0+$/;
 /** Reflog actions whose commits git makes without running pre-commit: not a bypass. */
 const REPLAY_ACTIONS = ["cherry-pick", "revert", "rebase", "merge", "pull", "am"];
-
-/**
- * Runs git. The hook's own git calls keep the environment git gave the hook (GIT_DIR, GIT_INDEX_FILE: they name the repository
- * being pushed or committed to); a caller that works on some other repository, as the tests do, passes a sealed `env`.
- */
-function git(
-	args: string[],
-	cwd?: string,
-	env: Record<string, string | undefined> = process.env,
-): { ok: boolean; out: string } {
-	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", env, ...(cwd ? { cwd } : {}) });
-	return { ok: proc.exitCode === 0, out: proc.stdout.toString().trim() };
-}
-
-function stateDir(): string {
-	const common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-	if (!common.ok) throw new Error("not a git repository");
-	const dir = join(common.out, "chamberlain-hooks");
-	mkdirSync(dir, { recursive: true });
-	return dir;
-}
 
 /** The environment variables that make lefthook skip jobs, one message each. */
 export function droppedJobs(env: Record<string, string | undefined>): string[] {
@@ -79,10 +46,6 @@ export function isBypass(commit: { parents: number; action: string; tree: string
 	if (commit.parents > 1) return false;
 	if (REPLAY_ACTIONS.some((action) => commit.action.startsWith(action))) return false;
 	return !verified.includes(commit.tree);
-}
-
-function readLines(file: string): string[] {
-	return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
 }
 
 function guard(): number {
@@ -123,47 +86,6 @@ function audit(): number {
 
 // ---- snapshots: the checks run on the bytes that will be committed or pushed ----------------------------------------
 
-/** Writes every file of the index (what the next commit will contain) under `dir`. */
-export function snapshotIndex(
-	root: string,
-	dir: string,
-	env: Record<string, string | undefined> = process.env,
-): boolean {
-	return git(["checkout-index", "--all", `--prefix=${dir}/`], root, env).ok;
-}
-
-/** Writes the tree of commit `sha` under `dir`. */
-export function snapshotCommit(
-	root: string,
-	sha: string,
-	dir: string,
-	env: Record<string, string | undefined> = process.env,
-): boolean {
-	const archive = Bun.spawnSync(["git", "archive", "--format=tar", sha], {
-		cwd: root,
-		env,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	if (archive.exitCode !== 0) return false;
-	return Bun.spawnSync(["tar", "-x", "-C", dir], { env: sealedGitEnv(env), stdin: archive.stdout }).exitCode === 0;
-}
-
-/** Fills a fresh temporary directory, links the clone's node_modules into it, runs `body` there, and removes it. */
-async function inSnapshot(root: string, fill: (dir: string) => boolean, body: (dir: string) => Promise<number>) {
-	const dir = mkdtempSync(join(tmpdir(), "chamberlain-hook-"));
-	try {
-		if (!fill(dir)) {
-			console.error("hooks: could not take a snapshot to check");
-			return 1;
-		}
-		symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
-		return await body(dir);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-}
-
 const LINTED = /^(src|scripts)\/.*\.ts$/;
 /** The snapshot has no .git, so Biome must not look for one. */
 const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-unmatched", "--vcs-enabled=false"];
@@ -172,41 +94,6 @@ const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-
 function listed(args: string[], root: string): string[] | undefined {
 	const out = git(args, root);
 	return out.ok ? out.out.split("\n").filter((file) => LINTED.test(file)) : undefined;
-}
-
-/**
- * Starts one check or test run and waits for it. The child gets an explicit environment with every GIT_* variable removed
- * (scripts/git-env.ts): git exports GIT_DIR and others to a hook, and a child that inherits them points every git command it
- * runs, a test's `git init` and `git config` included, at the real repository. No shell is involved, so nothing re-reads them.
- */
-async function run(
-	cmd: string[],
-	cwd: string,
-	env: Record<string, string | undefined> = sealedGitEnv(process.env),
-): Promise<number> {
-	return await Bun.spawn(cmd, { cwd, env, stdio: ["inherit", "inherit", "inherit"] }).exited;
-}
-
-/**
- * The test run: `cmd` in `cwd` with the sealed environment of every other step, plus a scratch HOME and global git config under
- * TMPDIR and no system config, so a test that runs git can neither read nor write the developer's real git configuration.
- * `base` is the environment to seal (the hook's own, unless a test of this function says otherwise).
- */
-export async function runTests(
-	cmd: string[],
-	cwd: string,
-	base: Record<string, string | undefined> = process.env,
-): Promise<number> {
-	const scratch = scratchGitHome();
-	const remove = () => rmSync(scratch.root, { recursive: true, force: true });
-	// process.exit() (the lock's ^C handler) does not unwind this function, but it does run 'exit' listeners.
-	process.on("exit", remove);
-	try {
-		return await run(cmd, cwd, testRunEnv(base, scratch));
-	} finally {
-		process.off("exit", remove);
-		remove();
-	}
 }
 
 /** Biome on `files` (every file when undefined); nothing to check is a pass. */
@@ -306,84 +193,6 @@ async function prePush(): Promise<number> {
 }
 
 // ---- the heavy-work lock ------------------------------------------------------------------------------------------------
-
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function ownerOf(path: string): number {
-	return Number(readLines(path)[0]) || 0;
-}
-
-/**
- * Takes the lock: a file holding our pid, put in place with link(2), which fails if it exists and leaves no moment when
- * the file exists empty. A lock whose owner is gone is moved aside (rename is atomic, so one waiter wins it) and the
- * attempt is made again by the caller's loop.
- */
-export function takeLock(path: string): boolean {
-	const mine = `${path}.${process.pid}.${Date.now()}`;
-	writeFileSync(mine, String(process.pid));
-	try {
-		linkSync(mine, path);
-		return true;
-	} catch {
-		reclaimIfDead(path);
-		return false;
-	} finally {
-		rmSync(mine, { force: true });
-	}
-}
-
-function reclaimIfDead(path: string): void {
-	const owner = ownerOf(path);
-	if (owner && alive(owner)) return;
-	const aside = `${path}.stale.${process.pid}.${Date.now()}`;
-	try {
-		renameSync(path, aside);
-	} catch {
-		return; // another waiter moved it first
-	}
-	// If a live lock was swapped in between our read and the rename, put it back.
-	if (ownerOf(aside) !== owner) {
-		try {
-			linkSync(aside, path);
-		} catch {
-			// a newer lock is already in place: nothing to restore
-		}
-	}
-	rmSync(aside, { force: true });
-}
-
-/** Removes the lock only when it is ours. */
-export function releaseLock(path: string): void {
-	if (ownerOf(path) === process.pid) rmSync(path, { force: true });
-}
-
-async function withLock(job: () => Promise<number>): Promise<number> {
-	const path = join(stateDir(), "heavy.lock");
-	const deadline = Date.now() + LOCK_TIMEOUT_MS;
-	while (!takeLock(path)) {
-		if (Date.now() > deadline) {
-			console.error(`hooks: timed out waiting for ${path}. Another worktree is running the checks; wait for it.`);
-			return 1;
-		}
-		await Bun.sleep(1000);
-	}
-	process.on("SIGINT", () => {
-		releaseLock(path);
-		process.exit(130);
-	});
-	try {
-		return await job();
-	} finally {
-		releaseLock(path);
-	}
-}
 
 async function install(): Promise<number> {
 	if (process.env.CI) return 0;

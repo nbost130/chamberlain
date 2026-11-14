@@ -1,16 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-	ConfigFileError,
-	configValue,
-	legacyValue,
-	parseConfigDoc,
-	SCALARS,
-	SECTIONS,
-	setting,
-	settingSource,
-} from "./layout.ts";
+import { configValue, setting, settingSource } from "./layout.ts";
+import { legacyValue } from "./layout-legacy.ts";
+import { ConfigFileError, parseConfigDoc, SCALARS, SECTIONS } from "./layout-schema.ts";
 import { SchemaTooNewError } from "./schema.ts";
 
 const refused = (doc: unknown, message: string) =>

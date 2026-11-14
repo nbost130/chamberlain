@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseAsk, queueBase, stageEvidence } from "./ask.ts";
+import { queueBase, stageEvidence } from "./ask.ts";
+import { parseAsk } from "./ask-parse.ts";
 import type { Question } from "./core/questions.ts";
 
 const base = {

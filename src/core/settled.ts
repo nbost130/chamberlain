@@ -24,8 +24,9 @@
  * never silently.
  */
 import { principal, readSettings, type SettledMatch } from "./config.ts";
-import { type QuestionState, questionStates } from "./questions.ts";
-import { type Clock, isExpired, readRulings } from "./rulings.ts";
+import type { Clock } from "./rulings.ts";
+import { decisionRecords, queueRecords, rulingRecords } from "./settled-records.ts";
+import { names, sameTopic, titlesOverlap, tokens } from "./settled-title.ts";
 import type { Store } from "./store.ts";
 
 type SettledSource = "queue" | "ruling" | "decision";
@@ -50,7 +51,7 @@ export type Subject = {
 	branch?: string;
 };
 
-type SettledRecord = {
+export type SettledRecord = {
 	source: SettledSource;
 	date: string;
 	id: string;
@@ -61,13 +62,6 @@ type SettledRecord = {
 	run?: string;
 	item?: string;
 };
-
-const oneLine = (s: string, n = 110) => {
-	const t = s.replace(/\s+/g, " ").trim();
-	return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-};
-
-/* ---------- refs ---------- */
 
 type PrRef = { repo?: string; n: number };
 type Refs = { prs: PrRef[]; shas: string[]; items: string[]; runs: string[]; branches: string[] };
@@ -124,168 +118,6 @@ function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { strong: s
 
 /* ---------- words ---------- */
 
-const STOP = new Set(
-	"the and for with from this that these those into onto over under about after before while than then them they their there here have has had been being are was were will would should could can may might must not but you your his her its our out off per via who whom what when where which why how all any each some more most other such only own same too very just also now new old one two get got let use used using need needs want wants make made going goes done did does doing is it as at be by do if in of on or so to up we an a".split(
-		" ",
-	),
-);
-/** Workflow words that open many unrelated questions. A title made only of these never matches on overlap. */
-const GENERIC = new Set(
-	"approve approval approved deploy deployed deployment merge merged review reviewed decision decide decided question ask asks asked fix fixed fixes pr issue release released delete deleted remove removed ready green red check checks run runs thread threads item items update updated add added change changes changed hold held wait waiting needs needed confirm confirmed yes no ok pick choose call plan test tests build builds work worker workers task tasks gate gates".split(
-		" ",
-	),
-);
-
-/** Pure: a title's significant words, in order, lightly stemmed (a plural "s" dropped). */
-export function tokens(text: string): string[] {
-	const out: string[] = [];
-	for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
-		if (raw.length < 3 || STOP.has(raw)) continue;
-		const w = raw.length > 4 && raw.endsWith("s") && !raw.endsWith("ss") ? raw.slice(0, -1) : raw;
-		if (out[out.length - 1] !== w) out.push(w);
-	}
-	return out;
-}
-
-/**
- * Pure: the shared words when two titles overlap strongly enough to be the same question, else undefined. `ignore` are words
- * that say nothing about the topic (settings `ignoreWords`, the principal's name, lower-cased by `matchSettings`): they are
- * dropped from both titles before any count, so "Acme deployment" and "Acme deployment database rollback?" share one word.
- */
-export function titlesOverlap(x: string, y: string, ignore: ReadonlySet<string> = new Set()): string[] | undefined {
-	const tx = dropIgnored(tokens(x), ignore),
-		ty = dropIgnored(tokens(y), ignore);
-	const [a, b] = new Set(tx).size <= new Set(ty).size ? [tx, ty] : [ty, tx];
-	const aSet = new Set(a),
-		bSet = new Set(b);
-	if (aSet.size < 2) return undefined;
-	const shared = [...aSet].filter((w) => bSet.has(w));
-	const distinctive = shared.filter((w) => !GENERIC.has(w));
-	if (aSet.size === 2) return pairOverlap(a, b, bSet.size, shared, distinctive);
-	if (shared.length < 3 || shared.length / aSet.size < 0.75 || distinctive.length < 2) return undefined;
-	if (bSet.size <= 2 * aSet.size) return shared;
-	// Against a long text every shared word must sit close together, or any long ruling would "contain" a short title.
-	if (shared.length !== aSet.size) return undefined;
-	return sitTogether(b, new Set(shared), 2 * aSet.size + 2) ? shared : undefined;
-}
-
-/** Pure: a title's words without the ignored ones and without a word repeated right after itself. */
-const dropIgnored = (t: string[], ignore: ReadonlySet<string>) =>
-	t.filter((w) => !ignore.has(w)).filter((w, i, kept) => i === 0 || kept[i - 1] !== w);
-
-/** Pure: a two-word title's overlap with `b`: both words shared, one of them distinctive, and in order with at most one word between. */
-function pairOverlap(
-	a: string[],
-	b: string[],
-	bSize: number,
-	shared: string[],
-	distinctive: string[],
-): string[] | undefined {
-	if (shared.length !== 2 || !distinctive.length) return undefined;
-	if (bSize === 2) return shared;
-	// In order, with at most one word between: "Rename the project to Atlas" is "Rename to Atlas".
-	for (let i = 0; i < b.length; i++) if (b[i] === a[0] && (b[i + 1] === a[1] || b[i + 2] === a[1])) return shared;
-	return undefined;
-}
-
-/** Pure: whether some window of `width` words of `b` holds every word of `need`. */
-function sitTogether(b: string[], need: ReadonlySet<string>, width: number): boolean {
-	for (let i = 0; i < b.length; i++) {
-		const seen = new Set<string>();
-		for (let j = i; j < b.length && j - i < width; j++) {
-			const w = b[j];
-			if (w !== undefined && need.has(w)) seen.add(w);
-			if (seen.size === need.size) return true;
-		}
-	}
-	return false;
-}
-
-/**
- * Pure: the shared topic words when two titles are about the same thing beyond the subject they both name, else undefined:
- * three distinctive words, and at least half of the shorter title's. What a weak ref must pass. `ignore` are words that
- * say nothing about the topic (the principal's name, a project name).
- */
-export function sameTopic(x: string, y: string, ignore: ReadonlySet<string> = new Set()): string[] | undefined {
-	const keep = (t: string) => new Set(tokens(t).filter((w) => !GENERIC.has(w) && !ignore.has(w) && !/^\d+$/.test(w)));
-	const a = keep(x),
-		b = keep(y);
-	const shared = [...a].filter((w) => b.has(w));
-	return shared.length >= 3 && shared.length / Math.min(a.size, b.size) >= 0.5 ? shared : undefined;
-}
-
-const norm = (s: string) =>
-	s
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, " ")
-		.trim();
-/** Pure: does `text` name `title` as a whole phrase? Only a title of 12+ characters and two words counts. */
-function names(text: string, title: string | undefined): boolean {
-	const t = title ? norm(title) : "";
-	if (t.length < 12 || !t.includes(" ")) return false;
-	return ` ${norm(text)} `.includes(` ${t} `);
-}
-
-/* ---------- the three sources ---------- */
-
-/** What a settled question's answer says on one line: its option or direction, its note and any ruling it saved. */
-function queueAnswerText(q: QuestionState): string {
-	if (q.status === "answered-on-card") return "answered on its question card";
-	const note = q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : "";
-	const ruling = q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : "";
-	return `answered "${q.answer?.label ?? "?"}"${note}${ruling}`;
-}
-
-function queueRecords(store: Store): SettledRecord[] {
-	const out: SettledRecord[] = [];
-	for (const q of questionStates(store).values()) {
-		// A dismissed item was never answered: it is not a ruling and answers no later question, so a lookup never sees it.
-		if (q.status === "open" || q.status === "dismissed") continue;
-		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
-		const answer = queueAnswerText(q);
-		out.push({
-			source: "queue",
-			date,
-			id: q.id,
-			answer,
-			title: q.title,
-			text: `${q.title}\n${q.context ?? ""}\n${q.blocks ?? ""}`,
-			thread: q.thread,
-		});
-	}
-	return out;
-}
-
-/** The rulings in force at `nowMs`: status in-force and not past its expiry. Proposed, expired, superseded and retired rulings settle nothing. */
-function rulingRecords(store: Store, nowMs: number): SettledRecord[] {
-	return readRulings(store)
-		.filter((r) => r && typeof r === "object" && r.status === "in-force" && !isExpired(r, nowMs))
-		.map((r) => ({
-			source: "ruling" as const,
-			date: String(r.confirmedAt ?? r.date ?? "").slice(0, 10),
-			id: r.id,
-			answer: `in force: ${oneLine(r.decides)}`,
-			title: r.decides,
-			text: `${r.words}\n${r.decides}`,
-			...(r.item ? { item: r.item } : {}),
-		}));
-}
-
-function decisionRecords(store: Store): SettledRecord[] {
-	return store.decisions
-		.list()
-		.filter((d) => d && typeof d === "object" && typeof d.t === "string" && typeof d.decision === "string")
-		.map((d) => ({
-			source: "decision" as const,
-			date: d.t.slice(0, 10),
-			id: `D@${d.t.slice(0, 16)}`,
-			answer: `decided: ${oneLine(d.decision)}${d.ruling ? ` (${oneLine(d.ruling, 40)})` : ""}`,
-			title: d.decision,
-			text: `${d.decision}\n${d.ruling ?? ""}\n${d.ref ?? ""}`,
-			thread: d.thread,
-		}));
-}
-
 /** The matching rule's settings: settings.json `settledMatch`, else the defaults (title overlap on, no extra ignored words). */
 export function matchSettings(m: SettledMatch | undefined = readSettings().settledMatch): {
 	titleOverlap: boolean;
@@ -314,7 +146,7 @@ export function findSettled(
 	let malformed = 0;
 	for (const r of records) {
 		try {
-			const why = whyMatches(s, body, mine, r, titleOverlap, ignore);
+			const why = whyMatches({ s, body, mine }, r, { titleOverlap, ignore });
 			if (why) matches.push({ source: r.source, date: r.date, id: r.id, answer: r.answer, why });
 		} catch {
 			// EMPTY_CATCH_OK: one malformed record (a title that is not text, say) is counted below and never hides the others.
@@ -359,12 +191,9 @@ function subjectRefs(s: Subject, body: string): Refs {
 
 /** What one record's match with the subject rests on, or undefined when it does not match. May throw on a malformed record. */
 function whyMatches(
-	s: Subject,
-	body: string,
-	mine: Refs,
+	{ s, body, mine }: { s: Subject; body: string; mine: Refs },
 	r: SettledRecord,
-	titleOverlap: boolean,
-	ignore: ReadonlySet<string>,
+	{ titleOverlap, ignore }: { titleOverlap: boolean; ignore: ReadonlySet<string> },
 ): string | undefined {
 	const theirs = refsIn(r.text);
 	theirs.items.push(r.id);

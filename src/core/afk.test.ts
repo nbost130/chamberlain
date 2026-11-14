@@ -3,11 +3,10 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
+import { brief, briefMarkdown } from "./afk.ts";
 import {
 	type Afk,
 	appendHeld,
-	brief,
-	briefMarkdown,
 	cleanRef,
 	closeHeld,
 	closeHeldForCard,
@@ -18,7 +17,7 @@ import {
 	heldOpen,
 	noteHeld,
 	readAfk,
-} from "./afk.ts";
+} from "./afk-held.ts";
 import { awayModeLine } from "./messages.ts";
 import { askQuestion, type Question } from "./questions.ts";
 import { openStore } from "./sqlite-store.ts";

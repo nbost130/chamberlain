@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
-import type { StewardProbe } from "./adapter.ts";
+import type { StewardProbe } from "./adapter-inspect.ts";
 import type { RightsSent } from "./decide.ts";
 import { createStewardCheck, type StewardCheckDeps } from "./engine-steward.ts";
 import { alarms } from "./messages.ts";

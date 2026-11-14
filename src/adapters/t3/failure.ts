@@ -3,7 +3,7 @@
  * `error` carrying the run's id and a `failure` object (`class`, `code`, `message`, `retryable`, `resetAt`), and an interrupt as a
  * `run_interrupt_request` item with the run's id. Both are read here and nowhere else; the core classifies them (src/core/recover.ts).
  */
-import type { RunFailure, RunLook } from "../../core/adapter.ts";
+import type { RunFailure, RunLook } from "../../core/adapter-inspect.ts";
 
 type Run = { id?: string; ordinal?: number; status?: string };
 type Item = {

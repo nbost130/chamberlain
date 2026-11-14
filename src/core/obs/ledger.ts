@@ -18,7 +18,8 @@ import { obsFor } from "../log.ts";
 import type { Item, Store } from "../store.ts";
 import { type LedgerDb, openLedger } from "./db.ts";
 import { corrOf, isUuid } from "./fields.ts";
-import type { Obs, Outcome } from "./obs.ts";
+import type { Obs } from "./obs.ts";
+import type { Outcome } from "./obs-spec.ts";
 
 /** An event ready to append: what it is, when, the fields the registry types, the key that makes it appear once, and the thread it is about. */
 export type Derived = {
@@ -131,13 +132,10 @@ function holdClosedEvent(item: Row): Derived {
 function emit(obs: Obs, d: Derived, corr?: string): Outcome {
 	// A thread that is not a UUID (a decision's `thread` is whatever the Steward typed) is left out, not counted as a rejection.
 	const thread = d.thread !== undefined && isUuid(d.thread) ? d.thread : undefined;
-	return obs.record(
-		"info",
-		d.event,
-		d.fields,
-		{ mod: "ledger", thread, ...(corr ? { corr } : {}) },
-		{ t: d.t, sourceKey: d.sourceKey },
-	);
+	return obs.record("info", d.event, d.fields, {
+		ctx: { mod: "ledger", thread, ...(corr ? { corr } : {}) },
+		opts: { t: d.t, sourceKey: d.sourceKey },
+	});
 }
 
 /** The queue item the store holds, as the row shape the builders read (the reconciler reads the same shape from SQL). */
@@ -256,7 +254,7 @@ export function reconcileStore(store: Store, o: ReconcileOptions = {}): Reconcil
 		const obs = obsFor(store);
 		const r = reconcile(obs, ledger, o);
 		obs.checkpoint();
-		if (r.emitted > 0) obs.record("info", "obs.reconciled", { ...r }, { mod: "ledger" });
+		if (r.emitted > 0) obs.record("info", "obs.reconciled", { ...r }, { ctx: { mod: "ledger" } });
 		return r;
 	} catch {
 		return undefined;

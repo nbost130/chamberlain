@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { eventRows, everything, OTHER_THREAD, THREAD } from "../../testing/obs.ts";
 import { MARK } from "../../testing/secrets.ts";
 import { memStore } from "../../testing/store.ts";
-import { appendHeld, closeHeld, heldId } from "../afk.ts";
+import { appendHeld, closeHeld, heldId } from "../afk-held.ts";
 import { closeCardQuestions } from "../card-hold.ts";
 import { decisionRecord } from "../decided.ts";
 import { obsFor } from "../log.ts";
-import { type Answer, askQuestion, claimWake, pageClaim, QUEUE, type Question } from "../questions.ts";
+import { type Answer, askQuestion, QUEUE, type Question } from "../questions.ts";
+import { claimWake, pageClaim } from "../questions-claim.ts";
 import { openStore } from "../sqlite-store.ts";
 import { dbPath, type Store } from "../store.ts";
 import { openLedger } from "./db.ts";
@@ -75,10 +76,7 @@ function oldLedger(dir: string) {
 	for (const [i, thread] of [THREAD, "Deploy the billing fix", OTHER_THREAD].entries())
 		store.decisions.append(
 			decisionRecord(
-				thread,
-				`decided ${MARK} ${i}`,
-				i === 0 ? "R12, R30: words" : "no ruling",
-				undefined,
+				{ thread, decision: `decided ${MARK} ${i}`, ruling: i === 0 ? "R12, R30: words" : "no ruling" },
 				`2026-11-12T0${i}:00:00.000Z`,
 			),
 		);
@@ -252,8 +250,8 @@ describe("the inline emission, and the repair of the one that did not happen", (
 		ledgerEvents(store).answered("Q-inl01", answerOf("Q-inl01", 1, "page", new Date(Date.now() + 5000).toISOString()));
 		const h = appendHeld(store, { thread: "T", what: "w" });
 		closeHeld(store, h, "done");
-		store.decisions.append(decisionRecord(THREAD, "d", "R1", undefined));
-		ledgerEvents(store).decision(1, decisionRecord(THREAD, "d", "R1", undefined));
+		store.decisions.append(decisionRecord({ thread: THREAD, decision: "d", ruling: "R1" }));
+		ledgerEvents(store).decision(1, decisionRecord({ thread: THREAD, decision: "d", ruling: "R1" }));
 		const rows = eventRows(obsFor(store), "source_key IS NOT NULL");
 		expect(rows.map((r) => r.source_key).sort()).toEqual(
 			["decision:1", `hold:${h}:closed`, "item:Q-inl01:answered", "item:Q-inl01:asked"].sort(),

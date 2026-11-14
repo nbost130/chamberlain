@@ -4,7 +4,7 @@
  * (src/core/engine.ts), which passes it the few things it reads.
  */
 import { readFileSync } from "node:fs";
-import { readAfk } from "./afk.ts";
+import { readAfk } from "./afk-held.ts";
 import { principal } from "./config.ts";
 import type { Outbox } from "./deliver.ts";
 import type { Log } from "./log.ts";

@@ -5,15 +5,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld, HELD, heldOpen } from "../core/afk.ts";
+import { appendHeld, HELD, heldOpen } from "../core/afk-held.ts";
 import { newToken, TOKEN_HEADER } from "../core/capability.ts";
 import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import { askQuestion, QUEUE, type Question, questionStates, readRelay } from "../core/questions.ts";
+import { askQuestion, QUEUE, type Question, questionStates } from "../core/questions.ts";
+import { readRelay } from "../core/questions-claim.ts";
 import { findSettled } from "../core/settled.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath, type Store } from "../core/store.ts";
 import { memoryCapability } from "../testing/capability.ts";
-import { createApp, inlineVerdict } from "./app.ts";
+import { createApp } from "./app.ts";
+import { inlineVerdict } from "./app-http.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
@@ -295,7 +297,7 @@ describe("direction: a note and no option", () => {
 		expect(wakes(s)).toHaveLength(1);
 	});
 
-	test("closes its afk hold, once the daemon's reconciler runs, as any answer does", async () => {
+	test("closes its afk hold the moment it settles; the reconciler finds nothing left", async () => {
 		const s = setup();
 		askQuestion(s.store, question("Q-aaaa"));
 		const h = hold(s.store, "Q-aaaa");

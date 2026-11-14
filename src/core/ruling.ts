@@ -103,15 +103,13 @@ function printRulings(store: Store) {
 /** Records the words as a ruling in force, and says what happened. */
 function recordInChat(store: Store, a: Recording): string {
 	const sup = a.opts.supersedes?.length ? a.opts.supersedes.join(", ") : undefined;
-	const r = addInForce(
-		store,
-		a.words,
-		a.decides,
-		"chat",
-		`stated by ${principal()} in chat, recorded by the Steward`,
-		undefined,
-		a.opts,
-	);
+	const r = addInForce(store, {
+		words: a.words,
+		decides: a.decides,
+		source: "chat",
+		how: `stated by ${principal()} in chat, recorded by the Steward`,
+		opts: a.opts,
+	});
 	return r.duplicate
 		? `already recorded as ${r.id} (${r.status}); ${r.supersedesAdded?.length ? `it now also supersedes ${r.supersedesAdded.join(", ")}, retired as superseded now` : "nothing new added"}`
 		: `recorded ${r.id}, in force${sup ? `; ${sup} retired as superseded` : ""}`;
@@ -120,7 +118,7 @@ function recordInChat(store: Store, a: Recording): string {
 /** Records the words as a proposal, and says what happened. */
 function recordProposal(store: Store, a: Recording): string {
 	const sup = a.opts.supersedes?.length ? a.opts.supersedes.join(", ") : undefined;
-	const r = propose(store, a.words, a.decides, undefined, a.opts);
+	const r = propose(store, { words: a.words, decides: a.decides, opts: a.opts });
 	const added = r.supersedesAdded?.join(", ");
 	if (r.alreadyInForce)
 		return `already recorded as ${r.id} (in force); nothing new added${r.supersedesNotAdded?.length ? `. It does not supersede ${r.supersedesNotAdded.join(", ")}: a proposal cannot change a ruling in force; ${principal()} retires or replaces it on the rulings page` : ""}`;
