@@ -439,19 +439,19 @@ test("the view sends the page's key from its own script address on every call, a
 	expect(calls.length).toBeGreaterThan(0);
 	expect(headers).toHaveLength(calls.length);
 	expect(headers.every((h) => h["x-decision-token"] === KEY)).toBe(true);
-	// an <img> cannot send a header, so its address carries the key; "Open the queue page" does too, and opens signed in
+	// an <img> cannot send a header, so its address carries the key
 	const imgs = dq.all((e) => e.tag === "img");
 	expect(imgs.length).toBeGreaterThan(0);
 	expect(imgs.every((i) => i.src.endsWith(`/shot.png?k=${KEY}`))).toBe(true);
 });
 
-test("a mirrored card's 'Open the queue page' link opens signed in, with the key from the script address", async () => {
+test("a mirrored card's 'Open the queue page' link carries no key: the script's key is the weak view key, and the browser's own cookie signs it in", async () => {
 	const KEY = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
 	const dq = run(() => ({ items: [], cards: [card("rm -rf build", "sig-1")] }), {
 		src: `http://queue.test/inline.js?view=decisions&k=${KEY}`,
 	});
 	await settle();
-	expect(dq.all((e) => e.tag === "a" && e.href === `http://queue.test/?k=${KEY}`)).toHaveLength(1);
+	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(1);
 });
 
 test("a view whose key was rotated says so, instead of showing an empty queue", async () => {

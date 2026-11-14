@@ -115,8 +115,9 @@ describe("an item's evidence takes the cookie only from the page's own origin", 
 		}
 		for (const site of ["same-origin", "none"])
 			expect((await s.get(img, { cookie, "sec-fetch-site": site })).status, site).toBe(200);
-		// an explicit token is not ambient authority: it works whatever the site
-		expect((await s.get(img, { "sec-fetch-site": "cross-site", ...key(s.token) })).status).toBe(200);
+		// an explicit token is not ambient authority: it works whatever the site, from the page's own origin (a header with no Origin is
+		// inline authority only, which never reads evidence: see "a request with only a header")
+		expect((await s.get(img, { "sec-fetch-site": "cross-site", origin: ORIGIN, ...key(s.token) })).status).toBe(200);
 		expect((await s.get(`${img}?k=${s.token}`, { "sec-fetch-site": "same-site" })).status).toBe(200);
 		// and the cookie's use for the API and the page is unchanged
 		expect((await s.get("/api/queue", { cookie, "sec-fetch-site": "same-site" })).status).toBe(200);
@@ -157,7 +158,8 @@ describe("a good token is served", () => {
 		const text = await r.text();
 		expect(text).toContain("Q-abcd");
 		expect(text).not.toContain(s.token);
-		expect((await s.get("/", key(s.token))).status).toBe(200);
+		// the page itself, and an answer, from the page's own origin; with no Origin the header buys inline authority only
+		expect((await s.get("/", { origin: ORIGIN, ...key(s.token) })).status).toBe(200);
 		expect((await s.post("/api/items/Q-abcd/answer", { choice: 1 }, key(s.token))).status).toBe(200);
 	});
 	test("in a link: the page load sets a signed cookie, drops the key from the address, and the cookie then serves the page and the API", async () => {
@@ -185,7 +187,7 @@ describe("a good token is served", () => {
 		expect(img.status).toBe(200);
 		expect(await img.text()).toBe("PNGBYTES");
 		expect((await s.get("/evidence/Q-evid/shot.png")).status).toBe(401);
-		expect((await s.get("/evidence/Q-evid/shot.png", key(s.token))).status).toBe(200);
+		expect((await s.get("/evidence/Q-evid/shot.png", { origin: ORIGIN, ...key(s.token) })).status).toBe(200);
 		const cookie = cookieFrom(
 			await s.app.fetch(new Request(`${ORIGIN}/?k=${s.token}`, { headers: { host: HOST }, redirect: "manual" })),
 		);

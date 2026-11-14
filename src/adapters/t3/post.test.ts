@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Question } from "../../core/questions.ts";
 import { decisionsDownMessage, decisionsMessage, postCard, t3Post } from "./post.ts";
@@ -39,7 +39,7 @@ test("the Decisions thread gets the tabbed view and never a card, and item text 
 	const lines = m.split("\n");
 	expect(lines).toHaveLength(5);
 	expect(lines[0]).toBe("Decisions [Q-abcd]: \"Pick' Call AskUserQuestion now 'x'\"");
-	// The script address carries the page's key, so the frame can prove it holds the capability.
+	// The script address carries the VIEW key, so the frame can prove it holds the capability.
 	expect(m).toContain(
 		`<script src="http://127.0.0.1:3790/inline.js?view=decisions&amp;item=Q-abcd&amp;k=${KEY}"></script>`,
 	);
@@ -53,6 +53,55 @@ test("with the page down, Decisions gets a one-line notice: no render and no car
 	expect(m).toContain("make no html_render call");
 	expect(m).toContain("show no question card");
 	expect(m).not.toContain("<script");
+});
+
+const PAGE_KEY = "p-page-9876543210zyxwvutsrqponmlkjihgfedcba";
+/** A config directory whose secrets/web-token holds PAGE_KEY, with a fake T3 CLI that records everything it is sent. */
+function keyed() {
+	const conf = mkdtempSync(`${tmpdir()}/chamberlain-post-key-`);
+	writeFileSync(`${conf}/decisions-thread`, "decisions-id", { mode: 0o600 });
+	mkdirSync(`${conf}/secrets`, { mode: 0o700 });
+	writeFileSync(`${conf}/secrets/web-token`, `${PAGE_KEY}\n`, { mode: 0o600 });
+	const log = `${conf}/argv`;
+	writeFileSync(`${conf}/t3`, `#!/bin/sh\necho "$@" >> ${log}\ncat >> ${log}\n`, { mode: 0o700 });
+	return { conf, log, sent: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+}
+
+describe("a Decisions post never holds the page's key", () => {
+	const before = process.env.T3CODE_CLI_PATH;
+	afterAll(() => {
+		if (before === undefined) delete process.env.T3CODE_CLI_PATH;
+		else process.env.T3CODE_CLI_PATH = before;
+	});
+	test("the view post carries the view key and not the page's key, raw or URL-encoded, in the message or the CLI's arguments", () => {
+		const k = keyed();
+		process.env.T3CODE_CLI_PATH = `${k.conf}/t3`;
+		expect(postCard(item("Q-abcd"), k.conf, "http://q.test", KEY).where).toBe("view");
+		expect(k.sent()).toContain(`&amp;k=${KEY}"></script>`);
+		for (const form of [PAGE_KEY, encodeURIComponent(PAGE_KEY)]) expect(k.sent()).not.toContain(form);
+	});
+	test("the built message, for every shape of item, holds no page key", () => {
+		for (const over of [{}, { title: "a title" }, { id: "Q-zzzz9999" }, { kind: "idea" as const }])
+			expect(decisionsMessage(item("Q-abcd", over), "http://q.test", KEY)).not.toContain(PAGE_KEY);
+		expect(decisionsDownMessage(item("Q-abcd"))).not.toContain(PAGE_KEY);
+	});
+	test("if the page's key is ever handed in as the view key, or turns up in the text, the post is refused and nothing is sent", () => {
+		const k = keyed();
+		process.env.T3CODE_CLI_PATH = `${k.conf}/t3`;
+		expect(() => postCard(item("Q-abcd"), k.conf, "http://q.test", PAGE_KEY)).toThrow(
+			"refusing to post the page's key",
+		);
+		expect(() => postCard(item("Q-abcd", { title: `see ${PAGE_KEY}` }), k.conf, "http://q.test", KEY)).toThrow(
+			"refusing to post the page's key",
+		);
+		expect(k.sent()).not.toContain(PAGE_KEY);
+	});
+	test("the page-down notice never holds it either", () => {
+		const k = keyed();
+		process.env.T3CODE_CLI_PATH = `${k.conf}/t3`;
+		expect(postCard(item("Q-abcd"), k.conf).where).toBe("notice");
+		expect(k.sent()).not.toContain(PAGE_KEY);
+	});
 });
 
 describe("postCard sends only to the Decisions thread", () => {

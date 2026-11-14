@@ -9,7 +9,7 @@
 	// Shells posted before the tag was added to them get it here.
 	try { if (document.head && !document.querySelector('meta[name="viewport"]')) { const m = document.createElement("meta"); m.name = "viewport"; m.content = "width=device-width, initial-scale=1"; document.head.append(m); } } catch { /* a page without a head keeps its layout */ }
 	const BASE = SRC.origin;
-	// The page's capability token rides on this script's own address (?k=). Every call proves it with a header, and an <img> or a link carries it as ?k=.
+	// The view key (never the page key: a Decisions post is copied into the thread) rides on this script's own address (?k=). Every call proves it with a header; the image links below carry it as ?k= too, but the page serves evidence only to its own link or cookie.
 	// A 401 means the key is missing, or it was rotated since this view was made: say so instead of showing an empty queue.
 	const KEY = SRC.searchParams.get("k") || "";
 	const kq = KEY ? `?k=${encodeURIComponent(KEY)}` : "";
@@ -192,7 +192,7 @@
 			if ((m.type === "approval" || m.type === "goal") && m.command) c.append(el("pre", "dq-cmd", m.command));
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
 			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
-			const full = el("a", "dq-meta", "Open the queue page"); full.href = `${BASE}/${kq}`; full.target = "_blank"; full.rel = "noopener"; c.append(full);
+			const full = el("a", "dq-meta", "Open the queue page"); full.href = `${BASE}/`; full.target = "_blank"; full.rel = "noopener"; c.append(full);
 			if (m.link) { const a = el("a", "dq-meta", "Open the thread"); a.href = m.link; a.target = "_blank"; a.rel = "noopener"; c.append(a); }
 			return c;
 		}

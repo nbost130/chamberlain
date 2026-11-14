@@ -30,7 +30,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { CONF, STATE } from "./core/config.ts";
-import { readToken } from "./core/capability.ts";
+import { readViewKey } from "./core/capability.ts";
 import { cfg } from "./core/layout.ts";
 import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
@@ -269,19 +269,22 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	}
 	const base = queueBase();
 	const up = base !== undefined && (await queueUp(base));
-	// The view's links carry the page's key. The page makes it when it starts, so a page that answers has one; one that cannot be read
-	// (a wrong mode) or is missing gets the notice, with the reason on stderr, never a link that would not work.
+	// The view's script address carries the VIEW key, never the page's key (a post is copied into the thread). The page makes it when it
+	// starts, so a page that answers has one; one that cannot be read (a wrong mode) or is missing gets the notice, with the reason on stderr,
+	// never a link that would not work.
 	let key: string | undefined;
 	if (up) {
 		try {
-			key = readToken(CONF);
+			key = readViewKey(CONF);
 		} catch (e) {
 			console.error(
-				`the page's key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
+				`the view key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
 			);
 		}
 		if (!key)
-			console.error("the page has no key yet: run `chamberlain web link`; posting a notice instead of the view");
+			console.error(
+				"the page has no view key yet: start the page (chamberlain web); posting a notice instead of the view",
+			);
 	}
 	const inline = up && key !== undefined;
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });

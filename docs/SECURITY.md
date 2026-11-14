@@ -24,10 +24,10 @@ it is deliberately conservative.
   **capability token**: 32 random bytes, made on first start and kept in `secrets/web-token` (mode 0600). A request without it, or with a
   wrong one, gets `401` and reads nothing; the page's own static code (`app.js`, `app.css`, `inline.js`) carries no data and is served
   to any request that reached the right `Host`. The token is compared in constant time, and never logged, never written to the events
-  table and never echoed in a reply or an error. It travels three ways: as the `x-decision-token` header (T3's inline frames, tools), as a
+  table and never echoed in a reply or an error. It travels three ways: as the `x-decision-token` header (from the page's own origin for full authority; from a request with **no `Origin`** or from a null-origin frame it buys inline authority only), as a
   `?k=` link that sets a long-lived, HMAC-signed, HttpOnly cookie in a browser and then drops the key from the address (a `303`), and as `?k=`
   on an evidence image. The cookie holds no token, so `chamberlain web rotate-token` ends every old link, cookie and rendered view at
-  once. Every link Chamberlain makes carries the key (the Decisions thread's view, `chamberlain web link`); the page itself is gated as
+  once. The page link `chamberlain web link` prints carries it; **a Decisions post never does** (it carries the view key, below); the page itself is gated as
   well as its API because the network alone (loopback, or everything on your tailnet) is not a reason to hand the queue to any local
   process or tailnet peer that can `curl` it. How an existing install gets back in: [web-access.md](web-access.md).
   Beyond the key, a request must carry a known `Host` header (against DNS rebinding), a request from a page on **any other origin** is refused
@@ -35,13 +35,19 @@ it is deliberately conservative.
   Content-Security-Policy is sent on every response.
 - **T3's inline frames, and exactly what they can do.** T3 renders inline pages in a sandboxed frame whose origin is `null` and which holds
   no cookie of ours, so such a frame is let in **only with the token in the header**, which the Decisions thread's view reads from its own
-  script address (`inline.js?...&k=<token>`); a `null`-origin request without a valid token is refused (`401`), and a cookie or a `?k=` on
-  an API call does not stand in for it. The token is a capability: anyone who can read that thread can use it, as you can. Even with it
-  the **server** limits a frame, by route and by field (not the page's own script, which an attacker would not run): a `null`-origin
-  request may `GET /api/queue`, `/api/recent` and `/api/rulings`, and `POST /api/items/<id>/answer` with a `choice` and an optional `note`
+  script address (`inline.js?...&k=<key>`); a `null`-origin request without a valid key is refused (`401`), and a cookie or a `?k=` on
+  an API call does not stand in for it. **The key in that address is the view key (`secrets/view-key`), never the page's token.** A post is
+  copied into the thread's messages, its `html_render` input and the provider transcript, where anyone who can read the thread can read it,
+  so it is the weakest secret the install has: it is accepted only for what an inline frame may do, from any `Origin` or none, and never for a
+  cookie, a page load, a `?k=` link, evidence, a card or a ruling. `chamberlain ask` refuses to send a post whose text holds the page's token.
+  The **page's** token in the header gets the same limit from a request with **no `Origin`** (curl, an agent's fetch) or from a null-origin
+  frame; full authority is the signed cookie, the header on a **same-origin** request, or `?k=` on a page load. The server limits a frame, by
+  route and by field (not the page's own script, which an attacker would not run): such a request
+  may `GET /api/queue`, `/api/recent` and `/api/rulings`, and `POST /api/items/<id>/answer` with a `choice` and an optional `note`
   and **no other field**. It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
   nothing), answer a mirrored card or an approval (refused, however exact the fingerprint), read one item on its own
-  (`GET /api/items/<id>` is refused), batch-accept, or change anything else. Cards, approvals and rulings are done on the full page.
+  (`GET /api/items/<id>` is refused), read an item's evidence (a request with no `Origin` or the view key; a null-origin frame's evidence
+  reads are as before), batch-accept, or change anything else. Cards, approvals and rulings are done on the full page.
 - **What the page will and won't answer.** Question cards and one-time approvals ("approve once" or "decline", never
   "always") are answered **on the full page only**, after re-reading the card from its thread, and only if its fingerprint is
   unchanged since you saw it. An approval (or a goal proposal) takes **two requests, and the server enforces both**: the first
