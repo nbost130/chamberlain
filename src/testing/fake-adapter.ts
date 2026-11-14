@@ -16,6 +16,7 @@ import {
 	type Adapter,
 	type AnswerOutcome,
 	type Inspector,
+	type LastAssistant,
 	type OptionalCapability,
 	type PostOptions,
 	type PostResult,
@@ -58,6 +59,8 @@ export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
  */
 export type FakeThread = {
 	lastMessage?: string;
+	/** What `lastAssistant` reports (id, text, ISO time). Unset: the thread has no finished assistant message. */
+	lastAssistant?: LastAssistant;
 	waiting?: WaitingItem[] /** Request IDs the backend shows in a terminal status: the only thing that closes a card hold. */;
 	resolved?: string[];
 	waitingRead?: WaitingRead | (() => WaitingRead);
@@ -163,6 +166,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 	};
 	const inspect: Inspector = {
 		lastMessage: async (id) => fake.threads.get(id)?.lastMessage ?? "",
+		lastAssistant: async (id) => fake.threads.get(id)?.lastAssistant,
 		waiting: async (id): Promise<WaitingRead> => {
 			const th = fake.threads.get(id);
 			if (th?.waitingError) throw Error(th.waitingError);

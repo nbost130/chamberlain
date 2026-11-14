@@ -175,9 +175,17 @@ export type RunLook = {
 	waiting: boolean;
 };
 
+/** A thread's last finished assistant message: its id, its text, and when it finished (ISO). */
+export type LastAssistant = { id: string; text: string; at: string };
+
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
 	lastMessage(threadId: string): Promise<string>;
+	/**
+	 * The thread's last finished assistant message with its own id and the time it finished (ISO), or undefined when there is none.
+	 * The idle-parents sweep check (src/core/idle-parents.ts) reads it. Absent: that check cannot see this adapter's threads.
+	 */
+	lastAssistant?(threadId: string): Promise<LastAssistant | undefined>;
 	/** What the thread is waiting on now. Never rejects; only an `ok: true` read may be believed (see `WaitingRead`). */
 	waiting(threadId: string): Promise<WaitingRead>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */

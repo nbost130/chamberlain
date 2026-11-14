@@ -51,15 +51,15 @@ import {
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
+import { idleParentCandidate, type IdleParentsRead } from "./idle-parents.ts";
 import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
 import {
 	decide,
+	endKind,
 	idleKey,
 	lastInstruction,
 	idleWorkLine,
 	LIVE,
-	looksLikeAsk,
-	looksLikeStall,
 	principalWroteWithin,
 	questionText,
 	reportKey,
@@ -301,6 +301,43 @@ export function createEngine(d: EngineDeps) {
 			return busy.filter((_, i) => keep[i]);
 		}
 
+		/**
+		 * Top-level threads that finished and sat idle past the threshold, read for the idle-parents check. Only a connected watcher with
+		 * `inspect.lastAssistant` can say. A thread whose read fails is listed as unreadable, so it keeps what it had and is never read as cleared.
+		 */
+		async idleParents(now: number, thresholdMs: number, skip: ReadonlySet<string>): Promise<IdleParentsRead> {
+			const read: IdleParentsRead = { facts: [], unreadable: [] };
+			const lastAssistant = this.inspect?.lastAssistant;
+			if (!lastAssistant || !this.inspect) return read;
+			const server = this.srv.name;
+			const candidates = [...this.states.values()].filter((th) =>
+				idleParentCandidate(th, skip, this.liveChildren(th.id)),
+			);
+			if (!this.connected) {
+				for (const th of candidates) read.unreadable.push({ server, id: th.id });
+				return read;
+			}
+			const one = async (th: ThreadState) => {
+				try {
+					const last = await lastAssistant.call(this.inspect, th.id);
+					const at = last ? Date.parse(last.at) : Number.NaN;
+					if (last && Number.isFinite(at) && now - at > thresholdMs)
+						read.facts.push({ server, id: th.id, title: th.title, last, at });
+				} catch (e) {
+					log("read-failed", {
+						server,
+						threadId: th.id,
+						what: "last assistant message",
+						error: String(e).slice(0, 200),
+					});
+					read.unreadable.push({ server, id: th.id });
+				}
+			};
+			// A few at a time: each read is one projection of the thread.
+			for (let i = 0; i < candidates.length; i += 8) await Promise.all(candidates.slice(i, i + 8).map(one));
+			return read;
+		}
+
 		/** A thread running away keeps taking turns of its own. Counted at the turn's end, when who started it can be read. A machine's turn isn't one. */
 		countTurn(th: ThreadState, read: InstructionRead) {
 			if (read.byMachine || th.parentThreadId !== null) return;
@@ -442,8 +479,9 @@ export function createEngine(d: EngineDeps) {
 					this.liveChildren(live.id) > 0 ||
 					(await this.subagents(live.id).catch(this.readFailed("subagents", live.id, 0))) > 0;
 				excerpt = await this.lastMessage(c.thread.id).catch(this.readFailed("last message", live.id, ""));
-				stalled = !looksLikeAsk(excerpt) && looksLikeStall(excerpt);
-				if (children || (!looksLikeAsk(excerpt) && !stalled)) {
+				const kind = endKind(excerpt);
+				stalled = kind === "stall";
+				if (children || kind === "plain") {
 					// Each finished turn restarts the window: the wake belongs to the last turn, not the first.
 					const due = reportOf(reportKey(read.items, read.byMachine, notified)) ?? (await this.idleWork(live, read));
 					// A failed read can't say the turn has nothing to report, so it goes on to the read after the wait.
@@ -923,7 +961,22 @@ export function createEngine(d: EngineDeps) {
 		},
 	}).check;
 
-	const sweep = createSweep({ store, log, outbox, conf, privateFile, sweepPromptFile: d.sweepPromptFile, watchers });
+	const sweep = createSweep({
+		store,
+		log,
+		outbox,
+		conf,
+		privateFile,
+		sweepPromptFile: d.sweepPromptFile,
+		watchers,
+		// Threads that are Chamberlain's own, or the operator's exclude list, are never idle parents.
+		idleSkip: () =>
+			new Set(
+				[...EXCLUDE, privateFile("steward-thread"), privateFile("decisions-thread"), privateFile("desk-thread")].filter(
+					(x): x is string => Boolean(x),
+				),
+			),
+	});
 
 	const heartbeat = createHeartbeat({
 		store,

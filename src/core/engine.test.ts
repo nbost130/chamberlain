@@ -343,6 +343,45 @@ describe("a turn end waits for the Steward to be free", () => {
 		expect(r.fake.wakes).toEqual([]);
 	});
 
+	describe("a thread the principal drove (the Steward never instructed it) still wakes the Steward on an ask, and only on an ask", () => {
+		const principalDriven = (r: ReturnType<typeof rig>, id: string, lastMessage: string) => {
+			r.fake.threads.set(id, {
+				lastMessage,
+				instruction: {
+					items: [{ type: "user_message", id: "u1", text: "fix it", createdBy: "user", creationSource: "web" }],
+					state: "complete",
+					byMachine: false,
+				},
+			});
+			r.fake.emit({ kind: "state", thread: thread(id, "running") });
+			r.fake.emit({ kind: "state", thread: thread(id, "completed") });
+		};
+		// The real miss: the go-line was only in the spoken closing line.
+		const SIGN_OFF =
+			"The token is in place.\n\n🗣️ The breaker still needs its endpoint built; say go and I'll start it.";
+
+		test("a go-phrase in the closing line wakes it as a handed-back question, not skipped", async () => {
+			const r = rig({ steward: "steward-1" });
+			principalDriven(r, "t5", SIGN_OFF);
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("finished and handed a question back");
+			expect(r.events.some((e) => e.event === "skip-turn-ended")).toBe(false);
+		});
+		test("a go-phrase that also says 'I'll start' is an ask, not a stall", async () => {
+			const r = rig({ steward: "steward-1" });
+			principalDriven(r, "t5", "The endpoint is not built yet. Say go and I'll start it.");
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("finished and handed a question back");
+			expect(r.fake.wakes[0]!.message).not.toContain("stalled");
+		});
+		test("a plain finish on the same thread is still skipped", async () => {
+			const r = rig({ steward: "steward-1" });
+			principalDriven(r, "t5", "All done and verified.\n\n🗣️ Done.");
+			await r.until("the skip", () => r.events.some((e) => e.event === "skip-turn-ended"));
+			expect(r.fake.wakes).toEqual([]);
+		});
+	});
+
 	test("a wake the webhook refuses stays pending, its attempt counted, and goes on a later pass, once", async () => {
 		const r = rig({ steward: "steward-1" });
 		r.fake.setWakeStatus(() => 503);
@@ -681,6 +720,69 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		await r.engine.tick();
 		await r.quiet();
 		expect(r.fake.wakes).toHaveLength(1);
+	});
+
+	test("the idle-parents sweep check: idle top-level threads reach the Steward once per last message, asks first, and the rest are filtered out", async () => {
+		const r = rig({ housekeeping: true, steward: "stew" });
+		const ago = (min: number, text: string, id = "m1") => ({
+			id,
+			text,
+			at: new Date(Date.now() - min * 60_000).toISOString(),
+		});
+		const seen = (id: string, status: string, over: Partial<ThreadInput>, last = ago(180, "All done.")) => {
+			r.fake.threads.set(id, { lastAssistant: last });
+			r.fake.emit({ kind: "state", thread: thread(id, status, over) });
+		};
+		// The real miss: it ended on a go-phrase, with no card and no open PR.
+		seen(
+			"ask",
+			"idle",
+			{},
+			ago(240, "The token is in.\n\n🗣️ The breaker still needs its endpoint; say go and I'll start it."),
+		);
+		seen("plain", "completed", {}, ago(120, "Finished the report."));
+		seen("fresh", "idle", {}, ago(10, "Just now."));
+		seen("child", "idle", { parentThreadId: "ask" });
+		seen("settled", "idle", { settled: true });
+		seen("snoozed", "idle", { snoozed: true });
+		seen("working", "running", {});
+		seen("stew", "idle", {});
+		await r.quiet();
+		await r.engine.tick();
+		await r.until("the sweep wake", () => r.fake.wakes.length === 1);
+		const msg = r.fake.wakes[0]!.message;
+		expect(msg).toContain('[ASKING] thread "Thread ask" on fake (threadId ask), idle 240 min.');
+		expect(msg).toContain('thread "Thread plain" on fake (threadId plain), idle 120 min.');
+		expect(msg.indexOf("threadId ask")).toBeLessThan(msg.indexOf("threadId plain"));
+		for (const id of ["fresh", "child", "settled", "snoozed", "working", "stew"])
+			expect(msg).not.toContain(`threadId ${id})`);
+		// A later sweep with the same last messages reports nothing.
+		r.clock.t += 120_000;
+		r.store.state.set("sweep-clock", { lastAt: 0, lastFullAt: Date.now(), seeded: true });
+		await r.engine.tick();
+		await r.quiet();
+		expect(r.fake.wakes).toHaveLength(1);
+		// A new last message on one thread is reported alone.
+		r.fake.threads.set("plain", { lastAssistant: ago(90, "Merged it.", "m2") });
+		r.store.state.set("sweep-clock", { lastAt: 0, lastFullAt: Date.now(), seeded: true });
+		await r.engine.tick();
+		await r.until("the second sweep wake", () => r.fake.wakes.length === 2);
+		expect(r.fake.wakes[1]!.message).toContain("Merged it.");
+		expect(r.fake.wakes[1]!.message).not.toContain("threadId ask)");
+	});
+
+	test("the idle-parents check can be switched off in the sweep section", async () => {
+		const r = rig({ housekeeping: true });
+		r.priv("sweep.json", JSON.stringify({ idleParents: { enabled: false } }));
+		r.fake.threads.set("a", {
+			lastAssistant: { id: "m", text: "Say go.", at: new Date(Date.now() - 3 * 3600_000).toISOString() },
+		});
+		r.fake.emit({ kind: "state", thread: thread("a", "idle") });
+		await r.quiet();
+		await r.engine.tick();
+		await r.quiet();
+		expect(r.fake.wakes).toEqual([]);
+		expect(r.store.items.list({ source: "check:idle-parents" })).toEqual([]);
 	});
 
 	test("an approval held for the operator's return: the record that it was seen and the hold are one transaction", async () => {

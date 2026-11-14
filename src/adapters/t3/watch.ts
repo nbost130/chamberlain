@@ -172,6 +172,17 @@ export class T3Link {
 				.find((i) => i.type === "assistant_message" && i.status === "completed");
 			return String(last?.text ?? "");
 		},
+		lastAssistant: async (threadId) => {
+			if (!this.rpc) return undefined;
+			const p = await this.projection(threadId);
+			const last = [...(p.turnItems ?? [])]
+				.reverse()
+				.find((i) => i.type === "assistant_message" && i.status === "completed");
+			const id = last?.itemId ?? last?.id;
+			return last && typeof id === "string" && typeof last.updatedAt === "string"
+				? { id, text: String(last.text ?? ""), at: last.updatedAt }
+				: undefined;
+		},
 		runningSubagents: async (threadId) => {
 			if (!this.rpc) return 0;
 			const p = await this.projection(threadId);

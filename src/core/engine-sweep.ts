@@ -7,12 +7,14 @@ import { readFileSync } from "node:fs";
 import { readAfk } from "./afk.ts";
 import { principal } from "./config.ts";
 import type { Outbox } from "./deliver.ts";
+import { IDLE_PARENTS_SOURCE, idleParentsSource, type IdleParentsRead } from "./idle-parents.ts";
 import type { Log } from "./log.ts";
 import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
 import type { Store } from "./store.ts";
 import {
 	type BusyFact,
 	configuredSources,
+	idleParentsConfig,
 	renderSweepPrompt,
 	runawaySource,
 	SWEEP_MS,
@@ -33,10 +35,15 @@ export type SweepDeps = {
 	/** The bundled full-sweep prompt, used when there is no sweep-prompt.md. */
 	sweepPromptFile?: string | undefined;
 	/** The watchers, which say which threads keep starting turns. */
-	watchers: readonly { runawayCandidates(now: number): Promise<BusyFact[]> }[];
+	watchers: readonly {
+		runawayCandidates(now: number): Promise<BusyFact[]>;
+		idleParents(now: number, thresholdMs: number, skip: ReadonlySet<string>): Promise<IdleParentsRead>;
+	}[];
+	/** The thread ids the idle-parents check never reports: the Steward, the decisions thread, the Alert Desk, the exclude list. */
+	idleSkip: () => ReadonlySet<string>;
 };
 
-export function createSweep({ store, log, outbox, conf, privateFile, sweepPromptFile, watchers }: SweepDeps) {
+export function createSweep({ store, log, outbox, conf, privateFile, sweepPromptFile, watchers, idleSkip }: SweepDeps) {
 	/** Once a minute, away or not: run the routine checks when a sweep is due, and wake the Steward only for what they find. */
 	const SWEEP_CLOCK = "sweep-clock";
 	/** The full-sweep prompt: sweep-prompt.md in the config directory if there is one, else the bundled template. */
@@ -67,7 +74,25 @@ export function createSweep({ store, log, outbox, conf, privateFile, sweepPrompt
 			// writes nothing. What they found, what notified, the clock and the wake are then ONE transaction (`commit` in
 			// deliver.ts): a crash between recording a finding as notified and queueing its wake would lose the alert for good.
 			const evaluations: Evaluation[] = [];
-			for (const src of [runawaySource(busy), ...configuredSources(conf)]) evaluations.push(await evaluateSource(src));
+			const idle = idleParentsConfig(conf);
+			const idleSource = idle.enabled
+				? idleParentsSource({
+						cfg: idle,
+						gather: async () => {
+							const reads = await Promise.all(
+								watchers.map((w) => w.idleParents(now, idle.thresholdMinutes * 60_000, idleSkip())),
+							);
+							return { facts: reads.flatMap((r) => r.facts), unreadable: reads.flatMap((r) => r.unreadable) };
+						},
+						prior: () =>
+							store.items
+								.list({ source: IDLE_PARENTS_SOURCE, status: ["triggered", "acknowledged"] })
+								.map((i) => ({ dedupKey: i.dedupKey, text: String(i.payload.text ?? i.dedupKey) })),
+						now: () => now,
+					})
+				: undefined;
+			for (const src of [runawaySource(busy), ...(idleSource ? [idleSource] : []), ...configuredSources(conf)])
+				evaluations.push(await evaluateSource(src));
 			outbox.commit(() => {
 				const outcomes = evaluations.map((e) => recordEvaluation(store, e, { now, firstRun: !s.seeded }));
 				const action = sweepAction(outcomes, now - s.lastFullAt);

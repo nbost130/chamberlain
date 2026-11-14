@@ -43,6 +43,11 @@
     }
   },
   "sweep": {
+    "idleParents": {
+      "enabled": true,
+      "thresholdMinutes": 60,
+      "maxThreads": 10
+    },
     "checks": [
       {
         "name": "disk",

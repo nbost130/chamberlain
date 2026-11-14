@@ -14,6 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import { CONF, principal, selfCommand } from "./config.ts";
+import { IDLE_PARENTS, parseIdleParents, type IdleParentsConfig } from "./idle-parents.ts";
 import { cfg } from "./layout.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
 import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
@@ -148,20 +149,27 @@ export type SweepCheck = {
 	timeoutMs?: number /** silenced, shadow or live (default live). */;
 	mode?: ItemMode;
 };
-export type SweepConfig = { schemaVersion?: number; checks: SweepCheck[] };
+export type SweepConfig = { schemaVersion?: number; checks: SweepCheck[]; idleParents: IdleParentsConfig };
 const MODES: readonly string[] = ["silenced", "shadow", "live"];
 
 /** Pure: the checks a parsed sweep.json lists. */
 export function parseSweepConfig(raw: unknown): SweepConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("sweep.json: expected a JSON object");
-	const o = raw as { schemaVersion?: unknown; checks?: unknown };
+	const o = raw as { schemaVersion?: unknown; checks?: unknown; idleParents?: unknown };
 	checkVersion("sweep.json", o.schemaVersion);
+	// A section that only tunes the built-in idle-parents check needs no checks of its own.
+	if (o.checks === undefined && o.idleParents !== undefined) o.checks = [];
 	if (!Array.isArray(o.checks)) throw Error('sweep.json: need {"checks": [{"name", "command": [...]}]}');
+	const idleParents = parseIdleParents(o.idleParents);
 	const names = new Set<string>();
 	const checks = o.checks.map((c: Partial<SweepCheck>, i) => {
 		if (!c || typeof c.name !== "string" || !/^[\w.-]{1,40}$/.test(c.name))
 			throw Error(`sweep.json: check ${i + 1} needs a name of letters, digits, dot, dash or underscore`);
 		if (names.has(c.name)) throw Error(`sweep.json: two checks are named ${c.name}`);
+		if (c.name === IDLE_PARENTS)
+			throw Error(
+				`sweep.json: "${IDLE_PARENTS}" is the built-in idle-parents check; tune it with "idleParents", not a check`,
+			);
 		names.add(c.name);
 		if (!Array.isArray(c.command) || !c.command.length || !c.command.every((x) => typeof x === "string"))
 			throw Error(`sweep.json: check ${c.name} needs "command": ["program", "arg", ...]`);
@@ -176,13 +184,22 @@ export function parseSweepConfig(raw: unknown): SweepConfig {
 			...(c.mode ? { mode: c.mode } : {}),
 		};
 	});
-	return { schemaVersion: SCHEMA_VERSION, checks };
+	return { schemaVersion: SCHEMA_VERSION, checks, idleParents };
 }
 
 /** The `sweep` section of config.json (else the legacy sweep.json), or no checks. It names programs the daemon runs. */
 export function readSweepConfig(conf = CONF): SweepConfig {
 	const raw = cfg(conf, "sweep");
-	return raw === undefined ? { checks: [] } : parseSweepConfig(raw);
+	return raw === undefined ? { checks: [], idleParents: parseIdleParents(undefined) } : parseSweepConfig(raw);
+}
+
+/** The idle-parents settings: the config's, or the defaults when the sweep section cannot be read (that failure already shows as the `sweep.json` source in error). */
+export function idleParentsConfig(conf = CONF): IdleParentsConfig {
+	try {
+		return readSweepConfig(conf).idleParents;
+	} catch {
+		return parseIdleParents(undefined);
+	}
 }
 
 const FINDING_FIELDS = new Set(["dedupKey", "text", "repeatIntervalMs", "maxNotifications", "baseline", "subject"]);

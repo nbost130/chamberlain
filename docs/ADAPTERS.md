@@ -93,7 +93,9 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   `lastMessage` and `runningSubagents` may reject (the core logs it and goes on); `instruction` never rejects, it returns a
   state (`complete`, `truncated`, `failed`) that says whether "nothing to report" can be believed, and `waiting` never
   rejects either (below). Without `inspect` the core has no way to know who instructed a thread, so a turn end is reported
-  once per turn instead of only for work the Steward sent.
+  once per turn instead of only for work the Steward sent. `lastAssistant` is optional (the last finished assistant message
+  with its id and finish time, or nothing): the `idle-parents` sweep check reads it, and without it that check lists nothing
+  for this adapter's threads.
 - **`waiting` returns a `WaitingRead`, and it reports only what it saw.** `{ ok: true, cards, resolved, ignored }` says the
   backend was connected for the whole read and answered in the shape you expect. It is NOT a complete list of the thread's
   cards: a backend may return a bounded window of the thread's history, and T3 does (`orchestration.getThreadProjection`
