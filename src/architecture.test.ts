@@ -165,8 +165,8 @@ const NOTIFICATION_FIELD_WRITE =
 	/\b(notificationCount|nextNotificationAt|shadowNotificationCount|shadowNextNotificationAt)\s*(\+\+|--|[-+*]?=(?!=))/;
 const NOTIFICATION_DUE = /\bnextNotificationAt\s*(<=?|>=?)|(<=?|>=?)\s*[\w.]*\bnextNotificationAt\b/;
 
-/** The files allowed to name the notification columns and to write the items table: the store, its schema, and the one function. */
-const ITEM_OWNERS = new Set(["core/sqlite-store.ts", "core/migrations.ts", "core/notification.ts"]);
+/** The files allowed to name the notification columns and to write the items table: the store's items module, its schema, and the one function. */
+const ITEM_OWNERS = new Set(["core/sqlite-items.ts", "core/migrations.ts", "core/notification.ts"]);
 
 /** Pure: what a source file does that a second item mechanism would do. `file` is src/-relative. Comments are not code. */
 export function itemViolations(file: string, code: string): string[] {
@@ -232,7 +232,7 @@ describe("one item system", () => {
 				/\bdecideNotification\(/.test(readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "")) &&
 				f !== "core/notification.ts",
 		);
-		expect(callers).toEqual(["core/sqlite-store.ts"]);
+		expect(callers).toEqual(["core/sqlite-items.ts"]);
 	});
 
 	test("nothing in src/core/ but the store opens a database: the core reaches state only through the Store", () => {
@@ -263,7 +263,7 @@ describe("one item system", () => {
 		expect(itemViolations("core/x.ts", "if (now >= item.nextNotificationAt) send();")).toHaveLength(1);
 		expect(itemViolations("core/engine.ts", `readFileSync(\`\${d}/fired.json\`)`)).toHaveLength(1);
 		// What is allowed: the owners, comments, tests of a read, and the words in prose.
-		expect(itemViolations("core/sqlite-store.ts", 'run("UPDATE items SET notification_count = ?")')).toEqual([]);
+		expect(itemViolations("core/sqlite-items.ts", 'run("UPDATE items SET notification_count = ?")')).toEqual([]);
 		expect(itemViolations("core/notification.ts", "const due = s.nextNotificationAt; if (now >= due) {}")).toEqual([]);
 		expect(
 			itemViolations(

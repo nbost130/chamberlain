@@ -503,7 +503,7 @@ export type RelayState = { started: boolean; outcome?: "delivered" | "failed"; d
 export const readRelay = (store: Store, itemId: string): RelayState => store.claims.readRelay(QUEUE, itemId);
 export const startRelay = (store: Store, itemId: string): boolean => store.claims.startRelay(QUEUE, itemId);
 export const finishRelay = (store: Store, itemId: string, outcome: "delivered" | "failed", detail?: string) =>
-	store.claims.finishRelay(QUEUE, itemId, outcome, detail);
+	store.claims.finishRelay(QUEUE, itemId, { outcome, detail });
 
 /** Writes a claim's wake (or the message given, a fallback) as an outbox row. False when the outbox already knows its id. */
 export const enqueueClaim = (store: Store, c: Claim, message = c.message, now = Date.now()): boolean =>

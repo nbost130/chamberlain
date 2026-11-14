@@ -46,7 +46,8 @@ import {
 	rightsStateKey,
 } from "./rights-sent.ts";
 import { isRelayLock, lockCovers, type RelayLock } from "./singleton.ts";
-import type { Composed, HeldItem, HoldClock, OutboxRow, RightsStamp, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { Composed, HeldItem, HoldClock, OutboxRow, RightsStamp } from "./store-wakes.ts";
 
 /** The pause before a failed row is tried again: one minute, then four, so a webhook back within about five minutes loses nothing. */
 export const retryAfterMs = (attempts: number) => Math.min(60_000 * 4 ** (attempts - 1), 15 * 60_000);

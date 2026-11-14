@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged } from "./decide.ts";
 import { rightsWake } from "./messages.ts";
-import type { RightsStamp, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { RightsStamp } from "./store-wakes.ts";
 
 export const RIGHTS_SENT_KEY = "rights-sent";
 

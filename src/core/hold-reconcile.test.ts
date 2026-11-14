@@ -64,7 +64,7 @@ describe("pass 1: every way a question gets answered closes its holds", () => {
 		};
 		claimWake(store, pageClaim(relayed, answerOf("Q-relay", "page")));
 		store.claims.startRelay(QUEUE, "Q-relay");
-		store.claims.finishRelay(QUEUE, "Q-relay", "delivered");
+		store.claims.finishRelay(QUEUE, "Q-relay", { outcome: "delivered" });
 		expect(reconcileItemHolds(store)).toEqual({ closed: 4 });
 		expect(whats(store)).toEqual(["Q-open1"]);
 	});

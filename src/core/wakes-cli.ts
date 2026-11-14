@@ -11,7 +11,8 @@
  */
 import { selfCommand } from "./config.ts";
 import { maxAttemptsFromEnv } from "./deliver.ts";
-import type { OutboxRow, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { OutboxRow } from "./store-wakes.ts";
 
 export const wakesUsage = () =>
 	["list", "retry <delivery id>", "cancel <delivery id>"]

@@ -18,7 +18,8 @@
 import { createHash } from "node:crypto";
 import { readSecret } from "../layout.ts";
 import type { Log } from "../log.ts";
-import type { DispositionAction, DispositionKey, Store } from "../store.ts";
+import type { Store } from "../store.ts";
+import type { DispositionAction, DispositionKey } from "../store-records.ts";
 import { type Bank, combine, type Decision } from "./bank.ts";
 import { type ClassifierConfig, loadBank, SENDS_TEXT } from "./config.ts";
 import { haikuProvider } from "./provider-haiku.ts";

@@ -15,9 +15,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Transcript } from "./adapter.ts";
-import type { Store, WakeUsage } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { WakeUsage } from "./store-records.ts";
 
-export type { WakeUsage } from "./store.ts";
+export type { WakeUsage } from "./store-records.ts";
 
 /**
  * The wake header every Chamberlain wake starts with (`t3-wake` is the name it had before), recognised only where a wake puts it: at the
