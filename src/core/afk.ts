@@ -160,7 +160,9 @@ export function noteHeld(store: Store, id: string, text: string, now = new Date(
 		const i = store.items.get(HELD, id);
 		if (!i || i.status === "resolved") throw Error(`no open held item ${id}`);
 		const notes = [...((i.payload as Held).notes ?? []), { t: now.toISOString(), text }];
-		return store.items.patch(HELD, id, { notes })!.payload as Held;
+		const patched = store.items.patch(HELD, id, { notes });
+		if (!patched) throw Error(`no open held item ${id}`);
+		return patched.payload as Held;
 	});
 }
 /** The queue item a hold waits on: its structured `item` field and nothing else. The prose is never read. */
@@ -247,209 +249,280 @@ export function brief(store: Store, a: Afk): string {
 	);
 }
 
+/** Prints a usage or refusal line and exits 2. */
+function usageExit(message: string): never {
+	console.error(message);
+	process.exit(2);
+}
+
+/** Prints the error of a command that failed and exits 1. */
+function failExit(e: unknown): never {
+	console.error((e as Error).message);
+	process.exit(1);
+}
+
+type Command = (store: Store, rest: string[]) => void;
+
+const enterCommand: Command = (store, rest) => {
+	const words = rest.filter((x, i) => !x.startsWith("--") && !rest[i - 1]?.startsWith("--"))[0];
+	if (!words) usageExit('usage: afk.ts enter "<their words>" [--return ISO] [--cap "<note>"]');
+	const flag = (n: string) => {
+		const i = rest.indexOf(n);
+		return i >= 0 ? rest[i + 1] : undefined;
+	};
+	const a: Afk = {
+		enteredAt: flag("--since") ?? new Date().toISOString(),
+		words,
+		...(flag("--return") ? { expectedReturn: flag("--return") } : {}),
+		...(flag("--cap") ? { spendNote: flag("--cap") } : {}),
+	};
+	store.away.enter(a);
+	console.log("away since", a.enteredAt);
+};
+
+const statusCommand: Command = (store) => {
+	const a = readAfk(store);
+	console.log(a ? awayModeLine(a) : "not away");
+	const beat = store.state.get("heartbeat");
+	console.log("heartbeat:", beat ? JSON.stringify(beat) : "none");
+};
+
+const HOLD_USAGE =
+	'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] --item <Q-id> [--not-settled "<why>"] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId> --server <name>]';
+const HOLD_FLAGS = ["--item", "--not-settled", "--pr", "--issue", "--branch", "--run", "--thread", "--server"];
+
+/** The positional arguments of `hold` and its flags. A flag that is unknown or has no value exits with the usage. */
+function parseHoldArgs(rest: string[]): { flags: Record<string, string>; pos: string[] } {
+	const flags: Record<string, string> = {};
+	const pos: string[] = [];
+	const args = rest.values();
+	for (const a of args) {
+		if (!a.startsWith("--")) {
+			pos.push(a);
+			continue;
+		}
+		const value = args.next();
+		if (!HOLD_FLAGS.includes(a) || value.done) usageExit(HOLD_USAGE);
+		flags[a] = value.value;
+	}
+	return { flags, pos };
+}
+
+/** The --item of a hold. A hold with none exits 2: whatever waits on the principal goes on the decision queue first. */
+function requireItem(item: string | undefined): string {
+	if (!item)
+		usageExit(
+			`afk.ts hold: refused, a hold needs --item <Q-id>. Anything that waits on ${principal()} goes on the decision queue first: ${selfCommand("ask")} '<json>' (add "urgent": false if it can wait), then hold it with the item ID it prints.`,
+		);
+	return item;
+}
+
+/** The open question a hold names. One that is not on the queue, or is already answered, exits 2. */
+function openQuestionOf(store: Store, item: string) {
+	const queued = getQuestion(store, item);
+	if (!queued)
+		usageExit(
+			`afk.ts hold: refused, ${item} is not on the decision queue. File the question with ask.ts first, then hold it with the item ID it prints.`,
+		);
+	// A hold on a question already answered waits on nothing: the answer is what the hold was for.
+	if (queued.status !== "open")
+		usageExit(
+			`afk.ts hold: refused, ${item} is already answered (${queued.answer ? `"${queued.answer.label}"` : "on its card"}). Act on the answer; nothing waits on ${principal()}.`,
+		);
+	return queued;
+}
+
+/** Refuses a hold that matches something already settled. Reasons the check could not read something are printed and do not refuse. */
+function refuseIfSettled(store: Store, q: Parameters<typeof findSettled>[1]) {
+	const { matches, skipped } = findSettled(store, q);
+	for (const k of skipped) console.error(`afk.ts hold: the settled check could not read ${k}`);
+	if (matches.length)
+		usageExit(
+			refusalLines("afk.ts hold", matches, 'add --not-settled "<why this is a different question>"').join("\n"),
+		);
+}
+
+/** What `hold` was given: its words, the flags, and the ref fields they make. */
+type HoldArgs = {
+	thread: string | undefined;
+	what: string | undefined;
+	taken: string | undefined;
+	/** The positional threadId of an open card. */
+	cardThread: string | undefined;
+	item: string | undefined;
+	server: string | undefined;
+	notSettledFlag: string | undefined;
+	raw: { pr?: string; issue?: string; branch?: string; runId?: string; threadId?: string };
+	ref: HoldRef | undefined;
+	/** How many ref fields were given, well formed or not. */
+	given: number;
+};
+
+function readHoldArgs(rest: string[]): HoldArgs {
+	const { flags, pos } = parseHoldArgs(rest);
+	const [thread, what, taken, cardThread] = pos;
+	const raw = {
+		pr: flags["--pr"],
+		issue: flags["--issue"],
+		branch: flags["--branch"],
+		runId: flags["--run"],
+		threadId: flags["--thread"],
+	};
+	return {
+		thread,
+		what,
+		taken,
+		cardThread,
+		item: flags["--item"],
+		server: flags["--server"],
+		notSettledFlag: flags["--not-settled"],
+		raw,
+		ref: cleanRef(raw),
+		given: Object.values(raw).filter((v) => v !== undefined).length,
+	};
+}
+
+/** Whether the item, the refs and the server of a hold are well formed. A server needs a thread beside it. */
+function holdFieldsOk(h: HoldArgs): boolean {
+	if (h.item !== undefined && !ITEM_ID.test(h.item)) return false;
+	if (Object.keys(h.ref ?? {}).length !== h.given) return false;
+	return h.server === undefined || (/^[A-Za-z0-9_.-]{1,40}$/.test(h.server) && Boolean(h.raw.threadId || h.cardThread));
+}
+
+/** The hold to write, from what it was given and the reason it may stand although something settled matches it. */
+function heldFrom(
+	h: HoldArgs & { thread: string; what: string },
+	item: string,
+	why: string | undefined,
+): Omit<Held, "t"> {
+	return {
+		thread: h.thread,
+		what: h.what,
+		...(h.taken ? { taken: h.taken } : {}),
+		...(h.cardThread ? { threadId: h.cardThread } : {}),
+		...(h.server ? { server: h.server } : {}),
+		item,
+		...(why ? { notSettled: why } : {}),
+		...(h.ref ? { ref: h.ref } : {}),
+	};
+}
+
+const holdCommand: Command = (store, rest) => {
+	const h = readHoldArgs(rest);
+	const fyi = h.thread && h.what ? fyiReason(h.thread, h.what) : undefined;
+	if (fyi)
+		usageExit(
+			`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: ${selfCommand("decided")} "<thread>" "<what I decided>" "<ruling cited>"`,
+		);
+	if (!h.thread || !h.what || !holdFieldsOk(h)) usageExit(HOLD_USAGE);
+	const item = requireItem(h.item);
+	const queued = openQuestionOf(store, item);
+	const notSettled = h.notSettledFlag?.trim() || undefined;
+	if (h.notSettledFlag !== undefined && !notSettled) usageExit(HOLD_USAGE);
+	// A question asked with its own notSettled reason has been through the check already; the hold inherits the reason and records it.
+	const inherited = !notSettled ? queued.notSettled : undefined;
+	if (!notSettled && !inherited)
+		refuseIfSettled(store, {
+			title: h.what,
+			context: h.taken,
+			thread: h.thread,
+			item,
+			run: h.raw.runId,
+			pr: h.raw.pr,
+			issue: h.raw.issue,
+			branch: h.raw.branch,
+		});
+	const why = notSettled || inherited ? (notSettled ?? `inherited from ${item}: ${inherited}`) : undefined;
+	appendHeld(store, heldFrom({ ...h, thread: h.thread, what: h.what }, item, why));
+	console.log("held");
+};
+
+const heldCommand: Command = (store) => {
+	for (const h of heldOpen(store)) {
+		console.log(`${heldId(h)} | ${h.t.slice(5, 16)} | ${h.thread} | ${h.what}${h.taken ? ` | ${h.taken}` : ""}`);
+		for (const n of h.notes ?? []) console.log(`    note ${n.t.slice(5, 16)}: ${n.text}`);
+	}
+};
+
+const noteCommand: Command = (store, rest) => {
+	const [id, text] = rest;
+	if (!id || !text) usageExit('usage: afk.ts note <id> "<what changed>"');
+	try {
+		console.log(`noted: ${noteHeld(store, id, text).thread}`);
+	} catch (e) {
+		failExit(e);
+	}
+};
+
+/** The card an open hold waits on: the one it carries, or the one its server and request ID name. None for an ordinary hold. */
+function cardOfHold(held: Held): { server: string; requestId: string } | undefined {
+	if (held.card) return held.card;
+	const { server, requestId } = held;
+	return server && requestId ? { server, requestId } : undefined;
+}
+
+const closeCommand: Command = (store, rest) => {
+	const [id, how] = rest;
+	if (!id || !how) usageExit('usage: afk.ts close <id> "<how it closed>"');
+	try {
+		// A daemon card hold never closes alone: by hand it closes with its pointer question, as close-card does.
+		const h = store.items.get(HELD, id);
+		const card = h && h.status !== "resolved" ? cardOfHold(h.payload as Held) : undefined;
+		if (card) {
+			const n = closeCardByHand(store, card.server, card.requestId, how);
+			console.log(`closed card ${card.server} ${card.requestId}: ${n.holds} hold(s), ${n.questions} question(s)`);
+		} else console.log(`closed: ${closeHeld(store, id, how).thread}`);
+	} catch (e) {
+		failExit(e);
+	}
+};
+
+const closeCardCommand: Command = (store, rest) => {
+	const [server, requestId, how] = rest;
+	if (!server || !requestId || !how) usageExit('usage: afk.ts close-card <server> <request id> "<how it closed>"');
+	try {
+		const n = closeCardByHand(store, server, requestId, how);
+		console.log(`closed card ${server} ${requestId}: ${n.holds} hold(s), ${n.questions} question(s)`);
+	} catch (e) {
+		failExit(e);
+	}
+};
+
+const briefCommand: Command = (store) => {
+	const a = readAfk(store);
+	console.log(a ? brief(store, a) : "not away");
+};
+
+const exitCommand: Command = (store) => {
+	const a = readAfk(store);
+	if (!a) {
+		console.log("not away");
+		return;
+	}
+	console.log(brief(store, a));
+	store.away.exit(new Date().toISOString());
+	console.log("\nreturned; the absence is ended and stays on record");
+};
+
+const COMMANDS = new Map<string, Command>([
+	["enter", enterCommand],
+	["status", statusCommand],
+	["hold", holdCommand],
+	["held", heldCommand],
+	["note", noteCommand],
+	["close", closeCommand],
+	["close-card", closeCardCommand],
+	["brief", briefCommand],
+	["exit", exitCommand],
+]);
+
 export function main(argv: string[] = process.argv.slice(2)) {
 	startup();
 	const store = defaultStore();
 	const [cmd, ...rest] = argv;
-	if (cmd === "enter") {
-		const words = rest.filter((x, i) => !x.startsWith("--") && !rest[i - 1]?.startsWith("--"))[0];
-		if (!words) {
-			console.error('usage: afk.ts enter "<their words>" [--return ISO] [--cap "<note>"]');
-			process.exit(2);
-		}
-		const flag = (n: string) => {
-			const i = rest.indexOf(n);
-			return i >= 0 ? rest[i + 1] : undefined;
-		};
-		const a: Afk = {
-			enteredAt: flag("--since") ?? new Date().toISOString(),
-			words,
-			...(flag("--return") ? { expectedReturn: flag("--return") } : {}),
-			...(flag("--cap") ? { spendNote: flag("--cap") } : {}),
-		};
-		store.away.enter(a);
-		console.log("away since", a.enteredAt);
-	} else if (cmd === "status") {
-		const a = readAfk(store);
-		console.log(a ? awayModeLine(a) : "not away");
-		const beat = store.state.get("heartbeat");
-		console.log("heartbeat:", beat ? JSON.stringify(beat) : "none");
-	} else if (cmd === "hold") {
-		const HOLD_USAGE =
-			'usage: afk.ts hold "<thread>" "<what waits>" ["<default taken>"] ["<threadId of an open card>"] --item <Q-id> [--not-settled "<why>"] [--pr <owner/repo#n>] [--issue <owner/repo#n>] [--branch <owner/repo:branch>] [--run <run id>] [--thread <threadId> --server <name>]';
-		const flags: Record<string, string> = {};
-		const pos: string[] = [];
-		for (let k = 0; k < rest.length; k++) {
-			const a = rest[k]!;
-			if (!a.startsWith("--")) {
-				pos.push(a);
-				continue;
-			}
-			if (
-				!["--item", "--not-settled", "--pr", "--issue", "--branch", "--run", "--thread", "--server"].includes(a) ||
-				rest[k + 1] === undefined
-			) {
-				console.error(HOLD_USAGE);
-				process.exit(2);
-			}
-			flags[a] = rest[++k]!;
-		}
-		const [thread, what, taken, threadId] = pos;
-		const item = flags["--item"];
-		const raw = {
-			pr: flags["--pr"],
-			issue: flags["--issue"],
-			branch: flags["--branch"],
-			runId: flags["--run"],
-			threadId: flags["--thread"],
-		};
-		const server = flags["--server"];
-		const ref = cleanRef(raw);
-		const given = Object.entries(raw).filter(([, v]) => v !== undefined);
-		const fyi = thread && what ? fyiReason(thread, what) : undefined;
-		if (fyi) {
-			console.error(
-				`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: ${selfCommand("decided")} "<thread>" "<what I decided>" "<ruling cited>"`,
-			);
-			process.exit(2);
-		}
-		if (
-			!thread ||
-			!what ||
-			(item !== undefined && !ITEM_ID.test(item)) ||
-			Object.keys(ref ?? {}).length !== given.length ||
-			(server !== undefined && (!/^[A-Za-z0-9_.-]{1,40}$/.test(server) || (!raw.threadId && !threadId)))
-		) {
-			console.error(HOLD_USAGE);
-			process.exit(2);
-		}
-		if (!item) {
-			console.error(
-				`afk.ts hold: refused, a hold needs --item <Q-id>. Anything that waits on ${principal()} goes on the decision queue first: ${selfCommand("ask")} '<json>' (add "urgent": false if it can wait), then hold it with the item ID it prints.`,
-			);
-			process.exit(2);
-		}
-		const queued = getQuestion(store, item);
-		if (!queued) {
-			console.error(
-				`afk.ts hold: refused, ${item} is not on the decision queue. File the question with ask.ts first, then hold it with the item ID it prints.`,
-			);
-			process.exit(2);
-		}
-		// A hold on a question already answered waits on nothing: the answer is what the hold was for.
-		if (queued.status !== "open") {
-			console.error(
-				`afk.ts hold: refused, ${item} is already answered (${queued.answer ? `"${queued.answer.label}"` : "on its card"}). Act on the answer; nothing waits on ${principal()}.`,
-			);
-			process.exit(2);
-		}
-		const notSettled = flags["--not-settled"]?.trim() || undefined;
-		if (flags["--not-settled"] !== undefined && !notSettled) {
-			console.error(HOLD_USAGE);
-			process.exit(2);
-		}
-		// A question asked with its own notSettled reason has been through the check already; the hold inherits the reason and records it.
-		const inherited = !notSettled ? queued.notSettled : undefined;
-		if (!notSettled && !inherited) {
-			const { matches, skipped } = findSettled(store, {
-				title: what,
-				context: taken,
-				thread,
-				item,
-				run: raw.runId,
-				pr: raw.pr,
-				issue: raw.issue,
-				branch: raw.branch,
-			});
-			for (const k of skipped) console.error(`afk.ts hold: the settled check could not read ${k}`);
-			if (matches.length) {
-				console.error(
-					refusalLines("afk.ts hold", matches, 'add --not-settled "<why this is a different question>"').join("\n"),
-				);
-				process.exit(2);
-			}
-		}
-		appendHeld(store, {
-			thread,
-			what,
-			...(taken ? { taken } : {}),
-			...(threadId ? { threadId } : {}),
-			...(server ? { server } : {}),
-			item,
-			...(notSettled || inherited ? { notSettled: notSettled ?? `inherited from ${item}: ${inherited}` } : {}),
-			...(ref ? { ref } : {}),
-		});
-		console.log("held");
-	} else if (cmd === "held") {
-		for (const h of heldOpen(store)) {
-			console.log(`${heldId(h)} | ${h.t.slice(5, 16)} | ${h.thread} | ${h.what}${h.taken ? ` | ${h.taken}` : ""}`);
-			for (const n of h.notes ?? []) console.log(`    note ${n.t.slice(5, 16)}: ${n.text}`);
-		}
-	} else if (cmd === "note") {
-		const [id, text] = rest;
-		if (!id || !text) {
-			console.error('usage: afk.ts note <id> "<what changed>"');
-			process.exit(2);
-		}
-		try {
-			console.log(`noted: ${noteHeld(store, id, text).thread}`);
-		} catch (e) {
-			console.error((e as Error).message);
-			process.exit(1);
-		}
-	} else if (cmd === "close") {
-		const [id, how] = rest;
-		if (!id || !how) {
-			console.error('usage: afk.ts close <id> "<how it closed>"');
-			process.exit(2);
-		}
-		try {
-			// A daemon card hold never closes alone: by hand it closes with its pointer question, as close-card does.
-			const h = store.items.get(HELD, id);
-			const card =
-				h && h.status !== "resolved"
-					? ((h.payload as Held).card ??
-						((h.payload as Held).requestId && (h.payload as Held).server
-							? { server: (h.payload as Held).server!, requestId: (h.payload as Held).requestId! }
-							: undefined))
-					: undefined;
-			if (card) {
-				const n = closeCardByHand(store, card.server, card.requestId, how);
-				console.log(`closed card ${card.server} ${card.requestId}: ${n.holds} hold(s), ${n.questions} question(s)`);
-			} else console.log(`closed: ${closeHeld(store, id, how).thread}`);
-		} catch (e) {
-			console.error((e as Error).message);
-			process.exit(1);
-		}
-	} else if (cmd === "close-card") {
-		const [server, requestId, how] = rest;
-		if (!server || !requestId || !how) {
-			console.error('usage: afk.ts close-card <server> <request id> "<how it closed>"');
-			process.exit(2);
-		}
-		try {
-			const n = closeCardByHand(store, server, requestId, how);
-			console.log(`closed card ${server} ${requestId}: ${n.holds} hold(s), ${n.questions} question(s)`);
-		} catch (e) {
-			console.error((e as Error).message);
-			process.exit(1);
-		}
-	} else if (cmd === "brief") {
-		const a = readAfk(store);
-		console.log(a ? brief(store, a) : "not away");
-	} else if (cmd === "exit") {
-		const a = readAfk(store);
-		if (!a) {
-			console.log("not away");
-			return;
-		}
-		console.log(brief(store, a));
-		store.away.exit(new Date().toISOString());
-		console.log("\nreturned; the absence is ended and stays on record");
-	} else {
-		console.error("usage: afk.ts enter|status|hold|held|note|close|close-card|brief|exit");
-		process.exit(2);
-	}
+	const run = cmd === undefined ? undefined : COMMANDS.get(cmd);
+	if (!run) usageExit("usage: afk.ts enter|status|hold|held|note|close|close-card|brief|exit");
+	run(store, rest);
 }
 
 if (import.meta.main) main();
