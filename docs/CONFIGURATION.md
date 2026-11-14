@@ -58,7 +58,7 @@ The old place for these, the config directory itself, is still read when `secret
 
 **Scalar keys.** Each can be overridden by an environment variable, and **one rule names it: `CHAMBERLAIN_` + the key in UPPER_SNAKE_CASE**
 (`stallMs` is `CHAMBERLAIN_STALL_MS`, `t3StateDb` is `CHAMBERLAIN_T3_STATE_DB`). The environment wins, then `config.json`, then the default.
-A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not read as zero. A list is comma-separated, and a boolean is `1` or `true`.
+A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not read as zero. A list is comma-separated, and a switch is `1` (on) or `0` (off): any other value is ignored.
 
 | Key | Environment | Default | Meaning |
 | --- | --- | --- | --- |
@@ -68,7 +68,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `t3Origin` | `CHAMBERLAIN_T3_ORIGIN` | `http://127.0.0.1:3773` | The origin of the one default server when there is no `servers` list. |
 | `alertCmd` | `CHAMBERLAIN_ALERT_CMD` | none | Run for each alarm as `<command> warning <title> <summary>`, with `CHAMBERLAIN_ALARM_KEY` (the alarm's stable key, to de-duplicate on) in its environment. Without one, alarms are only logged. |
 | `compactTokens` | `CHAMBERLAIN_COMPACT_TOKENS` | `350000` | Steward context size above which the daemon sends `/compact`. |
-| `recover` | `CHAMBERLAIN_RECOVER` | off | `true` / `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge`; without one, to the Steward unjudged). Needs the server's operate token. See [GLOSSARY.md](GLOSSARY.md#recovering-a-failed-thread). |
+| `recover` | `CHAMBERLAIN_RECOVER` | off | `true` (`1` in the variable): turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge`; without one, to the Steward unjudged). Needs the server's operate token. See [GLOSSARY.md](GLOSSARY.md#recovering-a-failed-thread). |
 | `exclude` | `CHAMBERLAIN_EXCLUDE` | none | Thread ids to never wake about (a list; comma-separated in the variable). |
 | `reportQuietMs` | `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn must stay quiet before it is reported (a PR update often follows). |
 | `reportHoldMs` | `CHAMBERLAIN_REPORT_HOLD_MS` | `3600000` | How long a report waits on a thread's own background work before it goes anyway. |

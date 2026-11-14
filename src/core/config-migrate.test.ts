@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import {
 	ALERT_DESK,
@@ -264,6 +275,103 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		expect(text).toContain("secrets/");
 		expect(text).toContain("wake-url");
 		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, ...Object.values(FAKE.tokens)]) expect(text).not.toContain(v);
+	});
+});
+
+describe("the cases an audit of the first version found", () => {
+	test("names the live list does not have: judge.json, read-token, hand-off URL files, t3StateDb, an unknown settings key", () => {
+		const conf = fresh();
+		writeFileSync(
+			`${conf}/judge.json`,
+			JSON.stringify({ triggers: {}, backends: { b: { command: ["/fake/judge"] } } }),
+			{ mode: 0o600 },
+		);
+		writeFileSync(`${conf}/read-token`, "fake-read\n", { mode: 0o600 });
+		writeFileSync(`${conf}/wake-url.steward`, "https://fake.example/steward\n", { mode: 0o600 });
+		writeFileSync(`${conf}/wake-url.prev`, "https://fake.example/prev\n", { mode: 0o600 });
+		writeFileSync(
+			`${conf}/settings.json`,
+			JSON.stringify({ schemaVersion: 2, t3StateDb: "/fake/state.sqlite", quietHours: "22-7" }),
+			{ mode: 0o600 },
+		);
+		const r = migrateLayout(conf);
+		const c = json(`${conf}/config.json`);
+		expect(c.judge).toEqual({ triggers: {}, backends: { b: { command: ["/fake/judge"] } } });
+		expect(c.t3StateDb).toBe("/fake/state.sqlite");
+		for (const [n, v] of [
+			["read-token", "fake-read"],
+			["wake-url.steward", "https://fake.example/steward"],
+			["wake-url.prev", "https://fake.example/prev"],
+		] as const)
+			expect(readFileSync(`${conf}/secrets/${n}`, "utf8")).toBe(`${v}\n`);
+		expect(r.plan.notes.join("\n")).toContain("quietHours is not read by this build");
+	});
+
+	test("a token file called credential.md is a secret, not prose, once the old copy is gone", () => {
+		const conf = fresh();
+		writeFileSync(
+			`${conf}/servers.json`,
+			JSON.stringify({
+				schemaVersion: 2,
+				servers: [{ name: "a", adapter: "t3", origin: "http://x", tokenFile: "credential.md" }],
+			}),
+			{ mode: 0o600 },
+		);
+		writeFileSync(`${conf}/credential.md`, "fake-md-token\n", { mode: 0o600 });
+		migrateLayout(conf);
+		rmSync(`${conf}/credential.md`);
+		expect(readNamed(conf, "credential.md")).toBe("fake-md-token");
+		writeFileSync(`${conf}/decision-rights.md`, "# rights\n", { mode: 0o600 });
+		expect(readNamed(conf, "decision-rights.md")).toBe("# rights");
+		expect(existsSync(`${conf}/secrets/decision-rights.md`)).toBe(false);
+	});
+
+	test("a webhook file that is a symlink to a regular 0600 file is copied by content", () => {
+		const conf = fresh();
+		writeFileSync(`${conf}/real-hook`, "https://fake.example/linked\n", { mode: 0o600 });
+		symlinkSync(`${conf}/real-hook`, `${conf}/wake-url`);
+		migrateLayout(conf);
+		expect(readFileSync(`${conf}/secrets/wake-url`, "utf8")).toBe("https://fake.example/linked\n");
+		expect(lstatSync(`${conf}/secrets/wake-url`).isSymbolicLink()).toBe(false);
+		expect(mode(`${conf}/secrets/wake-url`)).toBe(0o600);
+	});
+
+	test('"threads": null in config.json means none: it is not refilled from the old files, and no fallback reads them', () => {
+		const conf = fresh();
+		writeLegacyConf(conf);
+		writeFileSync(`${conf}/config.json`, JSON.stringify({ schemaVersion: 1, threads: null }), { mode: 0o600 });
+		const r = migrateLayout(conf);
+		expect(r.plan.added.map((a) => a.key).filter((k) => k.startsWith("threads"))).toEqual([]);
+		expect(json(`${conf}/config.json`).threads).toBeNull();
+		expect(thread(conf, "steward")).toBeUndefined();
+	});
+
+	test("a secret is copied through a temporary file: a stale one is replaced, and none is left behind", () => {
+		const conf = fresh();
+		writeLegacyConf(conf);
+		mkdirSync(`${conf}/secrets`, { mode: 0o700 });
+		writeFileSync(`${conf}/secrets/wake-url.tmp-${process.pid}`, "half a url", { mode: 0o600 });
+		migrateLayout(conf);
+		expect(readFileSync(`${conf}/secrets/wake-url`, "utf8")).toBe(`${FAKE.wakeUrl}\n`);
+		expect(existsSync(`${conf}/secrets/wake-url.tmp-${process.pid}`)).toBe(false);
+	});
+
+	test("CHAMBERLAIN_RECOVER=true does not turn recovery on: only 1 does, as before", () => {
+		const conf = fresh();
+		expect(setting("recover", conf, { CHAMBERLAIN_RECOVER: "true" })).toBeUndefined();
+		expect(setting("recover", conf, { CHAMBERLAIN_RECOVER: "yes" })).toBeUndefined();
+		expect(setting("recover", conf, { CHAMBERLAIN_RECOVER: "1" })).toBe(true);
+		writeFileSync(`${conf}/daemon.env`, "CHAMBERLAIN_RECOVER=true\n", { mode: 0o600 });
+		expect(planMigration(conf).added).toEqual([]);
+		expect(envValue("recover", "true")).toBeUndefined();
+	});
+
+	test("a daemon.env value that disagrees with settings.json is reported, and the file's value is the one kept", () => {
+		const conf = fresh();
+		writeLegacyConf(conf);
+		const r = migrateLayout(conf);
+		expect(r.plan.differs.find((d) => d.key === "alertCmd")?.from).toContain("daemon.env");
+		expect(json(`${conf}/config.json`).alertCmd).toBe(SETTINGS.alertCommand);
 	});
 });
 

@@ -8,7 +8,7 @@
  * `config.json` in the config directory holds every setting that is not a secret, `secrets/` the tokens and webhook URLs, and a scalar
  * key can be overridden by an environment variable (src/core/layout.ts). See docs/CONFIGURATION.md.
  */
-import { cfg } from "./layout.ts";
+import { cfg, setting } from "./layout.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
 import type { Settings, SettledMatch } from "./settings-parse.ts";
 export { parseSettings } from "./settings-parse.ts";
@@ -121,8 +121,7 @@ export const alertCommand = (): string | undefined => {
 	const v = process.env.CHAMBERLAIN_ALERT_CMD ?? readSettings().alertCommand;
 	return v ? tilde(v) : undefined;
 };
-export const compactTokens = (fallback: number): number =>
-	Number(process.env.CHAMBERLAIN_COMPACT_TOKENS ?? readSettings().compactTokens ?? fallback);
+export const compactTokens = (fallback: number): number => setting("compactTokens") ?? fallback;
 
 /** What wakes call the human: CHAMBERLAIN_PRINCIPAL, then `principalName` in settings.json, then "the operator". */
 export const principal = (): string =>

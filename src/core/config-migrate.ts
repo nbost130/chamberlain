@@ -15,6 +15,8 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
+	rmSync,
 	statSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
@@ -102,7 +104,7 @@ export function parseEnvFile(text: string): [string, string][] {
 export function envValue(key: ScalarKey, raw: string): unknown {
 	const kind = SCALARS[key] as string;
 	if (kind === "string") return raw.trim() ? raw : undefined;
-	if (kind === "boolean") return raw === "1" || raw.toLowerCase() === "true";
+	if (kind === "boolean") return raw === "1" ? true : raw === "0" ? false : undefined;
 	if (kind === "list") {
 		const l = raw
 			.split(",")
@@ -135,7 +137,7 @@ function secretNames(conf: string, doc: Record<string, unknown>): string[] {
 	if (isObject(web.answerTokens)) for (const v of Object.values(web.answerTokens)) add(v);
 	try {
 		for (const e of readdirSync(conf, { withFileTypes: true }))
-			if (e.isFile() && SECRET_FILE.test(e.name)) names.add(e.name);
+			if ((e.isFile() || e.isSymbolicLink()) && SECRET_FILE.test(e.name)) names.add(e.name);
 	} catch {
 		// EMPTY_CATCH_OK: an unreadable config directory has no files to find; the caller reports the directory itself.
 	}
@@ -181,11 +183,34 @@ export function planMigration(conf: string): Plan {
 		}
 	};
 
+	try {
+		const p = `${conf}/settings.json`;
+		if (existsSync(p) && isPrivateFile(statSync(p))) {
+			const known = new Set([
+				"schemaVersion",
+				"principalName",
+				"t3BaseDir",
+				"t3StateDb",
+				"alertCommand",
+				"compactTokens",
+				"settledMatch",
+			]);
+			const raw = JSON.parse(readFileSync(p, "utf8")) as unknown;
+			const extra = isObject(raw) ? Object.keys(raw).filter((k) => !known.has(k)) : [];
+			if (extra.length)
+				plan.notes.push(
+					`settings.json: ${extra.join(", ")} ${extra.length === 1 ? "is" : "are"} not read by this build, so not migrated`,
+				);
+		}
+	} catch {
+		// EMPTY_CATCH_OK: a settings.json that cannot be read is reported by the migration of its keys just below.
+	}
 	for (const key of [...SETTINGS_KEYS, ...FILE_SECTIONS]) {
 		const v = legacy(key);
 		if (v) fold(key, v.file, v.value, v.trust);
 	}
-	for (const member of THREADS) {
+	const threadsNone = existing !== undefined && Object.hasOwn(existing, "threads") && existing.threads === null;
+	for (const member of threadsNone ? [] : THREADS) {
 		let id: string | undefined;
 		try {
 			id = legacyThreadId(conf, member);
@@ -321,8 +346,13 @@ function apply(conf: string, plan: Plan): boolean {
 		for (const s of copies) {
 			const to = `${conf}/${SECRETS_DIR}/${s.name}`;
 			mkdirSync(dirname(to), { recursive: true, mode: 0o700 });
-			copyFileSync(`${conf}/${s.name}`, to, constants.COPYFILE_EXCL);
-			chmodSync(to, 0o600);
+			// Through a temporary file and a rename, so a copy that is cut short leaves no half-written secret under its real name to be
+			// taken, on the next run, for the one that wins.
+			const tmp = `${to}.tmp-${process.pid}`;
+			rmSync(tmp, { force: true });
+			copyFileSync(`${conf}/${s.name}`, tmp, constants.COPYFILE_EXCL);
+			chmodSync(tmp, 0o600);
+			renameSync(tmp, to);
 			changed = true;
 		}
 	}

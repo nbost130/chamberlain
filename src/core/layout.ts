@@ -345,19 +345,20 @@ export const cfg = (conf: string, key: string): unknown => configValue(conf, key
 export function thread(conf: string, member: ThreadKey): string | undefined {
 	const doc = readConfigFile(conf);
 	const t = doc?.threads;
+	if (doc && Object.hasOwn(doc, "threads") && t === null) return undefined; // "threads": null says none, and stops the fallback
 	if (isObject(t) && Object.hasOwn(t, member)) return typeof t[member] === "string" ? (t[member] as string) : undefined;
 	const old = legacyThread(conf, member);
 	if (old) deprecated(conf, LEGACY_THREAD_FILES[member], `threads.${member}`, `config.json "threads.${member}"`);
 	return old;
 }
 
-/** The string, number, boolean or list an environment variable holds for a scalar key, or undefined when it is unset or unusable. */
+/** The string, number, boolean (`1` or `0`) or list an environment variable holds for a scalar key, or undefined when it is unset or unusable. */
 function fromEnv<K extends ScalarKey>(key: K, env: Record<string, string | undefined>): ScalarValue<K> | undefined {
 	const raw = env[envName(key)];
 	if (raw === undefined) return undefined;
 	const kind: ScalarKind = SCALARS[key];
 	if (kind === "string") return raw as ScalarValue<K>;
-	if (kind === "boolean") return (raw === "1" || raw.toLowerCase() === "true") as ScalarValue<K>;
+	if (kind === "boolean") return (raw === "1" ? true : raw === "0" ? false : undefined) as ScalarValue<K> | undefined; // as before: only "1" turns a switch on
 	if (kind === "list")
 		return raw
 			.split(",")
@@ -425,14 +426,17 @@ export function secretPath(conf: string, name: string): string | undefined {
 	return existsSync(`${conf}/${name}`) ? `${conf}/${name}` : undefined;
 }
 
+/** The prose files the operator edits, which stay files in the config directory. Any other name `readNamed` is given is a secret. */
+const PROSE_FILES = ["decision-rights.md", "sweep-prompt.md", "alert-desk-prompt.md", "operating-rules.md"];
+
 /**
- * The one reader behind `readPrivate(name)`: a thread id name (`steward-thread`) reads config.json's `threads`, a prose file (`*.md`) stays a
- * file in the config directory (mode 0600, as before), and anything else is a secret.
+ * The one reader behind `readPrivate(name)`: a thread id name (`steward-thread`) reads config.json's `threads`, one of the prose files
+ * (`decision-rights.md`, `sweep-prompt.md`) stays a file in the config directory (mode 0600, as before), and anything else is a secret.
  */
 export function readNamed(conf: string, name: string): string | undefined {
 	const member = (Object.keys(LEGACY_THREAD_FILES) as ThreadKey[]).find((k) => LEGACY_THREAD_FILES[k] === name);
 	if (member) return thread(conf, member);
-	if (name.endsWith(".md")) return readLegacyText(conf, name);
+	if (PROSE_FILES.includes(name)) return readLegacyText(conf, name);
 	return readSecret(conf, name);
 }
 
