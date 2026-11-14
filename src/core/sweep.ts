@@ -15,7 +15,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile, modeText } from "./private.ts";
-import { CONF, principal, principalPoss, selfCommand } from "./config.ts";
+import { CONF, principal } from "./config.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
 import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
 import { type Finding, type ItemSource, type SourceOutcome } from "./source.ts";

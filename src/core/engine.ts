@@ -6,7 +6,6 @@
  * adapter lacks switches one feature off (see the table in adapter.ts). src/daemon.ts builds the real deps for it.
  */
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { closeHeldForCard, readAfk } from "./afk.ts";
 import { cardWaitOf, holdCard, reconcileCardHolds, trackUnverified, unverifiedAlarm, type CardThreadRead } from "./card-hold.ts";
 import type { Question } from "./questions.ts";
@@ -16,6 +15,9 @@ import { alertCommand, compactTokens, PrincipalPoss, principal, selfCommand } fr
 import { alarms, awayModeLine, threadHappened, threadWakeHead, type AlarmText } from "./messages.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
+import { createHeartbeat } from "./engine-heartbeat.ts";
+import { createStewardCheck } from "./engine-steward.ts";
+import { createSweep } from "./engine-sweep.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
 import { DESK_RECEIVER, drainAlertDesk, inboxPath } from "./alert-desk.ts";
 import type { RelayLock } from "./singleton.ts";
@@ -24,20 +26,19 @@ import { createRecovery, DEFAULT_RECOVER_TIMING, outcomeOf, type Handling, type 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
 import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
-import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, needsCompact, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
+import { decide, idleKey, lastInstruction, idleWorkLine, LIVE, looksLikeAsk, looksLikeStall, principalWroteWithin, questionText, reportKey, rightsUnreadable, routeNeedsInput, stewardInstruction, turnBegan, type Candidate, type RightsSent } from "./decide.ts";
 import type { Gate } from "./hold.ts";
 import { failedRead, skipEvent, type InstructionRead } from "./history.ts";
 import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
 import { privateFile as readPrivateFile } from "./private.ts";
 import { settleReport } from "./report.ts";
-import { epochOf, fullStamp, openRightsSent, rightsFirstMessage, rightsFor, rightsHash, rightsHighWater, rightsStamp } from "./rights-sent.ts";
+import { epochOf, fullStamp, openRightsSent, rightsFirstMessage, rightsFor, rightsHash, rightsStamp } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
-import type { OutboxRow, Store } from "./store.ts";
+import type { Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
 import { HEALTH_CONFIG, handoffDeliveryId, handoffWakeMessage, healthTicker, liveHealth, type Health } from "./steward-health.ts";
-import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
-import { BUSY_TURNS, commitsAhead, configuredSources, renderSweepPrompt, runawaySource, SWEEP_MS, sweepAction, sweepClock, sweepMessage, type BusyFact, type SweepClock } from "./sweep.ts";
+import { BUSY_TURNS, commitsAhead, SWEEP_MS, type BusyFact } from "./sweep.ts";
 
 /** One configured server and the adapter that serves it. */
 export type EngineServer = { server: ServerEntry; adapter: Adapter };
@@ -96,8 +97,6 @@ const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s
 const shellWord = (s: string) => (/^[A-Za-z0-9_.:@%+=,/-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 /** What an adapter without a history reports for every thread: nothing says who instructed it. */
 const NO_HISTORY: InstructionRead = { items: [], state: "complete", byMachine: false };
-const QUEUE_READ_FAILURES_MAX = 5;
-const COMPACT_COOLDOWN_MS = 10 * 60_000;
 const TOKEN_ALARM_WINDOW_MS = 6 * 3600_000;
 
 export function createEngine(d: EngineDeps) {
@@ -140,7 +139,6 @@ export function createEngine(d: EngineDeps) {
 		execFile(cmd, ["warning", title, summary], { timeout: 30000, env }, (err) => { if (err) log("alarm-emit-failed", { key, error: String(err.message).slice(0, 200) }); });
 	}
 
-	let stewardId = privateFile("steward-thread");
 	let decisionsThread = privateFile("decisions-thread");
 
 	/**
@@ -575,91 +573,11 @@ export function createEngine(d: EngineDeps) {
 		} catch (e) { log("rulings-unreadable", { error: String(e).slice(0, 200) }); return undefined; }
 	}
 
-	/** Once a minute: keep the Steward out of its own wakes, and compact it when its context has outgrown the limit. */
-	let lastCompactAt = 0;
-	let compactHeldFor: string | undefined;
-	let queueReadFailures = 0;
-	const COMPACT_AT = d.compactAt ?? compactTokens(HEALTH_CONFIG.compactContext);
-	async function stewardCheck() {
-		decisionsThread = privateFile("decisions-thread");
-		const id = privateFile("steward-thread");
-		stewardId = id;
-		if (!id) return;
-		EXCLUDE.add(id);
-		const p = probe();
-		if (!p) return;
-		const used = p.contextTokens;
-		// Keep the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen. A shrink invalidates the
-		// record by bumping the epoch, so a full block composed before it cannot restore the record when it lands.
-		const sent = rightsSent.get(), high = rightsHighWater(sent, used);
-		if (high) rightsSent.set(high);
-		else if (sent) { rightsSent.set(undefined); log("rights-invalidated", { reason: "context shrink", used }); }
-		// A 202 only means queued. This is the check that the Steward is actually working through them.
-		// One failed read is the backend busy. A run of them means both checks here can no longer see, and that must not be silent.
-		queueReadFailures = p.readable ? 0 : queueReadFailures + 1;
-		if (queueReadFailures >= QUEUE_READ_FAILURES_MAX) raiseAlarm("steward-queue-unreadable", alarms.queueUnreadable(queueReadFailures));
-		if (p.stalled) alarm("steward-stalled", p.stalled.title, p.stalled.summary);
-		if (!needsCompact(used, COMPACT_AT, Date.now() - lastCompactAt < COMPACT_COOLDOWN_MS)) return;
-		const blocked = p.compactBlocked;
-		if (blocked !== compactHeldFor) log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
-		compactHeldFor = blocked;
-		if (blocked) return;
-		lastCompactAt = Date.now();
-		if (!relay.compactReady()) { raiseAlarm("steward-compact", alarms.compactUnavailable(used)); return; }
-		// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
-		// here, before the job runs, let a full block already in flight land after and restore it.
-		log("fire", { server: "steward", kind: "compact", threadId: id, used });
-		if (DRY) return;
-		// The compaction target is a task whose prompt is /compact, so it takes no message. Only the log line is shared with wakes. The request goes out through the relay, the only code that calls a transport.
-		const deliveryId = `compact:${id}:${Date.now()}`;
-		try { const r = await relay.compact(deliveryId); log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 }); } catch (e) { log("deliver-error", { deliveryId, attempt: 1, error: e instanceof Error ? e.message : String(e) }); }
-	}
+	const stewardCheck = createStewardCheck({ privateFile, exclude: EXCLUDE, probe, rightsSent, compactReady: () => relay.compactReady(), compact: (id) => relay.compact(id), log, alarm, raiseAlarm, dry: DRY, compactAt: d.compactAt ?? compactTokens(HEALTH_CONFIG.compactContext), onDecisionsThread: (id) => { decisionsThread = id; } }).check;
 
-	/** Once a minute, away or not: run the routine checks when a sweep is due, and wake the Steward only for what they find. */
-	const SWEEP_CLOCK = "sweep-clock";
-	/** The full-sweep prompt: sweep-prompt.md in the config directory if there is one, else the bundled template. */
-	const sweepPrompt = () => {
-		const own = privateFile("sweep-prompt.md");
-		return renderSweepPrompt(own ?? (d.sweepPromptFile ? readFileSync(d.sweepPromptFile, "utf8") : ""), principal());
-	};
-	const readSweep = (): Partial<SweepClock> | undefined => store.state.get<Partial<SweepClock>>(SWEEP_CLOCK);
-	let sweeping = false;
-	async function sweepTick() {
-		if (sweeping) return;
-		const now = Date.now();
-		const prior = readSweep();
-		const s = sweepClock(prior, now);
-		if (!prior) store.state.set(SWEEP_CLOCK, s);
-		if (s.seeded && now - s.lastAt < SWEEP_MS) return;
-		sweeping = true;
-		try {
-			// Read before anything is consumed, and a broken record counts as here, which grants nothing.
-			let away = false;
-			try { away = Boolean(readAfk(store)); } catch (e) { log("sweep-afk-unreadable", { error: String(e).slice(0, 200) }); }
-			const busy = (await Promise.all(watchers.map((w) => w.runawayCandidates(now)))).flat();
-			// The sweep is a timer that runs sources; the item system decides what notifies (src/core/source.ts). Running a source
-			// writes nothing. What they found, what notified, the clock and the wake are then ONE transaction (`commit` in
-			// deliver.ts): a crash between recording a finding as notified and queueing its wake would lose the alert for good.
-			const evaluations: Evaluation[] = [];
-			for (const src of [runawaySource(busy), ...configuredSources(conf)]) evaluations.push(await evaluateSource(src));
-			outbox.commit(() => {
-				const outcomes = evaluations.map((e) => recordEvaluation(store, e, { now, firstRun: !s.seeded }));
-				const action = sweepAction(outcomes, now - s.lastFullAt);
-				store.state.set(SWEEP_CLOCK, { lastAt: now, lastFullAt: action.wake === "full" ? now : s.lastFullAt, seeded: true } satisfies SweepClock);
-				log("sweep", { wake: action.wake, findings: action.fresh.map((x) => x.item), errored: action.errored, ...(action.shadow.length ? { shadow: action.shadow } : {}) });
-				return action.wake === "none" ? undefined : { message: sweepMessage(action, sweepPrompt(), away), deliveryId: `sweep:${now}`, meta: { kind: "sweep" } };
-			});
-		} finally {
-			sweeping = false;
-		}
-	}
+	const sweep = createSweep({ store, log, outbox, conf, privateFile, sweepPromptFile: d.sweepPromptFile, watchers });
 
-	/** Once a minute: write the heartbeat file and turn silent stops into alarms. */
-	function heartbeat() {
-		const states = watchers.map((w) => w.health());
-		store.state.set("heartbeat", { t: new Date().toISOString(), away: Boolean(readAfk(store)), deliveryFailures: relay.failures(), servers: states });
-		for (const s of states) if (!s.connected && s.downMs > 10 * 60_000 && !d.servers.find((x) => x.server.name === s.name)?.server.mayBeOffline) raiseAlarm(`disconnected:${s.name}`, alarms.serverDown(s.name, Math.round(s.downMs / 60000)));
-	}
+	const heartbeat = createHeartbeat({ store, watchers, failures: () => relay.failures(), mayBeOffline: (name) => d.servers.find((x) => x.server.name === name)?.server.mayBeOffline, raiseAlarm }).beat;
 
 	const ask = d.ask;
 	const healthTick = has(homeAdapter, "transcriptPath")
@@ -747,7 +665,7 @@ export function createEngine(d: EngineDeps) {
 				try { drainAlertDesk({ store, outbox, inbox: inboxPath(process.env, process.env.HOME ?? ""), conf, now: d.relay?.now?.() ?? Date.now(), canDeliver: !DRY && deskLane.wake.ready(), log }); } catch (e) { log("alert-desk-error", { error: String(e).slice(0, 200) }); alarm("alert-desk", "chamberlain alert desk failed", "The Alert Desk drain threw an error and did not finish, so alerts are not reaching the desk thread this round. Its inbox keeps them."); }
 			}
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
-			checks.push(sweepTick().catch((e) => { log("sweep-error", { error: String(e) }); raiseAlarm("sweep", alarms.sweepFailed()); }));
+			checks.push(sweep.tick().catch((e) => { log("sweep-error", { error: String(e) }); raiseAlarm("sweep", alarms.sweepFailed()); }));
 		}
 		await Promise.all(checks);
 	}
