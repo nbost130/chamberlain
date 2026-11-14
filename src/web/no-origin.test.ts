@@ -14,7 +14,7 @@ import { readRulings } from "../core/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { useWebNoOriginFixtures } from "../testing/web-no-origin-fixtures.ts";
 
-const { ORIGIN, setup, tok, REFUSED, SHELL } = useWebNoOriginFixtures();
+const { ORIGIN, setup, tok, REFUSED, REFUSED_TO_THE_PAGE_KEY, SHELL } = useWebNoOriginFixtures();
 
 for (const [who, headers, how] of [
 	["the page key, no Origin", (s: ReturnType<typeof setup>) => tok(s.page), "page"],
@@ -34,7 +34,13 @@ for (const [who, headers, how] of [
 				const r = await s.send("GET", path, h);
 				expect([path, r.status]).toEqual([path, 200]);
 			}
-			const a = await s.send("POST", "/api/items/Q-efgh/answer", h, { choice: 1, note: "make it bigger" });
+			// The page key's plain answer takes an optional note; the view key's is a choice and nothing else (view-key.test.ts).
+			const a = await s.send(
+				"POST",
+				"/api/items/Q-efgh/answer",
+				h,
+				how === "page" ? { choice: 1, note: "make it bigger" } : { choice: 1 },
+			);
 			expect(a.status).toBe(200);
 			expect(getQuestion(s.store, "Q-efgh")!.status).not.toBe("open");
 			expect(readRulings(s.store)).toEqual([]);
@@ -54,7 +60,7 @@ for (const [who, headers, how] of [
 				for (const k of [s.page, s.view]) expect(text.includes(k)).toBe(false);
 			});
 		}
-		for (const [method, path, body] of REFUSED) {
+		for (const [method, path, body] of how === "page" ? [...REFUSED, ...REFUSED_TO_THE_PAGE_KEY] : REFUSED) {
 			test(`${method} ${path}${body ? ` ${JSON.stringify(body).slice(0, 50)}` : ""} is refused (403), and nothing changes`, async () => {
 				const s = setup();
 				const r = await s.send(method, path, headers(s), body);

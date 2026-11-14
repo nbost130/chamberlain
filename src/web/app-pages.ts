@@ -4,6 +4,7 @@ import type { AppDeps, Ctx } from "./app-ctx.ts";
 import { fail, inlineCors, inlineVerdict, isJsonContentType, withSecurity } from "./app-http.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { openPage } from "./thread-links.ts";
+import { viewKeyVerdict } from "./view-key.ts";
 
 function evidence(ctx: Ctx, url: URL): Response {
 	const { d } = ctx;
@@ -60,6 +61,20 @@ const tapped = (req: Request) => req.headers.get("sec-fetch-user") === "?1";
 /** Who a request says it is: whether it comes from an inline frame, and whether that frame may do what it asked. */
 type Gate = { inline: boolean; allowed: boolean; origin: string | null; sameOrigin: boolean };
 
+/**
+ * A null-origin frame's request against the list of the key it holds: the view key's (./view-key.ts), or the old inline list for any other
+ * (the page key from a frame stays exactly as it was). A preflight carries no key, so it is answered when either list has the route: it grants
+ * nothing, and the request it clears is checked again with its key.
+ */
+function frameVerdict(d: AppDeps, req: Request, pathname: string): "ok" | "refuse" {
+	const onViewList = viewKeyVerdict(req.method, pathname) !== "refuse";
+	const onPageList = inlineVerdict(req.method, pathname) !== "refuse";
+	if (req.method === "OPTIONS") return onViewList || onPageList ? "ok" : "refuse";
+	const key = req.headers.get(TOKEN_HEADER);
+	const viewKeyOnly = !d.capability.accepts(key) && d.capability.acceptsView(key);
+	return (viewKeyOnly ? onViewList : onPageList) ? "ok" : "refuse";
+}
+
 /** Checks Host and Origin: a refusal (or the answer to a preflight) as a Response, or the request's Gate. */
 export function checkOrigin(d: AppDeps, req: Request, url: URL): Response | Gate {
 	// The page binds to one address. A Host it doesn't know is a rebinding attempt or a mistake.
@@ -71,11 +86,14 @@ export function checkOrigin(d: AppDeps, req: Request, url: URL): Response | Gate
 	// approval, read one item, or change anything else. A page on any other origin is refused outright, whatever it sends.
 	const inline = origin === "null";
 	if (origin !== null && !inline && !sameOrigin) return withSecurity(fail(403, "refused: cross-origin request"));
-	const verdict = inline ? inlineVerdict(req.method, url.pathname) : undefined;
+	const verdict = inline ? frameVerdict(d, req, url.pathname) : undefined;
 	// A null-origin request outside the list is refused whatever it is. (Static files carry no Origin when a frame loads them.)
 	if (inline && verdict === "refuse" && (url.pathname.startsWith("/api/") || req.method !== "GET"))
 		return withSecurity(
-			fail(403, "refused: an inline frame may read the queue, recent answers and rulings, and answer a question"),
+			fail(
+				403,
+				"refused: an inline frame may read the queue, recent answers and rulings, and answer, snooze, direct or dismiss a question",
+			),
 		);
 	const allowed = inline && verdict !== "refuse";
 	// A preflight cannot carry the token, so it is answered; it grants nothing, and the request it clears is checked below.
@@ -145,8 +163,13 @@ export function restrictedRefusal(
 	const shellRead =
 		req.method === "GET" && proof.byPageKeyHeader && (isShell(url.pathname) || (isOpen(url.pathname) && !inline));
 	if (!restricted || shellRead || !(!inline || proof.byViewKey || isOpen(url.pathname))) return undefined;
-	const v = inlineVerdict(req.method, url.pathname);
-	if (v === "read" || v === "answer") return undefined;
+	if (proof.byViewKey) {
+		const v = viewKeyVerdict(req.method, url.pathname);
+		if (v !== "refuse" && v !== "preflight") return undefined;
+	} else {
+		const v = inlineVerdict(req.method, url.pathname);
+		if (v === "read" || v === "answer") return undefined;
+	}
 	return withSecurity(
 		fail(
 			403,

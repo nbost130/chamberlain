@@ -490,8 +490,11 @@ builds ignore.
   `questionStates` reads it back as status `dismissed` with a `dismissal`, never as an `answer`: it is not an answer or a ruling, and
   `settled.ts` skips it. The Steward's wake says dismissed (`dismissedWakeText`), still under the `[chamberlain] answer:` head.
 
-All four routes (`snooze`, `unsnooze`, `direction`, `dismiss`) change state, so they are the full page's alone: a request needs the page's key
-and the page's own origin as an answer does, and `inlineVerdict` refuses them to an inline frame, whatever key it holds ([SECURITY.md](SECURITY.md)).
+All four routes (`snooze`, `unsnooze`, `direction`, `dismiss`) change state. The full page does all four (the page's key and own origin, as an answer
+does). The Decisions view does three of them in place with the view key, and not un-snooze: `src/web/view-key.ts` holds that allowlist (the view key's three reads
+and four writes), and each write route takes the request's authority (`full`, `view` or `restricted`), checked in `mayDo`, in place of the old inline flag. A request's
+key is recorded with it: `key: "page" | "view"` on the claim's answer (`plainAnswer`, `Answer.key`), on the snooze (`snoozedKey`) and on the logged event, and the ledger's
+`question.answered` row carries it ([SECURITY.md](SECURITY.md)).
 
 ### Queue first, hold second, settled never twice
 

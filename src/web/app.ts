@@ -20,6 +20,7 @@ import {
 } from "./app-pages.ts";
 import { recover } from "./app-relay.ts";
 import { api } from "./app-routes.ts";
+import { authorityOf } from "./view-key.ts";
 
 async function handle(ctx: Ctx, req: Request): Promise<Response> {
 	const { d } = ctx;
@@ -35,7 +36,7 @@ async function handle(ctx: Ctx, req: Request): Promise<Response> {
 	if (proof.byLink && (isShell(url.pathname) || isOpen(url.pathname))) return linkRedirect(d, req, url);
 	if (req.method === "POST" && !postAllowed(req, gate)) return withSecurity(fail(403, "refused"));
 	if (url.pathname.startsWith("/api/")) {
-		const r = withSecurity(await api(ctx, req, url, gate.inline || !proof.full));
+		const r = withSecurity(await api(ctx, req, url, authorityOf(gate.inline || !proof.full, proof.byViewKey)));
 		return gate.allowed ? inlineCors(r) : r;
 	}
 	return servePage(ctx, req, url);

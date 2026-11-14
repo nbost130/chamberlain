@@ -107,6 +107,7 @@ function answeredEvent(item: Row): Derived | undefined {
 		choice,
 		recommended: choice !== undefined && choice === num(q.recommended),
 		by: onCard ? "card" : text(a.by),
+		key: onCard ? undefined : text(a.key),
 		wait_ms: Math.max(0, Date.parse(t) - (item.first_seen as number)),
 		ruled: a.ruling !== undefined && a.ruling !== null,
 	};

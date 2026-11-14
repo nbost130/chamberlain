@@ -2,7 +2,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { item, run, settle } from "../testing/web-inline-view-fixtures.ts";
+import { run, settle } from "../testing/inline-dom.ts";
+import { buttons, item } from "../testing/web-inline-view-fixtures.ts";
 
 describe("one question's view (?item=) and the recent answers know snoozed and dismissed", () => {
 	test("a snoozed question says when it returns and links to it on the full page", async () => {
@@ -15,7 +16,11 @@ describe("one question's view (?item=) and the recent answers know snoozed and d
 		await settle();
 		expect(dq.textContent).toContain("Snoozed. It returns ");
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("snoozed");
-		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Snooze"]);
+		// un-snoozing is not the view key's (src/web/view-key.ts): the link opens the full page
+		expect(dq.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
+			["Un-snooze", "http://queue.test/item/Q-snz1"],
+		]);
+		expect(buttons(dq)).toEqual([]);
 	});
 	test("a dismissed question says dismissed and that nothing was answered", async () => {
 		const gone = {
@@ -52,10 +57,16 @@ describe("one question's view (?item=) and the recent answers know snoozed and d
 	});
 });
 
-test("the view's script never calls a route that changes an item's state: those are the full page's alone", () => {
-	const source = readFileSync(new URL("./static/inline.js", import.meta.url), "utf8");
-	expect(source).not.toMatch(/\/(snooze|unsnooze|direction|dismiss)["`'?]/);
-	expect(source).not.toMatch(/api\/items\/[^"'`]*\/(snooze|unsnooze|direction|dismiss)/);
-	// and the one POST it makes is the plain answer
+test("the view's script posts only to the view key's four writes: answer, snooze, direction, dismiss", () => {
+	const source = readFileSync(new URL("../web/static/inline.js", import.meta.url), "utf8");
+	// the one POST goes to /api/items/<id>/<action>, and every action it is given is on the list in src/web/view-key.ts
 	expect([...source.matchAll(/method:\s*"POST"/g)]).toHaveLength(1);
+	expect([...new Set([...source.matchAll(/\bsend\("([a-z-]+)"/g)].map((m) => m[1]))].sort()).toEqual([
+		"answer",
+		"direction",
+		"dismiss",
+		"snooze",
+	]);
+	expect(source).not.toMatch(/\/(unsnooze|not-now|accept-all|cards\/|confirm)/);
+	expect(source).not.toMatch(/api\/rulings\/|saveRuling|rulingWording/);
 });

@@ -1,7 +1,8 @@
 /** Runs the Decisions view (static/inline.js) against a tiny in-memory DOM, to check what a refresh shows. */
 
 import { expect, test } from "bun:test";
-import { card, ctxOf, INLINE_PATHS, item, run, settle } from "../testing/web-inline-view-fixtures.ts";
+import { run, settle } from "../testing/inline-dom.ts";
+import { card, ctxOf, INLINE_PATHS, item } from "../testing/web-inline-view-fixtures.ts";
 
 test("health card shows context meter, preserves expanded evidence, and labels each elevated signal", async () => {
 	const h = {

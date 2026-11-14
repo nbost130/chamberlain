@@ -1,7 +1,8 @@
 /** inline-view, continued: see inline-view.test.ts for the overview. */
 
 import { describe, expect, test } from "bun:test";
-import { card, type El, item, run, settle, settleLinks } from "../testing/web-inline-view-fixtures.ts";
+import { type El, run, settle } from "../testing/inline-dom.ts";
+import { buttons, card, item } from "../testing/web-inline-view-fixtures.ts";
 
 test("a view whose key was rotated says so, instead of showing an empty queue", async () => {
 	const dq = run(() => ({ items: [] }), { src: "http://queue.test/inline.js?view=decisions&k=old", status: 401 });
@@ -62,18 +63,15 @@ describe("links out of the view", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
-			...settleLinks("Q-ctx1"),
 		]);
 	});
-	test("a secret or a card pointer, answered in its thread, links to that thread and can be snoozed, nothing more", async () => {
+	test("a secret or a card pointer, answered in its thread, links to that thread and can be snoozed in place, nothing more", async () => {
 		const base = { ...item("x"), open: "/open/mac/t2" };
 		for (const extra of [{ secret: true }, { cardRequest: { requestId: "r" } }]) {
 			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
 			await settle();
-			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([
-				["Open the thread", "http://queue.test/open/mac/t2"],
-				["Snooze", "http://queue.test/item/Q-ctx1"],
-			]);
+			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([["Open the thread", "http://queue.test/open/mac/t2"]]);
+			expect(buttons(dq)).toEqual(["Snooze"]);
 		}
 	});
 	test("no /open path, no thread link: never a raw t3-thread:// or other custom-scheme href, which the frame cannot open", async () => {
@@ -82,8 +80,8 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [q], cards: [c] }), { src: SRC });
 		await settle();
 		const hrefs = anchors(dq).map((a) => a.href);
-		expect(anchors(dq).map((a) => a.text)).toEqual(["Snooze", "Direction", "Dismiss", "Open the queue page"]);
-		expect(hrefs[3]).toBe("http://queue.test/");
+		expect(anchors(dq).map((a) => a.text)).toEqual(["Open the queue page"]);
+		expect(hrefs[0]).toBe("http://queue.test/");
 		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
 	});
 });
@@ -107,7 +105,7 @@ describe("the thread link inside T3's phone app", () => {
 	test("at the top of T3's web view, a question's thread link is the app link itself, opened in place (no new window)", async () => {
 		const dq = run(() => ({ items: [q] }), { src: SRC, window: top() });
 		await settle();
-		expect(anchors(dq)).toEqual([{ text: "Open the thread", href: APP, target: "" }, ...settleLinks("Q-ctx1")]);
+		expect(anchors(dq)).toEqual([{ text: "Open the thread", href: APP, target: "" }]);
 	});
 	test("a mirrored card and a secret question get the app link too; the queue page link stays the page's own", async () => {
 		const c = { ...card("make", "sig-1"), open: "/open/main/t", app: APP };
@@ -116,7 +114,6 @@ describe("the thread link inside T3's phone app", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: APP, target: "" },
-			...settleLinks("Q-ctx1", ["Snooze"]),
 			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
 			{ text: "Open the thread", href: APP, target: "" },
 		]);
@@ -135,7 +132,6 @@ describe("the thread link inside T3's phone app", () => {
 			await settle();
 			expect(anchors(dq)).toEqual([
 				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
-				...settleLinks("Q-ctx1"),
 			]);
 		}
 	});
@@ -169,14 +165,7 @@ describe("the thread link inside T3's phone app", () => {
 				},
 			);
 			await settle();
-			expect([app, anchors(dq).map((a) => a.href)]).toEqual([
-				app,
-				[
-					"http://queue.test/open/mithrandir/t1",
-					...settleLinks("Q-ctx1").map((a) => a.href),
-					...settleLinks("Q-ctx2").map((a) => a.href),
-				],
-			]);
+			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1"]]);
 		}
 	});
 });
@@ -188,7 +177,8 @@ describe("a secret question whose secret box has closed", () => {
 		await settle();
 		expect(dq.textContent).toContain("Request expired. Its secret box is closed: ask the thread to reopen it.");
 		expect(dq.textContent).not.toContain("A secret is entered in its own thread");
-		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread", "Snooze"]);
+		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread"]);
+		expect(buttons(dq)).toEqual(["Snooze"]);
 		expect(dq.all((e) => e.tag === "button" && e.className === "dq-go")).toEqual([]);
 	});
 	test("an open box, an unknown state or any other value reads as before", async () => {
