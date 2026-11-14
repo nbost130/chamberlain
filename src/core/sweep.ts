@@ -15,7 +15,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile, modeText } from "./private.ts";
-import { CONF, principal } from "./config.ts";
+import { CONF, principal, selfCommand } from "./config.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
 import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
 import { type Finding, type ItemSource, type SourceOutcome } from "./source.ts";
@@ -61,6 +61,16 @@ export function sweepClock(prior: Partial<SweepClock> | undefined, now: number):
 }
 
 /** Pure: the full-sweep prompt from its template. The leading HTML comment is for whoever edits the template, not for the Steward. */
+/** Pure: the first message of a new Steward thread from its template (docs/steward-start.md): the commands are the ones the running build has. */
+export function renderStartPrompt(template: string, o: { conf: string; compiled?: boolean; repo?: string }): string {
+	const cmd = (sub: "brief" | "switch-steward") => selfCommand(sub, { ...(o.compiled !== undefined ? { compiled: o.compiled } : {}), ...(o.repo !== undefined ? { repo: o.repo } : {}) });
+	return template.replace(/<!--[\s\S]*?-->\s*/g, "").trim()
+		.replaceAll("{{briefSteward}}", () => `${cmd("brief")} steward --mode live`)
+		.replaceAll("{{briefWake}}", () => `${cmd("brief")} wake-prompt`)
+		.replaceAll("{{switchSteward}}", () => cmd("switch-steward"))
+		.replaceAll("{{conf}}", () => o.conf);
+}
+
 export const renderSweepPrompt = (template: string, principalName: string) => template.replace(/<!--[\s\S]*?-->\s*/g, "").trim().replaceAll("{{principalName}}", principalName);
 
 export const principalHereNote = notAwayNote;

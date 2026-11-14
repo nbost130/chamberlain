@@ -49,6 +49,11 @@ try {
 	const h = exec("help");
 	check("help lists every command", h.exitCode === 0 && ["daemon", "web", "ask", "afk", "brief", "debug"].every((c) => h.stdout.toString().includes(c)));
 	check("an unknown command exits 2", exec("nope").exitCode === 2);
+	// A new Steward needs no checkout: its first message and its wake task's prompt come out of the binary.
+	const start = exec("brief", "start");
+	check("brief start prints the first Steward message with `chamberlain` commands", start.exitCode === 0 && start.stdout.toString().includes("`chamberlain switch-steward <your thread id>`") && !/\{\{|bun /.test(start.stdout.toString()), `exit ${start.exitCode}: ${start.stdout}${start.stderr}`);
+	const wake = exec("brief", "wake-prompt");
+	check("brief wake-prompt prints the wake task's prompt", wake.exitCode === 0 && wake.stdout.toString().startsWith("/steward-wake"), `exit ${wake.exitCode}: ${wake.stdout}${wake.stderr}`);
 	// A diagnostic command under `debug`, and by the old name a prompt written before the grouping still uses.
 	for (const argv of [["debug", "desk-allowlist", "check", "journalctl -n 5"], ["desk-allowlist", "check", "journalctl -n 5"]]) {
 		const d = exec(...argv);

@@ -12,7 +12,7 @@ import pkg from "../package.json" with { type: "json" };
 import { awayModeLine } from "./core/messages.ts";
 import { stewardBrief, type BriefInput } from "./core/brief.ts";
 import { COMMANDS, DEBUG_COMMANDS, REPO, selfArgv, selfCommand, setCompiled, type CommandName } from "./core/config.ts";
-import { sweepMessage, type SweepAction } from "./core/sweep.ts";
+import { renderStartPrompt, sweepMessage, type SweepAction } from "./core/sweep.ts";
 import { t3Brief } from "./adapters/t3/brief.ts";
 import { createApp } from "./web/app.ts";
 import { memStore } from "./testing/store.ts";
@@ -74,6 +74,24 @@ describe("every prompt-embedded command, rendered both ways", () => {
 		expect(out.match(/\bbun \S*\/src\/\S*/g)).toBeNull();
 		expect(out.includes("/opt/chamberlain")).toBe(false);
 		expect(out.includes(REPO)).toBe(false);
+	});
+});
+
+describe("the new Steward's first message names commands that exist in the build running it", () => {
+	const template = readFileSync(join(REPO, "docs/steward-start.md"), "utf8");
+	test("the template hard-codes no checkout command and no home path", () => {
+		expect(template).not.toMatch(/bun src\/|~\/\.config|~\/\.local/);
+		for (const v of ["{{briefSteward}}", "{{briefWake}}", "{{switchSteward}}", "{{conf}}"]) expect(template).toContain(v);
+	});
+	test("compiled, it says `chamberlain <subcommand>`, and no placeholder is left", () => {
+		const out = renderStartPrompt(template, { conf: "/home/u/.config/chamberlain", compiled: true });
+		for (const c of ["`chamberlain brief steward --mode live`", "`chamberlain brief wake-prompt`", "`chamberlain switch-steward <your thread id>`", "/home/u/.config/chamberlain/wake-url.steward"]) expect(out.includes(c), `missing: ${c}`).toBe(true);
+		expect(out).not.toMatch(/\{\{|bun |<!--/);
+	});
+	test("from a checkout, it says `bun <checkout>/src/...`", () => {
+		const out = renderStartPrompt(template, { conf: "/c", compiled: false, repo: "/opt/chamberlain" });
+		expect(out).toContain("`bun /opt/chamberlain/src/brief.ts steward --mode live`");
+		expect(out).toContain("`bun /opt/chamberlain/src/adapters/t3/switch-steward.ts <your thread id>`");
 	});
 });
 
