@@ -190,6 +190,42 @@ describe("T3 lastAssistant: the last finished assistant message with its id and 
 			at: "2026-11-14T02:00:00.000Z",
 		});
 	});
+	test("previous: the last non-empty user message before it, human when T3 says createdBy user, else agent", async () => {
+		const user = (itemId: string, text: string, createdBy?: string) => ({
+			type: "user_message",
+			itemId,
+			text,
+			updatedAt: "2026-11-14T00:00:00.000Z",
+			...(createdBy ? { createdBy } : {}),
+		});
+		const read = async (turnItems: unknown[]) =>
+			(await link(async () => ({ turnItems })).inspector.lastAssistant!("th-1"))?.previous;
+		expect(
+			await read([
+				user("u1", "older", "user"),
+				user("u2", "which tabs?", "user"),
+				msg("a1", "half", "2026-11-14T02:00:00.000Z"),
+			]),
+		).toEqual({ by: "human", text: "which tabs?" });
+		expect(await read([user("u1", "continue", "orchestrator"), msg("a1", "ok", "2026-11-14T02:00:00.000Z")])).toEqual({
+			by: "agent",
+			text: "continue",
+		});
+		expect(await read([user("u1", "no author"), msg("a1", "ok", "2026-11-14T02:00:00.000Z")])).toEqual({
+			by: "agent",
+			text: "no author",
+		});
+		// A user message AFTER the last finished answer is not the one it answered; a blank one is passed over.
+		expect(
+			await read([
+				user("u1", "the question", "user"),
+				user("u2", "   ", "user"),
+				msg("a1", "answer", "2026-11-14T02:00:00.000Z"),
+				user("u3", "later", "user"),
+			]),
+		).toEqual({ by: "human", text: "the question" });
+		expect(await read([msg("a1", "alone", "2026-11-14T02:00:00.000Z")])).toBeUndefined();
+	});
 	test("no assistant message, no time, or no socket reads as nothing, and a malformed projection throws", async () => {
 		expect(await link(async () => ({ turnItems: [] })).inspector.lastAssistant!("th-1")).toBeUndefined();
 		expect(
