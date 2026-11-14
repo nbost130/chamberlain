@@ -2,7 +2,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { cardsFrom, createT3Waiting, type Server, type WaitingDeps } from "./waiting.ts";
+import { cardsFrom } from "./wait-cards.ts";
+import type { Server, WaitingDeps } from "./wait-ctx.ts";
+import { createT3Waiting } from "./waiting.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -54,7 +56,7 @@ describe("the shell snapshot is checked before anything is listed", () => {
 describe("answer without an operate token", () => {
 	test("is refused as 'refused', never sent, and says where to answer", async () => {
 		const { w, sent } = adapter({ threads: [] });
-		const card = cardsFrom("main", false, { id: "th-1" }, [
+		const card = cardsFrom({ server: "main", canAnswer: false, thread: { id: "th-1" } }, [
 			{
 				type: "user_input_request",
 				status: "waiting",
@@ -77,7 +79,12 @@ describe("answer without an operate token", () => {
 describe("an approval card", () => {
 	test("carries the thread link it was given, and none when it was given none", () => {
 		const item = { type: "approval_request", status: "waiting", requestId: "r1", prompt: "ls", requestKind: "command" };
-		expect(cardsFrom("main", true, { id: "th-1" }, [item], "t3-thread://x/th-1")[0]?.link).toBe("t3-thread://x/th-1");
-		expect("link" in (cardsFrom("main", true, { id: "th-1" }, [item])[0] ?? {})).toBe(false);
+		expect(
+			cardsFrom({ server: "main", canAnswer: true, thread: { id: "th-1" }, link: "t3-thread://x/th-1" }, [item])[0]
+				?.link,
+		).toBe("t3-thread://x/th-1");
+		expect("link" in (cardsFrom({ server: "main", canAnswer: true, thread: { id: "th-1" } }, [item])[0] ?? {})).toBe(
+			false,
+		);
 	});
 });
