@@ -39,7 +39,7 @@ import {
 	heldOpen,
 	isCardHold,
 } from "./afk.ts";
-import { askQuestion, newItemId, QUEUE, type Question, questionStates } from "./questions.ts";
+import { askQuestion, newItemId, QUEUE, type Question, type QuestionState, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
 /** What the engine passes on of one waiting card. The card's questions, options and any value are not part of it. */
@@ -270,6 +270,38 @@ export const cardKey = (c: Pick<CardRef, "server" | "requestId">) => `${c.server
 /** The engine's alarm key for a card with no evidence for too long. */
 export const cardAlarmKey = (c: Pick<CardRef, "server" | "requestId">) => `card-unverified:${c.server}:${c.requestId}`;
 
+type CardHoldRef = { id: string; seq?: number };
+
+/** Adds a card to `out`, keyed by (server, request ID): the first thread it is given wins, and its holds are gathered. A card with no server or request ID is not one. */
+function addOpenCard(out: Map<string, OpenCard>, c: Partial<CardRef>, hold?: CardHoldRef): void {
+	if (!c.server || !c.requestId) return;
+	const key = cardKey({ server: c.server, requestId: c.requestId });
+	const prev = out.get(key);
+	const threadId = prev?.threadId ?? c.threadId;
+	out.set(key, {
+		server: c.server,
+		requestId: c.requestId,
+		...(threadId ? { threadId } : {}),
+		holds: [...(prev?.holds ?? []), ...(hold ? [hold] : [])],
+	});
+}
+
+/** One open hold's card, if it is a card hold, with the thread its pointer question gives when the hold has none (a hold written before `card` existed). */
+function addHeldCard(out: Map<string, OpenCard>, h: Held, qs: Map<string, QuestionState>): void {
+	const c = cardRefOf(h);
+	if (!c) return;
+	const q = h.item ? qs.get(h.item) : undefined;
+	const seq = typeof h.seq === "number" && Number.isSafeInteger(h.seq) && h.seq > 0 ? h.seq : undefined;
+	addOpenCard(
+		out,
+		{
+			...c,
+			threadId: c.threadId ?? (q?.cardRequest === c.requestId && q.server === c.server ? q.threadId : undefined),
+		},
+		{ id: heldId(h), ...(seq ? { seq } : {}) },
+	);
+}
+
 /**
  * Every open card hold and every open pointer question, as the cards they wait on, keyed by (server, request ID). The card's
  * thread comes from the hold's `card`, else from its pointer question (a hold written before `card` existed). A card whose
@@ -279,33 +311,10 @@ export const cardAlarmKey = (c: Pick<CardRef, "server" | "requestId">) => `card-
 export function openCards(store: Store): OpenCard[] {
 	const out = new Map<string, OpenCard>();
 	const qs = questionStates(store);
-	const add = (c: Partial<CardRef>, hold?: { id: string; seq?: number }) => {
-		if (!c.server || !c.requestId) return;
-		const key = cardKey({ server: c.server, requestId: c.requestId });
-		const prev = out.get(key);
-		const threadId = prev?.threadId ?? c.threadId;
-		out.set(key, {
-			server: c.server,
-			requestId: c.requestId,
-			...(threadId ? { threadId } : {}),
-			holds: [...(prev?.holds ?? []), ...(hold ? [hold] : [])],
-		});
-	};
 	for (const q of qs.values())
-		if (q.status === "open" && q.cardRequest) add({ server: q.server, threadId: q.threadId, requestId: q.cardRequest });
-	for (const h of heldOpen(store)) {
-		const c = cardRefOf(h);
-		if (!c) continue;
-		const q = h.item ? qs.get(h.item) : undefined;
-		const seq = typeof h.seq === "number" && Number.isSafeInteger(h.seq) && h.seq > 0 ? h.seq : undefined;
-		add(
-			{
-				...c,
-				threadId: c.threadId ?? (q?.cardRequest === c.requestId && q.server === c.server ? q.threadId : undefined),
-			},
-			{ id: heldId(h), ...(seq ? { seq } : {}) },
-		);
-	}
+		if (q.status === "open" && q.cardRequest)
+			addOpenCard(out, { server: q.server, threadId: q.threadId, requestId: q.cardRequest });
+	for (const h of heldOpen(store)) addHeldCard(out, h, qs);
 	return [...out.values()];
 }
 
@@ -317,6 +326,72 @@ export type CardReconcile = {
 	unverified: Unverified[];
 	failed: { server: string; reason: string }[];
 };
+
+type ThreadRead = { seq: number; r: CardThreadRead };
+
+/**
+ * The read of one (server, thread), made once per pass. A new value is taken from the store's sequence BEFORE the read is asked for: every
+ * hold written with a smaller value was committed before the read started. A read that fails, throws or breaks the contract is `ok: false`
+ * and is also reported in `out.failed`.
+ */
+async function readOnce(
+	store: Store,
+	read: (server: string, threadId: string) => Promise<CardThreadRead>,
+	server: string,
+	threadId: string,
+	reads: Map<string, ThreadRead>,
+	out: CardReconcile,
+): Promise<ThreadRead> {
+	const key = `${server}\u0000${threadId}`;
+	const had = reads.get(key);
+	if (had) return had;
+	const seq = store.sequence.next();
+	const r = await read(server, threadId).then(
+		(x) =>
+			isCardThreadRead(x)
+				? x
+				: ({ ok: false, reason: "the read did not keep the CardThreadRead contract" } as CardThreadRead),
+		(e): CardThreadRead => ({ ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) }),
+	);
+	const got = { seq, r };
+	reads.set(key, got);
+	if (!r.ok) out.failed.push({ server, reason: r.reason });
+	return got;
+}
+
+type Judgement = { verdict: "verified" } | { verdict: "close" } | { verdict: "unverified"; reason: string };
+const unverified = (reason: string): Judgement => ({ verdict: "unverified", reason });
+
+/** What a card's thread read says of it: seen waiting (verified), seen resolved after its holds were written (close it), or why it stays open. */
+function judge(c: OpenCard, r: CardThreadRead, seq: number): Judgement {
+	if (!r.ok) return unverified(r.reason);
+	if (r.waiting.has(c.requestId)) return { verdict: "verified" };
+	if (!r.resolved.has(c.requestId))
+		return unverified(
+			"its thread's read does not show the card resolved or waiting (it may be outside the read's history window)",
+		);
+	if (!c.holds.length || !c.holds.every((h) => h.seq !== undefined && h.seq < seq))
+		return unverified(
+			c.holds.length
+				? "the read did not start after its hold was written"
+				: "it has no open hold, only its pointer question",
+		);
+	return { verdict: "close" };
+}
+
+/** Closes a card whose read showed it resolved: hold and question together, once. A card that closes nothing is left unverified. */
+function closeResolved(store: Store, c: OpenCard, threadId: string, seq: number, now: Date, out: CardReconcile): void {
+	const ref = { server: c.server, threadId, requestId: c.requestId };
+	const n = closeCard(
+		store,
+		ref,
+		"The card's own item is resolved in its thread (completed, cancelled, failed or interrupted there); closed by the daemon's card reconciler.",
+		now,
+		seq,
+	);
+	if (n.questions || n.holds) out.closed.push(ref);
+	else out.unverified.push({ card: c, reason: "the read did not start after its hold was written" });
+}
 
 /**
  * Close every card whose own item a read shows resolved: on each tick and at every (re)connection, so a card resolved while the
@@ -334,65 +409,18 @@ export async function reconcileCardHolds(
 	read: (server: string, threadId: string) => Promise<CardThreadRead>,
 	now = () => new Date(),
 ): Promise<CardReconcile> {
-	const cards = openCards(store);
-	const reads = new Map<string, { seq: number; r: CardThreadRead }>();
+	const reads = new Map<string, ThreadRead>();
 	const out: CardReconcile = { closed: [], verified: [], unverified: [], failed: [] };
-	for (const c of cards) {
+	for (const c of openCards(store)) {
 		if (!c.threadId) {
 			out.unverified.push({ card: c, reason: "neither its hold nor its question names its thread" });
 			continue;
 		}
-		const key = `${c.server}\u0000${c.threadId}`;
-		let got = reads.get(key);
-		if (!got) {
-			// Taken before the read is asked for: every hold written with a smaller value was committed before the read started.
-			const seq = store.sequence.next();
-			const r = await read(c.server, c.threadId).then(
-				(x) =>
-					isCardThreadRead(x)
-						? x
-						: ({ ok: false, reason: "the read did not keep the CardThreadRead contract" } as CardThreadRead),
-				(e): CardThreadRead => ({ ok: false, reason: String(e instanceof Error ? e.message : e).slice(0, 200) }),
-			);
-			got = { seq, r };
-			reads.set(key, got);
-			if (!r.ok) out.failed.push({ server: c.server, reason: r.reason });
-		}
-		const { seq, r } = got;
-		if (!r.ok) {
-			out.unverified.push({ card: c, reason: r.reason });
-			continue;
-		}
-		if (r.waiting.has(c.requestId)) {
-			out.verified.push(c);
-			continue;
-		}
-		if (!r.resolved.has(c.requestId)) {
-			out.unverified.push({
-				card: c,
-				reason:
-					"its thread's read does not show the card resolved or waiting (it may be outside the read's history window)",
-			});
-			continue;
-		}
-		if (!c.holds.length || !c.holds.every((h) => h.seq !== undefined && h.seq < seq)) {
-			out.unverified.push({
-				card: c,
-				reason: c.holds.length
-					? "the read did not start after its hold was written"
-					: "it has no open hold, only its pointer question",
-			});
-			continue;
-		}
-		const n = closeCard(
-			store,
-			{ server: c.server, threadId: c.threadId, requestId: c.requestId },
-			"The card's own item is resolved in its thread (completed, cancelled, failed or interrupted there); closed by the daemon's card reconciler.",
-			now(),
-			seq,
-		);
-		if (n.questions || n.holds) out.closed.push({ server: c.server, threadId: c.threadId, requestId: c.requestId });
-		else out.unverified.push({ card: c, reason: "the read did not start after its hold was written" });
+		const { seq, r } = await readOnce(store, read, c.server, c.threadId, reads, out);
+		const j = judge(c, r, seq);
+		if (j.verdict === "verified") out.verified.push(c);
+		else if (j.verdict === "unverified") out.unverified.push({ card: c, reason: j.reason });
+		else closeResolved(store, c, c.threadId, seq, now(), out);
 	}
 	return out;
 }
