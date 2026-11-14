@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { deskAskCommand, renderDeskPrompt } from "./core/alert-desk.ts";
+import { deskAskCommand, renderDeskPrompt } from "./core/alert-desk-prompt.ts";
 import { selfCommand, setCompiled } from "./core/config.ts";
 import { parseShapes } from "./core/desk-shapes.ts";
 import { checkCommand, checkPath, checkTool, LOG_DIRS } from "./desk-allowlist.ts";

@@ -134,7 +134,8 @@ describe("routes that refuse", () => {
 describe("ruling actions", () => {
 	const withRulings = () => {
 		const s = setup();
-		for (const w of ["one", "two", "three", "four"]) addInForce(s.real, `words ${w}`, `decides ${w}`, "chat", "stated");
+		for (const w of ["one", "two", "three", "four"])
+			addInForce(s.real, { words: `words ${w}`, decides: `decides ${w}`, source: "chat", how: "stated" });
 		return { s, ids: readRulings(s.real).map((r) => r.id) };
 	};
 

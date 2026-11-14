@@ -20,7 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { FAKE, legacyFiles, tokensFor, writeLegacyConf } from "../testing/legacy-conf.ts";
 import { loadConfig } from "../web/config.ts";
-import { readConfig } from "./alert-desk.ts";
+import { readConfig } from "./alert-desk-config.ts";
 import { getValue, reappearedLine, showLines } from "./config-cmd.ts";
 import { migrateLayout, setThread, startupLayout } from "./config-migrate.ts";
 import { revertLayout } from "./config-revert.ts";

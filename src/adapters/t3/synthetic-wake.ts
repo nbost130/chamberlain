@@ -16,7 +16,7 @@ import { defaultStore } from "../../core/default-store.ts";
 import { createOutbox } from "../../core/deliver.ts";
 import { makeLog } from "../../core/log.ts";
 import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
-import { rulingsText } from "../../core/rulings.ts";
+import { rulingsText } from "../../core/rulings-read.ts";
 import { readServers } from "../../core/servers.ts";
 import { t3ServerLine } from "./index.ts";
 

@@ -7,7 +7,7 @@
  */
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
-import { citedIds } from "./rulings.ts";
+import { citedIds } from "./rulings-read.ts";
 import type { DecisionRow } from "./store.ts";
 
 export type DecisionRecord = DecisionRow;

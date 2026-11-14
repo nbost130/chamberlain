@@ -19,7 +19,8 @@ import {
 	type WaitingRead,
 } from "./adapter.ts";
 import { closeHeldForCard, readAfk } from "./afk.ts";
-import { DESK_RECEIVER, drainAlertDesk, inboxPath } from "./alert-desk.ts";
+import { drainAlertDesk } from "./alert-desk.ts";
+import { DESK_RECEIVER, inboxPath } from "./alert-desk-config.ts";
 import { cardWaitOf, holdCard } from "./card-hold.ts";
 import { type CardThreadRead, reconcileCardHolds, trackUnverified, unverifiedAlarm } from "./card-reconcile.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal, selfCommand } from "./config.ts";
@@ -33,17 +34,11 @@ import { takeSnapshots } from "./hold-threads.ts";
 import { type AlarmText, alarms, awayModeLine, threadHappened, threadWakeHead } from "./messages.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import type { Question } from "./questions.ts";
-import {
-	createRecovery,
-	DEFAULT_RECOVER_TIMING,
-	type Handling,
-	type Outcome,
-	outcomeOf,
-	type RecoverState,
-	type RecoverTiming,
-	type Recovery,
-} from "./recover.ts";
-import { createRelay, type RelayDeps } from "./relay.ts";
+import { createRecovery, type Outcome, outcomeOf, type Recovery } from "./recover.ts";
+import { DEFAULT_RECOVER_TIMING, type RecoverTiming } from "./recover-classify.ts";
+import type { Handling, RecoverState } from "./recover-state.ts";
+import { createRelay } from "./relay.ts";
+import type { RelayDeps } from "./relay-ctx.ts";
 import type { RelayLock } from "./singleton.ts";
 import { announceReturns } from "./snooze.ts";
 
@@ -86,7 +81,8 @@ import {
 	rightsHash,
 	rightsStamp,
 } from "./rights-sent.ts";
-import { readRulings, renderInForce } from "./rulings.ts";
+import { readRulings } from "./rulings.ts";
+import { renderInForce } from "./rulings-read.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
 import {
 	HEALTH_CONFIG,

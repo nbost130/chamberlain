@@ -32,7 +32,8 @@ import {
 const TOKENS = tokensFor();
 
 import { loadConfig } from "../web/config.ts";
-import { readConfig, readOperator } from "./alert-desk.ts";
+import { readConfig } from "./alert-desk-config.ts";
+import { readOperator } from "./alert-desk-prompt.ts";
 import { readSettings } from "./config.ts";
 import { planLines, showLines } from "./config-cmd.ts";
 import { envValue, parseEnvFile } from "./config-fold.ts";

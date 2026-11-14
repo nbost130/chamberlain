@@ -11,33 +11,29 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
+import { drainAlertDesk } from "./alert-desk.ts";
 import {
 	ALERT_DESK,
-	type CrashPoint,
-	CURSOR_KEY,
-	type Cursor,
 	DAY_MS,
 	DEFAULTS,
 	DESK_RECEIVER,
 	type DeskConfig,
 	type DeskEvent,
-	drainAlertDesk,
 	inboxPath,
-	localDay,
-	morningPattern,
 	parseConfig,
-	parseLine,
+	readConfig,
+	systemTimezone,
+} from "./alert-desk-config.ts";
+import { type CrashPoint, CURSOR_KEY, type Cursor, readInbox } from "./alert-desk-cursor.ts";
+import { localDay, parseLine, severityOf, signature } from "./alert-desk-events.ts";
+import {
+	morningPattern,
 	parseMorning,
 	parseOperator,
-	readConfig,
-	readInbox,
 	readMorning,
 	readOperator,
 	renderDeskPrompt,
-	severityOf,
-	signature,
-	systemTimezone,
-} from "./alert-desk.ts";
+} from "./alert-desk-prompt.ts";
 import { createOutbox } from "./deliver.ts";
 
 const MIB = 1024 * 1024;

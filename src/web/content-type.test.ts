@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { askQuestion, readClaim } from "../core/questions.ts";
 import { openCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
-import { createApp, isJsonContentType } from "./app.ts";
+import { createApp } from "./app.ts";
+import { isJsonContentType } from "./app-http.ts";
 
 const HOST = "127.0.0.1:3790";
 

@@ -16,7 +16,7 @@
  */
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { type DeskOperator, deskAskCommand, morningPattern, readOperator } from "./core/alert-desk.ts";
+import { type DeskOperator, deskAskCommand, morningPattern, readOperator } from "./core/alert-desk-prompt.ts";
 import { CONF, selfCommand } from "./core/config.ts";
 import { GENERIC_SHAPES, type Shape, type ShapeBody, type ShapeSet, type ValueKind } from "./core/desk-shapes.ts";
 

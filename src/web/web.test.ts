@@ -52,13 +52,12 @@ function setup(opts: { status?: (n: number) => number; root?: string; relay?: bo
 	const store = openStore(dbPath(state));
 	if (!opts.root) {
 		dirs.push(root);
-		addInForce(
-			store,
-			"you can handle all merge conflicts",
-			"Merge conflicts are the Steward's.",
-			"chat",
-			"stated in chat",
-		);
+		addInForce(store, {
+			words: "you can handle all merge conflicts",
+			decides: "Merge conflicts are the Steward's.",
+			source: "chat",
+			how: "stated in chat",
+		});
 	}
 	const posts: { deliveryId: string; message: string }[] = [];
 	let n = 0;
@@ -433,7 +432,7 @@ describe("rulings from the page", () => {
 	test("confirm, edit, only this once and retire on the rulings page", async () => {
 		const s = setup();
 		const { propose } = await import("../core/rulings.ts");
-		const p = propose(s.store, "Approve (Recommended)", "gates");
+		const p = propose(s.store, { words: "Approve (Recommended)", decides: "gates" });
 		expect((await s.post(`/api/rulings/${p.id}/edit`, { decides: "gates like this" })).status).toBe(200);
 		expect(readRulings(s.store).find((x) => x.id === p.id)!.status).toBe("proposed");
 		expect((await s.post(`/api/rulings/${p.id}/confirm`, {})).status).toBe(200);
@@ -519,7 +518,7 @@ describe("rulings from the page", () => {
 	});
 	test("saving a ruling the Steward already proposed in the same words puts that proposal in force, not a second ruling", async () => {
 		const s = setup();
-		const p = propose(s.store, "A · One", "Lead with a photo");
+		const p = propose(s.store, { words: "A · One", decides: "Lead with a photo" });
 		s.add(item("Q-abcd"));
 		const r = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as {
 			ruling: string;
@@ -531,7 +530,7 @@ describe("rulings from the page", () => {
 	});
 	test("a refused second answer saves no ruling, and does not promote a held proposal", async () => {
 		const s = setup();
-		const p = propose(s.store, "A · One", "Lead with a photo");
+		const p = propose(s.store, { words: "A · One", decides: "Lead with a photo" });
 		s.add(item("Q-abcd"));
 		expect((await s.post("/api/items/Q-abcd/answer", { choice: 1 })).status).toBe(200);
 		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true });

@@ -6,7 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { parseSettings, type SettledMatch } from "./config.ts";
 import { askQuestion, claimWake, pageClaim, QUEUE, type Question } from "./questions.ts";
-import { addInForce, propose, retireRuling } from "./rulings.ts";
+import { addInForce, propose } from "./rulings.ts";
+import { retireRuling } from "./rulings-change.ts";
 import { findSettled, matchSettings, refusalLines, sameTopic, titlesOverlap, tokens } from "./settled.ts";
 import type { Store } from "./store.ts";
 
@@ -239,48 +240,50 @@ describe("the three sources", () => {
 	test("only rulings in force now are settled: a proposal, a retired, a superseded or an expired ruling is not", () => {
 		const store = memStore();
 		const NOW = () => Date.parse("2026-11-13T12:00:00Z");
-		propose(store, "keep the nightly export", "Keep the nightly export running on weekends");
+		propose(store, { words: "keep the nightly export", decides: "Keep the nightly export running on weekends" });
 		expect(find(store, { title: "Nightly export on weekends: keep running?" }).matches).toEqual([]);
-		const ruling = addInForce(
-			store,
-			"no Friday deploys",
-			"Freeze production deploys every Friday afternoon",
-			"chat",
-			"stated in chat",
-		);
-		retireRuling(store, ruling.id, "retired");
+		const ruling = addInForce(store, {
+			words: "no Friday deploys",
+			decides: "Freeze production deploys every Friday afternoon",
+			source: "chat",
+			how: "stated in chat",
+		});
+		retireRuling(store, ruling.id, { how: "retired" });
 		expect(find(store, { title: "Production deploys Friday afternoon freeze?" }).matches).toEqual([]);
-		addInForce(store, "the cache stays", "Keep the image cache warm across restarts", "chat", "stated in chat");
+		addInForce(store, {
+			words: "the cache stays",
+			decides: "Keep the image cache warm across restarts",
+			source: "chat",
+			how: "stated in chat",
+		});
 		expect(find(store, { title: "Keep image cache warm?" }).matches.map((m) => m.answer)).toEqual([
 			"in force: Keep the image cache warm across restarts",
 		]);
 		// Superseded: the old one settles nothing, the one that replaced it does.
-		const old = addInForce(
-			store,
-			"staging resets",
-			"Reset the staging database every Monday morning",
-			"chat",
-			"stated in chat",
-		);
-		addInForce(
-			store,
-			"staging resets weekly",
-			"Reset staging on Sundays instead",
-			"chat",
-			"stated in chat",
-			undefined,
-			{ supersedes: [old.id] },
-		);
+		const old = addInForce(store, {
+			words: "staging resets",
+			decides: "Reset the staging database every Monday morning",
+			source: "chat",
+			how: "stated in chat",
+		});
+		addInForce(store, {
+			words: "staging resets weekly",
+			decides: "Reset staging on Sundays instead",
+			source: "chat",
+			how: "stated in chat",
+			opts: { supersedes: [old.id] },
+		});
 		expect(find(store, { title: "Staging database Monday morning reset?" }).matches).toEqual([]);
 		// Expired: in force until its day ends, settled nothing after.
 		addInForce(
 			store,
-			"the banner stays",
-			"Keep the maintenance banner on the login page",
-			"chat",
-			"stated in chat",
-			undefined,
-			{ expires: "2026-11-20" },
+			{
+				words: "the banner stays",
+				decides: "Keep the maintenance banner on the login page",
+				source: "chat",
+				how: "stated in chat",
+				opts: { expires: "2026-11-20" },
+			},
 			NOW,
 		);
 		const banner = { title: "Maintenance banner on the login page: keep it?" };

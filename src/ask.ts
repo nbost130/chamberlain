@@ -47,7 +47,7 @@ import {
 	type Option,
 	type Question,
 } from "./core/questions.ts";
-import { expiresProblem, isExpired } from "./core/rulings.ts";
+import { expiresProblem, isExpired } from "./core/rulings-expiry.ts";
 import { findSettled, refusalLines } from "./core/settled.ts";
 import type { Store } from "./core/store.ts";
 

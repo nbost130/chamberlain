@@ -25,7 +25,8 @@
  */
 import { principal, readSettings, type SettledMatch } from "./config.ts";
 import { type QuestionState, questionStates } from "./questions.ts";
-import { type Clock, isExpired, readRulings } from "./rulings.ts";
+import { type Clock, readRulings } from "./rulings.ts";
+import { isExpired } from "./rulings-expiry.ts";
 import type { Store } from "./store.ts";
 
 type SettledSource = "queue" | "ruling" | "decision";

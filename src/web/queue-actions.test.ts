@@ -13,7 +13,8 @@ import { findSettled } from "../core/settled.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath, type Store } from "../core/store.ts";
 import { memoryCapability } from "../testing/capability.ts";
-import { createApp, inlineVerdict } from "./app.ts";
+import { createApp } from "./app.ts";
+import { inlineVerdict } from "./app-http.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
