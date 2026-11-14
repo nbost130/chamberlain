@@ -79,6 +79,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `maxAttempts` | `CHAMBERLAIN_MAX_ATTEMPTS` | `3` | The most attempts (POSTs) one outbox row gets, a positive whole number. Every outcome counts, a refusal and a timeout included. At the limit the row is a dead letter, kept and not sent again until `chamberlain wakes retry` or `cancel` (see [DELIVERY.md](DELIVERY.md#dead-letters)). |
 | `gh` | `CHAMBERLAIN_GH` | `gh` | The command the held-for-return reconciler uses for its GitHub reads (`gh api <path> --jq <filter>`): another `gh`, or a wrapper that adds your credentials. |
 | `healthFormatPattern` | `CHAMBERLAIN_HEALTH_FORMAT_PATTERN` | none | A regular expression enabling the optional reply-format health signal ([`steward-health.md`](steward-health.md)). |
+| `stewardTokens` | `CHAMBERLAIN_STEWARD_TOKENS` | off | `true` (`1` in the variable): measure what the Steward spends per wake. The daemon re-reads the Steward's Claude Code transcript hourly and stores one row per wake (tokens and model requests, never text) in the database; `chamberlain steward-health tokens` reports tokens per wake by kind, the cost of a full sweep and the context trend, and `chamberlain steward-health tokens backfill` reads past Steward sessions. Off: nothing is read, stored or shown. See [`steward-health.md`](steward-health.md#tokens-per-wake). |
 
 **Sections.** Objects and lists have no environment override.
 
@@ -171,11 +172,26 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the
 adapter does not issue (T3: a UUID, `mcp:<uuid>`, `mcp:launch:<64 hex>`, `thread:<kind>:...`, `import:<instance>:<session>`), get no
 link rather than a wrong one. A page or view does not
-put that link in front of a device as it is: T3 Code's inline frame opens only `http(s)` links, and no browser or phone opens
-`t3-thread://`. "Open the thread" goes to the page's own `/open/<server>/<threadId>` (signed in with `?k=` like any page link),
-which sends the device on to the thread's app link (T3: `t3code://threads/<environmentId>/<threadId>`, opened by the T3 Code app)
-or to an `http(s)` override. Nothing to configure for the usual layout: the Steward's server reports its own environment, and
-every other server's entry already names it.
+put that link in front of a device as it is: no browser or phone opens `t3-thread://`. "Open the thread" is one of two links:
+
+- **In T3 Code's phone app** the Decisions view is the top document of the app's own web view, and the app hands any link that is
+  not `http(s)` to the phone's OS. So the view links straight to the thread's app link (T3: `t3code://threads/<environmentId>/<threadId>`),
+  and the phone opens the thread in the app, in place: no browser, no page in between.
+- **Everywhere else** (T3's web and desktop clients show the view in a sandboxed frame that opens only `http(s)`; the queue page in
+  a browser) it goes to the page's own `/open/<server>/<threadId>` (signed in with `?k=` like any page link). A tap or click there
+  is answered with a redirect straight to the thread's app link or `http(s)` override, so the browser hands it to the app in the
+  same navigation (Safari on iPhone asks once, "Open in T3 Code?", as it does for every app link). A load that is not a tap (a
+  reload, a link another app handed the browser, a browser older than Safari 16.4 that does not say) gets a short page that goes
+  on by itself where the browser allows it and keeps an "Open" button, with a line saying to tap it if nothing opened.
+
+Nothing to configure for the usual layout: the Steward's server reports its own environment, and every other server's entry
+already names it. An `http(s)` `threadLinks`/`mirrorLinks` override for a server makes its views use `/open` everywhere.
+
+**Expired secret requests.** A secret question (`chamberlain ask` with `secret: true`, or the daemon's pointer for a secret card)
+shows "Request expired. Its secret box is closed: ask the thread to reopen it." once the card mirror's reads show no secret box
+waiting in its thread (for a pointer: not its own box): read on a server the page mirrors, by a read that succeeded and began after
+the question was asked. The question stays open: the thread still needs the value, and only the thread can open a new box. Answer
+or close it as usual once that is done; a pointer still closes on its own when its card's item ends.
 
 **`sweep`** lists your own routine checks, run every two hours:
 

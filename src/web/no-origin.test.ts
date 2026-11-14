@@ -289,6 +289,22 @@ describe("a browser's navigation to the page keeps working", () => {
 	});
 });
 
+describe("/open, a tap on a thread link, is a navigation GET like the page shell", () => {
+	const open = "/open/main/mcp%3Alaunch%3Aab12";
+	test("the page key in a header (no Origin, or its own) is let through to the route; the view key, and a null-origin frame, are refused and set no cookie", async () => {
+		const s = setup();
+		// no thread is configured here, so a request let through gets the route's own 404, never the 403 of the inline limit
+		expect((await s.send("GET", open, tok(s.page))).status).toBe(404);
+		expect((await s.send("GET", open, { ...tok(s.page), origin: ORIGIN })).status).toBe(404);
+		for (const h of [tok(s.view), { ...tok(s.view), origin: "null" }, { ...tok(s.page), origin: "null" }]) {
+			const r = await s.send("GET", open, h);
+			expect(r.status).toBe(403);
+			expect(r.headers.get("set-cookie")).toBeNull();
+		}
+		expect((await s.send("GET", `${open}?k=${encodeURIComponent(s.view)}`)).status).toBe(401);
+	});
+});
+
 describe("secrecy", () => {
 	test("neither key, raw or URL-encoded, is in a response body, a header or a logged event of any request above", async () => {
 		const s = setup();

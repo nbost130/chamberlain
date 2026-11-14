@@ -54,7 +54,7 @@
 .dq-row{border-bottom:1px solid var(--border);padding:10px 0;display:flex;flex-direction:column;gap:4px}.dq-row:last-child{border-bottom:0}
 .dq-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground)}
 .dq-link{display:inline-flex;align-items:center;align-self:flex-start;min-height:40px;padding:0 2px;font-size:13px;color:var(--primary);text-decoration:underline;text-underline-offset:3px}
-.dq-go:disabled{opacity:.5}.dq-msg{font-size:13px}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
+.dq-go:disabled{opacity:.5}.dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
 	const healthCss = `.dq-health{padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;--health-tone:var(--success)}
 .dq-health-summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:6px 10px}.dq-health-summary::-webkit-details-marker{display:none}.dq-health-summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:10px}.dq-health-chevron{font-size:14px;color:var(--muted-foreground);transition:transform .15s}.dq-health[open]>.dq-health-summary .dq-health-chevron{transform:rotate(90deg)}.dq-health[open]>.dq-health-summary{border-bottom:1px solid var(--border)}
 .dq-health-mini{display:flex;align-items:center;justify-content:flex-end;gap:8px;font-family:var(--font-mono);font-size:11px;white-space:nowrap}.dq-health-mini-track{width:54px;height:4px;background:var(--muted);border-radius:9px;overflow:hidden}.dq-health-mini-fill{height:100%;background:var(--health-tone)}.dq-health-brief{grid-column:1/-1;display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap;font-size:11px;color:var(--muted-foreground)}.dq-health-brief .dq-health-age{margin-left:auto}.dq-health>:not(summary){margin-left:12px;margin-right:12px}.dq-health>.dq-health-evidence{margin-bottom:10px}@media(max-width:380px){.dq-health-mini-track{display:none}.dq-health-summary{gap:6px}.dq-health-brief{gap:4px 8px}}
@@ -173,11 +173,23 @@
 		return box;
 	}
 
-	// A link out of this view. T3 Code's frame opens only an http(s) link (it hands it to the app's browser or the phone's), never a
-	// custom scheme such as t3-thread:// or t3code://, so every link here is one of the page's own addresses. None carries a key: the frame holds only the weak view key (never the page key), which cannot sign a browser in, so a link opens signed in only where the browser already holds the page's cookie.
+	// A link out of this view: one of the page's own addresses. T3 Code's web and desktop clients show this view in a sandboxed frame that
+	// opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets. None carries a key: the frame holds only the
+	// weak view key (never the page key), which cannot sign a browser in, so a link opens signed in only where the browser already holds the page's cookie.
 	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}`; a.target = "_blank"; a.rel = "noopener"; return a; };
-	// The thread's own link goes through the page's /open route, which sends the device on to the app (src/web/thread-links.ts).
-	const threadLink = (open) => (typeof open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(open) ? linkOut("Open the thread", open) : null);
+	// T3 Code's phone app shows this view as the top document of its own web view, not in a frame, and hands any link that is not http(s)
+	// to the phone's OS, which opens the app's own link (t3code://threads/…) in the app itself: the thread opens in place, no browser.
+	// So the top document links straight to the app link the server made; a frame (T3's web and desktop clients) uses /open.
+	const TOP = (() => { try { return window.parent === window; } catch { return false; } })();
+	// The app link's shape, as the server checks it (src/web/thread-links.ts isAppLink): a lowercase scheme no browser runs or loads, then
+	// only unreserved characters, ":", "/" and percent escapes. Anything else never becomes an href.
+	const APP_LINK = /^(?!(?:javascript|vbscript|data|file|blob|about|filesystem|https?|wss?|ftp):)[a-z][a-z0-9+.-]{0,31}:\/\/[A-Za-z0-9._~:%/-]{1,1024}$/;
+	// The thread's own link: the app link in T3's phone app; else the page's /open route, which sends the device on (src/web/thread-links.ts).
+	// No target: an app link is a navigation the app's web view hands to the OS, and a new window would drop it.
+	const threadLink = (x) => {
+		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", "dq-meta dq-link", "Open the thread"); a.href = x.app; return a; }
+		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open) : null;
+	};
 
 	function card(it) {
 		const c = el("div", "dq-card");
@@ -189,8 +201,14 @@
 			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; i.onerror = () => i.replaceWith(el("div", "dq-meta", "Image evidence shows on the full queue page.")); ev.append(i); }
 			c.append(ev);
 		}
-		const own = threadLink(it.open);
-		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); if (own) c.append(own); return c; }
+		const own = threadLink(it);
+		if (it.secret) {
+			// The server says `ended` once no secret box waits in the thread (it timed out, or was cancelled or answered): never point at a box that is gone.
+			if (it.secretRequest === "ended") c.append(el("div", "dq-msg dq-expired", "Request expired. Its secret box is closed: ask the thread to reopen it."));
+			else c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here."));
+			if (own) c.append(own);
+			return c;
+		}
 		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); if (own) c.append(own); return c; }
 		const m = it.mirrored;
 		if (m) {
@@ -201,7 +219,7 @@
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
 			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
 			c.append(linkOut("Open the queue page", "/"));
-			const t = threadLink(m.open);
+			const t = threadLink(m);
 			if (t) c.append(t);
 			return c;
 		}

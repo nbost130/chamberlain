@@ -35,7 +35,7 @@ Treat them like a password: anyone who holds one can read the queue and answer f
 
 The page link is the one place the page key appears. **It never goes into a Decisions post.** `chamberlain ask` puts the **view key** in the view it posts to the Decisions thread
 (with the page up but no view key yet, it posts the one-line notice and says so on stderr, never a link that cannot work), and refuses to send any post whose text holds the page key. The inline
-view passes the view key on every call. Its "Open the queue page" and "Open the thread" links (the second goes through `/open/<server>/<threadId>`, see [CONFIGURATION.md](CONFIGURATION.md)) carry no key: open them in a browser that already holds the cookie, because the weak view key cannot sign a browser in. **Evidence images in the Decisions view** loaded
+view passes the view key on every call. Its "Open the queue page" and "Open the thread" links (the second goes through `/open/<server>/<threadId>`, except in T3 Code's phone app, where it is the thread's app link; see [CONFIGURATION.md](CONFIGURATION.md)) carry no key: open them in a browser that already holds the cookie, because the weak view key cannot sign a browser in. **Evidence images in the Decisions view** loaded
 with `?k=<key>`, which the page now accepts only for the page key, so a view posted after this change shows an item's image evidence on the full page only (a signed per-image address
 for the frame belongs to the view-key work in issue #10).
 

@@ -403,6 +403,42 @@ export interface SequenceStore {
 	current(): number;
 }
 
+// ---- the Steward's token usage per wake ------------------------------------------------------------
+
+/**
+ * One segment of a Steward transcript (src/core/steward-tokens.ts): one wake, or the start prompt, a compaction, a T3 notice or a message,
+ * with every model request until the next. The API's four `usage` fields summed over its distinct requests, and the context size (input plus
+ * cache read plus cache write) at its first and last request. Never any text.
+ */
+export type WakeUsage = {
+	session: string;
+	/** The wake's delivery id; a wake from before delivery ids, or any other prompt, is `uuid:<its row's uuid>`. A repeat in one session gets `#2`, `#3`. */
+	wakeKey: string;
+	/** The wake's kind from its header (`turn_ended`, `needs_input`, `answer`, `digest`, `sweep`, ...), or `start`, `compact`, `notice`, `message`, `preamble`. */
+	kind: string;
+	/** For a sweep: `full` (time for a full supervision sweep) or `findings` (only the listed checks). */
+	variant?: string;
+	deliveryId?: string;
+	startedAt: number;
+	endedAt: number;
+	requests: number;
+	inputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+	outputTokens: number;
+	contextStart?: number;
+	contextEnd?: number;
+	contextPeak?: number;
+	/** Compactions inside the segment (`compact_boundary` rows). */
+	compactions: number;
+};
+export interface UsageStore {
+	/** Inserts or replaces each row by (session, wake key), in one transaction. A rerun over the same transcript writes the same rows. */
+	upsert(rows: WakeUsage[]): void;
+	/** Rows started at or after `since`, of one session if given, oldest first. */
+	list(q?: { since?: number; session?: string }): WakeUsage[];
+}
+
 export interface Store {
 	/** The database file, or ":memory:". */
 	readonly path: string;
@@ -421,6 +457,7 @@ export interface Store {
 	readonly events: EventStore;
 	readonly state: StateStore;
 	readonly sequence: SequenceStore;
+	readonly usage: UsageStore;
 	readonly dispositions: DispositionStore;
 }
 

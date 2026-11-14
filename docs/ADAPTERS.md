@@ -134,6 +134,10 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   `answer(card, choice, sig)` must re-read the card live and refuse (`kind: "stale"`) unless it is unchanged, and must
   never answer a secret or a link request. The core checks the choice and the fingerprint first, and sends one answer
   per card as shown; report `maybeSent: true` when a reply was lost and the answer may have delivered.
+  List a secret request (`type: "secret"`) exactly while its box can still take a value, as your backend counts it (T3: its
+  `secretStatus` is `pending` and the run whose agent asked has not ended). The page reads a secret request missing from a read
+  that succeeded, and began after a secret question was asked, as that question's box having closed, and says so on its card
+  ("Request expired"); it closes nothing on that.
 - **`send(threadId, text, seed)`** sends a message into a thread as the Steward. Use `seed` to make a retry carry the same
   ids so the backend can drop the repeat.
 - **`setTitle(title)`** renames the Decisions thread.
@@ -151,9 +155,11 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   reference as its messages write it (T3: `t3-thread://v2/<environmentId>/<threadId>`), `app` a link a device's OS hands to the
   backend's app (T3: `t3code://threads/<environmentId>/<threadId>`). Leave either out when it cannot be made exactly: no link is
   better than one to the wrong thread. An adapter that has to look something up (T3 reads its server's environment id) answers
-  with what it knows and does the lookup in the background; it must never make `listWaiting` wait for it. The page uses `ref` as a card's `link` and sends "Open the thread" through its own
-  `http(s)` route `/open/<server>/<threadId>` to `app`, because an embedded frame may open only `http(s)`. In `listWaiting`, set
-  each card's `link` from the page's `linkBase` when it gives one, else from `ref`.
+  with what it knows and does the lookup in the background; it must never make `listWaiting` wait for it. The page uses `ref` as a card's `link`.
+  "Open the thread" is `app` itself in a view that is the top document of the backend's own app (T3 Code's phone app hands such a
+  link to the OS, which opens it in the app), and the page's `http(s)` route `/open/<server>/<threadId>` everywhere else, because
+  an embedded frame may open only `http(s)`. `app` must use a scheme of its own: one a browser runs or loads (`javascript:`,
+  `data:`, `http(s):`, …) is never used. In `listWaiting`, set each card's `link` from the page's `linkBase` when it gives one, else from `ref`.
 - **Wording**: `serverLine()` and `approvalHint` adapt the sentences a wake says about the server and about approvals.
 
 ## Testing an adapter
