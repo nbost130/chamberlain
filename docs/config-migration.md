@@ -45,8 +45,8 @@ Each moves to `secrets/<same name>`, mode 0600, in a 0700 directory. Nothing is 
 | `compact-url` | `secrets/compact-url` | The compact webhook URL. |
 | `desk-wake-url` | `secrets/desk-wake-url` | The Alert Desk's webhook URL. |
 | `read-token` | `secrets/read-token` | The default server's read token. |
-| `<server>-token` (for example `main-token`, `mac-token`, `desktop-token`) | `secrets/<server>-token` | A server's read token. |
-| `<server>-operate-token` (for example `mac-operate-token`, `desktop-operate-token`) | `secrets/<server>-operate-token` | A server's operate token (`web.answerTokens`). |
+| `<server>-token` (for example `main-token`, `laptop-token`) | `secrets/<server>-token` | A server's read token. |
+| `<server>-operate-token` (for example `laptop-operate-token`) | `secrets/<server>-operate-token` | A server's operate token (`web.answerTokens`). |
 | `t3-operate-token` | `secrets/t3-operate-token` | The Decisions server's operate token (`web.decisionsServer`). |
 | any other file that `tokenFile`, `operateTokenFile`, `decisionsServer.operateTokenFile` or `answerTokens` names | `secrets/<same name>` | |
 | `wake-url.steward`, `wake-url.prev` | `secrets/wake-url.steward`, `secrets/wake-url.prev` | Hand-off files. A new Steward writes its URL to `secrets/wake-url.steward`. |

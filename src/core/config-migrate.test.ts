@@ -23,8 +23,11 @@ import {
 	SWEEP,
 	WEB,
 	legacyFiles,
+	tokensFor,
 	writeLegacyConf,
 } from "../testing/legacy-conf.ts";
+
+const TOKENS = tokensFor();
 import { planLines, showLines } from "./config-cmd.ts";
 import { envValue, migrateLayout, parseEnvFile, planMigration, setThread, startupLayout } from "./config-migrate.ts";
 import {
@@ -70,8 +73,8 @@ describe("the live install's twenty file names, with fake values, migrate to the
 				"decisions-thread",
 				"desk-thread",
 				"desk-wake-url",
-				"mac-operate-token",
-				"mac-token",
+				"laptop-operate-token",
+				"laptop-token",
 				"main-token",
 				"desktop-operate-token",
 				"desktop-token",
@@ -121,7 +124,7 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		expect(c.migrated.files).toContain("settings.json");
 		// nothing secret is in config.json
 		const text = readFileSync(`${conf}/config.json`, "utf8");
-		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, FAKE.deskWakeUrl, ...Object.values(FAKE.tokens)])
+		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, FAKE.deskWakeUrl, ...Object.values(TOKENS)])
 			expect(text).not.toContain(v);
 
 		// secrets/: a 0700 directory of 0600 files, one per secret, same name, same content
@@ -130,7 +133,7 @@ describe("the live install's twenty file names, with fake values, migrate to the
 			"wake-url": FAKE.wakeUrl,
 			"compact-url": FAKE.compactUrl,
 			"desk-wake-url": FAKE.deskWakeUrl,
-			...FAKE.tokens,
+			...TOKENS,
 		};
 		expect(Object.keys(secretFiles)).toHaveLength(9);
 		for (const [name, value] of Object.entries(secretFiles)) {
@@ -156,14 +159,14 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		for (const n of names) if (n !== "decision-rights.md" && n !== "daemon.env") rmSync(`${conf}/${n}`);
 		expect(readFileSync(`${conf}/decision-rights.md`, "utf8")).toBe(DECISION_RIGHTS);
 
-		expect(readServers(conf)!.map((s) => s.name)).toEqual(["main", "mac", "desktop"]);
+		expect(readServers(conf)!.map((s) => s.name)).toEqual(["main", "laptop", "desktop"]);
 		expect(readServers(conf)![1]).toMatchObject({
-			environmentId: "fake-env-mac",
+			environmentId: "fake-env-laptop",
 			mayBeOffline: true,
-			tokenFile: "mac-token",
+			tokenFile: "laptop-token",
 		});
 		expect(loadConfig(conf)).toMatchObject({ host: "127.0.0.1", port: 3790, allowedHosts: ["fake-host.example"] });
-		expect(loadConfig(conf).answerTokens).toEqual({ mac: "mac-operate-token", desktop: "desktop-operate-token" });
+		expect(loadConfig(conf).answerTokens).toEqual({ laptop: "laptop-operate-token", desktop: "desktop-operate-token" });
 		expect(loadConfig(conf).decisionsServer).toEqual(WEB.decisionsServer);
 		expect(readSweepConfig(conf).checks.map((c) => c.name)).toEqual(["disk"]);
 		expect(readConfig(conf)).toMatchObject({ dailyCap: 9, morningHour: 6 });
@@ -176,7 +179,7 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		expect(readNamed(conf, "wake-url")).toBe(FAKE.wakeUrl);
 		expect(readNamed(conf, "compact-url")).toBe(FAKE.compactUrl);
 		expect(readNamed(conf, "desk-wake-url")).toBe(FAKE.deskWakeUrl);
-		for (const [name, value] of Object.entries(FAKE.tokens)) expect(readSecret(conf, name)).toBe(value);
+		for (const [name, value] of Object.entries(TOKENS)) expect(readSecret(conf, name)).toBe(value);
 		expect(readNamed(conf, "decision-rights.md")).toBe(DECISION_RIGHTS.trim());
 		expect(setting("principal", conf, NONE)).toBe("Ada");
 		expect(setting("recover", conf, NONE)).toBe(true);
@@ -193,13 +196,7 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		expect(dry.plan.secrets.filter((s) => s.action === "copy")).toHaveLength(9);
 		// the dry-run text names keys and files and never a value
 		const text = planLines(dry.plan, { dryRun: true }).join("\n");
-		for (const v of [
-			FAKE.wakeUrl,
-			FAKE.compactUrl,
-			FAKE.deskWakeUrl,
-			FAKE.stewardThread,
-			...Object.values(FAKE.tokens),
-		])
+		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, FAKE.deskWakeUrl, FAKE.stewardThread, ...Object.values(TOKENS)])
 			expect(text).not.toContain(v);
 		expect(text).toContain("secrets/wake-url: would copy");
 
@@ -231,11 +228,11 @@ describe("the live install's twenty file names, with fake values, migrate to the
 	test("a secret that is not 0600 is not copied, and the rest still migrates", () => {
 		const conf = fresh();
 		writeLegacyConf(conf);
-		chmodSync(`${conf}/mac-token`, 0o644);
+		chmodSync(`${conf}/laptop-token`, 0o644);
 		const r = migrateLayout(conf);
-		expect(existsSync(`${conf}/secrets/mac-token`)).toBe(false);
+		expect(existsSync(`${conf}/secrets/laptop-token`)).toBe(false);
 		expect(existsSync(`${conf}/secrets/desktop-token`)).toBe(true);
-		expect(r.plan.problems.join("\n")).toContain("mac-token");
+		expect(r.plan.problems.join("\n")).toContain("laptop-token");
 		expect(existsSync(`${conf}/config.json`)).toBe(true);
 	});
 
@@ -271,10 +268,10 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		expect(text).toContain("principal");
 		expect(text).toContain("(config.json)");
 		expect(text).toContain("servers");
-		expect(text).toContain("main, mac, desktop");
+		expect(text).toContain("main, laptop, desktop");
 		expect(text).toContain("secrets/");
 		expect(text).toContain("wake-url");
-		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, ...Object.values(FAKE.tokens)]) expect(text).not.toContain(v);
+		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, ...Object.values(TOKENS)]) expect(text).not.toContain(v);
 	});
 });
 
