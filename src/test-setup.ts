@@ -7,6 +7,8 @@
  *    set its own can therefore never read the developer's settings.json, tokens or database, or write to them.
  *  - Every CHAMBERLAIN_*, ALERT_DESK_* and DESK_* variable the shell holds is dropped, and `<HOME>/bin` is off the PATH, so a live alert
  *    command (settings.json `alertCommand`, CHAMBERLAIN_ALERT_CMD) cannot be reached from a test.
+ *  - Every variable that points git at a repository (GIT_DIR and the rest) is dropped too: a git hook sets them, and a test's own `git init` and
+ *    `git commit` would then write into the developer's repository.
  *  - The alert command is a sentinel that only records its call. A test that raises an alarm through a real engine must pass `noAlert`
  *    (the `noAlert` helper in the testing directory) or its own command; one that does not leaves a marker, and the run fails at the end with what was called.
  *    (src/test-isolation.test.ts holds these promises.)
@@ -29,8 +31,14 @@ writeFileSync(
 	"[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n",
 );
 
+// The git variables a hook leaves in the environment (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) point every `git` a test runs at the repository
+// being pushed or committed: from a linked worktree GIT_DIR is absolute, so a test's `git init` and `git commit` would write into the developer's
+// repository, and its branch, refs and history with them. GIT_EDITOR and the like only name an editor, and stay.
+const GIT_REPOSITORY_VARS =
+	/^GIT_(DIR|WORK_TREE|INDEX_FILE|PREFIX|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM|QUARANTINE_PATH)$/;
 for (const k of Object.keys(process.env))
-	if (/^(CHAMBERLAIN_|ALERT_DESK_|DESK_)/.test(k) || k === "CLAUDE_CONFIG_DIR") delete process.env[k];
+	if (/^(CHAMBERLAIN_|ALERT_DESK_|DESK_)/.test(k) || k === "CLAUDE_CONFIG_DIR" || GIT_REPOSITORY_VARS.test(k))
+		delete process.env[k];
 Object.assign(process.env, {
 	HOME: home,
 	CHAMBERLAIN_CONF: conf,

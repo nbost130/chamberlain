@@ -29,6 +29,33 @@ describe("a test run touches nothing of the developer's", () => {
 	});
 });
 
+describe("git is not pointed at the developer's repository", () => {
+	test("git repository variables are not in the environment", () => {
+		expect(
+			Object.keys(process.env).filter((k) => /^GIT_(DIR|WORK_TREE|INDEX_FILE|PREFIX|COMMON_DIR)$/.test(k)),
+		).toEqual([]);
+	});
+	test("a hook's GIT_DIR is dropped before any test runs (a pre-push hook sets it, and a test's git init would write into the pushed repository)", async () => {
+		const here = new URL("./test-isolation.test.ts", import.meta.url).pathname;
+		const p = Bun.spawn(["bun", "test", here, "-t", "git repository variables are not in the environment"], {
+			env: {
+				...process.env,
+				GIT_DIR: "/nonexistent/.git",
+				GIT_WORK_TREE: "/nonexistent",
+				GIT_INDEX_FILE: "/nonexistent/index",
+			},
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [out, err, code] = await Promise.all([
+			new Response(p.stdout).text(),
+			new Response(p.stderr).text(),
+			p.exited,
+		]);
+		expect({ code, ran: /\b1 pass\b/.test(out + err) }).toEqual({ code: 0, ran: true });
+	});
+});
+
 describe("the alert command is a recorder, and a call to it fails the run", () => {
 	test("the command in force is the sentinel in this run's root", () => {
 		expect(alertCommand()).toBe(`${root}/alert-sentinel.sh`);

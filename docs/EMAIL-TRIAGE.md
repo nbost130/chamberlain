@@ -193,8 +193,7 @@ answer to a mail card is carried out by the module's code and wakes the Steward 
 | **Newsletter digest** | section 6 | `idea`, `urgent: false` | One per configured route, the default route first until a route is learned (a route applies to every highlight on the card); Skip this issue; Fewer like this |
 | **Triage rule proposal** (cleanup or routing) | the rule in words, its match, its action, and its backtest | `ruling`, `urgent: false` | Confirm; Not now; No |
 
-**Every card takes an optional note, and a note teaches.** A card's answer may carry a note (the Direction pattern of #29; until it
-lands, the answer note the queue has today). The module stores each answer with its note as a **labelled example** in `mail_examples`:
+**Every card takes an optional note, and a note teaches.** A card's answer may carry a note (the Direction pattern of #29). The module stores each answer with its note as a **labelled example** in `mail_examples`:
 the sender or newsletter, the kind of item, the option chosen (for a highlight, the route), and the note, capped in length. Examples are
 what proposals read (below) and what the Steward can list; a note is never used as an instruction. The existing rule stands: an answer
 with a note also reaches the Steward as an answer wake, which is how a note such as "tools like this are tasks for you" is seen.
