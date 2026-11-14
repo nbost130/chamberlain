@@ -10,7 +10,7 @@
  */
 import { cfg, setting } from "./layout.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
-import type { Settings, SettledMatch } from "./settings-parse.ts";
+import { parseSettledMatch, type Settings, type SettledMatch } from "./settings-parse.ts";
 export { parseSettings } from "./settings-parse.ts";
 export type { Settings, SettledMatch } from "./settings-parse.ts";
 import { configDir, stateDir } from "./state-dir.ts";
@@ -103,7 +103,7 @@ export function readSettings(conf = CONF): Settings {
 		...(str(g("t3StateDb")) ? { t3StateDb: str(g("t3StateDb")) } : {}),
 		...(str(g("alertCmd")) ? { alertCommand: str(g("alertCmd")) } : {}),
 		...(typeof tokens === "number" ? { compactTokens: tokens } : {}),
-		...(g("settledMatch") ? { settledMatch: g("settledMatch") as SettledMatch } : {}),
+		...(g("settledMatch") ? { settledMatch: parseSettledMatch(g("settledMatch"), "config.json") } : {}),
 	};
 	if (Object.keys(settings).length) settings.schemaVersion = SCHEMA_VERSION;
 	cached = { conf, settings };

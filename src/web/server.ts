@@ -5,7 +5,7 @@
  *   link            print the page's links with the token on them: the one to open on a phone or laptop, and the inline view's script address
  *   rotate-token    make a new token; every old link, cookie and rendered view stops working at once, and the new links are printed
  *
- * Binds only to the address in ~/.config/chamberlain/web.json (loopback or a Tailscale IP) and refuses a wildcard or a
+ * Binds only to the address in the `web` section of ~/.config/chamberlain/config.json (loopback or a Tailscale IP) and refuses a wildcard or a
  * missing one. An answer's wake is an outbox row written in the answer's own transaction; the daemon's relay sends it (src/core/relay.ts).
  *
  * --test runs against fixture data: CHAMBERLAIN_CONF and CHAMBERLAIN_STATE must point away from the live directories, the

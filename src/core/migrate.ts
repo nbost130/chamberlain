@@ -22,7 +22,7 @@ import { copyFileSync, constants, existsSync, readFileSync, renameSync, statSync
 import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 import { STATE, CONF } from "./config.ts";
 import { SCHEMA_VERSION, SchemaTooNewError, checkVersion, versionOf } from "./schema.ts";
-import { ConfigFileError, SECRETS_DIR, attachDeprecationLog, readConfigFile } from "./layout.ts";
+import { ConfigFileError, SECRETS_DIR, attachDeprecationLog, oldFileState, readConfigFile } from "./layout.ts";
 import { startupLayout } from "./config-migrate.ts";
 
 /** json: one document. jsonl: one record per line. servers: servers.json. */
@@ -90,9 +90,12 @@ const pathOf = (f: StoredFile, conf: string, state: string) => `${f.dir === "con
 
 type Entry = { path: string; what: string; kind: Kind };
 function entries(conf: string, state: string): Entry[] {
-	return FILES.map((f) => ({ path: pathOf(f, conf, state), what: f.name, kind: f.kind })).filter((e) =>
-		existsSync(e.path),
-	);
+	return FILES.filter(
+		// a file the layout migration moved is not read again by its old name: a rewritten one is not this build's to check or upgrade
+		(f) => f.dir !== "conf" || oldFileState(conf, f.name, false) !== "reappeared",
+	)
+		.map((f) => ({ path: pathOf(f, conf, state), what: f.name, kind: f.kind }))
+		.filter((e) => existsSync(e.path));
 }
 
 /** The raw records of a file: a list for jsonl (a torn line is `undefined`), one value otherwise, or `undefined` if it isn't JSON. */

@@ -4,7 +4,7 @@ Everything lives in two directories. The config directory is mode **0700**. In i
 secret, and one directory, `secrets/` (also 0700), holds a file per secret (mode **0600**: Chamberlain refuses a token or a URL that anyone else can read).
 
 Coming from the file-per-setting layout of the first releases (`settings.json`, `servers.json`, `web.json`, one file per token)?
-The daemon and the page convert it for you the first time they start, and leave your old files where they are.
+The daemon and the page **move** it for you the first time they start (secrets renamed into `secrets/`, the other files set aside as `<name>.migrated`).
 [config-migration.md](config-migration.md) maps every old file and variable to its new place.
 
 ## Config directory `~/.config/chamberlain` (`CHAMBERLAIN_CONF`)
@@ -40,7 +40,7 @@ One file per secret, in the T3 adapter's names. A `tokenFile` or `operateTokenFi
 | `web-token` | the page: made on its first start | The page's capability token: 32 random bytes. Every request to the page must hold it. `chamberlain web link` prints the links that carry it, `chamberlain web rotate-token` replaces it. See [web-access.md](web-access.md). |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `chamberlain switch-steward` during a hand-off; the old URL is kept for one-rename rollback. |
 
-The old place for these, the config directory itself, is still read when `secrets/` lacks the file, with one `config-deprecated` line in the events log.
+After a migration a secret is read only from `secrets/`: a file written at the old path is never read (the daemon logs `config-legacy-reappeared`). Only a secret the migration never moved is still read from the config directory, with one `config-deprecated` line in the events log.
 
 ### `config.json`
 
@@ -274,7 +274,7 @@ The standalone binary is one command, `chamberlain <name>`; from a checkout each
 | `chamberlain wakes list\|retry <id>\|cancel <id>` | you | The outbox: what is pending, held and dead-lettered; retry a dead letter; cancel a row for good. See [DELIVERY.md](DELIVERY.md#dead-letters). |
 | `chamberlain butler start\|stop\|list` | the Steward | The butler ledger. |
 | `chamberlain steward-health` | you | Read-only Steward health report. |
-| `chamberlain config migrate [--dry-run]`, `config show` | you | `migrate` converts the old file-per-setting layout into `config.json` and `secrets/`, and leaves the old files where they are; `--dry-run` prints what it would do. `show` prints every key with where its value comes from, and every secret by name. See [config-migration.md](config-migration.md). |
+| `chamberlain config migrate\|revert [--dry-run]`, `config show`, `config get <key>` | you | `migrate` MOVES the old file-per-setting layout into `config.json` and `secrets/`; `revert` puts it back so an older build starts; `--dry-run` prints what it would do. `show` prints every key with where its value comes from, every secret by name, and flags any old file written again after the move. `get <key>` prints one value for a script (`threads.steward`, `web.port`), never a secret. See [config-migration.md](config-migration.md). |
 | `chamberlain migrate [--check]` | you | Check every old-layout config file's schema version and upgrade old ones. (The database migrates itself when opened.) |
 | `chamberlain switch-steward <threadId>` | the Steward | The last step of a hand-off: make this thread the wake target. |
 | `chamberlain debug <command>` | you | Diagnostic commands, listed by `chamberlain debug help`: `peek <server> <threadId>` (the end of a thread in plain lines, a tenth of what `t3_thread_read` costs), `t3x threads\|read\|respond\|send <server>` (act on a thread on any configured server), `queue-waits [--hours N] [--store FILE]` (how long wakes sat before the Steward started on them), `compat [origin]` (a T3 server's version and whether it is in the tested range), `synthetic-wake` (queue one wake shaped like the daemon's, as an outbox row, so the running daemon sends it and the whole path is proved), `desk-allowlist hook\|check '<command>'` (the Alert Desk's command allowlist). The old top-level names (`chamberlain peek`, and so on) still work. |

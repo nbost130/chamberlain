@@ -27,6 +27,29 @@ export type Settings = {
  */
 export type SettledMatch = { titleOverlap?: boolean; ignoreWords?: string[] };
 
+/**
+ * Pure: a `settledMatch` value checked and normalised, or the first thing wrong with it. `where` names the file in the message: the one check
+ * serves settings.json and the `settledMatch` key of config.json.
+ */
+export function parseSettledMatch(sm: unknown, where: string): SettledMatch {
+	if (sm === null || typeof sm !== "object" || Array.isArray(sm))
+		throw Error(`${where}: "settledMatch" must be an object`);
+	const { titleOverlap, ignoreWords, ...extra } = sm as Record<string, unknown>;
+	if (Object.keys(extra).length)
+		throw Error(`${where}: "settledMatch" has unknown keys: ${Object.keys(extra).join(", ")}`);
+	if (titleOverlap !== undefined && typeof titleOverlap !== "boolean")
+		throw Error(`${where}: "settledMatch.titleOverlap" must be true or false`);
+	if (
+		ignoreWords !== undefined &&
+		(!Array.isArray(ignoreWords) || ignoreWords.some((w) => typeof w !== "string" || !w.trim()))
+	)
+		throw Error(`${where}: "settledMatch.ignoreWords" must be a list of words`);
+	return {
+		...(titleOverlap !== undefined ? { titleOverlap } : {}),
+		...(ignoreWords !== undefined ? { ignoreWords: (ignoreWords as string[]).map((w) => w.trim()) } : {}),
+	};
+}
+
 /** Pure: the settings a parsed file holds, or the first thing wrong with it. */
 export function parseSettings(raw: unknown): Settings {
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw))
@@ -45,26 +68,7 @@ export function parseSettings(raw: unknown): Settings {
 		(typeof compactTokens !== "number" || !Number.isFinite(compactTokens) || compactTokens <= 0)
 	)
 		throw Error('settings.json: "compactTokens" must be a positive number');
-	const sm = o.settledMatch;
-	let settledMatch: SettledMatch | undefined;
-	if (sm !== undefined) {
-		if (sm === null || typeof sm !== "object" || Array.isArray(sm))
-			throw Error('settings.json: "settledMatch" must be an object');
-		const { titleOverlap, ignoreWords, ...extra } = sm as Record<string, unknown>;
-		if (Object.keys(extra).length)
-			throw Error(`settings.json: "settledMatch" has unknown keys: ${Object.keys(extra).join(", ")}`);
-		if (titleOverlap !== undefined && typeof titleOverlap !== "boolean")
-			throw Error('settings.json: "settledMatch.titleOverlap" must be true or false');
-		if (
-			ignoreWords !== undefined &&
-			(!Array.isArray(ignoreWords) || ignoreWords.some((w) => typeof w !== "string" || !w.trim()))
-		)
-			throw Error('settings.json: "settledMatch.ignoreWords" must be a list of words');
-		settledMatch = {
-			...(titleOverlap !== undefined ? { titleOverlap } : {}),
-			...(ignoreWords !== undefined ? { ignoreWords: (ignoreWords as string[]).map((w) => w.trim()) } : {}),
-		};
-	}
+	const settledMatch = o.settledMatch === undefined ? undefined : parseSettledMatch(o.settledMatch, "settings.json");
 	return {
 		schemaVersion: SCHEMA_VERSION,
 		...(str("principalName") ? { principalName: str("principalName") } : {}),

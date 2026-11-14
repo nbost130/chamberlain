@@ -17,7 +17,10 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		process.exit(2);
 	}
 	const next = secretPath(CONF, "wake-url.steward");
-	if (!next) throw Error("no wake-url.steward: the new thread has not written its webhook");
+	if (!next)
+		throw Error(
+			"no secrets/wake-url.steward: the new thread has not written its webhook (write it into secrets/, not the config directory)",
+		);
 	const dir = ensureSecretsDir(CONF);
 	const current = secretPath(CONF, "wake-url");
 	if (current) {

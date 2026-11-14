@@ -3,6 +3,8 @@ import {
 	chmodSync,
 	existsSync,
 	lstatSync,
+	readdirSync,
+	utimesSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -45,6 +47,7 @@ import { readServers } from "./servers.ts";
 import { readSweepConfig } from "./sweep.ts";
 import { readConfig, readOperator } from "./alert-desk.ts";
 import { loadConfig } from "../web/config.ts";
+import { readSettings } from "./config.ts";
 
 const dirs: string[] = [];
 const fresh = () => {
@@ -90,7 +93,7 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		);
 	});
 
-	test("every value lands where it should, and every old file is left as it was", () => {
+	test("every value lands where it should, and the old files are MOVED: no stale copy is left at an old name", () => {
 		const conf = fresh();
 		const names = writeLegacyConf(conf);
 		const before = Object.fromEntries(names.map((n) => [n, readFileSync(`${conf}/${n}`, "utf8")]));
@@ -140,23 +143,29 @@ describe("the live install's twenty file names, with fake values, migrate to the
 			expect(mode(`${conf}/secrets/${name}`)).toBe(0o600);
 			expect(readFileSync(`${conf}/secrets/${name}`, "utf8")).toBe(`${value}\n`);
 		}
-		// the prose and systemd's file stay files, and are not copied
+		// the prose and systemd's file stay files, and are not moved
 		for (const n of ["decision-rights.md", "daemon.env"]) expect(existsSync(`${conf}/secrets/${n}`)).toBe(false);
 		expect(readFileSync(`${conf}/decision-rights.md`, "utf8")).toBe(DECISION_RIGHTS);
 		expect(readFileSync(`${conf}/daemon.env`, "utf8")).toBe(DAEMON_ENV);
 
-		// every old file is still there, byte for byte
-		for (const n of names) expect(readFileSync(`${conf}/${n}`, "utf8")).toBe(before[n]!);
+		// no stale copy: a secret is gone from its old name; each migrated non-secret file is set aside whole as <name>.migrated
+		for (const n of Object.keys(secretFiles)) expect(existsSync(`${conf}/${n}`), n).toBe(false);
+		const setAside = names.filter((n) => !(n in secretFiles) && n !== "decision-rights.md" && n !== "daemon.env");
+		expect(setAside).toHaveLength(9);
+		for (const n of setAside) {
+			expect(existsSync(`${conf}/${n}`), n).toBe(false);
+			expect(readFileSync(`${conf}/${n}.migrated`, "utf8"), n).toBe(before[n]!); // nothing is lost, not even a key this build never read
+		}
+		expect([...c.migrated.files].sort()).toEqual([...Object.keys(secretFiles), ...setAside].sort());
 
 		// the difference between settings.json and daemon.env is reported, not resolved
 		expect(r.plan.differs.map((d) => d.key)).toContain("alertCmd");
 	});
 
-	test("with every old file deleted the new layout alone serves every reader", () => {
+	test("the new layout alone serves every reader", () => {
 		const conf = fresh();
-		const names = writeLegacyConf(conf);
+		writeLegacyConf(conf);
 		migrateLayout(conf);
-		for (const n of names) if (n !== "decision-rights.md" && n !== "daemon.env") rmSync(`${conf}/${n}`);
 		expect(readFileSync(`${conf}/decision-rights.md`, "utf8")).toBe(DECISION_RIGHTS);
 
 		expect(readServers(conf)!.map((s) => s.name)).toEqual(["main", "laptop", "desktop"]);
@@ -193,23 +202,26 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		expect(existsSync(`${conf}/config.json`)).toBe(false);
 		expect(existsSync(`${conf}/secrets`)).toBe(false);
 		expect(dry.plan.added.length).toBeGreaterThan(10);
-		expect(dry.plan.secrets.filter((s) => s.action === "copy")).toHaveLength(9);
+		expect(dry.plan.secrets.filter((s) => s.action === "move")).toHaveLength(9);
+		expect(dry.plan.renames).toHaveLength(9);
 		// the dry-run text names keys and files and never a value
 		const text = planLines(dry.plan, { dryRun: true }).join("\n");
 		for (const v of [FAKE.wakeUrl, FAKE.compactUrl, FAKE.deskWakeUrl, FAKE.stewardThread, ...Object.values(TOKENS)])
 			expect(text).not.toContain(v);
-		expect(text).toContain("secrets/wake-url: would copy");
+		expect(text).toContain("secrets/wake-url: would move");
+		expect(text).toContain("settings.json: would be set aside as settings.json.migrated");
 
 		expect(migrateLayout(conf).changed).toBe(true);
 		const again = migrateLayout(conf);
 		expect(again.changed).toBe(false);
 		expect(again.plan.writeConfig).toBe(false);
 		expect(again.plan.added).toEqual([]);
-		expect(again.plan.secrets.every((s) => s.action === "present")).toBe(true);
-		expect(planLines(again.plan, { dryRun: false }).join("\n")).toContain("old files left in place");
+		expect(again.plan.secrets).toEqual([]);
+		expect(again.plan.renames).toEqual([]);
+		expect(planLines(again.plan, { dryRun: false }).join("\n")).toContain("nothing to do");
 	});
 
-	test("it never overwrites: a key config.json holds and a secret secrets/ holds win, and the difference is reported", () => {
+	test("it never overwrites, and an old name written again after the move is never read", () => {
 		const conf = fresh();
 		writeLegacyConf(conf);
 		migrateLayout(conf);
@@ -219,18 +231,19 @@ describe("the live install's twenty file names, with fake values, migrate to the
 		writeFileSync(`${conf}/wake-url`, "https://fake.example/hooks/CHANGED\n", { mode: 0o600 });
 		const r = migrateLayout(conf);
 		expect(r.changed).toBe(false);
-		expect(r.plan.differs.map((d) => d.key)).toContain("principal");
+		expect(r.plan.reappeared.sort()).toEqual(["settings.json", "wake-url"]);
 		expect(r.plan.secrets.find((s) => s.name === "wake-url")?.action).toBe("differs");
 		expect(setting("principal", conf, NONE)).toBe("Ada");
 		expect(readSecret(conf, "wake-url")).toBe(FAKE.wakeUrl);
 	});
 
-	test("a secret that is not 0600 is not copied, and the rest still migrates", () => {
+	test("a secret that is not 0600 is not moved, and the rest still migrates", () => {
 		const conf = fresh();
 		writeLegacyConf(conf);
 		chmodSync(`${conf}/laptop-token`, 0o644);
 		const r = migrateLayout(conf);
 		expect(existsSync(`${conf}/secrets/laptop-token`)).toBe(false);
+		expect(existsSync(`${conf}/laptop-token`)).toBe(true); // left where it is, never read at that mode
 		expect(existsSync(`${conf}/secrets/desktop-token`)).toBe(true);
 		expect(r.plan.problems.join("\n")).toContain("laptop-token");
 		expect(existsSync(`${conf}/config.json`)).toBe(true);
@@ -304,7 +317,7 @@ describe("the cases an audit of the first version found", () => {
 		expect(r.plan.notes.join("\n")).toContain("quietHours is not read by this build");
 	});
 
-	test("a token file called credential.md is a secret, not prose, once the old copy is gone", () => {
+	test("a token file called credential.md is a secret, not prose", () => {
 		const conf = fresh();
 		writeFileSync(
 			`${conf}/servers.json`,
@@ -316,14 +329,14 @@ describe("the cases an audit of the first version found", () => {
 		);
 		writeFileSync(`${conf}/credential.md`, "fake-md-token\n", { mode: 0o600 });
 		migrateLayout(conf);
-		rmSync(`${conf}/credential.md`);
+		expect(existsSync(`${conf}/credential.md`)).toBe(false);
 		expect(readNamed(conf, "credential.md")).toBe("fake-md-token");
 		writeFileSync(`${conf}/decision-rights.md`, "# rights\n", { mode: 0o600 });
 		expect(readNamed(conf, "decision-rights.md")).toBe("# rights");
 		expect(existsSync(`${conf}/secrets/decision-rights.md`)).toBe(false);
 	});
 
-	test("a webhook file that is a symlink to a regular 0600 file is copied by content", () => {
+	test("a webhook file that is a symlink to a regular 0600 file is written by content, and the link is set aside", () => {
 		const conf = fresh();
 		writeFileSync(`${conf}/real-hook`, "https://fake.example/linked\n", { mode: 0o600 });
 		symlinkSync(`${conf}/real-hook`, `${conf}/wake-url`);
@@ -331,6 +344,9 @@ describe("the cases an audit of the first version found", () => {
 		expect(readFileSync(`${conf}/secrets/wake-url`, "utf8")).toBe("https://fake.example/linked\n");
 		expect(lstatSync(`${conf}/secrets/wake-url`).isSymbolicLink()).toBe(false);
 		expect(mode(`${conf}/secrets/wake-url`)).toBe(0o600);
+		expect(existsSync(`${conf}/wake-url`)).toBe(false);
+		expect(lstatSync(`${conf}/wake-url.migrated`).isSymbolicLink()).toBe(true);
+		expect(readFileSync(`${conf}/real-hook`, "utf8")).toBe("https://fake.example/linked\n"); // the target is untouched
 	});
 
 	test('"threads": null in config.json means none: it is not refilled from the old files, and no fallback reads them', () => {
@@ -343,14 +359,14 @@ describe("the cases an audit of the first version found", () => {
 		expect(thread(conf, "steward")).toBeUndefined();
 	});
 
-	test("a secret is copied through a temporary file: a stale one is replaced, and none is left behind", () => {
+	test("a secret keeps its date through the move (the token-age alarm reads it), and no temporary file is left", () => {
 		const conf = fresh();
 		writeLegacyConf(conf);
-		mkdirSync(`${conf}/secrets`, { mode: 0o700 });
-		writeFileSync(`${conf}/secrets/wake-url.tmp-${process.pid}`, "half a url", { mode: 0o600 });
+		const old = new Date(Date.now() - 40 * 86_400_000);
+		utimesSync(`${conf}/laptop-token`, old, old);
 		migrateLayout(conf);
-		expect(readFileSync(`${conf}/secrets/wake-url`, "utf8")).toBe(`${FAKE.wakeUrl}\n`);
-		expect(existsSync(`${conf}/secrets/wake-url.tmp-${process.pid}`)).toBe(false);
+		expect(Math.abs(statSync(`${conf}/secrets/laptop-token`).mtimeMs - old.getTime())).toBeLessThan(2);
+		expect(readdirSync(`${conf}/secrets`).filter((n) => n.includes(".tmp-"))).toEqual([]);
 	});
 
 	test("CHAMBERLAIN_RECOVER=true does not turn recovery on: only 1 does, as before", () => {
@@ -443,6 +459,17 @@ describe("config.json is checked when it is read", () => {
 		write(conf, "{ not json");
 		expect(() => readConfigFile(conf)).toThrow("not valid JSON");
 	});
+	test("settledMatch is checked as settings.json checked it: unknown keys and wrong types are refused", () => {
+		const conf = fresh();
+		write(conf, { schemaVersion: 1, settledMatch: { titleOverlap: "no" } });
+		expect(() => readConfigFile(conf)).toThrow("titleOverlap");
+		write(conf, { schemaVersion: 1, settledMatch: { ignoreWords: ["a", ""] } });
+		expect(() => readConfigFile(conf)).toThrow("ignoreWords");
+		write(conf, { schemaVersion: 1, settledMatch: { colour: 1 } });
+		expect(() => readConfigFile(conf)).toThrow("unknown keys: colour");
+		write(conf, { schemaVersion: 1, settledMatch: { titleOverlap: false, ignoreWords: [" acme "] } });
+		expect(readSettings(conf).settledMatch).toEqual({ titleOverlap: false, ignoreWords: ["acme"] }); // trimmed
+	});
 	test("a newer schemaVersion is refused, never guessed at", () => {
 		const conf = fresh();
 		write(conf, { schemaVersion: 2 });
@@ -521,23 +548,24 @@ describe("writes", () => {
 		expect(c.threads.decisions).toBe(FAKE.decisionsThread);
 		expect(c.principal).toBe("Ada");
 		expect(thread(conf, "steward")).toBe("fake-new-steward");
+		// no stale steward-thread is left for a tool outside Chamberlain to read as the Steward
+		expect(existsSync(`${conf}/steward-thread`)).toBe(false);
+		expect(readFileSync(`${conf}/steward-thread.migrated`, "utf8").trim()).toBe(FAKE.stewardThread);
 	});
-	test("startupLayout migrates once, logs it, and lists the old files left behind", () => {
+	test("startupLayout migrates once and logs it; a start after it logs nothing about the layout", () => {
 		const conf = fresh();
 		writeLegacyConf(conf);
 		const lines: [string, Record<string, unknown>?][] = [];
 		startupLayout(conf, (e, d) => lines.push([e, d]));
-		expect(lines.map(([e]) => e)).toEqual(
-			["config-migrated", "config-legacy-files", "config-migrate-problem"].slice(0, lines.length),
-		);
-		expect(lines[0]![0]).toBe("config-migrated");
+		expect(lines.map(([e]) => e)).toEqual(["config-migrated"]);
 		expect(JSON.stringify(lines)).not.toContain(FAKE.wakeUrl);
-		const left = lines.find(([e]) => e === "config-legacy-files")![1]!.files as string[];
-		expect(left).toContain("settings.json");
-		expect(left).toContain("wake-url");
+		const d = lines[0]![1]!;
+		expect(d.secrets as string[]).toContain("wake-url");
+		expect(d.renamed as string[]).toContain("steward-thread.migrated");
+		expect(existsSync(`${conf}/wake-url`)).toBe(false);
 		const second: [string, Record<string, unknown>?][] = [];
 		startupLayout(conf, (e, d) => second.push([e, d]));
-		expect(second.map(([e]) => e)).not.toContain("config-migrated");
+		expect(second).toEqual([]);
 	});
 	test("a read-only config directory is logged, not fatal", () => {
 		const conf = fresh();
