@@ -9,9 +9,9 @@
  */
 import { Database } from "bun:sqlite";
 import { applyMigrations } from "../apply-migrations.ts";
+import { type OpenOptions, preparePrivateFile } from "../database.ts";
 import type { Migration } from "../migrations.ts";
 import { SchemaTooNewError } from "../schema.ts";
-import { type OpenOptions, preparePrivateFile } from "../sqlite-store.ts";
 
 /** The telemetry database's handle, and the ledger's read-only one: the only types of the driver that leave this file. */
 export type ObsDb = Database;

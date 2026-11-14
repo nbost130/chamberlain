@@ -25,8 +25,7 @@ import { budgetLeft, readDailyUsage, utcDayStart } from "./classify-budget.ts";
 import { classifyOne } from "./classify-one.ts";
 import { decide, decided, dispositionKey, keyOf, short, unknownOf } from "./classify-shared.ts";
 import { type ClassifierConfig, loadBank, SENDS_TEXT } from "./config.ts";
-import { haikuProvider } from "./provider-haiku.ts";
-import { jevProvider, type Provider, rulesProvider } from "./providers.ts";
+import { haikuProvider, jevProvider, type Provider, rulesProvider } from "./providers.ts";
 import type { HookRunner, ThreadText } from "./state.ts";
 
 /** One idle thread as the classifier needs it: where it is, which message, how long idle, and the text it may read. */

@@ -5,7 +5,7 @@
  *   rules  regular expressions per question (`looksLikeAsk`, `looksLikeStall`, each question's `rules`). Nothing leaves the machine.
  *   jev    TypeSafe's Jev over plain HTTP: one request per thread, one Noul head per question. Plain `fetch`, not the 0.7.0 SDK, which
  *          under Bun with concurrent requests threw `TypeError: Body already used` on nearly every call (the requests were billed).
- *   haiku  (./provider-haiku.ts) the `claude` CLI on the operator's own login, `--model haiku`, every question in one call. ANTHROPIC_API_KEY is removed
+ *   haiku  the `claude` CLI on the operator's own login, `--model haiku`, every question in one call. ANTHROPIC_API_KEY is removed
  *          from its environment so it runs on the operator's plan, not `--bare` (bare mode requires an API key). The thread state
  *          goes on stdin, never in argv, where any local user could read it.
  *
@@ -14,6 +14,17 @@
  * thread's text: only a status, an exit code or a fixed phrase.
  */
 import { looksLikeAsk, looksLikeStall } from "../decide.ts";
+import {
+	type CliReply,
+	type CliRunner,
+	claudeArgv,
+	MODEL_ID,
+	parseReply,
+	replyUsage,
+	reportedModels,
+	runClaude,
+	type Usage,
+} from "../llm/cli.ts";
 import { type Bank, DATA_PREAMBLE } from "./bank.ts";
 import type { SentState } from "./state.ts";
 
@@ -34,8 +45,6 @@ export type Provider = {
 	classify(state: SentState, bank: Bank): Promise<ProviderResult>;
 };
 
-/** What a call cost, when the provider said. A failed call that was billed still reports it, so the budget counts it. */
-export type Usage = { inputTokens?: number; costUsd?: number };
 /** A provider failure that may carry what the call cost. Its message is a fixed phrase: never a body, model output or the key. */
 export class ProviderError extends Error {
 	constructor(
@@ -46,10 +55,8 @@ export class ProviderError extends Error {
 		this.name = "ProviderError";
 	}
 }
-/** A model id as a provider may report it: a short token of letters, digits and `._:/-`. Anything else is refused, never stored. */
-export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 /** Pure: the reported model, checked; absent means the configured one. Throws (with the call's usage) for anything else. */
-export function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
+function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
 	if (reported === undefined || reported === null || reported === "") return configured;
 	if (typeof reported !== "string" || !MODEL_ID.test(reported))
 		throw new ProviderError(`${who} reported a model id that is not one`, usage);
@@ -199,6 +206,73 @@ export function jevProvider(o: JevOptions): Provider {
 			return {
 				answers,
 				model: modelOf(j.model, o.model, usage, "Jev"),
+				...usage,
+				latencyMs: Math.round(performance.now() - t0),
+			};
+		},
+	};
+}
+
+// ---- haiku -------------------------------------------------------------------------------------
+
+export type { CliRunner };
+export { MODEL_ID };
+
+export type HaikuOptions = { command: string; model: string; timeoutMs: number; run?: CliRunner };
+
+/** Pure: the system prompt: the bank, every question with its yes and no, and the one reply shape. */
+const haikuSystem = (bank: Bank): string =>
+	"You label one message from an AI agent's chat thread. Answer each question independently with your probability (0 to 1) that the answer is yes.\n\n" +
+	bank.map((q) => `- ${q.id}: ${DATA_PREAMBLE} ${q.ask}\n  YES: ${q.yes}\n  NO: ${q.no}`).join("\n") +
+	"\n\nReply with only a JSON object mapping each question id to a number, nothing else.";
+
+/** Pure: the argv: the shared no-tools one-shot reader (src/core/llm/cli.ts), with this bank as its system prompt. */
+export const haikuArgv = (o: Pick<HaikuOptions, "command" | "model">, bank: Bank): string[] =>
+	claudeArgv({ ...o, system: haikuSystem(bank) });
+
+/** The first flat `{...}` in the model's reply, parsed, or undefined when there is none or it is not JSON. */
+function haikuObject(result: unknown): unknown {
+	const m = typeof result === "string" ? result.match(/\{[^{}]*\}/) : null;
+	try {
+		return m ? JSON.parse(m[0]) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** The probability the model gave each question, checked; a refusal carries the call's usage. */
+function haikuAnswers(j: CliReply, bank: Bank, usage: Usage): Record<string, number> {
+	const parsed = haikuObject(j.result);
+	if (parsed === undefined) throw new ProviderError("the model's reply holds no JSON object of answers", usage);
+	try {
+		return validAnswers(bank, parsed);
+	} catch (e) {
+		throw new ProviderError((e as Error).message, usage);
+	}
+}
+
+export function haikuProvider(o: HaikuOptions): Provider {
+	return {
+		name: "haiku",
+		model: o.model,
+		classify: async (state, bank) => {
+			const env: Record<string, string | undefined> = { ...process.env };
+			delete env.ANTHROPIC_API_KEY;
+			const t0 = performance.now();
+			const stdout = await runClaude({
+				...o,
+				system: haikuSystem(bank),
+				stdin: JSON.stringify({ state }),
+				env,
+			});
+			const j = parseReply(o.command, stdout);
+			const usage = replyUsage(j);
+			const answers = haikuAnswers(j, bank, usage);
+			// Every reported model is checked; the first is recorded.
+			const models = reportedModels(j).map((id) => modelOf(id, o.model, usage, o.command));
+			return {
+				answers,
+				model: models[0] ?? o.model,
 				...usage,
 				latencyMs: Math.round(performance.now() - t0),
 			};

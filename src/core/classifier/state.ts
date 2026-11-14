@@ -11,7 +11,7 @@
  * The redaction hook (`redact.command`) gets the state as JSON on stdin and must print the same shape on stdout within five seconds.
  * Anything else (a failure, a timeout, a different shape) throws, and the caller sends nothing: the thread is `unknown`.
  */
-import { runPiped } from "./spawn.ts";
+import { runPiped } from "../llm/spawn.ts";
 
 type From = "human" | "agent" | "none";
 export type SentState = {

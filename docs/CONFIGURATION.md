@@ -92,6 +92,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `sweep` | Your own routine checks. See below. |
 | `alertDesk` | The Alert Desk's settings: its windows and cap, the morning hour, and the commands and gatherer agent it may use. See [alert-desk.md](alert-desk.md). |
 | `operatingRules` | Operating rules copied into the hand-off: excerpts of your own files. See below. |
+| `mail` | The optional email triage module. Off by default. See [Email triage](#email-triage-optional) below. |
 | `judge` | Which backend judges each trigger, with backend names of your own: `{"triggers": {"stalled-recovery": {"backend": "small-model"}}, "backends": {"small-model": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. There is **no default**: without it nothing is judged, the daemon logs `judge-off` with why at start, and a second failure goes to the Steward unjudged. Only error text, scrubbed, is ever sent. |
 
 Errors from a section still name the old file the section came from (`web.json: no bind address`, `sweep.json: check disk needs ...`): read that as the `web` or `sweep` section of `config.json`.
@@ -328,6 +329,37 @@ rows are kept past the 30-day retention as the next evaluation set. A bank file 
 (`human_asked`), `unless` other question ids (a `modifier` there holds a nudge while the thread is younger than the grace), and
 `rules` regular expressions or the builtins `@ask`, `@stall` and `@otherwise` for the `rules` provider.
 
+### Email triage (optional)
+
+**`mail`** is optional and **off by default**: without the section, or with `"provider": "none"`, Chamberlain runs exactly as it does
+without the module, and no `mail.db`, timer, child process or event exists. The design is [EMAIL-TRIAGE.md](EMAIL-TRIAGE.md); what is
+built so far is the seam (issue #34): the section is parsed and checked, `chamberlain mail` and the daemon start the module, and
+`mail.db` is made. **It reads and changes no mailbox yet**; the provider, the pipeline, the cards and the schedule are issues #35 to #42.
+A key it does not know is refused at start, naming it, and there is no key for a credential: the mail tool (`gog`, a mail client) keeps
+its own login and Chamberlain never sees it. Mail text leaves the machine only with two switches: a provider other than `"none"` with a
+reading model (`models.driver` anything but `"none"`) **and** `allowMailToLeaveMachine: true`; without the second the section is refused.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `provider` | `"none"` | `"none"` (off), `"gog"` (Gmail through the `gog` tool) or `"command"` (your own program speaking the provider verbs as JSON). |
+| `mode` | `"shadow"` | `"shadow"` runs everything and changes nothing in the mailbox; `"live"` lets confirmed rules and tapped cards act. |
+| `allowMailToLeaveMachine` | `false` | The second switch above. |
+| `gog` | `{command: "gog", account: null, timeoutMs: 60000, env: []}` | `env` lists extra variable names the `gog` child may inherit (a keyring's); `GOG_ACCESS_TOKEN` is refused there. |
+| `command` | `{argv: null, timeoutMs: 60000}` | The program for `provider: "command"`: `["program", "arg", ...]`. |
+| `scope` | `{query: "in:inbox", lookbackDays: 7, maxMessagesPerRun: 200}` | Which mail a run looks at. |
+| `schedule` | `{times: ["07:30", "16:30"], days: "mon-fri", tz: "local", maxRunsPerDay: 4}` | When a run starts: 24-hour `HH:MM` times (an empty list: only the Steward starts one), `"daily"` or days such as `"mon-fri"` or `"mon,wed,fri"`, `"local"` or an IANA zone. |
+| `labels` | `{prefix: "Chamberlain"}` | Every label the module adds is `<prefix>/<name>`; the prefix is a plain name with no `/`. |
+| `models` | `{command: "claude", driver: "haiku", escalate: "sonnet", top: "opus"}` | The model tiers, by the CLI's own model names. `driver: "none"` is rules only: no model is called and no text leaves. |
+| `budget` | `{driverCallsPerRun: 10, escalateCallsPerRun: 8, newsletterCallsPerRun: 3, topCallsPerRun: 0, inputTokensPerDay: 600000}` | Per-run and per-day caps; `topCallsPerRun` is 0 or 1. |
+| `important` | `{senders: [], words: ["invoice", "due", "contract", "tax", "court", "overdue"]}` | Senders (an address or `@domain`) and subject words whose mail is never cleaned without a tap. |
+| `newsletters` | `[]` | `[{"name": ..., "match": {"listId": ...} or {"sender": ...}, "maxHighlights": 1 to 5}]`. |
+| `interests` | `[]` | Topics highlights are scored against. |
+| `routes` | one route, `steward` | Where a picked highlight goes. Each is `{"id", "label", "kind"}` with `kind` `"steward"` (a task for the Steward), `"file"` (add `"file"`: Markdown is appended to it) or `"command"` (add `"command": ["program", ...]`: given the highlight as JSON on stdin, run only on a tap; **it is your own program and may fetch what it is given, so it is outside the module's no-fetch guarantee**). A route is added by writing it here, with no code. |
+| `defaultRoute` | the first `file` route, else the first route | The route offered first until a route has been learned for that kind of item. Must be one of `routes`. |
+| `cleanup.unattended` | `{minApproval: 0.95, shadowDays: 14, minBatches: 10, sampleRate: 0.25, sampleWindow: 8}` | The numbers of the unattended-archive mode, which is **off on every install and has no switch here**: it is turned on only by a measured shadow trial and the Steward's confirmation (EMAIL-TRIAGE.md, sections 5 and 8). The first three are floors: a weaker value is refused. |
+
+`chamberlain mail` (or `mail status`) says the module is off, or prints what is in force and makes `mail.db`.
+
 ## State directory `~/.local/state/chamberlain` (`CHAMBERLAIN_STATE`)
 
 Chamberlain follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/). The state
@@ -343,6 +375,7 @@ Chamberlain keeps no cache files today; `$XDG_CACHE_HOME/chamberlain` is reserve
   chamberlain.db              the SQLite ledger database (mode 0600), with chamberlain.db-wal and -shm beside it while it is open
   obs.db                      the telemetry database (mode 0600, WAL): events, and the logger's counters. Safe to delete with the daemon stopped (the reconciler rebuilds the
                               ledger-derived events at the next start); a backup of the ledger does not need it
+  mail.db                     only with the optional `mail` module on: its own database, same rules (mode 0600, WAL)
   evidence/<item>/            the screenshots and recordings the database's evidence rows point to
   steward-brief.md            the Steward's hand-off
 ~/.cache/chamberlain/         nothing: reserved for real caches
@@ -374,6 +407,7 @@ the state directory taken while the daemon is writing can catch the database and
 | table `events` | The log: every wake, skip, alarm and answer. `chamberlain debug queue-waits` and the return brief read it with SQL. |
 | table `state` | Small named records: the sweep clock, what rights text the Steward last received, the latest health verdict, the heartbeat. |
 | table `migrations` | The schema's version history (see [ARCHITECTURE.md](ARCHITECTURE.md)). |
+| `mail.db` (beside the database; only with the `mail` module on) | The email triage module's own database, with its own `migrations` table. It holds ids, addresses, dates, outcomes and capped derived text, never a mail body. Created on the first start with the module on, never before; remove the `mail` section and this file to delete the module's data. |
 | `evidence/<item>/` (a directory beside the database) | Screenshots and recordings copied in by `chamberlain ask`; the page serves only the names an item's `evidence` rows list. These stay files. |
 | `steward-brief.md` (beside the database) | The Steward's hand-off (where `/steward-handoff` writes it). |
 
@@ -421,5 +455,6 @@ The standalone binary is one command, `chamberlain <name>`; from a checkout each
 | `chamberlain steward-health` | you | Read-only Steward health report. |
 | `chamberlain config migrate\|revert [--dry-run]`, `config show`, `config get <key>` | you | `migrate` MOVES the old file-per-setting layout into `config.json` and `secrets/`; `revert` puts it back so an older build starts; `--dry-run` prints what it would do. `show` prints every key with where its value comes from, every secret by name, and flags any old file written again after the move. `get <key>` prints one value for a script (`threads.steward`, `web.port`), never a secret. See [config-migration.md](config-migration.md). |
 | `chamberlain migrate [--check]` | you | Check every old-layout config file's schema version and upgrade old ones. (The database migrates itself when opened.) |
+| `chamberlain mail [status]` | you | The optional email triage module: says it is off, or prints what is in force and makes `mail.db`. Reads and changes no mailbox yet. |
 | `chamberlain switch-steward <threadId>` | the Steward | The last step of a hand-off: make this thread the wake target. |
 | `chamberlain debug <command>` | you | Diagnostic commands, listed by `chamberlain debug help`: `peek <server> <threadId>` (the end of a thread in plain lines, a tenth of what `t3_thread_read` costs), `t3x threads\|read\|respond\|send <server>` (act on a thread on any configured server), `queue-waits [--hours N] [--store FILE]` (how long wakes sat before the Steward started on them), `compat [origin]` (a T3 server's version and whether it is in the tested range), `synthetic-wake` (queue one wake shaped like the daemon's, as an outbox row, so the running daemon sends it and the whole path is proved), `desk-allowlist hook\|check '<command>'` (the Alert Desk's command allowlist). The old top-level names (`chamberlain peek`, and so on) still work. |

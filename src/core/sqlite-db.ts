@@ -11,12 +11,4 @@ export function required(r: Row | undefined, what: string): Row {
 	return r;
 }
 
-/** One database and what every part of the store needs from it: the transaction wrapper and three query helpers. */
-export type Db = {
-	tx<T>(fn: () => T): T;
-	all(sql: string, ...p: unknown[]): Row[];
-	one(sql: string, ...p: unknown[]): Row | undefined;
-	run(sql: string, ...p: unknown[]): { changes: number; lastInsertRowid: number | bigint };
-	/** Runs `fn` with the busy timeout at zero, so a held write lock is an error at once and not a wait of seconds. */
-	nowait<T>(fn: () => T): T;
-};
+export type { Db } from "./database.ts";

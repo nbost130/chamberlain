@@ -31,8 +31,10 @@ const SRC = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 export function specifiers(code: string): string[] {
 	const bare = stripComments(code);
 	const out: string[] = [];
+	// A static import or re-export, a side-effect import, and a call to import or require with a literal first argument (extra arguments, such as
+	// import attributes, and a space before the parenthesis included).
 	for (const m of bare.matchAll(
-		/\b(?:import|export)\b[^"';]*?\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g,
+		/\b(?:import|export)\b[^"';]*?\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*[,)]/g,
 	))
 		out.push((m[1] ?? m[2] ?? m[3])!);
 	return out;
@@ -47,11 +49,16 @@ export function walk(root: string, dir = ""): string[] {
 /** Every .ts file under a directory of src/, as paths relative to src/. */
 const files = (dir: string) => walk(SRC, dir);
 
-/** The relative imports of a source text (static, dynamic and re-exports), resolved against `from` to src/-relative paths. */
+/**
+ * The imports of a source text (static, dynamic, require and re-exports) that point into this tree, as src/-relative paths: relative
+ * specifiers resolved against `from`, and absolute paths and file: URLs as they are. A package name points nowhere in src/ and is not listed.
+ */
 export function importsOf(code: string, from: string): string[] {
-	return specifiers(code)
-		.filter((p) => p.startsWith("."))
-		.map((p) => relative(SRC, resolve(SRC, dirname(from), p)));
+	return specifiers(code).flatMap((p) => {
+		if (p.startsWith(".")) return [relative(SRC, resolve(SRC, dirname(from), p))];
+		const abs = p.replace(/^file:\/\//, "");
+		return abs.startsWith("/") ? [relative(SRC, abs)] : [];
+	});
 }
 
 /** Pure: the violations of the rules in one file: what it imports that it may not. */
@@ -124,6 +131,217 @@ describe("the import boundary", () => {
 		expect(
 			violations("adapters/index.ts", 'import { a } from "./t3/index.ts";\nimport { b } from "./fake/index.ts";'),
 		).toEqual([]);
+	});
+});
+
+// ---- optional modules ---------------------------------------------------------------------------------
+
+/**
+ * The fourth rule: an optional module (src/modules/<name>/, contract in src/core/module.ts) is OFF unless its config section turns it on,
+ * and Chamberlain runs the same without it. The structure that keeps it out when it is off:
+ *   - nothing outside src/modules/ imports a module's own files: the only way in is the registry, src/modules/index.ts, and only the entry
+ *     points (src/cli.ts, src/daemon.ts) may import that. A test outside core/ may too, to drive it. Core, an adapter or the page never does.
+ *   - a module imports src/core/ and its own folder: never an adapter, never another module, and never the registry that makes it.
+ *   - a module opens its database through the shared opener (src/core/database.ts), never by naming bun:sqlite itself, so its file is private,
+ *     migrated and refused-when-newer exactly as `chamberlain.db` is.
+ */
+const REGISTRY = "modules/index.ts";
+const MAY_IMPORT_REGISTRY = new Set(["cli.ts", "daemon.ts"]);
+
+/** Pure: the violations of the module rules in one file: what it imports that it may not. `file` is src/-relative. */
+export function moduleViolations(file: string, code: string): string[] {
+	const bad: string[] = [];
+	const mine = file.match(/^modules\/([^/]+)\//)?.[1];
+	for (const target of importsOf(code, file)) {
+		const theirs = target.match(/^modules\/([^/.]+)\//)?.[1];
+		if (file.startsWith("core/") && target.startsWith("modules"))
+			bad.push(`${file} imports ${target}: core must not import from src/modules/`);
+		else if (!file.startsWith("modules/") && target.startsWith("modules") && target !== REGISTRY)
+			bad.push(`${file} imports ${target}: a module is reached only through the registry (${REGISTRY})`);
+		else if (target === REGISTRY && !file.startsWith("modules/")) {
+			const test = file.endsWith(".test.ts") && !file.startsWith("core/");
+			if (!MAY_IMPORT_REGISTRY.has(file) && !test)
+				bad.push(`${file} imports the registry: only src/cli.ts and src/daemon.ts may`);
+		}
+		if (mine && target.startsWith("adapters"))
+			bad.push(`${file} imports ${target}: a module must not import an adapter`);
+		if (mine && theirs && theirs !== mine)
+			bad.push(`${file} imports ${target}: a module must not import another module`);
+		if (mine && target === REGISTRY)
+			bad.push(`${file} imports the registry: a module is made by it, never the reverse`);
+	}
+	if (mine && !file.endsWith(".test.ts") && specifiers(code).includes("bun:sqlite"))
+		bad.push(`${file} imports bun:sqlite: a module opens its database through src/core/database.ts`);
+	return bad;
+}
+
+/**
+ * The module's reach (docs/EMAIL-TRIAGE.md, section 8, "Tracking links are never opened by the module"): a module has no HTTP client and
+ * starts no process of its own. A non-test file under src/modules/ may not call `fetch(`, open a socket or server, name an HTTP, socket or
+ * DNS package, or start a process; the model CLI is spawned by src/core/llm/cli.ts, which is core. A provider or a route that must run the
+ * operator's own program is listed in MAY_SPAWN with the reason, and nothing else is: B2 (#35) lists the provider's file, B7 (#40) the route's.
+ *
+ * What the scan enforces, in source text (it reads names, so a name built at run time is outside it; the behavioural proof is the real daemon
+ * test in src/modules/daemon.test.ts, which counts every child the kernel saw):
+ *   - the process APIs: `node:child_process` and `node:cluster`; the package `bun` itself, whose named exports `$`, `spawn` and `spawnSync`
+ *     (and `serve`, `connect`) are the same capabilities as the global's; `bun:ffi`; and the process libraries execa, cross-spawn, zx,
+ *     shelljs and node-pty;
+ *   - the `Bun` global: a module may name only the members in SAFE_BUN. `Bun.$`, `Bun.spawn`, a destructured or aliased `Bun`, `Bun?.x`,
+ *     `globalThis.Bun` and `Bun["x"]` are all a reference to `Bun` that is not one of those members, so each is refused;
+ *   - the network: `fetch(`, WebSocket, XMLHttpRequest and the HTTP, socket and DNS packages.
+ */
+export const MAY_SPAWN: Record<string, string> = {};
+/** The members of the `Bun` global a module may use: files, time and hashing, none of which starts a process or opens a socket. */
+const SAFE_BUN = "file|write|sleep|sleepSync|hash|nanoseconds|env";
+const NETWORK_PACKAGES =
+	/^(node:)?(http|https|http2|net|tls|dgram|dns|dns\/promises)$|^(undici|ws|node-fetch|axios|got)$/;
+const SPAWN_PACKAGES = /^(node:)?(child_process|cluster)$|^(bun|bun:ffi|execa|cross-spawn|zx|shelljs|node-pty)$/;
+const NETWORK_CALLS = /\bfetch\s*\(|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/;
+const BUN_GLOBAL_OUTSIDE_SAFE = new RegExp(`\\bBun\\b(?!\\s*\\.\\s*(?:${SAFE_BUN})\\b)`);
+const SPAWN_CALLS = /\b(execa|spawnSync|execSync|execFile|execFileSync)\s*\(/;
+
+/** Pure: the violations of the reach rule in one non-test file under src/modules/. `file` is src/-relative. */
+export function moduleReachViolations(file: string, code: string): string[] {
+	if (!file.startsWith("modules/") || file.endsWith(".test.ts")) return [];
+	const bare = stripComments(code);
+	const bad: string[] = [];
+	for (const spec of specifiers(code)) {
+		if (NETWORK_PACKAGES.test(spec)) bad.push(`${file} imports ${spec}: a module has no HTTP, socket or DNS client`);
+		if (SPAWN_PACKAGES.test(spec) && !(file in MAY_SPAWN))
+			bad.push(`${file} imports ${spec}: a module starts no process unless MAY_SPAWN lists the file`);
+	}
+	if (NETWORK_CALLS.test(bare))
+		bad.push(`${file} calls fetch or opens a socket or server: a module has no network client`);
+	if (BUN_GLOBAL_OUTSIDE_SAFE.test(bare))
+		bad.push(
+			`${file} names Bun outside Bun.{${SAFE_BUN.replaceAll("|", ",")}}: that is where a process, socket or server starts`,
+		);
+	if (SPAWN_CALLS.test(bare) && !(file in MAY_SPAWN))
+		bad.push(`${file} starts a process: a module starts none unless MAY_SPAWN lists the file`);
+	return bad;
+}
+
+describe("optional modules", () => {
+	// This file is not scanned: its scanner self-tests hold import statements as strings.
+	const all = () => walk(SRC).filter((f) => f !== "architecture.test.ts");
+
+	test("the scan is not vacuous: the mail module and the registry exist", () => {
+		expect(files("modules")).toContain("modules/index.ts");
+		expect(files("modules").filter((f) => f.startsWith("modules/mail/")).length).toBeGreaterThan(3);
+	});
+
+	test("nothing in src/core/ imports src/modules/", () => {
+		const bad = files("core").flatMap((f) => moduleViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+	});
+
+	test("a module imports only core and itself, never an adapter, another module or the registry, and never bun:sqlite", () => {
+		const bad = files("modules")
+			.filter((f) => f !== REGISTRY && !f.endsWith("index.test.ts") && !f.endsWith("daemon.test.ts"))
+			.flatMap((f) => moduleViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+	});
+
+	test("only cli.ts, daemon.ts and the registry name src/modules/ outside it (a test outside core may drive the registry)", () => {
+		const bad = all().flatMap((f) => moduleViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+		const importers = all().filter((f) => importsOf(readFileSync(join(SRC, f), "utf8"), f).includes(REGISTRY));
+		expect(importers.filter((f) => !f.endsWith(".test.ts")).sort()).toEqual(["cli.ts", "daemon.ts"]);
+	});
+
+	test("no file under src/modules/ has a network client or spawns a process it is not listed for", () => {
+		const bad = files("modules").flatMap((f) => moduleReachViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+		expect(Object.keys(MAY_SPAWN).filter((f) => !files("modules").includes(f))).toEqual([]);
+	});
+
+	test("the reach scanner catches each way to reach out (so a pass means something)", () => {
+		const f = "modules/mail/x.ts";
+		for (const code of [
+			'const r = await fetch("https://example.com");',
+			'const r = await fetch ("https://example.com");',
+			'import https from "node:https";',
+			'import { connect } from "net";',
+			'import { request } from "undici";',
+			'const s = new WebSocket("wss://x");',
+			"const s = Bun.listen({});",
+			"const p = Bun.spawn(['ls']);",
+			"const p = Bun.spawnSync(['ls']);",
+			"const p = Bun.$`ls`;",
+			// Bun's own exports and every way to hold the global: none is a literal `Bun.spawn` or `Bun.$`.
+			'import { $ } from "bun";\nexport const child = () => $`/usr/bin/true`;',
+			'import { $ as sh } from "bun";\nexport const child = () => sh`/usr/bin/true`;',
+			'import { spawn } from "bun";\nspawn(["ls"]);',
+			'import * as bun from "bun";\nbun.spawnSync(["ls"]);',
+			'import bun from "bun";\nbun.$`ls`;',
+			'const { $ } = await import("bun");',
+			'const { spawn } = require("bun");',
+			"const { spawn } = Bun;",
+			"const B = Bun;\nB.spawn(['ls']);",
+			"Bun?.spawn(['ls']);",
+			'Bun["spawn"](["ls"]);',
+			"globalThis.Bun.spawn(['ls']);",
+			'import { dlopen } from "bun:ffi";',
+			'import { execa } from "execa";',
+			'import cp from "cross-spawn";',
+			'import { fork } from "node:cluster";',
+			'import { exec } from "child_process";',
+			'import { exec } from "node:child_process";',
+			'const m = require("node:http");',
+			'const m = await import("node:dns", {});',
+		])
+			expect(moduleReachViolations(f, code), code).not.toEqual([]);
+		// What is allowed: the same words in comments, tests and strings of another shape, and other files that are not modules.
+		expect(moduleReachViolations(f, "// await fetch(url) is not allowed here\nconst a = 1;")).toEqual([]);
+		expect(moduleReachViolations("modules/mail/x.test.ts", "Bun.spawn(['bun']); await fetch(u);")).toEqual([]);
+		expect(moduleReachViolations("core/x.ts", "Bun.spawn(['ls']);")).toEqual([]);
+		expect(moduleReachViolations(f, 'import { join } from "node:path";\nconst s = "fetched";')).toEqual([]);
+		// The Bun members that are files, time and hashing are not process or network capabilities.
+		expect(
+			moduleReachViolations(f, "await Bun.write(p, await Bun.file(q).text()); await Bun.sleep(1); Bun.hash(s);"),
+		).toEqual([]);
+	});
+
+	test("the scanner catches each kind of violation (so a pass means something)", () => {
+		expect(moduleViolations("core/x.ts", 'import { a } from "../modules/mail/db.ts";')).toHaveLength(1);
+		// The spellings a plain relative static import hides behind: a space before the parenthesis, import options, require, and an absolute path or file URL.
+		for (const code of [
+			'await import ("../modules/mail/db.ts");',
+			'await import("../modules/mail/db.ts", {});',
+			'const m = require("../modules/mail/db.ts");',
+			'export * from "file://" + "x";\nexport * from "file://%SRC%/modules/mail/db.ts";',
+			'import { a } from "%SRC%/modules/mail/db.ts";',
+		])
+			expect(moduleViolations("core/x.ts", code.replaceAll("%SRC%", SRC)), code).not.toEqual([]);
+		expect(moduleViolations("core/x.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
+		expect(moduleViolations("core/x.test.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
+		expect(moduleViolations("core/x.ts", 'const m = await import("../modules/mail/cli.ts");')).toHaveLength(1);
+		expect(moduleViolations("adapters/t3/x.ts", 'import { a } from "../../modules/mail/db.ts";')).toHaveLength(1);
+		expect(moduleViolations("web/app.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
+		expect(moduleViolations("ask.ts", 'import { a } from "./modules/mail/config.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { a } from "../../adapters/t3/state.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { a } from "../other/y.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { a } from "../index.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { Database } from "bun:sqlite";')).toHaveLength(1);
+		// A test may read a database file raw, to check what the shared opener made.
+		expect(moduleViolations("modules/mail/x.test.ts", 'import { Database } from "bun:sqlite";')).toEqual([]);
+		// What is allowed.
+		expect(moduleViolations("cli.ts", 'const m = await import("./modules/index.ts");')).toEqual([]);
+		expect(moduleViolations("daemon.ts", 'import { a } from "./modules/index.ts";')).toEqual([]);
+		expect(moduleViolations("cli.test.ts", 'import { a } from "./modules/index.ts";')).toEqual([]);
+		expect(
+			moduleViolations(
+				"modules/mail/x.ts",
+				'import { a } from "../../core/config.ts";\nimport { b } from "./db.ts";\n// import { c } from "../../adapters/t3/state.ts";',
+			),
+		).toEqual([]);
+		expect(
+			moduleViolations(
+				"modules/index.ts",
+				'import { mail } from "./mail/index.ts";\nimport { other } from "./other/index.ts";',
+			),
+		).toEqual([]);
+		expect(moduleViolations("core/x.ts", 'import { a } from "./adapter.ts";')).toEqual([]);
 	});
 });
 
@@ -235,13 +453,14 @@ describe("one item system", () => {
 		expect(callers).toEqual(["core/sqlite-items.ts"]);
 	});
 
-	test("nothing in src/core/ but the store opens a database: the core reaches state only through the Store", () => {
-		// The ledger database is the Store's alone. The telemetry database (`obs.db`), and the read-only open of the ledger that the
+	test("nothing in src/core/ but the store, the shared opener and the telemetry opener opens a database: the core reaches state only through the Store", () => {
+		// The ledger database is opened through the shared opener (src/core/database.ts, which an optional module's own database file uses too) and
+		// the Store's own read-only fold (sqlite-store.ts). The telemetry database (`obs.db`), and the read-only open of the ledger that the
 		// reconciler needs, are the one other place: core/obs/db.ts, which everything else in core/obs/ goes through.
 		const opens = sources().filter(
 			(f) => f.startsWith("core/") && /from\s*["']bun:sqlite["']/.test(readFileSync(join(SRC, f), "utf8")),
 		);
-		expect(opens.sort()).toEqual(["core/obs/db.ts", "core/sqlite-store.ts"]);
+		expect(opens.sort()).toEqual(["core/database.ts", "core/obs/db.ts", "core/sqlite-store.ts"]);
 	});
 
 	test("the checker catches each kind of second mechanism (so a pass means something)", () => {
