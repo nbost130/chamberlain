@@ -25,11 +25,7 @@
 			"includes": ["**/*.test.ts", "src/testing/**", "src/test-setup.ts"],
 			"linter": {
 				"rules": {
-					"complexity": {
-						"noExcessiveCognitiveComplexity": "off",
-						"noExcessiveLinesPerFunction": "off",
-						"useMaxParams": "off"
-					},
+					"complexity": { "noExcessiveCognitiveComplexity": "off", "noExcessiveLinesPerFunction": "off" },
 					"style": { "noNonNullAssertion": "off", "noExcessiveLinesPerFile": "off" },
 					"suspicious": { "noExplicitAny": "off" }
 				}

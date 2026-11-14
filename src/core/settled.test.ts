@@ -26,8 +26,9 @@ const q = (id: string, title: string, over: Partial<Question> = {}): Question =>
 	...over,
 });
 /** An answered question, as the page leaves it: the item and its claim. */
-function answered(store: Store, id: string, title: string, over: Partial<Question> = {}, label = "No") {
-	const item = q(id, title, over);
+function answered(store: Store, id: string, title: string, over: Partial<Question> & { label?: string } = {}) {
+	const { label = "No", ...question } = over;
+	const item = q(id, title, question);
 	askQuestion(store, item);
 	claimWake(
 		store,
