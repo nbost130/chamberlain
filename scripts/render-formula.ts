@@ -6,6 +6,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
+import { flagReader } from "./args.ts";
 import { TARGETS, tarballName } from "./build.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -42,10 +43,7 @@ export function render(template: string, version: string, sums: Record<string, s
 }
 
 export function main(argv: string[] = process.argv.slice(2)) {
-	const flag = (n: string) => {
-		const i = argv.indexOf(n);
-		return i >= 0 ? argv[i + 1] : undefined;
-	};
+	const flag = flagReader(argv);
 	const sumsFile = flag("--sums");
 	if (!sumsFile) {
 		console.error(

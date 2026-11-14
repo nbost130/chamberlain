@@ -15,6 +15,7 @@
  */
 import { looksLikeAsk, looksLikeStall } from "../decide.ts";
 import { type Bank, DATA_PREAMBLE } from "./bank.ts";
+import { runPiped } from "./spawn.ts";
 import type { SentState } from "./state.ts";
 
 export const PROVIDERS = ["none", "rules", "jev", "haiku"] as const;
@@ -49,7 +50,7 @@ export class ProviderError extends Error {
 /** A model id as a provider may report it: a short token of letters, digits and `._:/-`. Anything else is refused, never stored. */
 export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 /** Pure: the reported model, checked; absent means the configured one. Throws (with the call's usage) for anything else. */
-export function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
+function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
 	if (reported === undefined || reported === null || reported === "") return configured;
 	if (typeof reported !== "string" || !MODEL_ID.test(reported))
 		throw new ProviderError(`${who} reported a model id that is not one`, usage);
@@ -100,7 +101,7 @@ export function rulesProvider(): Provider {
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_DEFAULT_MODEL = "jev-1.14.0";
 /** Input price, USD per million tokens (TypeSafe models page, Jev 1.14). Output is free. Used for any pinned Jev model. */
-export const JEV_USD_PER_MTOK = 0.042;
+const JEV_USD_PER_MTOK = 0.042;
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 export type JevOptions = {
@@ -215,18 +216,12 @@ export type CliRunner = (
 	o: { stdin: string; env: Record<string, string | undefined>; timeoutMs: number },
 ) => Promise<{ code: number | null; stdout: string }>;
 
-export const spawnCli: CliRunner = async (argv, o) => {
-	const p = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "ignore", env: o.env, timeout: o.timeoutMs });
-	p.stdin.write(o.stdin);
-	await p.stdin.end();
-	const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
-	return { code: p.signalCode ? null : code, stdout };
-};
+const spawnCli: CliRunner = (argv, o) => runPiped(argv, o.stdin, o.timeoutMs, o.env);
 
 export type HaikuOptions = { command: string; model: string; timeoutMs: number; run?: CliRunner };
 
 /** Pure: the system prompt: the bank, every question with its yes and no, and the one reply shape. */
-export const haikuSystem = (bank: Bank): string =>
+const haikuSystem = (bank: Bank): string =>
 	"You label one message from an AI agent's chat thread. Answer each question independently with your probability (0 to 1) that the answer is yes.\n\n" +
 	bank.map((q) => `- ${q.id}: ${DATA_PREAMBLE} ${q.ask}\n  YES: ${q.yes}\n  NO: ${q.no}`).join("\n") +
 	"\n\nReply with only a JSON object mapping each question id to a number, nothing else.";

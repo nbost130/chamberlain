@@ -38,7 +38,7 @@ import {
 	writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import { authorityProblem, isPrivateFile, modeText } from "./private.ts";
+import { authorityProblem, isPrivateFile, modeText, privateFile, readPrivate } from "./private.ts";
 import { checkVersion, SchemaTooNewError } from "./schema.ts";
 import { parseSettings, parseSettledMatch } from "./settings-parse.ts";
 import { configDir } from "./state-dir.ts";
@@ -46,7 +46,7 @@ import { configDir } from "./state-dir.ts";
 export const CONFIG_FILE = "config.json";
 export const SECRETS_DIR = "secrets";
 /** config.json carries its own version, apart from the legacy files' (src/core/schema.ts): it began at 1 with this layout. */
-export const CONFIG_SCHEMA_VERSION = 1;
+const CONFIG_SCHEMA_VERSION = 1;
 const DEFAULT_CONF = configDir(process.env, process.env.HOME ?? "");
 
 /** A config.json that cannot be used: not JSON, the wrong shape, or a mode that lets someone else change it. */
@@ -59,7 +59,7 @@ export class ConfigFileError extends Error {
 
 // ---- the keys ------------------------------------------------------------------------------------------
 
-type ScalarKind = "string" | "posnum" | "nonneg" | "posint" | "boolean" | "list";
+export type ScalarKind = "string" | "posnum" | "nonneg" | "posint" | "boolean" | "list";
 /** The scalar keys, each with the kind of value it takes. Each one has an environment override (`envName`). */
 export const SCALARS = {
 	principal: "string",
@@ -99,7 +99,6 @@ export const SECTIONS = [
 	"operatingRules",
 	"judge",
 ] as const;
-export type SectionKey = (typeof SECTIONS)[number];
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
 /** Bookkeeping the migration writes: when, and from which legacy files. Not a setting. */
@@ -296,17 +295,7 @@ function legacyThread(conf: string, member: ThreadKey): string | undefined {
 	return readLegacyText(conf, LEGACY_THREAD_FILES[member]);
 }
 function readLegacyText(conf: string, name: string): string | undefined {
-	if (!readable(conf, name, false)) return undefined;
-	try {
-		const p = `${conf}/${name}`;
-		const st = statSync(p);
-		if (!isPrivateFile(st))
-			throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
-		return readFileSync(p, "utf8").trim() || undefined;
-	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw e;
-	}
+	return readable(conf, name, false) ? privateFile(conf, name) : undefined;
 }
 
 /** The legacy settings.json as config keys, or undefined. */
@@ -361,21 +350,6 @@ export function legacyValue(conf: string, key: string): Legacy | undefined {
 	return { value: spec.strip ? withoutVersion(raw) : raw, file: spec.file, ...(doc.trust ? { trust: doc.trust } : {}) };
 }
 
-/** The names of legacy files that exist in the config directory: what a migration reads and a cleanup may remove. */
-export function legacyFilesPresent(conf: string): string[] {
-	const names = [
-		"settings.json",
-		"servers.json",
-		"web.json",
-		"sweep.json",
-		"alert-desk.json",
-		"operating-rules.json",
-		"judge.json",
-		...Object.values(LEGACY_THREAD_FILES),
-	];
-	return names.filter((n) => existsSync(`${conf}/${n}`));
-}
-
 // ---- what the migration moved ------------------------------------------------------------------------------
 
 /** What a non-secret file is renamed to when it has been migrated. */
@@ -399,7 +373,7 @@ export const NON_SECRET_HOME: Record<string, string> = {
 export const homeOfOld = (name: string): string => NON_SECRET_HOME[name] ?? `${SECRETS_DIR}/${name}`;
 
 /** The names config.json says the migration moved. A config.json that cannot be read lists none. */
-export function migratedNames(conf: string): Set<string> {
+function migratedNames(conf: string): Set<string> {
 	try {
 		const m = readConfigFile(conf)?.migrated;
 		return new Set(
@@ -480,7 +454,7 @@ const noticed = new Set<string>();
  * One line in the events log, once per process and file, when a legacy file was read in place of config.json or secrets/. Without a log
  * (a command-line tool) the notice waits until one is attached and is dropped if none ever is.
  */
-export function deprecated(conf: string, file: string, key: string, replacement: string): void {
+function deprecated(conf: string, file: string, key: string, replacement: string): void {
 	const id = `${conf}\0${file}`;
 	if (noticed.has(id)) return;
 	noticed.add(id);
@@ -553,7 +527,7 @@ export function thread(conf: string, member: ThreadKey): string | undefined {
 }
 
 /** The number an environment variable holds for a numeric key, or undefined when it is blank, not finite, or out of the kind's range. */
-function envNumber(raw: string, kind: "posnum" | "nonneg" | "posint"): number | undefined {
+export function envNumber(raw: string, kind: "posnum" | "nonneg" | "posint"): number | undefined {
 	const n = Number(raw);
 	if (raw.trim() === "" || !Number.isFinite(n)) return undefined;
 	if (kind === "posnum" && n <= 0) return undefined;
@@ -605,17 +579,7 @@ const insideSecrets = (name: string) => name !== "" && !name.startsWith("/") && 
  * deprecation notice. A file that is not a private regular file (mode exactly 0600) throws: a token or URL anyone can read is refused, not used.
  */
 export function readSecret(conf: string, name: string): string | undefined {
-	const tryRead = (p: string): string | undefined | null => {
-		try {
-			const st = statSync(p);
-			if (!isPrivateFile(st))
-				throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
-			return readFileSync(p, "utf8").trim() || undefined;
-		} catch (e) {
-			if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
-			throw e;
-		}
-	};
+	const tryRead = (p: string): string | undefined | null => readPrivate(p, name);
 	if (!insideSecrets(name)) return undefined; // a name that climbs out of the directory (`..`, an absolute path) names no secret
 	const v = tryRead(`${conf}/${SECRETS_DIR}/${name}`);
 	if (v !== null) return v;

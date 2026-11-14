@@ -16,7 +16,7 @@ import { within } from "../core/within.ts";
 export type ServerAdapter = { server: ServerEntry; adapter: Adapter };
 
 /** Names that can never carry answer rights, even as an explicit entry: object built-ins. */
-export const RESERVED_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+const RESERVED_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 /**
  * Pure: the servers with answer rights only where web.json grants them: the server named `decisionsServer` (matched by
  * its `origin`), and any server named in `answerTokens`. An operateTokenFile in servers.json itself is always dropped,
@@ -39,7 +39,7 @@ export function withAnswerRights<S extends { name: string; origin?: unknown }>(
 }
 
 /** A call that hasn't answered by then fails, so one hung server can't stall the poll. */
-export const POLL_TIMEOUT_MS = 90_000;
+const POLL_TIMEOUT_MS = 90_000;
 /**
  * Pure: the checks every card answer meets, in the order they are told: the card is still listed, it is an answerable kind (a
  * secret or link request never is, whatever it claims), the choice is one of its options, and the fingerprint is the one the operator

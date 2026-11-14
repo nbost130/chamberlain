@@ -28,7 +28,7 @@ import { questionStates } from "./questions.ts";
 import { type Clock, isExpired, readRulings } from "./rulings.ts";
 import type { Store } from "./store.ts";
 
-export type SettledSource = "queue" | "ruling" | "decision";
+type SettledSource = "queue" | "ruling" | "decision";
 export type Settled = {
 	source: SettledSource;
 	date: string;
@@ -70,12 +70,12 @@ const oneLine = (s: string, n = 110) => {
 /* ---------- refs ---------- */
 
 type PrRef = { repo?: string; n: number };
-export type Refs = { prs: PrRef[]; shas: string[]; items: string[]; runs: string[]; branches: string[] };
+type Refs = { prs: PrRef[]; shas: string[]; items: string[]; runs: string[]; branches: string[] };
 
 const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 
 /** Pure: the exact refs a text names. Fields (a run, a PR, a branch) are added by the caller. */
-export function refsIn(text: string): Refs {
+function refsIn(text: string): Refs {
 	const prs: PrRef[] = [];
 	for (const [, repo = "", n = ""] of text.matchAll(new RegExp(`(${SLUG})#(\\d{1,9})\\b`, "g")))
 		prs.push({ repo: repo.toLowerCase(), n: Number(n) });
@@ -107,7 +107,7 @@ const prMatch = (a: PrRef, b: PrRef) =>
 		((!a.repo.includes("/") || !b.repo.includes("/")) && repoName(a.repo) === repoName(b.repo)));
 
 /** Pure: the refs both sides share, split into strong (one thing) and weak (a subject; needs the same topic too). */
-export function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { strong: string[]; weak: string[] } {
+function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { strong: string[]; weak: string[] } {
 	const weak = [
 		...a.prs.filter((p) => b.prs.some((q) => prMatch(p, q))).map((p) => `PR/issue ${refLabel(p)}`),
 		...a.branches.filter((x) => b.branches.includes(x)).map((x) => `branch ${x}`),
@@ -130,7 +130,7 @@ const STOP = new Set(
 	),
 );
 /** Workflow words that open many unrelated questions. A title made only of these never matches on overlap. */
-export const GENERIC = new Set(
+const GENERIC = new Set(
 	"approve approval approved deploy deployed deployment merge merged review reviewed decision decide decided question ask asks asked fix fixed fixes pr issue release released delete deleted remove removed ready green red check checks run runs thread threads item items update updated add added change changes changed hold held wait waiting needs needed confirm confirmed yes no ok pick choose call plan test tests build builds work worker workers task tasks gate gates".split(
 		" ",
 	),
@@ -220,7 +220,7 @@ const norm = (s: string) =>
 		.replace(/[^a-z0-9]+/g, " ")
 		.trim();
 /** Pure: does `text` name `title` as a whole phrase? Only a title of 12+ characters and two words counts. */
-export function names(text: string, title: string | undefined): boolean {
+function names(text: string, title: string | undefined): boolean {
 	const t = title ? norm(title) : "";
 	if (t.length < 12 || !t.includes(" ")) return false;
 	return ` ${norm(text)} `.includes(` ${t} `);

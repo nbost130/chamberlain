@@ -29,7 +29,7 @@ import type { Store } from "./store.ts";
 
 export const IDLE_PARENTS = "idle-parents";
 /** The item source name: the same `check:<name>` form every routine check has. */
-export const IDLE_PARENTS_SOURCE = `check:${IDLE_PARENTS}`;
+const IDLE_PARENTS_SOURCE = `check:${IDLE_PARENTS}`;
 
 export type IdleParentsConfig = {
 	enabled: boolean;
@@ -135,7 +135,7 @@ export const messageHash = (last: Pick<LastAssistant, "id" | "text">): string =>
 	createHash("sha256").update(`${last.id}\0${last.text}`).digest("hex").slice(0, 12);
 
 /** Pure: asks first, then the longest idle, then by server and thread, so the order is the same on every run. */
-export const byAskThenIdle = (a: IdleThread, b: IdleThread): number =>
+const byAskThenIdle = (a: IdleThread, b: IdleThread): number =>
 	Number(b.looksLikeAsk) - Number(a.looksLikeAsk) ||
 	b.idleMinutes - a.idleMinutes ||
 	(`${a.server}\0${a.threadId}` < `${b.server}\0${b.threadId}` ? -1 : 1);
@@ -226,14 +226,14 @@ export const idleText = (t: IdleThread) =>
 export const classTag = (c: Pick<Classified, "action" | "reasons">) =>
 	`[${c.action.toUpperCase()}${c.reasons.map((r) => ` ${r.id} ${r.p.toFixed(2)}`).join(",")}]`;
 /** Pure: how a thread the classifier sorted reads in a live wake. Unknown (unclassified) reads exactly as without the classifier. */
-export const classifiedText = (t: IdleThread, c: Classified | undefined) =>
+const classifiedText = (t: IdleThread, c: Classified | undefined) =>
 	c && (c.action === "escalate" || c.action === "nudge")
 		? `${classTag(c)} thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`
 		: idleText(t);
 
 /** The item key of the day's settled digest line: one per UTC day. */
 export const DIGEST_PREFIX = "settled-digest:";
-export const digestKey = (day: string) => `${DIGEST_PREFIX}${day}`;
+const digestKey = (day: string) => `${DIGEST_PREFIX}${day}`;
 const DIGEST_TITLES = 12;
 /** Pure: the digest line for the threads a live classifier called settled. */
 export const digestText = (settled: readonly IdleThread[]) => {

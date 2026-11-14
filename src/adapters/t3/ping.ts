@@ -199,7 +199,7 @@ export function createRpcPing(
 }
 
 /** The T3 CLI: T3CODE_CLI_PATH, then <t3 base dir>/bin/t3, then the newest installed runtime. */
-export function t3Cli(): string {
+function t3Cli(): string {
 	if (process.env.T3CODE_CLI_PATH) return process.env.T3CODE_CLI_PATH;
 	const base = t3BaseDir();
 	if (existsSync(`${base}/bin/t3`)) return `${base}/bin/t3`;

@@ -10,7 +10,7 @@
  */
 
 /** What a flag value or a positional argument may be. Each is a fixed, anchored pattern in src/desk-allowlist.ts; none is free text. */
-export const VALUE_KINDS = ["digits", "word", "unit", "time", "repo", "ref"] as const;
+const VALUE_KINDS = ["digits", "word", "unit", "time", "repo", "ref"] as const;
 export type ValueKind = (typeof VALUE_KINDS)[number];
 
 /** One command (or one subcommand) of a shape. */
@@ -73,7 +73,7 @@ function gitRead(): ShapeBody {
 }
 
 /** Commands whose shapes are code (their values need more than a pattern): an operator may not redefine them. */
-export const BUILT_IN_COMMANDS = ["journalctl", "systemctl", "docker", ...Object.keys(GENERIC_SHAPES)];
+const BUILT_IN_COMMANDS = ["journalctl", "systemctl", "docker", ...Object.keys(GENERIC_SHAPES)];
 
 const COMMAND = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,60}$/;
 const FLAG = /^--?[A-Za-z][A-Za-z0-9-]{0,40}$/;

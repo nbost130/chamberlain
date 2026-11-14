@@ -13,7 +13,7 @@ import { readNamed, thread } from "../core/layout.ts";
 import { homeServer, readServers, type ServerEntry } from "../core/servers.ts";
 import { defaultT3Server, t3Entry } from "./t3/index.ts";
 
-export const ADAPTERS: Record<string, AdapterEntry> = {
+const ADAPTERS: Record<string, AdapterEntry> = {
 	t3: t3Entry,
 };
 
@@ -38,7 +38,7 @@ export type EnvParts = {
 	alarm?: AdapterEnv["alarm"];
 };
 /** The environment an adapter for `server` runs in: the directories, the Steward's thread, and the private files. */
-export function adapterEnv(server: ServerEntry, p: EnvParts = {}): AdapterEnv {
+function adapterEnv(server: ServerEntry, p: EnvParts = {}): AdapterEnv {
 	const conf = p.conf ?? CONF;
 	return {
 		server,

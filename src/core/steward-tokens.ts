@@ -28,7 +28,7 @@ const WAKE_HEADER = /(?:^|<webhook-data-[0-9a-f]+>)\[(?:chamberlain|t3-wake)\] (
  * The wake kinds Chamberlain (and t3-wake before it) has sent. A header naming any other word is stored as `wake`: the kind is a fixed
  * vocabulary, so no word of a transcript ever reaches the database or a report.
  */
-export const WAKE_KINDS = [
+const WAKE_KINDS = [
 	"turn_ended",
 	"needs_input",
 	"failed",
@@ -285,10 +285,10 @@ export const totalTokens = (w: WakeUsage): number =>
 	w.inputTokens + w.cacheReadInputTokens + w.cacheCreationInputTokens + w.outputTokens;
 
 /** Is this kind a wake Chamberlain sent (as opposed to the start prompt, a compaction, a notice or a message)? */
-export const isWake = (kind: string): boolean => !["start", "compact", "notice", "message", "preamble"].includes(kind);
+const isWake = (kind: string): boolean => !["start", "compact", "notice", "message", "preamble"].includes(kind);
 
 /** Reads and segments one transcript file. */
-export async function readTranscript(path: string, session = basename(path, ".jsonl")): Promise<WakeUsage[]> {
+async function readTranscript(path: string, session = basename(path, ".jsonl")): Promise<WakeUsage[]> {
 	const stream = createReadStream(path, "utf8");
 	const lines = createInterface({ input: stream, crlfDelay: Infinity });
 	try {
@@ -418,7 +418,7 @@ export function percentile(values: number[], p: number): number | undefined {
 	return s[Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))];
 }
 
-export type KindStats = {
+type KindStats = {
 	kind: string;
 	wakes: number;
 	tokensP50?: number;

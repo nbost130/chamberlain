@@ -95,7 +95,7 @@ const WHAT: Record<string, WaitWords> = {
 const kindOf = (type: string) => WHAT[type] ?? APPROVAL_REQUEST;
 
 /** Pure: the hold's one-line text: the card's kind and the adapter's label. */
-export const holdText = (w: Pick<CardWait, "type" | "label">) =>
+const holdText = (w: Pick<CardWait, "type" | "label">) =>
 	`${kindOf(w.type).hold}${w.label ? `: ${clip(flat(w.label), 100)}` : ""}`;
 
 /** Pure: the pointer question for a card, built from the CardWait fields only. */
@@ -268,7 +268,7 @@ export type OpenCard = Pick<CardRef, "server" | "requestId"> & {
 export const CARD_UNVERIFIED = "card-unverified";
 export const cardKey = (c: Pick<CardRef, "server" | "requestId">) => `${c.server}\u0000${c.requestId}`;
 /** The engine's alarm key for a card with no evidence for too long. */
-export const cardAlarmKey = (c: Pick<CardRef, "server" | "requestId">) => `card-unverified:${c.server}:${c.requestId}`;
+const cardAlarmKey = (c: Pick<CardRef, "server" | "requestId">) => `card-unverified:${c.server}:${c.requestId}`;
 
 type CardHoldRef = { id: string; seq?: number };
 

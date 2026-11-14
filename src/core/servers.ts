@@ -7,7 +7,7 @@ import { cfg } from "./layout.ts";
 import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
 
 /** The adapter a server entry names when it names none: every server was T3 Code before adapters existed. */
-export const DEFAULT_ADAPTER = "t3";
+const DEFAULT_ADAPTER = "t3";
 
 export type ServerEntry = {
 	/** A short name used in wakes, queue items and logs: "main", "laptop". */

@@ -47,10 +47,10 @@ import type { Item, Store } from "./store.ts";
 
 export const ALERT_DESK = "alert-desk";
 export const DESK_RECEIVER = "desk";
-export const DESK_KIND = "alert_desk";
+const DESK_KIND = "alert_desk";
 export const DAY_MS = 24 * 3600_000;
 
-export const SEVERITIES = ["critical", "warning", "info"] as const;
+const SEVERITIES = ["critical", "warning", "info"] as const;
 export type Severity = (typeof SEVERITIES)[number];
 export type DeskEvent = { source: string; family: string; title: string; body: string; ts: string; severity: Severity };
 
@@ -95,7 +95,6 @@ export function systemTimezone(): string {
 	}
 }
 
-export const configPath = (conf: string) => `${conf}/alert-desk.json`;
 export const inboxPath = (env: Record<string, string | undefined>, home: string) =>
 	env.ALERT_DESK_INBOX || `${home}/.cache/alert-desk/inbox.jsonl`;
 
@@ -133,10 +132,8 @@ export function readConfig(conf: string): DeskConfig {
  * the desk may run: they are read only from an alert-desk.json the operator owns that no group or other user can write (`authorityProblem`).
  */
 export type MorningSources = { commands: string[]; notes?: string };
-/** In a morning command, the place for a number (`--limit <N>`, `time >= <N>`): one to twelve digits. */
-export const NUMBER_SLOT = "<N>";
 /** The widest number a slot may take, in digits, whatever width it gives. */
-export const MAX_SLOT_DIGITS = 12;
+const MAX_SLOT_DIGITS = 12;
 /**
  * A number slot: `<N>` (1 to 12 digits), `<N:a-b>` (a to b digits, `<N:1-5>`) or `<N:a>` (exactly a digits), with 1 <= a <= b <= 12.
  * Anything else that starts `<N:` is a malformed slot, and the command holding it is left out (`slotProblem`).
@@ -144,7 +141,7 @@ export const MAX_SLOT_DIGITS = 12;
 const SLOT = /<N(?::(\d{1,2})(?:-(\d{1,2}))?)?>/g;
 
 /** Pure: why a morning command's number slots are malformed, or undefined when every slot is well formed. */
-export function slotProblem(command: string): string | undefined {
+function slotProblem(command: string): string | undefined {
 	for (const m of command.matchAll(SLOT)) {
 		if (m[1] === undefined) continue;
 		const lo = Number(m[1]),
@@ -266,7 +263,7 @@ export const deskAskCommand = (
 ) => (env.DESK_ASK_PATH ? `bun ${env.DESK_ASK_PATH}` : selfCommand("ask", o));
 
 /** Pure: the morning sources as the prompt lists them. */
-export function morningSourcesText(m: MorningSources): string {
+function morningSourcesText(m: MorningSources): string {
 	if (!m.commands.length)
 		return "   No morning sources are configured (`morningCommands` in alert-desk.json). Report what the morning wake carries, and say that no other source was read.";
 	const code = (c: string) => (c.includes("`") ? `\`\` ${c} \`\`` : `\`${c}\``);
@@ -299,21 +296,21 @@ export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
 }
 
 /** Pure: the evidence-gathering step, which names the operator's gatherer agent when there is one. */
-export function gatherStepText(gatherer?: string): string {
+function gatherStepText(gatherer?: string): string {
 	return gatherer
 		? `Fan out at most 4 \`${gatherer}\` subagents for the family (Agent tool, \`subagent_type: "${gatherer}"\`). Brief each one with one narrow question and one read-only command or file, and nothing else. Do not read the logs yourself; you decide, they read.`
 		: "No gatherer agent is configured, so read the evidence yourself: one narrow question at a time, each with one read-only command or file from the list below.";
 }
 
 /** Pure: the tools the desk has, which include the Agent tool only for the operator's gatherer. */
-export function toolListText(gatherer?: string): string {
+function toolListText(gatherer?: string): string {
 	return gatherer
 		? `Bash (in these shapes), Read, Grep, Glob and the Agent tool for \`${gatherer}\` gatherers`
 		: "Bash (in these shapes), Read, Grep and Glob";
 }
 
 /** Pure: the operator's own command shapes as bullets for the list of what may run (empty when there are none). */
-export function operatorCommandsText(shapes: ShapeSet): string {
+function operatorCommandsText(shapes: ShapeSet): string {
 	return Object.entries(shapes)
 		.map(([name, shape]) => `\n- ${describeShape(name, shape).join(", ")}.`)
 		.join("");
@@ -360,7 +357,7 @@ const blank = (s: string) =>
 		.replace(/\s+/g, " ")
 		.trim();
 /** How much of the body takes part: the opening says what failed, the tail is usually a log excerpt that differs every time. */
-export const SIGNATURE_BODY_CHARS = 300;
+const SIGNATURE_BODY_CHARS = 300;
 export function signature(e: Pick<DeskEvent, "severity" | "title" | "body">): string {
 	return createHash("sha1")
 		.update([e.severity, blank(e.title), blank(e.body.slice(0, SIGNATURE_BODY_CHARS))].join("\n"))
@@ -370,13 +367,13 @@ export function signature(e: Pick<DeskEvent, "severity" | "title" | "body">): st
 
 // ---- wake text --------------------------------------------------------------------------------------
 
-export type Reason = "new" | "changed" | "repeat";
+type Reason = "new" | "changed" | "repeat";
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const wakeId = (family: string, sig: string, ts: string) =>
 	`desk:${createHash("sha1").update(`${family}\n${sig}\n${ts}`).digest("hex").slice(0, 16)}`;
 
 /** Pure: the text the desk is woken with. The alert text is data; the standing prompt says what to do with it. */
-export function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, windowMin: number): string {
+function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, windowMin: number): string {
 	return [
 		`[alert-desk] ${e.severity.toUpperCase()} alert family ${e.family} (${reason})`,
 		`From ${e.source} at ${e.ts}.${absorbed ? ` ${absorbed} more event${absorbed === 1 ? "" : "s"} for this family ${absorbed === 1 ? "was" : "were"} folded since its last wake (window ${windowMin} min).` : ""}`,
@@ -388,7 +385,7 @@ export function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, win
 	].join("\n");
 }
 
-export function capMessage(cfg: DeskConfig, deferred: string[]): string {
+function capMessage(cfg: DeskConfig, deferred: string[]): string {
 	return [
 		`[alert-desk] daily cap reached: ${cfg.dailyCap} alert wakes in the last 24 h`,
 		`${deferred.length} famil${deferred.length === 1 ? "y is" : "ies are"} waiting and will wake as older wakes leave the 24 h window: ${deferred.slice(0, 8).join(", ")}${deferred.length > 8 ? ", …" : ""}.`,
@@ -414,7 +411,7 @@ export function localDay(now: number, tz: string): { day: string; hour: number }
 }
 
 /** Pure: the morning wake's text. It carries what the desk already handled, so the sweep reads only the sources the inbox lacks. */
-export function morningMessage(
+function morningMessage(
 	day: string,
 	handled: { family: string; wakes: number; severity: string; title: string }[],
 	waiting: string[],
@@ -523,7 +520,7 @@ function readLines(
 	}
 }
 
-export type Retired = { path: string; offset: number; after: number };
+type Retired = { path: string; offset: number; after: number };
 export type Cursor = {
 	offset: number;
 	inode: number;
@@ -538,7 +535,7 @@ const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
  * The cursor of a desk with none stored. "end": the inbox's current end, so nothing already in it wakes the desk (a line still being written
  * at that moment is skipped whole, as the reader skips any line it starts inside). No inbox yet, or "beginning": its start.
  */
-export function firstCursor(inbox: string, startAt: DeskConfig["startAt"]): Cursor {
+function firstCursor(inbox: string, startAt: DeskConfig["startAt"]): Cursor {
 	if (startAt === "beginning") return freshCursor();
 	try {
 		const st = statSync(inbox);
@@ -568,7 +565,7 @@ export type CrashPoint =
  * cursor restarts at the new inbox; if it does not, nothing was renamed and the intent is dropped. Either way nothing unread is lost, because a
  * rotation only starts when everything up to `from` is already committed.
  */
-export function recoverRotation(cur: Cursor, now: number): boolean {
+function recoverRotation(cur: Cursor, now: number): boolean {
 	const r = cur.rotating;
 	if (!r) return false;
 	if (existsSync(r.path)) {
@@ -584,7 +581,7 @@ export function recoverRotation(cur: Cursor, now: number): boolean {
  * Renames a big inbox away, but only once everything in it is committed (the saved cursor is at its end). The intent is saved BEFORE the
  * rename, and the retired file is in a saved cursor BEFORE anything reads or deletes it, so no crash between the steps loses a line.
  */
-export function rotateIfDue(
+function rotateIfDue(
 	cur: Cursor,
 	inbox: string,
 	now: number,
@@ -618,7 +615,7 @@ export function rotateIfDue(
 }
 
 /** Deletes a retired file a crash left behind after its cursor was saved (named `<inbox>.<ms>`, in no list, and old enough that no pass can still own it). */
-export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
+function sweepStrays(cur: Cursor, inbox: string, now: number): void {
 	const dir = dirname(inbox),
 		base = `${basename(inbox)}.`;
 	let names: string[];

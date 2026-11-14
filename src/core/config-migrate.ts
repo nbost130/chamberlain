@@ -35,6 +35,7 @@ import {
 	CONFIG_FILE,
 	ENV_KEYS,
 	ensureSecretsDir,
+	envNumber,
 	JOURNAL,
 	LEGACY_THREAD_FILES,
 	legacyValue,
@@ -48,6 +49,7 @@ import {
 	reappearedFiles,
 	SCALARS,
 	type ScalarKey,
+	type ScalarKind,
 	SECRET_FILE,
 	SECRETS_DIR,
 	syncDir,
@@ -147,23 +149,13 @@ function envList(raw: string): string[] | undefined {
 	return l.length ? l : undefined;
 }
 
-/** Pure: a numeric value as the number its kind takes, or undefined when it is not usable. */
-function envNumber(kind: string, raw: string): number | undefined {
-	const n = Number(raw);
-	if (raw.trim() === "" || !Number.isFinite(n)) return undefined;
-	if (kind === "posnum" && n <= 0) return undefined;
-	if (kind === "nonneg" && n < 0) return undefined;
-	if (kind === "posint" && (!Number.isInteger(n) || n < 1)) return undefined;
-	return n;
-}
-
 /** Pure: an environment value as the typed value its key takes, or undefined when it is not usable. */
 export function envValue(key: ScalarKey, raw: string): unknown {
-	const kind = SCALARS[key] as string;
+	const kind: ScalarKind = SCALARS[key];
 	if (kind === "string") return raw.trim() ? raw : undefined;
 	if (kind === "boolean") return raw === "1" ? true : raw === "0" ? false : undefined;
 	if (kind === "list") return envList(raw);
-	return envNumber(kind, raw);
+	return envNumber(raw, kind);
 }
 
 /** The token files the config names: each server's read and operate token, the Decisions server's, and every answer token. */
@@ -612,7 +604,7 @@ export function migrateLayout(
  * Changes config.json under the config directory's lock. A config directory that is still the old layout is migrated first, so nothing the old
  * files held is lost by writing a config.json that only has the change in it.
  */
-export function updateConfig(conf: string, mutate: (doc: Record<string, unknown>) => void): void {
+function updateConfig(conf: string, mutate: (doc: Record<string, unknown>) => void): void {
 	const lock = holdFlock(conf, { waitMs: 10_000 });
 	try {
 		if (!existsSync(`${conf}/${CONFIG_FILE}`)) {

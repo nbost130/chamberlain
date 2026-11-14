@@ -54,7 +54,7 @@ import { HEALTH_CONFIG, readHealth } from "../core/steward-health.ts";
 import type { Store } from "../core/store.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { type Linker, openPage } from "./thread-links.ts";
-import { checkCard, needsConfirmation, type SendToThread } from "./waiting.ts";
+import { checkCard, needsConfirmation, type SendToThread, type Waiting } from "./waiting.ts";
 
 export type AppDeps = {
 	/** The database the queue, rulings, claims and wakes live in. */
@@ -74,8 +74,7 @@ export type AppDeps = {
 	/** Each card's thread link, and where `/open/<server>/<threadId>` sends a device (./thread-links.ts). Without it no card links to its thread. */
 	links?: Linker;
 	/** Cards waiting in other threads (src/web/waiting.ts). */
-	mirror?: Pick<import("./waiting.ts").Waiting, "list" | "answer"> &
-		Partial<Pick<import("./waiting.ts").Waiting, "unreachable" | "secretRequest">>;
+	mirror?: Pick<Waiting, "list" | "answer"> & Partial<Pick<Waiting, "unreachable" | "secretRequest">>;
 	/** A directory holding index.html, app.css, app.js and inline.js; or `staticFiles`. */
 	staticDir?: string;
 	/** Each static file's path by the URL path it is served at (src/embedded.ts); wins over `staticDir`. */

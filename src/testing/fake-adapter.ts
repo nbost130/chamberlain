@@ -58,7 +58,7 @@ export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
  * `waitingError` makes the read throw. Otherwise, while the fake is not connected, every waiting read is `ok: false`, as the
  * contract says. `waitingRead` is returned whatever the connection, so a test can prove the core does not believe it.
  */
-export type FakeThread = {
+type FakeThread = {
 	lastMessage?: string;
 	/** What `lastAssistant` reports (id, text, ISO time). Unset: the thread has no finished assistant message. */
 	lastAssistant?: LastAssistant;

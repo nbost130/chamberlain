@@ -32,7 +32,7 @@ export const isWaitKind = (type: string): type is WaitKind =>
 	["user_input_request", "approval_request", "secret_request", "link_request"].includes(normalizeWaitKind(type));
 
 /** Pure: a timestamp field that is set: a string that parses as a date. Anything else (`{}`, `true`, a number, junk text) is not. */
-export const isStamp = (v: unknown): boolean => typeof v === "string" && Number.isFinite(Date.parse(v));
+const isStamp = (v: unknown): boolean => typeof v === "string" && Number.isFinite(Date.parse(v));
 
 export function toState(t: Raw, now = Date.now()): ThreadState {
 	const snoozedUntil = t.snoozedUntil ? Date.parse(t.snoozedUntil) : 0;

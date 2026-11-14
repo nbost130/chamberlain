@@ -93,7 +93,7 @@ export const alwaysUrgent = (q: Pick<Question, "secret" | "tag" | "cardRequest">
 export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean =>
 	q.urgent !== false || alwaysUrgent(q);
 /** Pure: the item with an `urgent: false` it may not have removed. Every write and every read of a question goes through it. */
-export function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
+function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
 	if (q.urgent !== false || !alwaysUrgent(q)) return q;
 	const { urgent: _dropped, ...rest } = q;
 	return rest as T;
@@ -191,7 +191,7 @@ export function notNow(store: Store, id: string, t = new Date().toISOString()) {
 
 const KIND_RANK: Record<Kind, number> = { "only-you": 0, product: 1, ruling: 2, idea: 3 };
 /** How many threads an item holds up, read from its blocks text ("blocks 3 threads", "holds 2 PRs"). */
-export const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
+const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\d+/)?.[0] ?? 1) || 1 : 0);
 
 /**
  * Pure: the open queue, ranked. Non-urgent questions sit below every urgent one; within each of the two, "not now" sinks
@@ -257,7 +257,7 @@ const WHY_TEXT: Record<StewardWhy, string> = {
 const SEND_UNCERTAIN =
 	"this option goes straight to the thread, but the direct send may or may not have reached the thread: check the thread before re-sending";
 /** Pure: a send detail that leaves open whether T3 took the message (the send's own deadline passed, or a crash cut it short). */
-export const sendUncertain = (detail: string) => /\bsend timed out\b|may or may not have reached/.test(detail);
+const sendUncertain = (detail: string) => /\bsend timed out\b|may or may not have reached/.test(detail);
 /**
  * Pure: a thread-routed claim's fallback wake, with how the send ended. A send that may have delivered tells the Steward
  * to check the thread before re-sending; a plain failure keeps "relay it yourself".
@@ -269,7 +269,7 @@ export function fallbackWake(message: string, detail: string): string {
 }
 
 /** Pure: the one message a thread-routed answer sends to the item's thread. It starts "Steward", as the Steward's own relay would. */
-export function threadRelayMessage(i: Question, a: Answer, relay: string): string {
+function threadRelayMessage(i: Question, a: Answer, relay: string): string {
 	const flat = (s: string) => s.replace(/\s+/g, " ").trim();
 	return [
 		`Steward, relaying ${principal()}'s answer from the decision queue (item ${i.id}; Chamberlain sent it the moment they answered).`,

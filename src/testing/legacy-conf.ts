@@ -5,7 +5,7 @@
  * are a parameter (`SERVER_NAMES` by default): a read token for each, an operate token for the second and third, and one for the Decisions
  * server. The values are made up: nothing here is, or is copied from, a real token, URL or thread id.
  */
-export const SERVER_NAMES = ["main", "laptop", "desktop"] as const;
+const SERVER_NAMES = ["main", "laptop", "desktop"] as const;
 export type ServerNames = readonly [string, string, string];
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
@@ -28,7 +28,7 @@ export const tokensFor = ([a, b, c]: ServerNames = SERVER_NAMES): Record<string,
 	"t3-operate-token": "fake-operate-token-t3",
 });
 
-export const serversFor = ([a, b, c]: ServerNames = SERVER_NAMES) => ({
+const serversFor = ([a, b, c]: ServerNames = SERVER_NAMES) => ({
 	schemaVersion: 2,
 	servers: [
 		{ name: a, adapter: "t3", origin: "http://127.0.0.1:3773", tokenFile: `${a}-token` },
@@ -59,7 +59,7 @@ export const SETTINGS = {
 	compactTokens: 123456,
 	settledMatch: { titleOverlap: false, ignoreWords: ["acme"] },
 };
-export const webFor = ([a, b, c]: ServerNames = SERVER_NAMES) => ({
+const webFor = ([a, b, c]: ServerNames = SERVER_NAMES) => ({
 	schemaVersion: 2,
 	host: "127.0.0.1",
 	port: 3790,

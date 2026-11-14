@@ -78,7 +78,7 @@ export function reconcileItemHolds(store: Store, now = new Date()): { closed: nu
 /* ---------- pass 2: structured refs ---------- */
 
 /** What a lookup learned. `live` means the thing is still going, so the hold stays. `unknown` stays too, and says why. */
-export type Seen = { state: "done"; saw: string } | { state: "live" } | { state: "unknown"; why: string };
+type Seen = { state: "done"; saw: string } | { state: "live" } | { state: "unknown"; why: string };
 /** A GitHub read: the API path, a jq filter, the parsed result. Rejects on any failure. */
 export type GhRead = (path: string, jq: string) => Promise<unknown>;
 /** What a snapshot says of a thread: settled with nothing pending, archived or deleted, still live, or not known. */

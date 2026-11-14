@@ -99,14 +99,18 @@ export function assertPrivateDir(path: string, what: string): void {
  * regular file (mode exactly 0600) throws: a token or a URL that anyone can read is refused, not used.
  */
 export function privateFile(conf: string, name: string): string | undefined {
+	return readPrivate(`${conf}/${name}`, name) ?? undefined;
+}
+
+/** The trimmed contents of the private file at `path` (undefined when empty), or null when it does not exist. Any other file throws, as `privateFile` says. */
+export function readPrivate(path: string, name: string): string | undefined | null {
 	try {
-		const p = `${conf}/${name}`;
-		const st = statSync(p);
+		const st = statSync(path);
 		if (!isPrivateFile(st))
 			throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
-		return readFileSync(p, "utf8").trim() || undefined;
+		return readFileSync(path, "utf8").trim() || undefined;
 	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
 		throw e;
 	}
 }

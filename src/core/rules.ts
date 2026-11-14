@@ -39,12 +39,12 @@ import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
 /** The 0.1 selector: a section, whole or by line prefixes. */
 export type RuleSpec = [section: string, lines: string[] | "whole"];
 /** A section of the source, whole or by line prefixes, optionally under a heading of its own. */
-export type SectionSelector = { section: string; lines: string[] | "whole"; as?: string };
+type SectionSelector = { section: string; lines: string[] | "whole"; as?: string };
 /** The one markdown table under a section's heading: its header and separator, and every body row or the rows chosen by prefix. */
-export type TableSelector = { table: string; rows: string[] | "whole"; as?: string };
+type TableSelector = { table: string; rows: string[] | "whole"; as?: string };
 export type Selector = RuleSpec | SectionSelector | TableSelector;
 /** A source and what to take from it: the selectors, or "whole" (the only way a whole file is copied). */
-export type RulesSource = { path: string; sections: Selector[] | "whole" };
+type RulesSource = { path: string; sections: Selector[] | "whole" };
 export type RulesConfig = { schemaVersion?: number; intro?: string; sources: RulesSource[] };
 
 /** The lines under `## name`, up to the next `## ` heading. Blank lines are dropped unless `keepBlank` (a table needs them to tell two tables apart). */
@@ -140,7 +140,7 @@ const selectorName = (selector: Selector): string => {
  * The chosen sections of `source`, each selector on its own: one that throws contributes nothing and is warned about (`where` names the
  * source), and the others still come out. Never the whole source.
  */
-export function excerptEach(source: string, sections: Selector[], where: string, warn: (msg: string) => void): string {
+function excerptEach(source: string, sections: Selector[], where: string, warn: (msg: string) => void): string {
 	const parts: string[] = [];
 	for (const s of sections) {
 		try {

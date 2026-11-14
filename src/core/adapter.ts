@@ -305,7 +305,7 @@ export type Transcript = {
 // ---- the adapter ---------------------------------------------------------------------------------
 
 /** What a snapshot knows of one thread. */
-export type ThreadFactsRow = {
+type ThreadFactsRow = {
 	id: string;
 	archived: boolean;
 	settled: boolean;
@@ -334,7 +334,7 @@ export type OptionalCapability =
  * (src/core/alert-desk.ts) into wakes for the `desk` receiver, and the one relay sends them here (a second receiver, through its one serial queue), so the desk holds and digests on its own
  * thread's state, never the Steward's.
  */
-export type AlertDeskLane = {
+type AlertDeskLane = {
 	/** How a wake reaches the desk thread. Its `ready()` is false until the operator has made the desk (no URL), and then nothing is drained. */
 	wake: WakeTransport;
 	/** Does the desk thread have a turn running or queued? Like `Adapter.isBusy`, for the desk's thread. */

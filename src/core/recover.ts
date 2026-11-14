@@ -28,8 +28,6 @@
  */
 import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
 
-export type { RunLook };
-
 import { type JudgeAnswer, scrubForJudge, type Trigger } from "./judge.ts";
 
 export type FailureKind =
@@ -51,15 +49,6 @@ export const RETRY_KINDS: ReadonlySet<FailureKind> = new Set([
 	"capacity",
 	"provider_turn_failed",
 	"oom",
-]);
-export const NEVER_KINDS: ReadonlySet<FailureKind> = new Set([
-	"auth",
-	"cloudflare",
-	"safety",
-	"quota",
-	"workspace",
-	"interrupted",
-	"unknown",
 ]);
 
 export const MIN = 60_000;
@@ -221,7 +210,7 @@ export function neverRetryThread(t: ThreadState, ctx: ThreadContext): string | u
 }
 
 export type Verdict = "retry_later" | "do_not_retry" | "ask_principal";
-export const VERDICTS: readonly Verdict[] = ["retry_later", "do_not_retry", "ask_principal"];
+const VERDICTS: readonly Verdict[] = ["retry_later", "do_not_retry", "ask_principal"];
 
 /** Pure: the judge's brief. It carries the two failures' class, code and scrubbed message, and never any thread text. */
 export function judgeBrief(

@@ -20,7 +20,7 @@ import { evaluateSource, recordEvaluation } from "./source.ts";
 import type { Store } from "./store.ts";
 import { fenced, idleParentsConfig } from "./sweep.ts";
 
-export const IDLE_CLOCK = "idle-parents-clock";
+const IDLE_CLOCK = "idle-parents-clock";
 export type IdleClock = { lastAt: number };
 
 export type IdleParentsDeps = {

@@ -12,6 +12,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
+import { flagReader } from "./args.ts";
 
 /** The four platforms the release ships: our `<os>-<arch>` name, and Bun's compile target for it. */
 export const TARGETS = {
@@ -41,10 +42,7 @@ export function compile(target: Target, dir: string): string {
 }
 
 export function main(argv: string[] = process.argv.slice(2)) {
-	const flag = (n: string) => {
-		const i = argv.indexOf(n);
-		return i >= 0 ? argv[i + 1] : undefined;
-	};
+	const flag = flagReader(argv);
 	const out = resolve(ROOT, flag("--out") ?? "dist");
 	const wanted = (flag("--targets")
 		?.split(",")

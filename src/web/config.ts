@@ -132,7 +132,7 @@ const TAILSCALE_V4 = [100, 64, 0, 0]; // 100.64.0.0/10, Tailscale's CGNAT range
 const TAILSCALE_V6 = [0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0, ...Array<number>(10).fill(0)]; // fd7a:115c:a1e0::, fd7a:115c:a1e0::/48, Tailscale's ULA range
 
 /** Pure: may the page listen here? Only loopback (127.0.0.1, ::1) or a Tailscale address. Everything else is refused. */
-export function allowedBind(ip: CanonicalIp): boolean {
+function allowedBind(ip: CanonicalIp): boolean {
 	if (ip.family === 4) return ip.text === "127.0.0.1" || inPrefix(ip.bytes, TAILSCALE_V4, 10);
 	return ip.text === "::1" || inPrefix(ip.bytes, TAILSCALE_V6, 48);
 }

@@ -11,7 +11,7 @@ import { type Bank, DEFAULT_BANK, parseBank, type Thresholds } from "./bank.ts";
 import { JEV_DEFAULT_MODEL, PROVIDERS, type ProviderName } from "./providers.ts";
 import type { RedactConfig, SendConfig } from "./state.ts";
 
-export type ClassifierMode = "shadow" | "live";
+type ClassifierMode = "shadow" | "live";
 export type ClassifierConfig = {
 	provider: ProviderName;
 	mode: ClassifierMode;

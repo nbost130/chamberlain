@@ -45,12 +45,12 @@ export interface ItemSource {
 	run(): Promise<readonly Finding[]>;
 }
 
-export const FINDING = "finding";
+const FINDING = "finding";
 /** The item kind (and dedup key) of a source that could not be evaluated: one per source. */
-export const EVALUATION_ERROR = "evaluation_error";
+const EVALUATION_ERROR = "evaluation_error";
 
 /** The repeat policy a finding asks for. */
-export const repeatPolicyOf = (f: Pick<Finding, "repeatIntervalMs" | "maxNotifications">): RepeatPolicy =>
+const repeatPolicyOf = (f: Pick<Finding, "repeatIntervalMs" | "maxNotifications">): RepeatPolicy =>
 	f.repeatIntervalMs === undefined ? NOTIFY_ONCE : repeatEvery(f.repeatIntervalMs, f.maxNotifications);
 
 export type SourceOutcome = {
@@ -64,7 +64,7 @@ export type SourceOutcome = {
 };
 
 /** What a source in error says, for the wake. */
-export const evaluationErrorText = (source: string, error: string) =>
+const evaluationErrorText = (source: string, error: string) =>
 	`A routine check could not run: ${source}: ${error.replace(/\s+/g, " ").slice(0, 120)}.`;
 
 /** What running a source found, not yet recorded: its findings, or the error that kept it from running. Nothing is written to run one. */

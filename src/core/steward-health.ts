@@ -48,7 +48,7 @@ export type MeasureOptions = {
 };
 
 /** The format pattern from `healthFormatPattern` (CHAMBERLAIN_HEALTH_FORMAT_PATTERN, or config.json; a regular expression), if it is set and valid. */
-export function formatPatternFromEnv(): RegExp | undefined {
+function formatPatternFromEnv(): RegExp | undefined {
 	const raw = setting("healthFormatPattern");
 	if (!raw) return undefined;
 	try {
@@ -237,7 +237,7 @@ export async function measure(
 	h.report = formatHealth(h);
 	return h;
 }
-export function formatHealth(h: Health): string {
+function formatHealth(h: Health): string {
 	return [
 		`Steward health: ${h.verdict} (${h.at})`,
 		`Context: ${h.tokens ?? "unknown"} tokens; watch >=${HEALTH_CONFIG.context}, compact >${HEALTH_CONFIG.compactContext}; peak ${h.peakTokens ?? "unknown"}`,

@@ -19,7 +19,7 @@ import { type CommandName, Principal, principal, principalPoss, STATE, selfComma
 import { awayModeLine } from "./messages.ts";
 import { authorityProblem } from "./private.ts";
 
-export type Environment = { name: string; environmentId?: string; mayBeOffline?: boolean };
+type Environment = { name: string; environmentId?: string; mayBeOffline?: boolean };
 export type BriefInput = {
 	mode: "test" | "live";
 	/** This checkout, so the commands in the hand-off are runnable from source (the compiled binary names itself, `chamberlain <sub>`). */

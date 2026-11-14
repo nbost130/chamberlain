@@ -103,9 +103,9 @@ import type { Store } from "./store.ts";
 import { BUSY_TURNS, type BusyFact, commitsAhead, SWEEP_MS } from "./sweep.ts";
 
 /** One configured server and the adapter that serves it. */
-export type EngineServer = { server: ServerEntry; adapter: Adapter };
+type EngineServer = { server: ServerEntry; adapter: Adapter };
 
-export type EngineTiming = {
+type EngineTiming = {
 	/** A thread event settles this long before the engine looks at it again (a state change often comes in bursts). */
 	debounceMs: number;
 	/** The projection can lag the status by a moment: wait this long before calling a wait empty. */
@@ -121,7 +121,7 @@ export type EngineTiming = {
  * The timings in force: `reportQuietMs` and `cardUnverifiedAlarmMs` from the environment or config.json (src/core/layout.ts), else the defaults.
  * CHAMBERLAIN_TICK_MS is a test knob and stays environment-only.
  */
-export const defaultTiming = (): EngineTiming => ({
+const defaultTiming = (): EngineTiming => ({
 	debounceMs: 2500,
 	lagMs: 3000,
 	quietMs: setting("reportQuietMs") ?? 180_000,
@@ -1463,4 +1463,3 @@ export function createEngine(d: EngineDeps) {
 		notified: () => new Set(core.store.items.list({ source: NOTIFICATION_LOG }).map((i) => i.dedupKey)),
 	};
 }
-export type Engine = ReturnType<typeof createEngine>;

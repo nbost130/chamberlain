@@ -37,7 +37,7 @@ const CARD_TYPES: ReadonlySet<string> = new Set([
 	"link_request",
 ]);
 const LINK_REQUEST_TYPE = /^[a-z]+(?:_[a-z]+)*_request$/;
-export const isCardType = (type: string): boolean =>
+const isCardType = (type: string): boolean =>
 	CARD_TYPES.has(type) ||
 	(LINK_REQUEST_TYPE.test(type) && /(?:^|_)link(?:_|$)/.test(type) && normalizeWaitKind(type) === "link_request");
 

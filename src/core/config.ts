@@ -30,7 +30,7 @@ let forced: boolean | undefined;
 export const setCompiled = (v?: boolean): void => {
 	forced = v;
 };
-export const isCompiled = (): boolean => forced ?? COMPILED;
+const isCompiled = (): boolean => forced ?? COMPILED;
 
 /**
  * Every command-line tool, by the subcommand `chamberlain <sub>` runs it as (src/cli.ts) and the source file `bun <checkout>/<file>` runs from a checkout.
@@ -73,7 +73,7 @@ export const DEBUG_COMMANDS = [
 ] as const satisfies readonly CommandName[];
 export const isDebugCommand = (sub: string): boolean => (DEBUG_COMMANDS as readonly string[]).includes(sub);
 /** The words after `chamberlain` that run tool `sub`: the name, behind `debug` for a debug command. */
-export const binaryWords = (sub: CommandName): string[] => (isDebugCommand(sub) ? ["debug", sub] : [sub]);
+const binaryWords = (sub: CommandName): string[] => (isDebugCommand(sub) ? ["debug", sub] : [sub]);
 
 /**
  * The command that runs tool `sub`, as an agent or operator types it, without its arguments: `chamberlain <sub>` from the compiled

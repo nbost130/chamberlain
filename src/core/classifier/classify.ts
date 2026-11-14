@@ -47,10 +47,10 @@ export type ClassifyDeps = {
 
 /** The state-table key of the day's attempt count: every call to a provider that sends text, and what they cost. */
 export const USAGE_KEY = "classifier-usage";
-export type DailyUsage = { day: string; calls: number; usd: number };
+type DailyUsage = { day: string; calls: number; usd: number };
 
 /** How many classification calls run at once. */
-export const CONCURRENCY = 4;
+const CONCURRENCY = 4;
 const DAY_MS = 24 * 3600_000;
 
 /** The real provider a config names. `none` has none. */

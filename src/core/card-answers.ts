@@ -15,9 +15,9 @@
  */
 import type { Store } from "./store.ts";
 
-export const CARD_ANSWER = "card-answer";
+const CARD_ANSWER = "card-answer";
 export const CARD_ANSWER_STALE_MS = 5 * 60_000;
-export const cardAnswerKey = (cardId: string, sig: string) => `${cardId}@${sig}`;
+const cardAnswerKey = (cardId: string, sig: string) => `${cardId}@${sig}`;
 
 export function reserveCardAnswer(
 	store: Store,

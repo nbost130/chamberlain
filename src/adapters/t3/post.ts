@@ -9,15 +9,13 @@ import { inlineScriptSrc, withoutToken } from "../../core/capability.ts";
 import { CONF, PrincipalPoss } from "../../core/config.ts";
 import { thread as configThread } from "../../core/layout.ts";
 import { cardTag, type Question } from "../../core/questions.ts";
-import { pingViaCli, t3Cli } from "./ping.ts";
-
-export { t3Cli };
+import { pingViaCli } from "./ping.ts";
 
 /**
  * Pure: the shell the Decisions thread renders: the tabbed view (Waiting, Rulings, Recent), opened on this item. The script address carries the
  * page's capability token (`k=`): the inline frame sends it with every call, and the page refuses a frame that does not.
  */
-export const dashShell = (base: string, id: string, token: string) =>
+const dashShell = (base: string, id: string, token: string) =>
 	`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="dq" style="min-height:700px"></div><script src="${inlineScriptSrc(base, token, id).replaceAll("&", "&amp;")}"></script></body></html>`;
 
 /**

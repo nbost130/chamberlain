@@ -20,15 +20,15 @@ export type Gate = "idle" | "busy" | "unknown";
  * wait on the desk's own gate, never held behind the Steward). Everything
  * else (a question or approval, a failure, a decision-queue answer, any kind not named here) goes out at once.
  */
-export const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk"]);
+const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk"]);
 export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta && HOLDABLE_KINDS.has(meta.kind));
 
 /** A Steward busy this long gets the digest anyway, and never more than one such digest per window. */
 export const HOLD_CEILING_MS = 20 * 60_000;
 /** T3 takes a moment to show a wake it just accepted as a queued turn. Until it does, a fresh post counts as busy. */
-export const POST_GRACE_MS = 30_000;
+const POST_GRACE_MS = 30_000;
 /** The relay looks at least once a minute. A gap longer than this means the stretch was not watched. */
-export const OBSERVE_GAP_MS = 5 * 60_000;
+const OBSERVE_GAP_MS = 5 * 60_000;
 
 /**
  * Pure: the wake that carries these items. One item goes as itself, under its own ID. Several go as one digest under an

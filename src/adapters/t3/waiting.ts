@@ -28,7 +28,7 @@ import {
 import { connect, type Rpc } from "./rpc.ts";
 
 // The one send path lives in ./ping.ts; these are re-exported because the page and the tests import them from here.
-export { CALL_TIMEOUT_MS, redact, stableId, within };
+export { redact };
 
 import type { AnswerOutcome, ListWaitingOptions, ThreadLinks, WaitingCard } from "../../core/adapter.ts";
 import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
@@ -92,12 +92,11 @@ type ShellThread = {
 
 export type MirrorCard = WaitingCard;
 
-export const MIRROR_ID = /^C-[a-f0-9]{12}$/;
 export const mirrorId = (server: string, requestId: string) =>
 	`C-${createHash("sha256").update(`${server}\0${requestId}`).digest("hex").slice(0, 12)}`;
 const RECOMMENDED = /\s*\(Recommended[^)]*\)\s*$/i;
 /** Pure: a fingerprint of everything the card asks (ids, text, options in order, multiSelect). */
-export const cardSig = (questions: unknown) =>
+const cardSig = (questions: unknown) =>
 	createHash("sha256")
 		.update(JSON.stringify(questions ?? null))
 		.digest("hex")
@@ -194,7 +193,7 @@ function questionWhy(
 const one = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
 
 /** The only decisions the page can send for an approval, by option index. Never "always" or "for this session". */
-export const APPROVAL_DECISIONS = ["accept", "decline"] as const;
+const APPROVAL_DECISIONS = ["accept", "decline"] as const;
 
 /**
  * Pure: an approval as a queue entry. Answerable only with an operate token and a non-empty command. Its fingerprint
@@ -335,7 +334,7 @@ export function goalProposal(items: TurnItem[]): { messageId: string; goal: stri
 const BUSY = new Set(["running", "starting", "preparing", "queued", "waiting"]);
 
 /** Pure: a goal proposal as a queue entry. Accepting sends the exact /goal text; it needs an operate token. */
-export function goalCard(
+function goalCard(
 	server: string,
 	canAnswer: boolean,
 	thread: ShellThread,

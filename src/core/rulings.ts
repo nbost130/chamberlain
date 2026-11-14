@@ -10,7 +10,7 @@
  */
 import type { Store } from "./store.ts";
 
-export type RulingStatus = "in-force" | "proposed" | "retired";
+type RulingStatus = "in-force" | "proposed" | "retired";
 export type RulingSource = "chat" | "card";
 export type RetiredHow = "retired" | "only this once" | "superseded" | "duplicate" | "expired" | "repeat";
 /** The housekeeping reasons a ruling can leave force for. The database keeps them apart from the page's two (retired_reason, migration 11). */
@@ -133,7 +133,7 @@ function realUtc(y: number, mo: number, d: number, h = 0, mi = 0, s = 0): number
 }
 
 /** Pure: is `expires` the shape of an ISO date or a date-time with a zone, whatever its numbers? */
-export const expiresShape = (expires: string) => DATE.test(expires) || DATE_TIME.test(expires);
+const expiresShape = (expires: string) => DATE.test(expires) || DATE_TIME.test(expires);
 
 /**
  * The moment an `expires` value ends, in ms. A date alone runs through the end of that day (UTC). NaN if it isn't one: a value
@@ -169,7 +169,7 @@ export const isExpired = (r: Pick<Ruling, "expires">, nowMs: number = Date.now()
 };
 
 /** A new ruling's options, checked: an unreadable or already-past expiry is refused, so a typo can't be recorded as a ruling. */
-export function checkOpts(o: RulingOpts = {}, nowMs: number = Date.now()): RulingOpts {
+function checkOpts(o: RulingOpts = {}, nowMs: number = Date.now()): RulingOpts {
 	const out: RulingOpts = {};
 	if (o.expires !== undefined) {
 		const e = o.expires.trim();
@@ -193,12 +193,7 @@ const sameText = (a: string, b: string) =>
  * The ruling already held with these exact words and this exact decision, if any: one that is still live (proposed or in
  * force, and not expired). A retired or expired ruling can be said again as a new one.
  */
-export function findHeld(
-	list: Ruling[],
-	words: string,
-	decides: string,
-	nowMs: number = Date.now(),
-): Ruling | undefined {
+function findHeld(list: Ruling[], words: string, decides: string, nowMs: number = Date.now()): Ruling | undefined {
 	return list.find(
 		(r) => r.status !== "retired" && !isExpired(r, nowMs) && sameText(r.words, words) && sameText(r.decides, decides),
 	);
@@ -276,7 +271,7 @@ function checkSupersedes(list: Ruling[], o: RulingOpts) {
  * The edges are every live ruling's `supersedes` (proposed and in force: a proposal's edges take effect when it is confirmed), plus
  * `adds` from `from` when given. A retired ruling's edges are spent, so they are not counted.
  */
-export function supersedeCycle(list: Ruling[], from?: string, adds: string[] = []): string[] | undefined {
+function supersedeCycle(list: Ruling[], from?: string, adds: string[] = []): string[] | undefined {
 	const edges = new Map<string, string[]>();
 	for (const r of list) if (r.status !== "retired") edges.set(r.id, [...(r.supersedes ?? [])]);
 	if (from) edges.set(from, [...(edges.get(from) ?? []), ...adds]);

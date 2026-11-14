@@ -51,7 +51,7 @@ import type { Composed, HeldItem, HoldClock, OutboxRow, RightsStamp, Store } fro
 /** The pause before a failed row is tried again: one minute, then four, so a webhook back within about five minutes loses nothing. */
 export const retryAfterMs = (attempts: number) => Math.min(60_000 * 4 ** (attempts - 1), 15 * 60_000);
 /** CHAMBERLAIN_RELAY_POLL_MS if it is a positive number, else one second. */
-export const relayPollMs = (env: Record<string, string | undefined> = process.env) => {
+const relayPollMs = (env: Record<string, string | undefined> = process.env) => {
 	const n = Number(env.CHAMBERLAIN_RELAY_POLL_MS);
 	return n > 0 ? n : 1000;
 };
@@ -239,7 +239,6 @@ export function createRelay(d: RelayDeps) {
 		},
 	};
 }
-export type Relay = ReturnType<typeof createRelay>;
 
 /**
  * The row's delivered commit. False while it cannot commit (the row stays owed). A Steward row with a `full` stamp (it carried the whole

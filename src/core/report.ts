@@ -11,7 +11,7 @@ import { setting } from "./layout.ts";
 
 export const REPORT_HOLD_MS = 60 * 60_000;
 /** The hold in force: `reportHoldMs` (CHAMBERLAIN_REPORT_HOLD_MS, else config.json), else the default above. */
-export const reportHoldMs = (): number => setting("reportHoldMs") ?? REPORT_HOLD_MS;
+const reportHoldMs = (): number => setting("reportHoldMs") ?? REPORT_HOLD_MS;
 const POLL_MS = 30_000;
 
 /** Pure: how long a report must still wait. Zero means now. */
