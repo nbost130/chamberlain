@@ -26,8 +26,8 @@ export function peekLines(items: Item[], n = 3, chars = 400): string[] {
 	return waiting.length ? [...lines, `WAITING: ${waiting.length} card or approval open`] : lines;
 }
 
-if (import.meta.main) {
-	const [server, threadId, n, chars] = process.argv.slice(2);
+export async function main(argv: string[] = process.argv.slice(2)) {
+	const [server, threadId, n, chars] = argv;
 	const servers = readServers(CONF) ?? [];
 	const found = servers.find((s) => s.name === server);
 	const srv = found && t3Server(found);
@@ -37,3 +37,5 @@ if (import.meta.main) {
 	console.log(peekLines(p.turnItems ?? [], Number(n) || 3, Number(chars) || 400).join("\n"));
 	process.exit(0);
 }
+
+if (import.meta.main) await main();

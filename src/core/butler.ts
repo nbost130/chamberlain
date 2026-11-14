@@ -44,10 +44,10 @@ export function formatButlers(list: Butler[], now = Date.now()): string {
 
 const arg = (argv: string[], name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
 
-function main() {
+export function main(argv: string[] = process.argv.slice(2)) {
 	startup();
 	const store = defaultStore();
-	const [cmd, ...rest] = process.argv.slice(2);
+	const [cmd, ...rest] = argv;
 	try {
 		if (cmd === "start") {
 			const b = startButler(store, { thread: arg(rest, "--thread") ?? "", machine: arg(rest, "--machine") ?? "", model: arg(rest, "--model") ?? "", scope: arg(rest, "--scope") ?? "", id: arg(rest, "--id") });

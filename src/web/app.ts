@@ -25,7 +25,10 @@ export type AppDeps = {
 	threadLinks?: Record<string, string>;
 	/** Cards waiting in other threads (src/web/waiting.ts). */
 	mirror?: Pick<import("./waiting.ts").Waiting, "list" | "answer"> & Partial<Pick<import("./waiting.ts").Waiting, "unreachable">>;
-	staticDir: string;
+	/** A directory holding index.html, app.css, app.js and inline.js; or `staticFiles`. */
+	staticDir?: string;
+	/** Each static file's path by the URL path it is served at (src/embedded.ts); wins over `staticDir`. */
+	staticFiles?: Record<string, string>;
 	testMode?: boolean;
 	/** The clock the confirmation challenges and the rulings (what has expired) use. Default Date.now; tests move it. */
 	now?: () => number;
@@ -346,6 +349,7 @@ export function createApp(d: AppDeps) {
 		return new Response(Bun.file(hit.path), { headers: { "content-type": hit.type, "cache-control": "private, max-age=3600" } });
 	}
 
+	const staticPath = (name: string) => d.staticFiles?.[name] ?? `${d.staticDir}${name}`;
 	const STATIC: Record<string, string> = { "/app.js": "text/javascript; charset=utf-8", "/app.css": "text/css; charset=utf-8", "/inline.js": "text/javascript; charset=utf-8" };
 
 	async function fetch(req: Request): Promise<Response> {
@@ -372,8 +376,8 @@ export function createApp(d: AppDeps) {
 		if (url.pathname.startsWith("/api/")) { const r = withSecurity(await api(req, url, inline)); return allowed ? inlineCors(r) : r; }
 		if (req.method !== "GET") return withSecurity(fail(404, "not found"));
 		if (url.pathname.startsWith("/evidence/")) return withSecurity(evidence(url));
-		if (STATIC[url.pathname]) return withSecurity(new Response(Bun.file(`${d.staticDir}${url.pathname}`), { headers: { "content-type": STATIC[url.pathname]!, "cache-control": "no-cache" } }));
-		if (url.pathname === "/" || url.pathname === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(url.pathname)) return withSecurity(new Response(Bun.file(`${d.staticDir}/index.html`), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } }));
+		if (STATIC[url.pathname]) return withSecurity(new Response(Bun.file(staticPath(url.pathname)), { headers: { "content-type": STATIC[url.pathname]!, "cache-control": "no-cache" } }));
+		if (url.pathname === "/" || url.pathname === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(url.pathname)) return withSecurity(new Response(Bun.file(staticPath("/index.html")), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } }));
 		return withSecurity(fail(404, "not found"));
 	}
 

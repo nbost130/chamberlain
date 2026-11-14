@@ -43,10 +43,9 @@ export function parseArgs(argv: string[]): { chat: boolean; opts: RulingOpts; wo
 	return { chat, opts, words: rest[0], decides: rest[1] };
 }
 
-function main() {
+export function main(argv: string[] = process.argv.slice(2)) {
 	startup();
 	const store = defaultStore();
-	const argv = process.argv.slice(2);
 	if (argv[0] === "list") {
 		for (const r of readRulings(store)) console.log(`${r.id}\t${r.status}\t${r.source}\t${r.confirmed ? "confirmed" : "unconfirmed"}${r.expires ? `\texpires ${r.expires}` : ""}\t"${r.words}" -> ${r.decides}`);
 		return;

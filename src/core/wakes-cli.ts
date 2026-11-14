@@ -9,10 +9,11 @@
  * id it has already handled as a repeat. retry works only on a dead letter, which the relay never has in flight, so it cannot add a POST
  * beside a live one.
  */
+import { selfCommand } from "./config.ts";
 import { maxAttemptsFromEnv } from "./deliver.ts";
 import type { OutboxRow, Store } from "./store.ts";
 
-export const WAKES_USAGE = "usage: bun src/wakes.ts list\n       bun src/wakes.ts retry <delivery id>\n       bun src/wakes.ts cancel <delivery id>";
+export const wakesUsage = () => ["list", "retry <delivery id>", "cancel <delivery id>"].map((c, i) => `${i ? "       " : "usage: "}${selfCommand("wakes")} ${c}`).join("\n");
 const iso = (ms: number | undefined) => (ms === undefined ? "-" : new Date(ms).toISOString());
 const line = (r: OutboxRow, max: number) => `  ${r.deliveryId}${r.receiver ? `  for ${r.receiver}` : ""}  ${r.attempts}/${max} attempts  created ${iso(r.createdAt)}  last tried ${iso(r.lastAttemptAt)}${r.members.length > 1 || r.members[0]?.deliveryId !== r.deliveryId ? `  members ${r.members.map((m) => m.deliveryId).join(", ")}` : ""}`;
 
@@ -42,6 +43,6 @@ export function runWakesCli(store: Store, argv: readonly string[], out: (line: s
 			: `cancel: ${id} is cancelled and kept as a tombstone; it is not recorded as delivered and nothing will send or queue it again`);
 		return 0;
 	}
-	out(WAKES_USAGE);
+	out(wakesUsage());
 	return 2;
 }

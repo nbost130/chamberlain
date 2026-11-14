@@ -157,8 +157,7 @@ export function format(r: Report): string {
 
 function arg(argv: string[], name: string): string | undefined { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; }
 
-if (import.meta.main) {
-	const argv = process.argv.slice(2);
+export function main(argv: string[] = process.argv.slice(2)) {
 	const hours = Number(arg(argv, "--hours") ?? 24);
 	if (!Number.isFinite(hours) || hours <= 0) { console.error("--hours must be a positive number"); process.exit(2); }
 	const storeFile = arg(argv, "--store") ?? storeDbPath(STATE);
@@ -175,3 +174,5 @@ if (import.meta.main) {
 	const report = analyze(wakesFrom(delivered, now - hours * 3600_000), runs, hours, now);
 	console.log(argv.includes("--json") ? JSON.stringify(report, null, 2) : format(report));
 }
+
+if (import.meta.main) main();

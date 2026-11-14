@@ -16,8 +16,51 @@ import { configDir, stateDir } from "./state-dir.ts";
 const HOME = process.env.HOME!;
 export const CONF = configDir(process.env, HOME);
 export const STATE = stateDir(process.env, HOME);
-/** This checkout: the Steward's wakes and hand-off name the CLI tools by this path. */
+/** This checkout: the Steward's wakes and hand-off name the CLI tools by this path. In a compiled binary it is a path inside the binary, so nothing may build a command from it: use `selfCommand`. */
 export const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
+
+/** True when this is the standalone binary made by `bun build --compile` (src/cli.ts), whose sources live under Bun's embedded `$bunfs`, not in a checkout. */
+const COMPILED = import.meta.url.includes("/$bunfs/");
+let forced: boolean | undefined;
+/** Whether commands are rendered for the compiled binary. For tests: `setCompiled(true)` renders as the binary would, `setCompiled()` goes back to the truth. */
+export const setCompiled = (v?: boolean): void => { forced = v; };
+export const isCompiled = (): boolean => forced ?? COMPILED;
+
+/**
+ * Every command-line tool, by the subcommand `chamberlain <sub>` runs it as (src/cli.ts) and the source file `bun <checkout>/<file>` runs from a checkout.
+ * The one table: the dispatcher's loaders and every command string an agent or an operator is shown come from it.
+ */
+export const COMMANDS = {
+	daemon: "src/daemon.ts",
+	web: "src/web/server.ts",
+	ask: "src/ask.ts",
+	afk: "src/core/afk.ts",
+	decided: "src/core/decided.ts",
+	ruling: "src/core/ruling.ts",
+	butler: "src/core/butler.ts",
+	migrate: "src/core/migrate.ts",
+	import: "src/cli/import.ts",
+	brief: "src/brief.ts",
+	wakes: "src/wakes.ts",
+	"steward-health": "src/steward-health.ts",
+	"desk-allowlist": "src/desk-allowlist.ts",
+	peek: "src/adapters/t3/peek.ts",
+	t3x: "src/adapters/t3/t3x.ts",
+	compat: "src/adapters/t3/compat.ts",
+	"queue-waits": "src/adapters/t3/queue-waits.ts",
+	"switch-steward": "src/adapters/t3/switch-steward.ts",
+	"synthetic-wake": "src/adapters/t3/synthetic-wake.ts",
+} as const;
+export type CommandName = keyof typeof COMMANDS;
+
+/**
+ * The command that runs tool `sub`, as an agent or operator types it, without its arguments: `chamberlain <sub>` from the compiled
+ * binary, `bun <checkout>/<file>` from source. The one place a command string is built; `compiled` and `repo` are for tests and for callers
+ * that were handed another checkout's path.
+ */
+export function selfCommand(sub: CommandName, o: { compiled?: boolean; repo?: string } = {}): string {
+	return (o.compiled ?? isCompiled()) ? `chamberlain ${sub}` : `bun ${o.repo ?? REPO}/${COMMANDS[sub]}`;
+}
 
 /** What the wakes call the human when no `principalName` is configured. */
 export const DEFAULT_PRINCIPAL = "the operator";
@@ -108,3 +151,8 @@ export const Principal = (): string => { const p = principal(); return p[0]!.toU
 /** The possessive: "Ada's", "the operator's". */
 export const principalPoss = (): string => `${principal()}'s`;
 export const PrincipalPoss = (): string => `${Principal()}'s`;
+
+/** The argv that runs tool `sub` as a child process: the binary itself with the subcommand when compiled, else this runtime on the source file. */
+export function selfArgv(sub: CommandName, o: { compiled?: boolean; repo?: string } = {}): string[] {
+	return (o.compiled ?? isCompiled()) ? [process.execPath, sub] : [process.execPath, `${o.repo ?? REPO}/${COMMANDS[sub]}`];
+}

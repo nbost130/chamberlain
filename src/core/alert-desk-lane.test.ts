@@ -11,6 +11,7 @@ import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
+import { selfCommand } from "./config.ts";
 import { openStore } from "./sqlite-store.ts";
 import { createEngine } from "./engine.ts";
 import { createRelay } from "./relay.ts";
@@ -104,7 +105,7 @@ describe("one relay, two receivers, one store", () => {
 		expect(orphan[0]!.title).toContain("desk");
 		expect(orphan[0]!.summary).toContain("2 outbox rows and 1 held wake");
 		expect(orphan[0]!.summary).toContain("desk-1, desk-2");
-		expect(orphan[0]!.summary).toContain("bun src/wakes.ts cancel");
+		expect(orphan[0]!.summary).toContain(`${selfCommand("wakes")} cancel`);
 		expect(logs.filter((l) => l.e === "deliver-receiver-unconfigured")).toEqual([{ e: "deliver-receiver-unconfigured", data: { receiver: "desk", rows: 2, held: 1 } }]);
 		// Not dropped and not delivered.
 		expect(s.wakes.rows("pending", "desk").map((r) => r.deliveryId)).toEqual(["desk-1", "desk-2"]);

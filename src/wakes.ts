@@ -6,5 +6,9 @@
 import { defaultStore } from "./core/default-store.ts";
 import { runWakesCli } from "./core/wakes-cli.ts";
 
-const store = defaultStore();
-try { process.exitCode = runWakesCli(store, process.argv.slice(2), (l) => console.log(l)); } finally { store.close(); }
+export function main(argv: string[] = process.argv.slice(2)) {
+	const store = defaultStore();
+	try { process.exitCode = runWakesCli(store, argv, (l) => console.log(l)); } finally { store.close(); }
+}
+
+if (import.meta.main) main();

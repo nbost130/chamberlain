@@ -26,6 +26,7 @@
  * accepted POST whose delivered commit fails is never POSTed again by this process: the commit is retried on every pass. Only a process
  * that exits before that commit leaves the row pending, and the restart sends it again under the same id, counted like any other attempt.
  */
+import { selfCommand } from "./config.ts";
 import { crashPoint } from "./crash.ts";
 import { maxAttemptsFromEnv, STALE_AFTER_MS, withDeliveryId, type WakeDraft, type WakeResult, type WakeTransport } from "./deliver.ts";
 import { composeWake, HOLD_CEILING_MS, observe, type Gate } from "./hold.ts";
@@ -339,7 +340,7 @@ export function createRelay(d: RelayDeps) {
 		const dead = store.wakes.rows("dead_letter", l.name);
 		if (!dead.length) return;
 		for (const w of dead) if (!reported.has(w.deliveryId)) { reported.add(w.deliveryId); d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts }); }
-		d.alarm(l.akey("wake-dead-letter"), l.desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "bun src/wakes.ts list" shows them, "bun src/wakes.ts retry <id>" sends one again (${max} more attempts at most) and "bun src/wakes.ts cancel <id>" gives it up.`);
+		d.alarm(l.akey("wake-dead-letter"), l.desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "${selfCommand("wakes")} list" shows them, "${selfCommand("wakes")} retry <id>" sends one again (${max} more attempts at most) and "${selfCommand("wakes")} cancel <id>" gives it up.`);
 	}
 
 	/** Once a minute: keeps each receiver's busy stretch measured, and raises its stale and dead-letter alarms, and the orphan alarm. */
@@ -364,7 +365,7 @@ export function createRelay(d: RelayDeps) {
 			const n = o.rows.length;
 			if (!reported.has(`orphan:${name}:${n}:${o.held}`)) { reported.add(`orphan:${name}:${n}:${o.held}`); d.log("deliver-receiver-unconfigured", { receiver: name, rows: n, held: o.held }); }
 			const what = [n ? `${n} outbox row${n === 1 ? "" : "s"}` : "", o.held ? `${o.held} held wake${o.held === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-			d.alarm(`${name}:wake-unconfigured`, `chamberlain has wakes for a receiver that is no longer configured: ${name}`, `${what} for the receiver "${name}" ${n + o.held === 1 ? "is" : "are"} waiting, but no "${name}" receiver is configured any more, so nothing will send ${n + o.held === 1 ? "it" : "them"}. Nothing is dropped and nothing goes to another receiver. Configure "${name}" again to send them${n ? `, or give the rows up: in the chamberlain checkout, "bun src/wakes.ts list" shows each row with its receiver and "bun src/wakes.ts cancel <id>" cancels one (${o.rows.slice(0, 5).map((r) => r.deliveryId).join(", ")}${n > 5 ? ", ..." : ""})` : ""}.${o.held ? " A held wake becomes a row only when its receiver is configured." : ""}`);
+			d.alarm(`${name}:wake-unconfigured`, `chamberlain has wakes for a receiver that is no longer configured: ${name}`, `${what} for the receiver "${name}" ${n + o.held === 1 ? "is" : "are"} waiting, but no "${name}" receiver is configured any more, so nothing will send ${n + o.held === 1 ? "it" : "them"}. Nothing is dropped and nothing goes to another receiver. Configure "${name}" again to send them${n ? `, or give the rows up: in the chamberlain checkout, "${selfCommand("wakes")} list" shows each row with its receiver and "${selfCommand("wakes")} cancel <id>" cancels one (${o.rows.slice(0, 5).map((r) => r.deliveryId).join(", ")}${n > 5 ? ", ..." : ""})` : ""}.${o.held ? " A held wake becomes a row only when its receiver is configured." : ""}`);
 		}
 	}
 	function auditLane(l: Lane) {

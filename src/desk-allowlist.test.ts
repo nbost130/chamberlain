@@ -1,13 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
-import { deskAskPath, renderDeskPrompt } from "./core/alert-desk.ts";
+import { deskAskCommand, renderDeskPrompt } from "./core/alert-desk.ts";
+import { selfCommand, setCompiled } from "./core/config.ts";
 import { checkCommand, checkPath, checkTool, LOG_DIRS } from "./desk-allowlist.ts";
 
 const HOME = process.env.HOME!;
-/** The one ask.ts the desk may run: DESK_ASK_PATH, else this checkout's. */
-const ASK = deskAskPath();
+/** The one command the desk may run to file a decision: `bun $DESK_ASK_PATH`, else this build's own `ask`. */
+const ASK = deskAskCommand();
 /** The operator's morning sources, as alert-desk.json would list them (`<N>` is a number). Nothing of the kind is built in. */
 const MONITOR = "/opt/monitor/report.ts";
 const MORNING = [
@@ -52,7 +53,7 @@ describe("the approved shapes are accepted", () => {
 		`bun ${MONITOR} heartbeat --json`,
 		`bun ${MONITOR} list --limit 1000 --json`,
 		`docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= 1731400000\\nOutputFormat: csv\\n' | lq"`,
-		`bun ${ASK} '{"kind":"product","title":"Restart a.service?","options":[{"label":"yes"},{"label":"no"}]}'`,
+		`${ASK} '{"kind":"product","title":"Restart a.service?","options":[{"label":"yes"},{"label":"no"}]}'`,
 	])("%s", (cmd) => allowed(cmd));
 });
 
@@ -109,9 +110,9 @@ describe("each widened argument is refused", () => {
 		refused(`bun ${MONITOR} list --limit 1000 --json --out /tmp/x`);
 		refused(`docker exec -u svc db1 bash -lc "printf 'GET log\\nFilter: time >= 1731400000\\n' | lq; id"`);
 		refused(`docker exec -u svc db1 bash -lc "id"`);
-		refused(`bun ${ASK} '{}' ; id`);
-		refused(`bun ${ASK} 'a' 'b'`);
-		refused(`bun ${ASK} "{}"`);
+		refused(`${ASK} '{}' ; id`);
+		refused(`${ASK} 'a' 'b'`);
+		refused(`${ASK} "{}"`);
 	});
 });
 
@@ -269,8 +270,8 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 	const template = readFileSync(new URL("../docs/alert-desk-prompt.md", import.meta.url), "utf8");
 	const vars = { principalName: "Ada", serverName: "box-1", repo: "/opt/chamberlain", morning: { commands: [] } };
 	/** The one line of the rendered prompt that files a decision. */
-	const askLine = (askPath: string) => {
-		const lines = renderDeskPrompt(template, { ...vars, askPath }).split("\n").filter((l) => l.includes("ask.ts '"));
+	const askLine = (askCommand: string) => {
+		const lines = renderDeskPrompt(template, { ...vars, allowlistHook: `${selfCommand("desk-allowlist")} hook`, askCommand }).split("\n").filter((l) => l.includes(" '{\"kind\":"));
 		expect(lines).toHaveLength(1);
 		return lines[0]!;
 	};
@@ -282,8 +283,8 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 	test("rendered with the path the hook uses (DESK_ASK_PATH unset: this checkout's src/ask.ts), the line is allowed, in process and by the hook's own entry point", () => {
 		const env = { ...process.env };
 		delete env.DESK_ASK_PATH;
-		const line = askLine(deskAskPath(env));
-		expect(line.startsWith(`bun ${deskAskPath(env)} '{`)).toBe(true);
+		const line = askLine(deskAskCommand(env));
+		expect(line.startsWith(`${deskAskCommand(env)} '{`)).toBe(true);
 		expect(line).not.toContain("cd ");
 		expect(checkCommand(line, { morning: [] })).toEqual({ ok: true });
 		expect(hook(line, env)).toEqual({ code: 0, out: "allow" });
@@ -291,7 +292,7 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 
 	test("rendered with DESK_ASK_PATH, the line is allowed by a hook that has the same DESK_ASK_PATH, and refused by one without it", () => {
 		const env = { ...process.env, DESK_ASK_PATH: "/srv/deployed/chamberlain/src/ask.ts" };
-		const line = askLine(deskAskPath(env));
+		const line = askLine(deskAskCommand(env));
 		expect(line.startsWith("bun /srv/deployed/chamberlain/src/ask.ts '{")).toBe(true);
 		expect(hook(line, env)).toEqual({ code: 0, out: "allow" });
 		const without = { ...process.env };
@@ -301,7 +302,7 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 
 	test("the old spelling, `cd <repo> && bun src/ask.ts`, is refused: the template no longer teaches it", () => {
 		expect(template).not.toContain("bun src/ask.ts");
-		expect(template).toContain("bun {{askPath}} '");
+		expect(template).toContain("{{askCommand}} '");
 		expect(checkCommand(`cd /opt/chamberlain && bun src/ask.ts '{"kind":"product"}'`, { morning: [] }).ok).toBe(false);
 	});
 });
@@ -309,7 +310,7 @@ describe("the standing prompt's own ask command passes the real allowlist", () =
 describe("the allowlist matches exactly: nothing is trimmed or normalised", () => {
 	const PLAIN = `bun ${MONITOR} heartbeat --json`;
 	const SLOT = `bun ${MONITOR} list --limit 12 --json`;
-	const FILE = `bun ${ASK} '{"kind":"product","title":"t","options":[{"label":"a"}]}'`;
+	const FILE = `${ASK} '{"kind":"product","title":"t","options":[{"label":"a"}]}'`;
 	const SPACES: Record<string, string> = { space: " ", tab: "\t", newline: "\n", "carriage return and newline": "\r\n", "no-break space": "\u00a0", "byte-order mark": "\ufeff", "vertical tab": "\v", "form feed": "\f", "line separator": "\u2028" };
 	test.each([["a morning command with no slot", PLAIN], ["a morning command with a <N> slot", SLOT], ["filing a decision", FILE]])("%s is allowed exactly as written", (_what, cmd) => allowed(cmd));
 	for (const [what, cmd] of [["a morning command with no slot", PLAIN], ["a morning command with a <N> slot", SLOT], ["filing a decision", FILE]] as const) {
@@ -319,4 +320,23 @@ describe("the allowlist matches exactly: nothing is trimmed or normalised", () =
 		}
 		test(`${what}, with a doubled inner space, is refused`, () => { refused(cmd.replace(" ", "  ")); });
 	}
+});
+
+describe("in the compiled binary the desk files a decision with `chamberlain ask`", () => {
+	const template = readFileSync(new URL("../docs/alert-desk-prompt.md", import.meta.url), "utf8");
+	const saved = process.env.DESK_ASK_PATH;
+	afterEach(() => { setCompiled(); if (saved === undefined) delete process.env.DESK_ASK_PATH; else process.env.DESK_ASK_PATH = saved; });
+
+	test("the prompt teaches `chamberlain ask '<json>'`, and the allowlist accepts that and not the source spelling", () => {
+		delete process.env.DESK_ASK_PATH;
+		setCompiled(true);
+		expect(deskAskCommand()).toBe("chamberlain ask");
+		const out = renderDeskPrompt(template, { principalName: "Ada", serverName: "box-1", allowlistHook: `${selfCommand("desk-allowlist")} hook`, askCommand: deskAskCommand(), morning: { commands: [] } });
+		const line = out.split("\n").find((l) => l.includes(" '{\"kind\":"))!;
+		expect(line.startsWith("chamberlain ask '{")).toBe(true);
+		expect(out).toContain("`chamberlain desk-allowlist hook` (Chamberlain's desk allowlist)");
+		expect(checkCommand(line, { morning: [] })).toEqual({ ok: true });
+		expect(checkCommand(`chamberlain ask '{}' ; id`, { morning: [] }).ok).toBe(false);
+		expect(checkCommand(`bun ${selfCommand("ask", { compiled: false }).slice(4)} '{}'`, { morning: [] }).ok).toBe(false);
+	});
 });

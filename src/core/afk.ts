@@ -29,7 +29,7 @@
  * the prose: only the `item` field links a hold to an answer, so a hold with no item closes through its refs or by `close`.
  */
 import { createHash } from "node:crypto";
-import { REPO, principal, principalPoss } from "./config.ts";
+import { principal, principalPoss, selfCommand } from "./config.ts";
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
 import { closeCardByHand } from "./card-hold.ts";
@@ -85,7 +85,7 @@ export const readAfk = (store: Store): Afk | undefined => store.away.current();
 export function mandateLine(a: Afk): string {
 	const back = a.expectedReturn ? ` Expected back ${a.expectedReturn}.` : "";
 	const spend = a.spendNote ? ` Spend: ${a.spendNote}.` : "";
-	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else). Put it on ${principalPoss()} queue first with \`bun ${REPO}/src/ask.ts '<json>'\` (add \`"urgent": false\` when it can wait: it is listed below the urgent ones and sends no notification), then hold it for the return brief with \`bun ${REPO}/src/core/afk.ts hold ... --item <the Q-id>\`; a hold with no queue item is refused, and so is anything already settled (it prints the answer). Never an FYI. Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
+	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else). Put it on ${principalPoss()} queue first with \`${selfCommand("ask")} '<json>'\` (add \`"urgent": false\` when it can wait: it is listed below the urgent ones and sends no notification), then hold it for the return brief with \`${selfCommand("afk")} hold ... --item <the Q-id>\`; a hold with no queue item is refused, and so is anything already settled (it prints the answer). Never an FYI. Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
 }
 
 /** A short stable handle for a held entry. */
@@ -201,10 +201,10 @@ export function brief(store: Store, a: Afk): string {
 	return briefMarkdown(a, store.decisions.list(), heldOpen(store), store.events.query({ since: a.enteredAt, events: ["fire", "skip-empty-wait", "held-by-daemon", "deliver-stale", "alarm"] }));
 }
 
-function main() {
+export function main(argv: string[] = process.argv.slice(2)) {
 	startup();
 	const store = defaultStore();
-	const [cmd, ...rest] = process.argv.slice(2);
+	const [cmd, ...rest] = argv;
 	if (cmd === "enter") {
 		const words = rest.filter((x, i) => !x.startsWith("--") && !rest[i - 1]?.startsWith("--"))[0];
 		if (!words) { console.error('usage: afk.ts enter "<their words>" [--return ISO] [--cap "<note>"]'); process.exit(2); }
@@ -234,9 +234,9 @@ function main() {
 		const ref = cleanRef(raw);
 		const given = Object.entries(raw).filter(([, v]) => v !== undefined);
 		const fyi = thread && what ? fyiReason(thread, what) : undefined;
-		if (fyi) { console.error(`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: bun ${new URL("./decided.ts", import.meta.url).pathname} "<thread>" "<what I decided>" "<ruling cited>"`); process.exit(2); }
+		if (fyi) { console.error(`afk.ts hold: refused, this reads as an FYI (${fyi}). A hold is a real wait on ${principal()}; an FYI is never held. Log what you decided with: ${selfCommand("decided")} "<thread>" "<what I decided>" "<ruling cited>"`); process.exit(2); }
 		if (!thread || !what || (item !== undefined && !ITEM_ID.test(item)) || Object.keys(ref ?? {}).length !== given.length || (server !== undefined && (!/^[A-Za-z0-9_.-]{1,40}$/.test(server) || (!raw.threadId && !threadId)))) { console.error(HOLD_USAGE); process.exit(2); }
-		if (!item) { console.error(`afk.ts hold: refused, a hold needs --item <Q-id>. Anything that waits on ${principal()} goes on the decision queue first: bun ${REPO}/src/ask.ts '<json>' (add "urgent": false if it can wait), then hold it with the item ID it prints.`); process.exit(2); }
+		if (!item) { console.error(`afk.ts hold: refused, a hold needs --item <Q-id>. Anything that waits on ${principal()} goes on the decision queue first: ${selfCommand("ask")} '<json>' (add "urgent": false if it can wait), then hold it with the item ID it prints.`); process.exit(2); }
 		const queued = getQuestion(store, item);
 		if (!queued) { console.error(`afk.ts hold: refused, ${item} is not on the decision queue. File the question with ask.ts first, then hold it with the item ID it prints.`); process.exit(2); }
 		// A hold on a question already answered waits on nothing: the answer is what the hold was for.
