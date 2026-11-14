@@ -370,7 +370,8 @@ test("a secret question whose secret box has closed says the request expired, no
 
 test("the thread link opens in this tab, so a tap the app does not take leaves the queue page in place", async () => {
 	const html = await detail("c", { open: "/open/s/t1", secret: true, options: [] });
-	expect(html).toContain('<a class="open" href="/open/s/t1">Open thread</a>');
+	// The link to the thread is a little button in the row along the bottom (Open thread, Snooze); the secret box keeps its own link too.
+	expect(html).toContain('<a class="mini" href="/open/s/t1">Open thread</a>');
 	expect(html).toContain('<a href="/open/s/t1">Open t in T3</a>');
 	expect(html).not.toMatch(/href="\/open\/[^"]*" target=/);
 });
