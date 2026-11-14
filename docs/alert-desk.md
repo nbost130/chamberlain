@@ -76,7 +76,7 @@ The matcher must cover every tool, or the default deny never sees the tool it is
 { "hooks": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
 ```
 
-With the standalone binary the hook command is `chamberlain desk-allowlist hook`.
+With the standalone binary the hook command is `chamberlain debug desk-allowlist hook`.
 
 Filing a decision is allowed in one spelling only, `<ask command> '<json>'`, matched as the whole string. The ask command is `bun $DESK_ASK_PATH` when
 `DESK_ASK_PATH` is set in the hook's environment, else this build's own: `chamberlain ask` from the standalone binary, `bun <that checkout>/src/ask.ts` from source.

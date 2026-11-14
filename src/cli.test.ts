@@ -11,12 +11,12 @@ import { join } from "node:path";
 import pkg from "../package.json" with { type: "json" };
 import { mandateLine } from "./core/afk.ts";
 import { stewardBrief, type BriefInput } from "./core/brief.ts";
-import { COMMANDS, REPO, selfArgv, selfCommand, setCompiled, type CommandName } from "./core/config.ts";
+import { COMMANDS, DEBUG_COMMANDS, REPO, selfArgv, selfCommand, setCompiled, type CommandName } from "./core/config.ts";
 import { sweepMessage, type SweepAction } from "./core/sweep.ts";
 import { t3Brief } from "./adapters/t3/brief.ts";
 import { createApp } from "./web/app.ts";
 import { memStore } from "./testing/store.ts";
-import { run, usage, VERSION } from "./cli.ts";
+import { debugUsage, run, usage, VERSION } from "./cli.ts";
 
 afterEach(() => setCompiled());
 
@@ -27,7 +27,7 @@ describe("selfCommand: one helper renders every command string", () => {
 		expect(selfCommand("ask", { compiled: false })).toBe(`bun ${REPO}/src/ask.ts`);
 		expect(selfCommand("afk", { compiled: false })).toBe(`bun ${REPO}/src/core/afk.ts`);
 		expect(selfCommand("peek", { compiled: false, repo: "/opt/chamberlain" })).toBe("bun /opt/chamberlain/src/adapters/t3/peek.ts");
-		expect(selfCommand("peek", { compiled: true, repo: "/opt/chamberlain" })).toBe("chamberlain peek");
+		expect(selfCommand("peek", { compiled: true, repo: "/opt/chamberlain" })).toBe("chamberlain debug peek");
 	});
 	test("without an override it follows the build: this test runs from source", () => {
 		expect(selfCommand("ask")).toBe(`bun ${REPO}/src/ask.ts`);
@@ -39,6 +39,7 @@ describe("selfCommand: one helper renders every command string", () => {
 	test("the child process the daemon starts is the binary itself with the subcommand, or this runtime on the source file", () => {
 		expect(selfArgv("ask", { compiled: true })).toEqual([process.execPath, "ask"]);
 		expect(selfArgv("ask", { compiled: false })).toEqual([process.execPath, `${REPO}/src/ask.ts`]);
+		expect(selfArgv("peek", { compiled: true })).toEqual([process.execPath, "debug", "peek"]);
 	});
 	test("no module builds `bun <path>/src/...` by hand: this helper is the one home", () => {
 		const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
@@ -69,7 +70,7 @@ describe("every prompt-embedded command, rendered both ways", () => {
 	test("compiled they name `chamberlain <sub>`, and no checkout path is left in any of them", () => {
 		setCompiled(true);
 		const out = render();
-		for (const c of ["chamberlain ask '<json>'", "chamberlain afk hold", "chamberlain afk held", "chamberlain afk status", "chamberlain afk note", "chamberlain afk close ", "chamberlain decided list 15", "chamberlain ruling --stated-in-chat", "chamberlain peek <server> <threadId>", "chamberlain t3x threads|read|respond|send <server>"]) has(out, c);
+		for (const c of ["chamberlain ask '<json>'", "chamberlain afk hold", "chamberlain afk held", "chamberlain afk status", "chamberlain afk note", "chamberlain afk close ", "chamberlain decided list 15", "chamberlain ruling --stated-in-chat", "chamberlain debug peek <server> <threadId>", "chamberlain debug t3x threads|read|respond|send <server>"]) has(out, c);
 		expect(out.match(/\bbun \S*\/src\/\S*/g)).toBeNull();
 		expect(out.includes("/opt/chamberlain")).toBe(false);
 		expect(out.includes(REPO)).toBe(false);
@@ -121,7 +122,36 @@ describe("the dispatcher", () => {
 			expect(lines.join("\n")).toContain('unknown command "nope"');
 			expect(await run(["constructor"])).toBe(2);
 		} finally { console.log = log; console.error = err; }
-		for (const name of Object.keys(COMMANDS) as CommandName[]) expect(usage()).toContain(name);
+		for (const name of Object.keys(COMMANDS) as CommandName[]) expect(DEBUG_COMMANDS.includes(name as never) ? debugUsage() : usage()).toContain(name);
+	});
+	test("the diagnostic commands are listed under `debug`, not on the front page, and still run under their old names", async () => {
+		for (const name of DEBUG_COMMANDS) {
+			expect(usage()).not.toContain(`  ${name} `);
+			expect(debugUsage()).toContain(name);
+		}
+		expect(usage()).toContain("chamberlain debug help");
+		const lines: string[] = [];
+		const log = console.log;
+		const err = console.error;
+		console.log = (...a: unknown[]) => { lines.push(a.join(" ")); };
+		console.error = (...a: unknown[]) => { lines.push(a.join(" ")); };
+		try {
+			expect(await run(["debug", "help"])).toBe(0);
+			expect(lines.pop()).toBe(debugUsage());
+			expect(await run(["debug"])).toBe(2);
+			expect(await run(["debug", "ask"])).toBe(2);
+			expect(lines.pop()).toContain('unknown debug command "ask"');
+			// The same tool, by its new path and by the old name a prompt written earlier still uses.
+			for (const argv of [["debug", "desk-allowlist", "check", "journalctl -n 5"], ["desk-allowlist", "check", "journalctl -n 5"]]) {
+				lines.length = 0;
+				const exit = process.exit;
+				let code: number | undefined;
+				process.exit = ((c?: number) => { code = c; throw new Error("exit"); }) as never;
+				try { await run(argv); } catch { /* the tool exits through process.exit */ } finally { process.exit = exit; }
+				expect(code).toBe(0);
+				expect(lines[0]).toBe("allow");
+			}
+		} finally { console.log = log; console.error = err; }
 	});
 	test("`bun src/cli.ts <tool>` runs the tool on a scratch state directory, like the tool's own file", () => {
 		const dir = mkdtempSync(`${tmpdir()}/chamberlain-cli-`);

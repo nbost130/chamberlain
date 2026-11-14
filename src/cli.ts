@@ -3,9 +3,11 @@
  * (`bun src/ask.ts ...`); this dispatcher is what the standalone binary (scripts/build.ts) runs, and `bun src/cli.ts <subcommand>` works too.
  * The tools and the source file each one lives in are listed once, in COMMANDS (src/core/config.ts). A subcommand is loaded only when it
  * runs, so `--version` and `help` start without opening anything.
+ *
+ * The diagnostic commands (DEBUG_COMMANDS) are run as `chamberlain debug <name>`; `chamberlain <name>` still works for them, unlisted.
  */
 import pkg from "../package.json" with { type: "json" };
-import { COMMANDS, type CommandName } from "./core/config.ts";
+import { COMMANDS, DEBUG_COMMANDS, isDebugCommand, type CommandName } from "./core/config.ts";
 
 type Tool = { main: (argv: string[]) => unknown };
 
@@ -55,17 +57,29 @@ const ABOUT: Record<CommandName, string> = {
 
 export const VERSION: string = pkg.version;
 
+const line = (c: CommandName) => `  ${c.padEnd(15)}${ABOUT[c]}`;
+
 export const usage = (): string => [
 	`chamberlain ${VERSION}: watches your T3 Code threads and wakes the Steward only when something needs it.`,
 	"",
 	"usage: chamberlain <command> [args]    chamberlain --version",
 	"",
-	...(Object.keys(COMMANDS) as CommandName[]).map((c) => `  ${c.padEnd(15)}${ABOUT[c]}`),
+	...(Object.keys(COMMANDS) as CommandName[]).filter((c) => !isDebugCommand(c)).map(line),
+	`  ${"debug".padEnd(15)}diagnostic commands: chamberlain debug help`,
 ].join("\n");
+
+/** What `chamberlain debug help` prints. */
+export const debugUsage = (): string => ["usage: chamberlain debug <command> [args]", "", ...DEBUG_COMMANDS.map(line)].join("\n");
 
 /** Runs `chamberlain <argv>`; returns the process exit code to use when the tool does not set one itself. */
 export async function run(argv: string[]): Promise<number> {
-	const [cmd, ...rest] = argv;
+	let [cmd, ...rest] = argv;
+	if (cmd === "debug") {
+		const [sub, ...more] = rest;
+		if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") { console.log(debugUsage()); return sub === undefined ? 2 : 0; }
+		if (!isDebugCommand(sub)) { console.error(`chamberlain: unknown debug command "${sub}"\n\n${debugUsage()}`); return 2; }
+		[cmd, rest] = [sub, more];
+	}
 	if (cmd === "--version" || cmd === "-v" || cmd === "version") { console.log(VERSION); return 0; }
 	if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") { console.log(usage()); return cmd === undefined ? 2 : 0; }
 	if (!Object.hasOwn(LOAD, cmd)) { console.error(`chamberlain: unknown command "${cmd}"\n\n${usage()}`); return 2; }

@@ -47,8 +47,13 @@ try {
 	const v = exec("--version");
 	check(`--version prints ${pkg.version}`, v.exitCode === 0 && v.stdout.toString().trim() === pkg.version, `exit ${v.exitCode}: ${v.stdout}${v.stderr}`);
 	const h = exec("help");
-	check("help lists every command", h.exitCode === 0 && ["daemon", "web", "ask", "afk", "brief", "desk-allowlist"].every((c) => h.stdout.toString().includes(c)));
+	check("help lists every command", h.exitCode === 0 && ["daemon", "web", "ask", "afk", "brief", "debug"].every((c) => h.stdout.toString().includes(c)));
 	check("an unknown command exits 2", exec("nope").exitCode === 2);
+	// A diagnostic command under `debug`, and by the old name a prompt written before the grouping still uses.
+	for (const argv of [["debug", "desk-allowlist", "check", "journalctl -n 5"], ["desk-allowlist", "check", "journalctl -n 5"]]) {
+		const d = exec(...argv);
+		check(`\`chamberlain ${argv.slice(0, argv[0] === "debug" ? 2 : 1).join(" ")}\` runs`, d.exitCode === 0 && d.stdout.toString().trim() === "allow", `exit ${d.exitCode}: ${d.stdout}${d.stderr}`);
+	}
 
 	// The page, from the embedded files, and a question asked by another process shows up on it.
 	const page = Bun.spawn([bin, "web", "--test"], { cwd: empty, env, stdout: "pipe", stderr: "pipe" });
@@ -87,10 +92,10 @@ try {
 	const brief = exec("brief", "steward", "--mode", "live");
 	const text = brief.stdout.toString();
 	check("brief steward renders", brief.exitCode === 0 && text.length > 1000, `exit ${brief.exitCode}: ${brief.stderr}`);
-	for (const c of ["chamberlain ask '<json>'", "chamberlain afk hold", "chamberlain afk held", "chamberlain decided list 15", "chamberlain ruling", "chamberlain peek <server> <threadId>", "chamberlain t3x threads|read|respond|send <server>"]) check(`the hand-off teaches \`${c}\``, text.includes(c));
+	for (const c of ["chamberlain ask '<json>'", "chamberlain afk hold", "chamberlain afk held", "chamberlain decided list 15", "chamberlain ruling", "chamberlain debug peek <server> <threadId>", "chamberlain debug t3x threads|read|respond|send <server>"]) check(`the hand-off teaches \`${c}\``, text.includes(c));
 	check("the hand-off names no `bun ...src/` command and no $bunfs path", !/\bbun \S*\/src\//.test(text) && !text.includes("$bunfs") && !text.includes("~BUN"), (text.match(/.{0,60}(\bbun \S*\/src\/|\$bunfs).{0,60}/) ?? [""])[0]);
 	const desk = exec("brief", "desk");
-	check("brief desk renders the embedded prompt with `chamberlain ask '{`", desk.exitCode === 0 && desk.stdout.toString().includes("chamberlain ask '{") && desk.stdout.toString().includes("`chamberlain desk-allowlist hook`"), `exit ${desk.exitCode}: ${desk.stderr}`);
+	check("brief desk renders the embedded prompt with `chamberlain ask '{`", desk.exitCode === 0 && desk.stdout.toString().includes("chamberlain ask '{") && desk.stdout.toString().includes("`chamberlain debug desk-allowlist hook`"), `exit ${desk.exitCode}: ${desk.stderr}`);
 	const allow = exec("desk-allowlist", "check", "chamberlain ask '{\"kind\":\"product\"}'");
 	check("desk-allowlist allows `chamberlain ask '<json>'`", allow.exitCode === 0 && allow.stdout.toString().trim() === "allow", `${allow.stdout}${allow.stderr}`);
 	const held = exec("afk", "held");

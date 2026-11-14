@@ -364,7 +364,7 @@ describe("in the compiled binary the desk files a decision with `chamberlain ask
 		const out = renderDeskPrompt(template, { principalName: "Ada", serverName: "box-1", allowlistHook: `${selfCommand("desk-allowlist")} hook`, askCommand: deskAskCommand(), morning: { commands: [] } });
 		const line = out.split("\n").find((l) => l.includes(" '{\"kind\":"))!;
 		expect(line.startsWith("chamberlain ask '{")).toBe(true);
-		expect(out).toContain("`chamberlain desk-allowlist hook` (Chamberlain's desk allowlist)");
+		expect(out).toContain("`chamberlain debug desk-allowlist hook` (Chamberlain's desk allowlist)");
 		expect(checkCommand(line, { morning: [], shapes: {} })).toEqual({ ok: true });
 		expect(checkCommand(`chamberlain ask '{}' ; id`, { morning: [], shapes: {} }).ok).toBe(false);
 		expect(checkCommand(`bun ${selfCommand("ask", { compiled: false }).slice(4)} '{}'`, { morning: [], shapes: {} }).ok).toBe(false);

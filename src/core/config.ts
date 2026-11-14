@@ -53,12 +53,21 @@ export const COMMANDS = {
 export type CommandName = keyof typeof COMMANDS;
 
 /**
+ * The commands for diagnosing and for the Steward's own reads, not for everyday use. The binary runs them as `chamberlain debug <name>` and
+ * keeps `chamberlain <name>` working as a hidden alias, so a prompt written before the grouping still runs.
+ */
+export const DEBUG_COMMANDS = ["t3x", "peek", "queue-waits", "compat", "desk-allowlist", "synthetic-wake"] as const satisfies readonly CommandName[];
+export const isDebugCommand = (sub: string): boolean => (DEBUG_COMMANDS as readonly string[]).includes(sub);
+/** The words after `chamberlain` that run tool `sub`: the name, behind `debug` for a debug command. */
+export const binaryWords = (sub: CommandName): string[] => (isDebugCommand(sub) ? ["debug", sub] : [sub]);
+
+/**
  * The command that runs tool `sub`, as an agent or operator types it, without its arguments: `chamberlain <sub>` from the compiled
  * binary, `bun <checkout>/<file>` from source. The one place a command string is built; `compiled` and `repo` are for tests and for callers
  * that were handed another checkout's path.
  */
 export function selfCommand(sub: CommandName, o: { compiled?: boolean; repo?: string } = {}): string {
-	return (o.compiled ?? isCompiled()) ? `chamberlain ${sub}` : `bun ${o.repo ?? REPO}/${COMMANDS[sub]}`;
+	return (o.compiled ?? isCompiled()) ? `chamberlain ${binaryWords(sub).join(" ")}` : `bun ${o.repo ?? REPO}/${COMMANDS[sub]}`;
 }
 
 /** What the wakes call the human when no `principalName` is configured. */
@@ -153,5 +162,5 @@ export const PrincipalPoss = (): string => `${Principal()}'s`;
 
 /** The argv that runs tool `sub` as a child process: the binary itself with the subcommand when compiled, else this runtime on the source file. */
 export function selfArgv(sub: CommandName, o: { compiled?: boolean; repo?: string } = {}): string[] {
-	return (o.compiled ?? isCompiled()) ? [process.execPath, sub] : [process.execPath, `${o.repo ?? REPO}/${COMMANDS[sub]}`];
+	return (o.compiled ?? isCompiled()) ? [process.execPath, ...binaryWords(sub)] : [process.execPath, `${o.repo ?? REPO}/${COMMANDS[sub]}`];
 }
