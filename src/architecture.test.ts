@@ -305,7 +305,12 @@ export const MAY_POST: Record<string, string> = {
 	"testing/wake.ts": "fetchWake, a test double for the transport",
 };
 /** The only files that may name the wake or compaction webhook's config file. */
-const NAMES_A_WAKE_URL = new Set(["adapters/t3/index.ts", "adapters/t3/switch-steward.ts"]);
+const NAMES_A_WAKE_URL = new Set([
+	"adapters/t3/index.ts",
+	"adapters/t3/switch-steward.ts",
+	// A fixture of the old config directory: it names every file of it, to prove the migration moves each one (it sends nothing).
+	"testing/legacy-conf.ts",
+]);
 /** Where each construct that can send or enable sending may appear (a definition site and its legitimate callers). */
 const MAY_CALL: Record<string, Set<string>> = {
 	createRelay: new Set([RELAY, "core/engine.ts", "testing/relay.ts"]),

@@ -2,12 +2,12 @@
 
 The pinned Decisions thread shows the decision queue as one live view with Waiting, Rulings and Recent tabs. It
 never shows a card, so nothing in it blocks. `chamberlain ask` posts every new question there, and only there
-(`~/.config/chamberlain/decisions-thread` names the thread): the live view when the queue page is up, or a one-line
-notice when it is down. The page keeps the title at "Decisions · N waiting" once `decisionsServer` in `web.json` names
+(`threads.decisions` in `~/.config/chamberlain/config.json` names the thread): the live view when the queue page is up, or a one-line
+notice when it is down. The page keeps the title at "Decisions · N waiting" once `decisionsServer` in the `web` section of `config.json` names
 an orchestration:operate token.
 
-Create a thread, put its id in `~/.config/chamberlain/decisions-thread` (mode 0600), and send it this message as its
-first message, or again after `/clear`. Replace `<base>` with your page's address: the origin from `web.json`
+Create a thread, put its id in `~/.config/chamberlain/config.json` as `"threads": {"decisions": "<id>"}`, and send it this message as its
+first message, or again after `/clear`. Replace `<base>` with your page's address: the origin from the `web` section
 (`http://<host>:<port>`), or its `publicBase` when T3 is loaded over https.
 
 ---

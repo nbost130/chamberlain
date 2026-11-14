@@ -6,6 +6,7 @@
  */
 import type { Adapter, AdapterEntry, AdapterEnv, AdapterFactory, OptionalCapability } from "../../core/adapter.ts";
 import type { Gate } from "../../core/hold.ts";
+import { setting } from "../../core/layout.ts";
 import type { ServerEntry } from "../../core/servers.ts";
 import { t3Brief } from "./brief.ts";
 import { postCard } from "./post.ts";
@@ -29,7 +30,7 @@ export const t3ServerLine = (srv: { name: string; environmentId?: string }): str
 export const defaultT3Server = (): ServerEntry => ({
 	name: "local",
 	adapter: "t3",
-	origin: process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773",
+	origin: setting("t3Origin") ?? "http://127.0.0.1:3773",
 	tokenFile: "read-token",
 });
 

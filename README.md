@@ -54,8 +54,9 @@ chamberlain brief start
 Steward may decide and what it must ask you, in your own words; start from [`examples/decision-rights.md`](examples/decision-rights.md).
 
 ```sh
-t3 auth session issue --base-dir ~/.t3 --scope orchestration:read --ttl 30d --token-only > ~/.config/chamberlain/read-token
-chmod 600 ~/.config/chamberlain/read-token
+install -d -m 700 ~/.config/chamberlain ~/.config/chamberlain/secrets
+t3 auth session issue --base-dir ~/.t3 --scope orchestration:read --ttl 30d --token-only > ~/.config/chamberlain/secrets/read-token
+chmod 600 ~/.config/chamberlain/secrets/read-token
 $EDITOR ~/.config/chamberlain/decision-rights.md
 ```
 
@@ -107,14 +108,15 @@ nobody is woken. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the layers, an
   an adapter, so another backend is a new folder ([docs/ADAPTERS.md](docs/ADAPTERS.md)).
 - **Bun only.** State is one `bun:sqlite` file, the page is `Bun.serve`, and Bun compiles the whole thing to one binary: no Node build,
   native addon or second service to install.
-- **Files that grant access must be mode 0600.** A token or webhook URL can read or wake every thread, so Chamberlain refuses to start
-  on one that is looser, instead of warning.
+- **One config file, one folder of secrets.** Settings are in `config.json`; a token or webhook URL is a file in `secrets/` that must be
+  mode 0600, because it can read or wake every thread, so Chamberlain refuses to start on one that is looser, instead of warning.
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every config file, the state directory, environment variables and commands |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | `config.json`, `secrets/`, the state directory, environment variables and commands |
+| [docs/config-migration.md](docs/config-migration.md) | Upgrading from the file-per-setting layout: where every old file and variable went |
 | [docs/SECURITY.md](docs/SECURITY.md) | What the daemon and the page can do, and what they refuse |
 | [docs/DELIVERY.md](docs/DELIVERY.md) | The outbox, the relay, retries and dead letters |
 | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) | The T3 versions it is tested against, what it relies on, known limits |

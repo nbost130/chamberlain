@@ -35,7 +35,9 @@ if (basename(bin).endsWith(".tar.gz")) {
 }
 
 const port = 40000 + Math.floor(Math.random() * 20000);
-writeFileSync(join(conf, "web.json"), JSON.stringify({ host: "127.0.0.1", port }), { mode: 0o600 });
+writeFileSync(join(conf, "config.json"), JSON.stringify({ schemaVersion: 1, web: { host: "127.0.0.1", port } }), {
+	mode: 0o600,
+});
 const env: Record<string, string> = {
 	PATH: "/usr/bin:/bin",
 	HOME: work,
@@ -202,6 +204,31 @@ try {
 		"desk-allowlist allows `chamberlain ask '<json>'`",
 		allow.exitCode === 0 && allow.stdout.toString().trim() === "allow",
 		`${allow.stdout}${allow.stderr}`,
+	);
+	// The config command: the new layout reads back, and a dry-run migration has nothing to do (the smoke config is already new).
+	const shown = exec("config", "show");
+	check(
+		"config show reads config.json",
+		shown.exitCode === 0 && shown.stdout.toString().includes("config.json  present"),
+		`exit ${shown.exitCode}: ${shown.stdout}${shown.stderr}`,
+	);
+	const got = exec("config", "get", "web.port");
+	check(
+		"config get web.port prints the port",
+		got.exitCode === 0 && got.stdout.toString().trim() === String(port),
+		`exit ${got.exitCode}: ${got.stdout}${got.stderr}`,
+	);
+	const refused = exec("config", "get", "wake-url");
+	check(
+		"config get refuses a secret, with exit 1 and nothing on stdout",
+		refused.exitCode === 1 && refused.stdout.toString() === "",
+		`exit ${refused.exitCode}: ${refused.stdout}`,
+	);
+	const dry = exec("config", "migrate", "--dry-run");
+	check(
+		"config migrate --dry-run finds nothing to do",
+		dry.exitCode === 0 && dry.stdout.toString().includes("nothing to do"),
+		`exit ${dry.exitCode}: ${dry.stdout}${dry.stderr}`,
 	);
 	const held = exec("afk", "held");
 	check("afk held runs", held.exitCode === 0, held.stderr.toString());

@@ -22,6 +22,8 @@ import { copyFileSync, constants, existsSync, readFileSync, renameSync, statSync
 import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 import { STATE, CONF } from "./config.ts";
 import { SCHEMA_VERSION, SchemaTooNewError, checkVersion, versionOf } from "./schema.ts";
+import { ConfigFileError, SECRETS_DIR, attachDeprecationLog, oldFileState, readConfigFile } from "./layout.ts";
+import { startupLayout } from "./config-migrate.ts";
 
 /** json: one document. jsonl: one record per line. servers: servers.json. */
 export type Kind = "json" | "jsonl" | "servers";
@@ -88,9 +90,12 @@ const pathOf = (f: StoredFile, conf: string, state: string) => `${f.dir === "con
 
 type Entry = { path: string; what: string; kind: Kind };
 function entries(conf: string, state: string): Entry[] {
-	return FILES.map((f) => ({ path: pathOf(f, conf, state), what: f.name, kind: f.kind })).filter((e) =>
-		existsSync(e.path),
-	);
+	return FILES.filter(
+		// a file the layout migration moved is not read again by its old name: a rewritten one is not this build's to check or upgrade
+		(f) => f.dir !== "conf" || oldFileState(conf, f.name, false) !== "reappeared",
+	)
+		.map((f) => ({ path: pathOf(f, conf, state), what: f.name, kind: f.kind }))
+		.filter((e) => existsSync(e.path));
 }
 
 /** The raw records of a file: a list for jsonl (a torn line is `undefined`), one value otherwise, or `undefined` if it isn't JSON. */
@@ -261,11 +266,16 @@ export function startup(
 ) {
 	try {
 		// The directory that holds the secrets must itself be private (0700), or a file's mode protects nothing: refused before any file is read.
-		assertPrivateDir(o.conf ?? CONF, "the config directory");
+		const conf = o.conf ?? CONF;
+		assertPrivateDir(conf, "the config directory");
+		assertPrivateDir(`${conf}/${SECRETS_DIR}`, "the secrets directory");
+		readConfigFile(conf); // a config.json that is unreadable, too new or writable by others stops the start here
 		if (o.migrate) {
+			if (o.log) attachDeprecationLog(o.log);
 			const r = migrateStorage(o);
 			if (r.migrated.length) o.log?.("schema-migrated", { files: r.migrated });
 			for (const s of r.skipped) o.log?.("schema-migrate-skipped", s);
+			if (o.log) startupLayout(conf, o.log);
 		} else assertSupported(o);
 	} catch (e) {
 		if (e instanceof SchemaTooNewError) {
@@ -275,6 +285,10 @@ export function startup(
 		if (e instanceof InsecureModeError) {
 			console.error(`chamberlain: ${e.message}`);
 			process.exit(4);
+		}
+		if (e instanceof ConfigFileError) {
+			console.error(`chamberlain: ${e.message}`);
+			process.exit(2);
 		}
 		throw e;
 	}

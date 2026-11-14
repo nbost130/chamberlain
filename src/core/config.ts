@@ -1,16 +1,18 @@
 /**
  * Where Chamberlain keeps its files, and the few settings every module shares.
  *
- *   CHAMBERLAIN_CONF   config directory, default $XDG_CONFIG_HOME/chamberlain, i.e. ~/.config/chamberlain (secrets and settings, mode 0600 files)
+ *   CHAMBERLAIN_CONF   config directory, default $XDG_CONFIG_HOME/chamberlain, i.e. ~/.config/chamberlain (config.json and secrets/)
  *   CHAMBERLAIN_STATE  state directory, default $XDG_STATE_HOME/chamberlain, i.e. ~/.local/state/chamberlain (the database,
  *                      the evidence files, the hand-off): durable data that survives restarts but is not user-edited config
  *
- * `settings.json` in the config directory (mode 0600) holds the rest, and each value can be overridden by an environment
- * variable. See docs/CONFIGURATION.md.
+ * `config.json` in the config directory holds every setting that is not a secret, `secrets/` the tokens and webhook URLs, and a scalar
+ * key can be overridden by an environment variable (src/core/layout.ts). See docs/CONFIGURATION.md.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isPrivateFile, modeText } from "./private.ts";
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
+import { cfg, setting } from "./layout.ts";
+import { SCHEMA_VERSION } from "./schema.ts";
+import { parseSettledMatch, type Settings, type SettledMatch } from "./settings-parse.ts";
+export { parseSettings } from "./settings-parse.ts";
+export type { Settings, SettledMatch } from "./settings-parse.ts";
 import { configDir, stateDir } from "./state-dir.ts";
 
 const HOME = process.env.HOME!;
@@ -41,6 +43,7 @@ export const COMMANDS = {
 	ruling: "src/core/ruling.ts",
 	butler: "src/core/butler.ts",
 	migrate: "src/core/migrate.ts",
+	config: "src/core/config-cmd.ts",
 	brief: "src/brief.ts",
 	wakes: "src/wakes.ts",
 	"steward-health": "src/steward-health.ts",
@@ -84,91 +87,25 @@ export function selfCommand(sub: CommandName, o: { compiled?: boolean; repo?: st
 /** What the wakes call the human when no `principalName` is configured. */
 export const DEFAULT_PRINCIPAL = "the operator";
 
-export type Settings = {
-	schemaVersion?: number;
-	/** What the Steward's wakes and hand-off call the human it works for: "Ada", "the operator". */
-	principalName?: string;
-	/** The T3 adapter's: T3's base directory. Default ~/.t3. */
-	t3BaseDir?: string;
-	/** The T3 adapter's: T3's state database. Default <t3BaseDir>/userdata/statev2.sqlite. */
-	t3StateDb?: string;
-	/** A command run for each alarm as `<command> <severity> <title> <summary>`. Without one, alarms are only logged. */
-	alertCommand?: string;
-	/** The Steward's context size, in tokens, past which the daemon sends a compact. Default 350000. */
-	compactTokens?: number;
-	/** How ask.ts and `afk.ts hold` decide a question is already settled (src/core/settled.ts). */
-	settledMatch?: SettledMatch;
-};
-/**
- * The settled check's one tunable rule. `titleOverlap: false` matches on exact refs only (a commit, a run, an item, or a PR,
- * branch or thread beside the same topic). `ignoreWords` are words that head many unrelated questions in your setup (a
- * project or product name), so sharing one says nothing about the topic.
- */
-export type SettledMatch = { titleOverlap?: boolean; ignoreWords?: string[] };
-
-/** Pure: the settings a parsed file holds, or the first thing wrong with it. */
-export function parseSettings(raw: unknown): Settings {
-	if (raw === null || typeof raw !== "object" || Array.isArray(raw))
-		throw Error("settings.json: expected a JSON object");
-	const o = raw as Record<string, unknown>;
-	checkVersion("settings.json", o.schemaVersion);
-	const str = (k: string) => {
-		const v = o[k];
-		if (v === undefined) return undefined;
-		if (typeof v !== "string" || !v.trim()) throw Error(`settings.json: "${k}" must be a non-empty string`);
-		return v.trim();
-	};
-	const compactTokens = o.compactTokens;
-	if (
-		compactTokens !== undefined &&
-		(typeof compactTokens !== "number" || !Number.isFinite(compactTokens) || compactTokens <= 0)
-	)
-		throw Error('settings.json: "compactTokens" must be a positive number');
-	const sm = o.settledMatch;
-	let settledMatch: SettledMatch | undefined;
-	if (sm !== undefined) {
-		if (sm === null || typeof sm !== "object" || Array.isArray(sm))
-			throw Error('settings.json: "settledMatch" must be an object');
-		const { titleOverlap, ignoreWords, ...extra } = sm as Record<string, unknown>;
-		if (Object.keys(extra).length)
-			throw Error(`settings.json: "settledMatch" has unknown keys: ${Object.keys(extra).join(", ")}`);
-		if (titleOverlap !== undefined && typeof titleOverlap !== "boolean")
-			throw Error('settings.json: "settledMatch.titleOverlap" must be true or false');
-		if (
-			ignoreWords !== undefined &&
-			(!Array.isArray(ignoreWords) || ignoreWords.some((w) => typeof w !== "string" || !w.trim()))
-		)
-			throw Error('settings.json: "settledMatch.ignoreWords" must be a list of words');
-		settledMatch = {
-			...(titleOverlap !== undefined ? { titleOverlap } : {}),
-			...(ignoreWords !== undefined ? { ignoreWords: (ignoreWords as string[]).map((w) => w.trim()) } : {}),
-		};
-	}
-	return {
-		schemaVersion: SCHEMA_VERSION,
-		...(str("principalName") ? { principalName: str("principalName") } : {}),
-		...(str("t3BaseDir") ? { t3BaseDir: str("t3BaseDir") } : {}),
-		...(str("t3StateDb") ? { t3StateDb: str("t3StateDb") } : {}),
-		...(str("alertCommand") ? { alertCommand: str("alertCommand") } : {}),
-		...(compactTokens !== undefined ? { compactTokens: compactTokens as number } : {}),
-		...(settledMatch ? { settledMatch } : {}),
-	};
-}
-
 let cached: { conf: string; settings: Settings } | undefined;
-/** The settings file, or {} when there is none. A file that is not a private regular file (0600) is refused. */
+/**
+ * The settings view of the config: principal, t3Dir, t3StateDb, alertCmd, compactTokens and settledMatch, from config.json, else the legacy
+ * settings.json (src/core/layout.ts). Environment overrides are applied by the callers below, not here. Cached per directory.
+ */
 export function readSettings(conf = CONF): Settings {
 	if (cached?.conf === conf) return cached.settings;
-	const p = `${conf}/settings.json`;
-	let settings: Settings = {};
-	if (existsSync(p)) {
-		const st = statSync(p);
-		if (!isPrivateFile(st))
-			throw Error(
-				`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`,
-			);
-		settings = parseSettings(JSON.parse(readFileSync(p, "utf8")));
-	}
+	const g = (k: string) => cfg(conf, k);
+	const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+	const tokens = g("compactTokens");
+	const settings: Settings = {
+		...(str(g("principal")) ? { principalName: str(g("principal")) } : {}),
+		...(str(g("t3Dir")) ? { t3BaseDir: str(g("t3Dir")) } : {}),
+		...(str(g("t3StateDb")) ? { t3StateDb: str(g("t3StateDb")) } : {}),
+		...(str(g("alertCmd")) ? { alertCommand: str(g("alertCmd")) } : {}),
+		...(typeof tokens === "number" ? { compactTokens: tokens } : {}),
+		...(g("settledMatch") ? { settledMatch: parseSettledMatch(g("settledMatch"), "config.json") } : {}),
+	};
+	if (Object.keys(settings).length) settings.schemaVersion = SCHEMA_VERSION;
 	cached = { conf, settings };
 	return settings;
 }
@@ -184,8 +121,7 @@ export const alertCommand = (): string | undefined => {
 	const v = process.env.CHAMBERLAIN_ALERT_CMD ?? readSettings().alertCommand;
 	return v ? tilde(v) : undefined;
 };
-export const compactTokens = (fallback: number): number =>
-	Number(process.env.CHAMBERLAIN_COMPACT_TOKENS ?? readSettings().compactTokens ?? fallback);
+export const compactTokens = (fallback: number): number => setting("compactTokens") ?? fallback;
 
 /** What wakes call the human: CHAMBERLAIN_PRINCIPAL, then `principalName` in settings.json, then "the operator". */
 export const principal = (): string =>

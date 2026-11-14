@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "principal": "Ada",
+  "t3Dir": "~/.t3",
+  "alertCmd": "~/bin/notify-me",
+  "compactTokens": 350000,
+  "threads": {
+    "steward": "REPLACE-WITH-THE-STEWARD-THREAD-ID",
+    "decisions": "REPLACE-WITH-THE-DECISIONS-THREAD-ID"
+  },
+  "servers": [
+    {
+      "name": "main",
+      "adapter": "t3",
+      "origin": "http://127.0.0.1:3773",
+      "tokenFile": "read-token"
+    },
+    {
+      "name": "laptop",
+      "adapter": "t3",
+      "origin": "http://127.0.0.1:13773",
+      "tokenFile": "laptop-read-token",
+      "environmentId": "REPLACE-WITH-THE-ENVIRONMENT-ID-T3-SHOWS-FOR-THIS-SERVER",
+      "mayBeOffline": true,
+      "sshHost": "ada@laptop.example"
+    }
+  ],
+  "web": {
+    "host": "127.0.0.1",
+    "port": 3790,
+    "allowedHosts": [
+      "chamberlain.example.ts.net"
+    ],
+    "threadLinks": {
+      "main": "https://t3.example.ts.net/threads/MAIN-ENVIRONMENT-ID/"
+    },
+    "decisionsServer": {
+      "origin": "http://127.0.0.1:3773",
+      "operateTokenFile": "operate-token"
+    },
+    "answerTokens": {
+      "laptop": "laptop-operate-token"
+    }
+  },
+  "sweep": {
+    "checks": [
+      {
+        "name": "disk",
+        "command": [
+          "/bin/sh",
+          "examples/sweep-check.sh"
+        ],
+        "timeoutMs": 20000,
+        "mode": "live"
+      }
+    ]
+  }
+}

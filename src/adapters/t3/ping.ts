@@ -20,7 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { isPrivateFile } from "../../core/private.ts";
+import { readSecret } from "../../core/layout.ts";
 import { t3BaseDir } from "./settings.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
@@ -66,13 +66,11 @@ export function within<T>(p: Promise<T>, ms = CALL_TIMEOUT_MS, what = "T3 call")
 export const redact = (msg: string, secrets: (string | undefined)[]) =>
 	secrets.reduce<string>((m, s) => (s ? m.split(s).join("[redacted]") : m), msg);
 
-/** A token file in the config directory, or undefined: absent, not exactly 0600, or empty. */
+/** A token file in `secrets/` (or, still, the config directory), or undefined: absent, not exactly 0600, or empty. */
 export const readToken = (conf: string, file: string | null | undefined): string | undefined => {
 	if (!file) return undefined;
 	try {
-		const p = `${conf}/${file}`;
-		if (!isPrivateFile(statSync(p))) return undefined;
-		return readFileSync(p, "utf8").trim() || undefined;
+		return readSecret(conf, file);
 	} catch {
 		// EMPTY_CATCH_OK: no token file means that server is read-only (or unread); the caller logs the outcome.
 		return undefined;

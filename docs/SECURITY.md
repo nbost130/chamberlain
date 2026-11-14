@@ -6,12 +6,13 @@ it is deliberately conservative.
 - **The daemon's token is read-only.** It needs `orchestration:read` and nothing more; it cannot send, answer or
   change anything. The webhook URL (which can wake the Steward) is the other secret it holds.
 - **Operate tokens are optional and separate.** An `orchestration:operate` token is only ever used by the page (to
-  answer question cards and rename the Decisions thread, if you name it in `web.json`) and by `chamberlain debug t3x`. The page never takes an operate token from `servers.json`: its rights come only from `web.json`. Tokens are never
+  answer question cards and rename the Decisions thread, if you name it in the `web` section of `config.json`) and by `chamberlain debug t3x`. The page never takes an operate token from a `servers` entry: its rights come only from the `web` section. Tokens are never
   logged and are redacted from error bodies.
-- **Configs must be private, and the rule fails closed.** Every file that holds a token, a webhook URL, a command or an address
-  (`read-token`, `wake-url`, `settings.json`, `servers.json`, `web.json`, `sweep.json`, `operating-rules.*`) must be a regular file with
-  mode **exactly 0600**: 0700, 0400, 0640 and the rest are refused, with the mode found in the message. The config and state
-  directories must be exactly **0700**. The database is created 0600 in a 0700 directory (its `-wal` and `-shm` files inherit the mode)
+- **Configs must be private, and the rule fails closed.** Every secret (a token or a webhook URL: the files in `secrets/`, and `operating-rules.md`)
+  must be a regular file with mode **exactly 0600**: 0700, 0400, 0640 and the rest are refused, with the mode found in the message.
+  `config.json` holds no secret but names commands the daemon runs and the address the page binds, so it must be a regular file you own that
+  no group or other user can write (0600 or 0644; a symlink is refused). The config directory, `secrets/` and the state
+  directory must be exactly **0700**. The database is created 0600 in a 0700 directory (its `-wal` and `-shm` files inherit the mode)
   and commits with `synchronous = FULL`, so a commit is durable before the call that made it returns. At start the mode is set and then
   **read back**: a database or directory that cannot be made private (not yours, a filesystem without modes) stops the process with exit
   code 4 and a message saying what it is, what it must be and the `chmod` that fixes it. A failed `chmod` is never swallowed. Config

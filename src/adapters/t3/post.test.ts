@@ -76,7 +76,7 @@ describe("postCard sends only to the Decisions thread", () => {
 	});
 	test("no Decisions thread set up: it fails loudly instead of posting anywhere else", () => {
 		const { conf } = setup(false);
-		expect(() => postCard(item("Q-abcd"), conf)).toThrow("decisions-thread");
+		expect(() => postCard(item("Q-abcd"), conf)).toThrow("Decisions thread is not set");
 	});
 });
 

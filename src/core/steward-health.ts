@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import type { Transcript } from "./adapter.ts";
 import { handoffWake } from "./messages.ts";
+import { setting } from "./layout.ts";
 import type { Store } from "./store.ts";
 
 export const HEALTH_CONFIG = {
@@ -46,9 +47,9 @@ export type MeasureOptions = {
 	formatPattern?: RegExp;
 };
 
-/** The format pattern from CHAMBERLAIN_HEALTH_FORMAT_PATTERN (a regular expression), if it is set and valid. */
+/** The format pattern from `healthFormatPattern` (CHAMBERLAIN_HEALTH_FORMAT_PATTERN, or config.json; a regular expression), if it is set and valid. */
 export function formatPatternFromEnv(): RegExp | undefined {
-	const raw = process.env.CHAMBERLAIN_HEALTH_FORMAT_PATTERN;
+	const raw = setting("healthFormatPattern");
 	if (!raw) return undefined;
 	try {
 		return new RegExp(raw);

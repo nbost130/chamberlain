@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 2,
-  "host": "127.0.0.1",
-  "port": 3790,
-  "allowedHosts": ["chamberlain.example.ts.net"],
-  "threadLinks": { "main": "https://t3.example.ts.net/threads/MAIN-ENVIRONMENT-ID/" },
-  "decisionsServer": { "origin": "http://127.0.0.1:3773", "operateTokenFile": "operate-token" },
-  "answerTokens": { "laptop": "laptop-operate-token" }
-}

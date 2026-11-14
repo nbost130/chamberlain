@@ -6,6 +6,7 @@
  * A wake that can wait (HOLDABLE_KINDS in hold.ts: a turn end, the sweep) is held instead, and the relay composes what is held into one
  * row when the Steward is idle. Every other wake is a pending row at once.
  */
+import { setting } from "./layout.ts";
 import { crashPoint } from "./crash.ts";
 import { holdable } from "./hold.ts";
 import type { Store, WakeMeta } from "./store.ts";
@@ -31,10 +32,14 @@ export type WakeDraft = { message: string; deliveryId: string; meta?: WakeMeta }
 
 /** How many attempts one row gets before it is dead-lettered (CHAMBERLAIN_MAX_ATTEMPTS overrides it). */
 export const MAX_ATTEMPTS = 3;
-/** CHAMBERLAIN_MAX_ATTEMPTS if it is a positive whole number, else the default. */
+/**
+ * `maxAttempts`: CHAMBERLAIN_MAX_ATTEMPTS if it is a positive whole number, else (for the process environment) config.json's, else the default.
+ * A caller that passes its own environment gets only that.
+ */
 export function maxAttemptsFromEnv(env: Record<string, string | undefined> = process.env): number {
 	const n = Number(env.CHAMBERLAIN_MAX_ATTEMPTS);
-	return Number.isInteger(n) && n >= 1 ? n : MAX_ATTEMPTS;
+	if (Number.isInteger(n) && n >= 1) return n;
+	return (env === process.env ? setting("maxAttempts") : undefined) ?? MAX_ATTEMPTS;
 }
 /** A wake still undelivered after this long raises the `wake-stale` alarm. An alarm, never a deadline: only delivery or a cancel ends a row. */
 export const STALE_AFTER_MS = 24 * 3600_000;

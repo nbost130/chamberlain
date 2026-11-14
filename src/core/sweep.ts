@@ -13,9 +13,8 @@
  * Judgement the checks cannot do (choosing new work) stays in a full sweep every six hours.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isPrivateFile, modeText } from "./private.ts";
 import { CONF, principal, selfCommand } from "./config.ts";
+import { cfg } from "./layout.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
 import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
 import { type Finding, type ItemSource, type SourceOutcome } from "./source.ts";
@@ -180,16 +179,10 @@ export function parseSweepConfig(raw: unknown): SweepConfig {
 	return { schemaVersion: SCHEMA_VERSION, checks };
 }
 
-/** sweep.json, or no checks. Like every config it must be a private regular file (0600): it names programs to run. */
+/** The `sweep` section of config.json (else the legacy sweep.json), or no checks. It names programs the daemon runs. */
 export function readSweepConfig(conf = CONF): SweepConfig {
-	const p = `${conf}/sweep.json`;
-	if (!existsSync(p)) return { checks: [] };
-	const st = statSync(p);
-	if (!isPrivateFile(st))
-		throw Error(
-			`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): it names programs the daemon runs.`,
-		);
-	return parseSweepConfig(JSON.parse(readFileSync(p, "utf8")));
+	const raw = cfg(conf, "sweep");
+	return raw === undefined ? { checks: [] } : parseSweepConfig(raw);
 }
 
 const FINDING_FIELDS = new Set(["dedupKey", "text", "repeatIntervalMs", "maxNotifications", "baseline", "subject"]);

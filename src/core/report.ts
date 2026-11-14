@@ -4,14 +4,17 @@
  * quiet window, then any background work or child threads, for up to REPORT_HOLD_MS. Past that it goes anyway: a hung
  * task must not swallow a report.
  */
+import { setting } from "./layout.ts";
 import { reportStillDue, type ThreadState } from "./decide.ts";
 import { skipEvent, type InstructionRead } from "./history.ts";
 
-export const REPORT_HOLD_MS = Number(process.env.CHAMBERLAIN_REPORT_HOLD_MS ?? 60 * 60_000);
+export const REPORT_HOLD_MS = 60 * 60_000;
+/** The hold in force: `reportHoldMs` (CHAMBERLAIN_REPORT_HOLD_MS, else config.json), else the default above. */
+export const reportHoldMs = (): number => setting("reportHoldMs") ?? REPORT_HOLD_MS;
 const POLL_MS = 30_000;
 
 /** Pure: how long a report must still wait. Zero means now. */
-export function reportWait(quietUntil: number, now: number, busy: boolean, holdMs = REPORT_HOLD_MS): number {
+export function reportWait(quietUntil: number, now: number, busy: boolean, holdMs = reportHoldMs()): number {
 	if (now < quietUntil) return quietUntil - now;
 	if (busy && now < quietUntil + holdMs) return Math.min(POLL_MS, quietUntil + holdMs - now);
 	return 0;

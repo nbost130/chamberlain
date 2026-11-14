@@ -21,6 +21,7 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	ruling: () => import("./core/ruling.ts"),
 	butler: () => import("./core/butler.ts"),
 	migrate: () => import("./core/migrate.ts"),
+	config: () => import("./core/config-cmd.ts"),
 	brief: () => import("./brief.ts"),
 	wakes: () => import("./wakes.ts"),
 	"steward-health": () => import("./steward-health.ts"),
@@ -43,6 +44,8 @@ const ABOUT: Record<CommandName, string> = {
 	ruling: "propose a ruling, record one stated in chat, or list them",
 	butler: "start, stop or list butler threads",
 	migrate: "check every config and state file, and upgrade the old ones",
+	config:
+		"config migrate|revert [--dry-run]: move the old files into config.json and secrets/, or back; config show; config get <key>",
 	brief: "print the Steward's hand-off (steward) or the Alert Desk's prompt (desk)",
 	wakes: "wakes that stopped sending: list|retry|cancel",
 	"steward-health": "print the Steward's health",
@@ -111,4 +114,8 @@ export async function run(argv: string[]): Promise<number> {
 	return 0;
 }
 
-if (import.meta.main) process.exitCode ||= await run(process.argv.slice(2));
+if (import.meta.main) {
+	// Read the exit code AFTER the tool ran: `process.exitCode ||= await run(...)` reads it first, and then overwrites what the tool set (exit 1 from `config get`, `config migrate`) with run's 0.
+	const code = await run(process.argv.slice(2));
+	process.exitCode ||= code;
+}

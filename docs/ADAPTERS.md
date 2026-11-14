@@ -18,7 +18,7 @@ adapter sits; the contract itself is `src/core/adapter.ts`, and it is short enou
 
    An `AdapterEntry` is `{ create, brief? }`: the factory, and optionally the adapter-specific sentences of the Steward's
    hand-off (`BriefNotes`: what its threads are called, how to read one cheaply, how to reach a server).
-3. Point a server at it in `servers.json`. `name` and `adapter` are the core's; every other key is yours:
+3. Point a server at it in the `servers` list of `config.json`. `name` and `adapter` are the core's; every other key is yours:
 
    ```json
    { "schemaVersion": 2, "servers": [{ "name": "ws", "adapter": "herdr", "socket": "/path/to/herdr.sock" }] }
@@ -35,13 +35,13 @@ that is a missing capability in the contract, not a reason to import.
 
 ```ts
 type AdapterEnv = {
-  server: ServerEntry;                          // your servers.json entry
+  server: ServerEntry;                          // your `servers` entry
   conf: string;  state: string;                 // the config and state directories
   store?: Store;                                // the database, if you must remember something across a restart: key it by your own name
   log(event: string, data?: object): void;      // the event log (the database's events table)
   alarm(key: string, title: string, summary: string): void;   // a dead-man alarm: an item that notifies at most once per 6 hours per key
   steward(): string | undefined;                // the Steward's thread id, read fresh (it changes at a hand-off)
-  readPrivate(name: string): string | undefined; // a mode-0600 file in the config directory, trimmed
+  readPrivate(name: string): string | undefined; // a secret: `secrets/<name>` (mode 0600), trimmed; a thread id name (`steward-thread`) reads `threads` in config.json
 };
 ```
 
@@ -142,7 +142,7 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`compact`** is a wake transport whose `send` takes no message.
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
   gate. With it the core drains the alert inbox into wakes for the `desk` receiver and the one relay sends them to this transport, through its one serial queue (docs/alert-desk.md). The T3 adapter
-  reads `desk-wake-url` and `desk-thread` from the config directory; without the URL `wake.ready()` is false and nothing is drained.
+  reads the `desk-wake-url` secret and `threads.desk` (`readPrivate("desk-wake-url")`, `readPrivate("desk-thread")`); without the URL `wake.ready()` is false and nothing is drained.
 - **Wording**: `serverLine()` and `approvalHint` adapt the sentences a wake says about the server and about approvals.
 
 ## Testing an adapter

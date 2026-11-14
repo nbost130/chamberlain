@@ -8,7 +8,7 @@ asking the operator once per session through the decision queue.
 
 ## What it reads
 
-- The active Steward thread, from T3's state database (`steward-thread` in the config directory names it), mapped to
+- The active Steward thread, from T3's state database (`threads.steward` in `config.json` names it), mapped to
   its native Claude Code session id and project directory.
 - That session's transcript, `<claude config dir>/projects/<project>/<session>.jsonl` (`CLAUDE_CONFIG_DIR`, default
   `~/.claude`). Only canonical rows count: sidechains and API request snapshots are skipped.

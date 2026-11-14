@@ -42,14 +42,14 @@ absorbed because the items already hold what woke the desk. A big, fully read in
 later, for a writer that still held it.
 
 **The first start.** With no cursor stored (the desk's first run, or its first run after an import that does not carry an
-older system's desk state over), `startAt` in `alert-desk.json` decides where reading begins. `"end"`, the default, sets the cursor to the
+older system's desk state over), `startAt` in `alertDesk` decides where reading begins. `"end"`, the default, sets the cursor to the
 inbox's current end, so nothing already in the inbox wakes the desk (a line being written at that moment is skipped whole); with no inbox yet,
 the cursor starts at its beginning, so the first lines written to it are read. `"beginning"` reads the whole existing inbox (events older than
 `maxAgeHours` still wake nobody). The cursor is saved before anything is read and the choice is logged once, as `alert-desk-start` with
 `startAt`, the inbox, the offset and, for `"end"`, the bytes skipped. A stored cursor is never moved by `startAt`.
 
-**Removing the desk.** With no `desk-wake-url` the desk's lane stays and its waiting wakes raise `desk:wake-not-ready`. If the receiver
-itself is gone (the home server in `servers.json` is now one whose adapter has no `alertDesk`), desk wakes still waiting are kept, never
+**Removing the desk.** With no `desk-wake-url` secret the desk's lane stays and its waiting wakes raise `desk:wake-not-ready`. If the receiver
+itself is gone (the home server in the `servers` list is now one whose adapter has no `alertDesk`), desk wakes still waiting are kept, never
 dropped or sent to the Steward: the relay raises `desk:wake-unconfigured` naming the receiver and the count, and `chamberlain wakes list`
 shows each row with `for desk`, so `chamberlain wakes cancel <id>` can give it up.
 
@@ -65,7 +65,7 @@ desk skips an id it has already handled: its prompt says to search the thread fo
 `chamberlain debug desk-allowlist hook` (`src/desk-allowlist.ts`) is a Claude Code PreToolUse hook that DENIES BY DEFAULT. It allows only: Bash in a fixed set of command shapes (journalctl,
 systemctl status, read-only gh and git commands, docker ps/logs/inspect with a plain `--format`, your own `commandShapes`, and the Morning sweep's own commands);
 Read, Grep and Glob under `/var/log`, `~/.cache/alert-desk` and `DESK_LOG_DIRS` (never a credential path, after `..` and symlinks are resolved); and the
-Agent tool only to start the `gatherer` agent you name in `alert-desk.json`, which is how the desk fans out (with none named, no agent starts). Every other tool is refused: the write tools, every MCP tool, and any
+Agent tool only to start the `gatherer` agent you name in `alertDesk`, which is how the desk fans out (with none named, no agent starts). Every other tool is refused: the write tools, every MCP tool, and any
 name it does not know. A command's whole argument list is parsed: a flag that is not on that command's list is refused, a flag given twice in any
 spelling (`--format` then `-f`) is refused, and every value is checked. `chamberlain debug desk-allowlist check '<command>'` tests one by hand.
 
@@ -87,7 +87,7 @@ trimmed: a leading or trailing space, tab, newline, no-break space or byte-order
 
 ## Nothing changes until the desk is switched on
 
-The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing without it). The alert writers (your monitors' webhooks and heartbeats)
+The desk is off until the adapter has a `desk-wake-url` secret (the drain reads nothing without it). The alert writers (your monitors' webhooks and heartbeats)
 append only when the desk is on: `ALERT_DESK_ENABLED=1` in their environment, or the flag file `~/.config/alert-desk/enabled` (`touch` it; remove it to
 switch them off; no restart is needed).
 
@@ -103,8 +103,8 @@ Two things changed on purpose, and a desk that relied on either needs one line o
 ## Switching it on
 
 1. Create the desk thread with the output of `chamberlain brief desk` as its first message, install the allowlist hook in its project, bind a
-   webhook scheduled task to it, and save its URL as `desk-wake-url` (0600) and its thread id as `desk-thread` in the config directory.
-2. Write `alert-desk.json` (below) if you want a time zone, morning sources, extra command shapes or a gatherer agent.
+   webhook scheduled task to it, and save its URL as `secrets/desk-wake-url` (0600) and its thread id as `threads.desk` in `config.json`.
+2. Add an `alertDesk` section to `config.json` (below) if you want a time zone, morning sources, extra command shapes or a gatherer agent.
 3. `touch ~/.config/alert-desk/enabled` to switch the writers on.
 
 The alert-desk tables arrived with database migration 8, which an older build cannot open (a database from a newer build is refused);
@@ -112,7 +112,7 @@ back the database up first if you may go back ([CONFIGURATION.md](CONFIGURATION.
 
 ## Config
 
-`$CHAMBERLAIN_CONF/alert-desk.json` (all optional) and the environment:
+The `alertDesk` section of `$CHAMBERLAIN_CONF/config.json` (all keys optional) and the environment. (It was the file `alert-desk.json`, which is still read until you delete it; [config-migration.md](config-migration.md).)
 
 ```json
 { "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Europe/London", "maxAgeHours": 6, "enabled": true, "startAt": "end",
@@ -126,7 +126,7 @@ back the database up first if you may go back ([CONFIGURATION.md](CONFIGURATION.
 `morningCommands` are the sources the Morning sweep reads that the inbox does not carry, each run exactly as written (`<N>` is a number the
 desk fills in, 1 to 12 digits; `<N:1-5>` gives the slot its own width, here 1 to 5 digits, and `<N:10>` exactly 10, any width within 1 to
 12; a command with a malformed slot, such as `<N:0-3>` or `<N:5-2>`, is left out with a warning), and `morningNotes` says how to read them. Both go into the prompt (`chamberlain brief desk`), and `src/desk-allowlist.ts` allows
-exactly these commands, so they widen what the desk may run: they are read only when `alert-desk.json` is owned by you and no group or other
+exactly these commands, so they widen what the desk may run: they are read only when `config.json` is owned by you and no group or other
 user can write it (0600 or 0644). Nothing of the kind is built in; with none configured, the Morning sweep reports only what its wake carries.
 
 **`commandShapes`** add read commands only your install has (a wrapper around a CLI, say) to what the desk may run. Each key is a bare command name; a
@@ -151,11 +151,11 @@ and none of the five can be redefined. A malformed shape is left out whole, with
 `run_in_background`; any other field is refused, so it cannot be widened into a checkout, another model or a remote run). The standing prompt names it, and
 the gatherer is under the same hook as the desk. Unset, the desk reads the evidence itself and the Agent tool is refused.
 
-`commandShapes` and `gatherer` widen what the desk may run, so, like `morningCommands`, they are read only when `alert-desk.json` is owned by you and no
+`commandShapes` and `gatherer` widen what the desk may run, so, like `morningCommands`, they are read only when `config.json` is owned by you and no
 group or other user can write it.
 
-`ALERT_DESK_INBOX` overrides the inbox path. The T3 adapter needs a private `desk-wake-url` (a webhook bound to the desk thread) and, for its busy
-gate, `desk-thread`; without the URL the desk is off and the inbox is not read. The first pass of each local day from `morningHour` sends the
+`ALERT_DESK_INBOX` overrides the inbox path. The T3 adapter needs a private `secrets/desk-wake-url` (a webhook bound to the desk thread) and, for its busy
+gate, `threads.desk`; without the URL the desk is off and the inbox is not read. The first pass of each local day from `morningHour` sends the
 morning wake, which runs the Morning sweep in the desk's prompt over the `morningCommands`.
 
 ## Schema

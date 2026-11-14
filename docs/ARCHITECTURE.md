@@ -369,7 +369,7 @@ corrupted.
 ## Where state lives
 
 Two directories, both private, laid out by the XDG Base Directory Specification. `CHAMBERLAIN_CONF` (default
-`~/.config/chamberlain`, files mode 0600) holds what the operator writes: secrets, settings, the decision rights.
+`~/.config/chamberlain`, mode 0700) holds what the operator writes: `config.json` (every setting that is not a secret), `secrets/` (one 0600 file per token or webhook URL) and the decision rights.
 `CHAMBERLAIN_STATE` (default `~/.local/state/chamberlain`) holds everything the processes write while they run and must
 keep, **in one SQLite database, `chamberlain.db`**, plus the evidence files and the hand-off. It is state, not cache: the
 rulings and the decision log are in it, so nothing may delete it. (The cache directory, `~/.cache/chamberlain`, holds
@@ -384,8 +384,8 @@ start with exit code 3, the way a config file from a newer build is.
 
 | Where | What | Written by |
 | --- | --- | --- |
-| config | `servers.json` (each entry names its `adapter`), `settings.json`, `web.json`, `sweep.json`, `operating-rules.*`, `decision-rights.md`, `steward-thread` | the operator |
-| config | `read-token`, `wake-url`, `compact-url`, `decisions-thread`, `*-token`, `wake-url.steward`, `wake-url.prev` | the operator: the T3 adapter's; another adapter documents its own |
+| config | `config.json`: `servers` (each entry names its `adapter`), `web`, `sweep`, `alertDesk`, `operatingRules`, `judge`, `threads` (the Steward, Decisions and desk thread ids) and the scalar settings; `decision-rights.md`, `operating-rules.md` | the operator; `chamberlain config migrate` and `switch-steward` write it too |
+| config | `secrets/`: `read-token`, `wake-url`, `compact-url`, `desk-wake-url`, `*-token`, `wake-url.steward`, `wake-url.prev` | the operator: the T3 adapter's; another adapter documents its own |
 | table `items` | the one item system (below): findings, questions, alarms, what woke the Steward, what is held for the operator's return | the sweep, `ask.ts`, the page, the daemon |
 | table `confirmation_challenges` | the single-use confirmations an approval answer must present (hashed, expiring) | the page |
 | tables `claims`, `relays`, `evidence` | a question's one-wake claim (wake text, delivery id, the answer, any ruling), its one direct send, and rows pointing at its evidence files | the page |

@@ -24,7 +24,7 @@ The mapping, from the contract to herdr:
 | `answer`, `setTitle`, `send`, `compact`, `alertDesk` | omitted: herdr answers happen in the terminal, and there is no Decisions thread |
 | `inspect` | omitted at first. `agent.read` could supply `lastMessage` from the screen, but herdr keeps no instruction history, so without `inspect` every top-level turn end is its own report |
 | `transcriptPath` | optional: when the Steward is a Claude Code pane, `agent.get` returns its `agent_session` (a path or an id) |
-| the Steward | the `steward-thread` file holds its pane id, as it holds a thread id for T3 |
+| the Steward | `threads.steward` holds its pane id, as it holds a thread id for T3 |
 
 The shape of it:
 
@@ -35,7 +35,7 @@ import type { Adapter, AdapterFactory, ThreadInput, WatchSink } from "../../core
 const STATUS: Record<string, string | undefined> = { working: "running", blocked: "waiting", done: "completed", idle: "idle", unknown: undefined };
 
 export const createHerdrAdapter: AdapterFactory = (env) => {
-  const socket = String(env.server.socket ?? "");              // your servers.json key
+  const socket = String(env.server.socket ?? "");              // your `servers` key
   if (!socket) throw Error(`servers.json: ${env.server.name}: a herdr server needs socket`);
   let busy: "idle" | "busy" | "unknown" = "unknown";            // the Steward's last status, kept from events
   const call = (method: string, params: object) => rpc(socket, { id: crypto.randomUUID(), method, params });   // newline-framed JSON; see the schema

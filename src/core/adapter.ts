@@ -376,7 +376,10 @@ export type AdapterEnv = {
 	alarm: (key: string, title: string, summary: string) => void;
 	/** The Steward's thread id, read fresh: it changes when the Steward is handed off. */
 	steward: () => string | undefined;
-	/** The contents of a private (mode 0600) file in the config directory, trimmed, or undefined when it is not there. */
+	/**
+	 * A private value, trimmed, or undefined when it is not there: a secret (`secrets/<name>`, mode 0600), or for a thread id name
+	 * (`steward-thread`, `decisions-thread`, `desk-thread`) the matching `threads` key of config.json (src/core/layout.ts `readNamed`).
+	 */
 	readPrivate: (name: string) => string | undefined;
 };
 export type AdapterFactory = (env: AdapterEnv) => Adapter;
