@@ -98,6 +98,7 @@ export const SECTIONS = [
 	"alertDesk",
 	"operatingRules",
 	"judge",
+	"mail",
 ] as const;
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];

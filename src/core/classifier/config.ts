@@ -7,6 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { bool, isArgv, modeOf, num, type Obj, object, oneOf, probability, str } from "../config-fields.ts";
 import { type Bank, DEFAULT_BANK, parseBank, type Thresholds } from "./bank.ts";
 import { JEV_DEFAULT_MODEL, PROVIDERS, type ProviderName } from "./providers.ts";
 import type { RedactConfig, SendConfig } from "./state.ts";
@@ -50,38 +51,6 @@ export const CLASSIFIER_DEFAULTS: ClassifierConfig = {
 export const SENDS_TEXT: readonly ProviderName[] = ["jev", "haiku"];
 const W = "sweep.idleParents.classifier";
 
-type Obj = Record<string, unknown>;
-function object(raw: unknown, where: string, keys: readonly string[]): Obj {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error(`${where}: expected an object`);
-	const o = raw as Obj;
-	for (const k of Object.keys(o))
-		if (!keys.includes(k)) throw Error(`${where}: unknown key "${k}" (known: ${keys.join(", ")})`);
-	return o;
-}
-const bool = (o: Obj, k: string, where: string, d: boolean): boolean => {
-	if (o[k] === undefined) return d;
-	if (typeof o[k] !== "boolean") throw Error(`${where}: ${k} must be true or false`);
-	return o[k] as boolean;
-};
-const num = (o: Obj, k: string, where: string, d: number, whole: boolean, zeroOk = false): number => {
-	const v = o[k];
-	if (v === undefined) return d;
-	if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || (!zeroOk && v === 0) || (whole && !Number.isInteger(v)))
-		throw Error(`${where}: ${k} must be a ${zeroOk ? "non-negative" : "positive"} ${whole ? "whole " : ""}number`);
-	return v;
-};
-const str = (o: Obj, k: string, where: string, d: string): string => {
-	const v = o[k];
-	if (v === undefined) return d;
-	if (typeof v !== "string" || !v.trim()) throw Error(`${where}: ${k} must be a non-empty string`);
-	return v;
-};
-const probability = (v: unknown, where: string): number => {
-	if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1)
-		throw Error(`${where} must be a number from 0 to 1`);
-	return v;
-};
-
 const KEYS = [
 	"provider",
 	"mode",
@@ -102,18 +71,15 @@ type Defaults = ClassifierConfig;
 
 /** The provider, the mode, the text-leaves-the-machine switch and the bank name: the checks that come first. */
 function parseGate(o: Obj, d: Defaults) {
-	const provider = o.provider ?? d.provider;
-	if (typeof provider !== "string" || !(PROVIDERS as readonly string[]).includes(provider))
-		throw Error(`${W}: provider must be one of ${PROVIDERS.join(", ")}`);
-	const mode = o.mode ?? d.mode;
-	if (mode !== "shadow" && mode !== "live") throw Error(`${W}: mode must be shadow or live`);
+	const provider = oneOf(o, "provider", W, PROVIDERS, d.provider);
+	const mode = modeOf(o, W, d.mode);
 	const allow = bool(o, "allowTextToLeaveMachine", W, d.allowTextToLeaveMachine);
-	if (SENDS_TEXT.includes(provider as ProviderName) && !allow)
+	if (SENDS_TEXT.includes(provider) && !allow)
 		throw Error(
 			`${W}: provider "${provider}" sends thread text off this machine; set "allowTextToLeaveMachine": true to allow it, or use "rules" or "none"`,
 		);
 	const questions = str(o, "questions", W, d.questions);
-	return { provider: provider as ProviderName, mode: mode as ClassifierMode, allow, questions };
+	return { provider, mode, allow, questions };
 }
 
 function parseThresholds(o: Obj, d: Defaults): Thresholds {
@@ -141,9 +107,8 @@ function parseRedact(o: Obj, d: Defaults): RedactConfig {
 	const ro = o.redact === undefined ? {} : object(o.redact, redW, ["builtin", "command"]);
 	let command: string[] | null = null;
 	if (ro.command !== undefined && ro.command !== null) {
-		if (!Array.isArray(ro.command) || !ro.command.length || !ro.command.every((x) => typeof x === "string" && x))
-			throw Error(`${redW}: command must be null or ["program", "arg", ...]`);
-		command = ro.command as string[];
+		if (!isArgv(ro.command)) throw Error(`${redW}: command must be null or ["program", "arg", ...]`);
+		command = ro.command;
 	}
 	return { builtin: bool(ro, "builtin", redW, d.redact.builtin), command };
 }

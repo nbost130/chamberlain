@@ -59,12 +59,24 @@ flowchart TB
 | `src/adapters/<name>/` | Every fact about one backend: its protocol, its tokens, its database, its wording. One folder per backend. | `src/core/` and its own folder |
 | `src/adapters/index.ts` | The registry: a name to a factory, one line per backend. The only file that names more than one adapter. | everything under `src/adapters/` |
 | `src/web/` | The decision-queue page: the JSON API (`app.ts`), the cards-across-servers layer (`waiting.ts`), the title keeper, the static files. Only `server.ts`, the entry point, touches the registry. | `src/core/` |
+| `src/modules/<name>/` | An optional feature that core never imports (the email triage module, `mail/`): off unless its section of `config.json` turns it on, with its own database file. The contract is `src/core/module.ts`; `src/modules/index.ts` is the registry, the only file that names more than one module. See [Optional modules](#optional-modules). | `src/core/` and its own folder |
 | `src/testing/` | Test doubles: the in-memory fake adapter, wake transports. | `src/core/` |
-| `src/*.ts` | Entry points that need an adapter: `daemon.ts`, `ask.ts`, `brief.ts`, `steward-health.ts`. | `src/core/`, the registry |
+| `src/*.ts` | Entry points that need an adapter: `daemon.ts`, `ask.ts`, `brief.ts`, `steward-health.ts`. `cli.ts` and `daemon.ts` also reach the module registry. | `src/core/`, the registry, the module registry |
 
 The import rule is enforced by `src/architecture.test.ts`, which reads every import statement (type-only ones too) and
 fails if anything in `src/core/` reaches into `src/adapters/`, if one adapter reaches into another, or if a page module
-other than the entry point reaches into an adapter. It runs with the rest of `bun test`.
+other than the entry point reaches into an adapter. The same file holds the module rules below. It runs with the rest of `bun test`.
+
+### Optional modules
+
+A module is a feature an operator may leave out entirely, so it is kept where leaving it out is the default and costs nothing. It is a folder `src/modules/<name>/` that core never imports, one section of `config.json` that is off by default, its own database file, and one entry in the registry (`src/modules/index.ts`), which only `cli.ts` and `daemon.ts` import. The contract is `Module` in `src/core/module.ts`: a name (the folder, the config section and the command are one word), `enabled(section)`, `start(ctx)` for what runs in the daemon, and `main(argv)` for `chamberlain <name>`.
+
+- **Off means absent.** A module whose section is missing, or says `"provider": "none"`, is not in `activeModules`: no timer, no table, no wake kind, no file, no event. `chamberlain <name>` says it is off and exits 0.
+- **Its own database.** `mail.db` is opened by the same code as `chamberlain.db` (`src/core/database.ts`: private, WAL, its own numbered migrations, refused when newer) but is a separate file, so its tables exist only for an operator who turned it on, and an older daemon never refuses `chamberlain.db` over a module's change. The one link back is the decision queue, through core functions.
+- **Enforced, not promised.** `src/architecture.test.ts` fails the build if `src/core/` imports `src/modules/`, if a module imports an adapter, another module or the registry, if a module names `bun:sqlite` instead of the shared opener, or if anything but `cli.ts`, `daemon.ts` and a test imports the registry. `src/modules/daemon.test.ts` starts the real daemon with the section absent and asserts no `mail.db`, no event and no child process.
+- **Adding one.** A folder under `src/modules/`, a `Module` in its `index.ts`, one line in the registry, its section name in `SECTIONS` (`src/core/layout.ts`) and a row in `COMMANDS` (`src/core/config.ts`) with the loader in `src/cli.ts`.
+
+Model calls that read untrusted text go through one runner, `src/core/llm/cli.ts`: the `claude -p` argv with no tools, no settings (so no hook), no MCP servers, no commands and no session file, which the runner refuses to spawn without. The idle-thread classifier and the email module share it, so the rule is written once.
 
 ## The adapter contract
 
@@ -385,7 +397,7 @@ start with exit code 3, the way a config file from a newer build is.
 
 | Where | What | Written by |
 | --- | --- | --- |
-| config | `config.json`: `servers` (each entry names its `adapter`), `web`, `sweep`, `alertDesk`, `operatingRules`, `judge`, `threads` (the Steward, Decisions and desk thread ids) and the scalar settings; `decision-rights.md`, `operating-rules.md` | the operator; `chamberlain config migrate` and `switch-steward` write it too |
+| config | `config.json`: `servers` (each entry names its `adapter`), `web`, `sweep`, `alertDesk`, `operatingRules`, `judge`, `mail` (optional module), `threads` (the Steward, Decisions and desk thread ids) and the scalar settings; `decision-rights.md`, `operating-rules.md` | the operator; `chamberlain config migrate` and `switch-steward` write it too |
 | config | `secrets/`: `read-token`, `wake-url`, `compact-url`, `desk-wake-url`, `*-token`, `wake-url.steward`, `wake-url.prev` | the operator: the T3 adapter's; another adapter documents its own |
 | table `items` | the one item system (below): findings, questions, alarms, what woke the Steward, what is held for the operator's return | the sweep, `ask.ts`, the page, the daemon |
 | table `confirmation_challenges` | the single-use confirmations an approval answer must present (hashed, expiring) | the page |
@@ -394,6 +406,7 @@ start with exit code 3, the way a config file from a newer build is.
 | tables `rulings`, `decisions`, `butlers`, `away` | the rulings ledger (see [Rulings](#rulings)), the Steward's self-answers, the butler ledger, the away record | the Steward's tools and the page |
 | table `events` | every wake, skip, alarm and answer; read with SQL by the return brief and `queue-waits.ts` | daemon, page |
 | table `state` | the sweep clock, `rights-sent`, `steward-health`, `heartbeat` | daemon |
+| file, beside the database (module on only) | `mail.db`: the email triage module's own database, never created while the module is off | the module |
 | files, beside the database | `evidence/<item>/` (copied in by `ask.ts`, served by the page, listed by `evidence` rows) and `steward-brief.md` | `ask.ts`, `brief.ts` |
 
 Config files carry a `schemaVersion` (currently 2) and `src/core/migrate.ts` upgrades older ones at start. One migrator runs at a time,

@@ -127,6 +127,109 @@ describe("the import boundary", () => {
 	});
 });
 
+// ---- optional modules ---------------------------------------------------------------------------------
+
+/**
+ * The fourth rule: an optional module (src/modules/<name>/, contract in src/core/module.ts) is OFF unless its config section turns it on,
+ * and Chamberlain runs the same without it. The structure that keeps it out when it is off:
+ *   - nothing outside src/modules/ imports a module's own files: the only way in is the registry, src/modules/index.ts, and only the entry
+ *     points (src/cli.ts, src/daemon.ts) may import that. A test outside core/ may too, to drive it. Core, an adapter or the page never does.
+ *   - a module imports src/core/ and its own folder: never an adapter, never another module, and never the registry that makes it.
+ *   - a module opens its database through the shared opener (src/core/database.ts), never by naming bun:sqlite itself, so its file is private,
+ *     migrated and refused-when-newer exactly as `chamberlain.db` is.
+ */
+const REGISTRY = "modules/index.ts";
+const MAY_IMPORT_REGISTRY = new Set(["cli.ts", "daemon.ts"]);
+
+/** Pure: the violations of the module rules in one file: what it imports that it may not. `file` is src/-relative. */
+export function moduleViolations(file: string, code: string): string[] {
+	const bad: string[] = [];
+	const mine = file.match(/^modules\/([^/]+)\//)?.[1];
+	for (const target of importsOf(code, file)) {
+		const theirs = target.match(/^modules\/([^/.]+)\//)?.[1];
+		if (file.startsWith("core/") && target.startsWith("modules"))
+			bad.push(`${file} imports ${target}: core must not import from src/modules/`);
+		else if (!file.startsWith("modules/") && target.startsWith("modules") && target !== REGISTRY)
+			bad.push(`${file} imports ${target}: a module is reached only through the registry (${REGISTRY})`);
+		else if (target === REGISTRY && !file.startsWith("modules/")) {
+			const test = file.endsWith(".test.ts") && !file.startsWith("core/");
+			if (!MAY_IMPORT_REGISTRY.has(file) && !test)
+				bad.push(`${file} imports the registry: only src/cli.ts and src/daemon.ts may`);
+		}
+		if (mine && target.startsWith("adapters"))
+			bad.push(`${file} imports ${target}: a module must not import an adapter`);
+		if (mine && theirs && theirs !== mine)
+			bad.push(`${file} imports ${target}: a module must not import another module`);
+		if (mine && target === REGISTRY)
+			bad.push(`${file} imports the registry: a module is made by it, never the reverse`);
+	}
+	if (mine && !file.endsWith(".test.ts") && /from\s*["']bun:sqlite["']/.test(stripComments(code)))
+		bad.push(`${file} imports bun:sqlite: a module opens its database through src/core/database.ts`);
+	return bad;
+}
+
+describe("optional modules", () => {
+	// This file is not scanned: its scanner self-tests hold import statements as strings.
+	const all = () => walk(SRC).filter((f) => f !== "architecture.test.ts");
+
+	test("the scan is not vacuous: the mail module and the registry exist", () => {
+		expect(files("modules")).toContain("modules/index.ts");
+		expect(files("modules").filter((f) => f.startsWith("modules/mail/")).length).toBeGreaterThan(3);
+	});
+
+	test("nothing in src/core/ imports src/modules/", () => {
+		const bad = files("core").flatMap((f) => moduleViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+	});
+
+	test("a module imports only core and itself, never an adapter, another module or the registry, and never bun:sqlite", () => {
+		const bad = files("modules")
+			.filter((f) => f !== REGISTRY && !f.endsWith("index.test.ts") && !f.endsWith("daemon.test.ts"))
+			.flatMap((f) => moduleViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+	});
+
+	test("only cli.ts, daemon.ts and the registry name src/modules/ outside it (a test outside core may drive the registry)", () => {
+		const bad = all().flatMap((f) => moduleViolations(f, readFileSync(join(SRC, f), "utf8")));
+		expect(bad).toEqual([]);
+		const importers = all().filter((f) => importsOf(readFileSync(join(SRC, f), "utf8"), f).includes(REGISTRY));
+		expect(importers.filter((f) => !f.endsWith(".test.ts")).sort()).toEqual(["cli.ts", "daemon.ts"]);
+	});
+
+	test("the scanner catches each kind of violation (so a pass means something)", () => {
+		expect(moduleViolations("core/x.ts", 'import { a } from "../modules/mail/db.ts";')).toHaveLength(1);
+		expect(moduleViolations("core/x.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
+		expect(moduleViolations("core/x.test.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
+		expect(moduleViolations("core/x.ts", 'const m = await import("../modules/mail/cli.ts");')).toHaveLength(1);
+		expect(moduleViolations("adapters/t3/x.ts", 'import { a } from "../../modules/mail/db.ts";')).toHaveLength(1);
+		expect(moduleViolations("web/app.ts", 'import { a } from "../modules/index.ts";')).toHaveLength(1);
+		expect(moduleViolations("ask.ts", 'import { a } from "./modules/mail/config.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { a } from "../../adapters/t3/state.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { a } from "../other/y.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { a } from "../index.ts";')).toHaveLength(1);
+		expect(moduleViolations("modules/mail/x.ts", 'import { Database } from "bun:sqlite";')).toHaveLength(1);
+		// A test may read a database file raw, to check what the shared opener made.
+		expect(moduleViolations("modules/mail/x.test.ts", 'import { Database } from "bun:sqlite";')).toEqual([]);
+		// What is allowed.
+		expect(moduleViolations("cli.ts", 'const m = await import("./modules/index.ts");')).toEqual([]);
+		expect(moduleViolations("daemon.ts", 'import { a } from "./modules/index.ts";')).toEqual([]);
+		expect(moduleViolations("cli.test.ts", 'import { a } from "./modules/index.ts";')).toEqual([]);
+		expect(
+			moduleViolations(
+				"modules/mail/x.ts",
+				'import { a } from "../../core/config.ts";\nimport { b } from "./db.ts";\n// import { c } from "../../adapters/t3/state.ts";',
+			),
+		).toEqual([]);
+		expect(
+			moduleViolations(
+				"modules/index.ts",
+				'import { mail } from "./mail/index.ts";\nimport { other } from "./other/index.ts";',
+			),
+		).toEqual([]);
+		expect(moduleViolations("core/x.ts", 'import { a } from "./adapter.ts";')).toEqual([]);
+	});
+});
+
 // ---- one item system --------------------------------------------------------------------------------
 
 /** The identifiers of the mechanisms the item system replaced. Any of them coming back is a second mechanism. */
@@ -235,11 +338,12 @@ describe("one item system", () => {
 		expect(callers).toEqual(["core/sqlite-store.ts"]);
 	});
 
-	test("nothing in src/core/ but the store opens a database: the core reaches state only through the Store", () => {
+	test("nothing in src/core/ but the store and the shared opener opens a database: the core reaches state only through the Store", () => {
 		const opens = sources().filter(
 			(f) => f.startsWith("core/") && /from\s*["']bun:sqlite["']/.test(readFileSync(join(SRC, f), "utf8")),
 		);
-		expect(opens).toEqual(["core/sqlite-store.ts"]);
+		// The store, and the one opener it shares with an optional module's own database file (src/core/database.ts).
+		expect(opens).toEqual(["core/database.ts", "core/sqlite-store.ts"]);
 	});
 
 	test("the checker catches each kind of second mechanism (so a pass means something)", () => {
