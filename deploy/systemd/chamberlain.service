@@ -2,6 +2,7 @@
 #   cp deploy/systemd/chamberlain.service ~/.config/systemd/user/ && systemctl --user daemon-reload
 #   systemctl --user enable --now chamberlain.service
 # Not installed by anything in this repo. Tune the unit names in After= to match how T3 runs on your machine.
+# This runs from a checkout with Bun. With the standalone binary (see the README, "Install") use the ExecStart line below it instead.
 [Unit]
 Description=Chamberlain: wakes the Steward when a T3 thread needs attention
 After=network-online.target
@@ -12,6 +13,8 @@ StartLimitBurst=5
 # The checkout. %h is your home directory.
 WorkingDirectory=%h/chamberlain
 ExecStart=%h/.bun/bin/bun src/daemon.ts
+# The standalone binary needs no checkout: delete the two lines above and use
+#   ExecStart=%h/.local/bin/chamberlain daemon
 Environment=HOME=%h
 # Optional: CHAMBERLAIN_* settings, one KEY=value per line (see README, "Configuration reference").
 EnvironmentFile=-%h/.config/chamberlain/daemon.env
