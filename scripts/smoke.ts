@@ -273,10 +273,12 @@ try {
 		logged.exitCode === 0 && exec("decided", "list").stdout.toString().includes("kept the default"),
 	);
 	// The sweep prompt is read by the daemon at run time; it must be inside the binary.
-	const sweep = readFileSync(join(ROOT, "docs/steward-sweep-prompt.md"), "utf8")
+	const sweepLine = readFileSync(join(ROOT, "docs/steward-sweep-prompt.md"), "utf8")
 		.split("\n")
-		.find((l) => l.startsWith("1. ") || l.startsWith("2. "))!
-		.slice(0, 60);
+		.find((l) => l.startsWith("1. ") || l.startsWith("2. "));
+	if (sweepLine === undefined)
+		throw Error("docs/steward-sweep-prompt.md has no numbered step to look for in the binary");
+	const sweep = sweepLine.slice(0, 60);
 	check(
 		"the sweep prompt is embedded in the binary",
 		Buffer.from(readFileSync(bin)).includes(Buffer.from(sweep)),
