@@ -54,6 +54,8 @@
 .dq-row{border-bottom:1px solid var(--border);padding:10px 0;display:flex;flex-direction:column;gap:4px}.dq-row:last-child{border-bottom:0}
 .dq-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground)}
 .dq-link{display:inline-flex;align-items:center;align-self:flex-start;min-height:40px;padding:0 2px;font-size:13px;color:var(--primary);text-decoration:underline;text-underline-offset:3px}
+.dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:0 14px;border-top:1px solid var(--border);margin-top:2px;padding-top:2px}.dq-actions .dq-link{font-size:12px;color:var(--muted-foreground);text-decoration:none;min-height:36px}.dq-actions .dq-link:hover{color:var(--foreground)}
+.dq-snoozed{border:1px solid var(--border);border-radius:var(--radius);font-size:13px}.dq-snoozed>summary{cursor:pointer;list-style:none;padding:10px 12px;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--muted-foreground)}.dq-snoozed>summary::-webkit-details-marker{display:none}.dq-snoozed>summary::after{content:"›";float:right;transition:transform .15s}.dq-snoozed[open]>summary::after{transform:rotate(90deg)}.dq-snoozed .dq-row{padding:10px 12px}
 .dq-go:disabled{opacity:.5}.dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
 	const healthCss = `.dq-health{padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;--health-tone:var(--success)}
 .dq-health-summary{list-style:none;cursor:pointer;padding:10px 12px;display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:6px 10px}.dq-health-summary::-webkit-details-marker{display:none}.dq-health-summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:10px}.dq-health-chevron{font-size:14px;color:var(--muted-foreground);transition:transform .15s}.dq-health[open]>.dq-health-summary .dq-health-chevron{transform:rotate(90deg)}.dq-health[open]>.dq-health-summary{border-bottom:1px solid var(--border)}
@@ -139,16 +141,25 @@
 		head.firstChild.textContent = "Decision ";
 		try {
 			// An inline frame may not read one item on its own, so it finds this one in the open queue, then in the recent answers.
-			const open = (await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json()).items || [];
-			const it = open.find((x) => x.id === ITEM);
+			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
+			const it = (q.items || []).find((x) => x.id === ITEM);
 			if (it) { count.textContent = "open"; list.replaceChildren(card(it)); return; }
+			// A snoozed question is not answered and not on the active list: say when it returns. It is un-snoozed on the full queue page.
+			const later = (q.snoozed || []).find((x) => x.id === ITEM);
+			if (later) {
+				count.textContent = "snoozed";
+				const c = el("div", "dq-card");
+				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`), actions(later, false));
+				list.replaceChildren(c);
+				return;
+			}
 			const done = (await (await authFetch(`${BASE}/api/recent`, { cache: "no-store" })).json()).items || [];
 			const was = done.find((x) => x.id === ITEM);
 			if (!was) { count.textContent = "?"; list.replaceChildren(el("div", "dq-msg dq-bad", `No such question: ${ITEM}`)); return; }
-			count.textContent = "answered";
+			count.textContent = was.status === "dismissed" ? "dismissed" : "answered";
 			const c = el("div", "dq-card");
 			c.append(el("div", `dq-kind ${was.kind}`, KIND[was.kind] || was.kind), el("div", "dq-title", was.title));
-			const how = was.status === "answered-on-card" ? "Answered on its question card in T3." : `Answered: ${was.answer?.label ?? ""}${was.answer?.note ? ` (${was.answer.note})` : ""}.`;
+			const how = was.status === "answered-on-card" ? "Answered on its question card in T3." : was.status === "dismissed" ? `Dismissed${was.dismissal?.note ? ` (${was.dismissal.note})` : ""}. Nothing was answered.` : `Answered: ${was.answer?.label ?? ""}${was.answer?.note ? ` (${was.answer.note})` : ""}.`;
 			c.append(el("div", "dq-msg dq-ok", how));
 			list.replaceChildren(c);
 		} catch (e) {
@@ -173,6 +184,8 @@
 		return box;
 	}
 
+	// When a snoozed question returns, in this device's own time zone.
+	const returnsAt = (iso) => { const d = new Date(iso); return isNaN(d) ? "later" : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
 	// A link out of this view: one of the page's own addresses, signed in with ?k=. T3 Code's web and desktop clients show this view in a
 	// sandboxed frame that opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets.
 	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}${kq}`; a.target = "_blank"; a.rel = "noopener"; return a; };
@@ -190,6 +203,17 @@
 		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open) : null;
 	};
 
+	// Little quiet buttons along a card's bottom edge, in the queue page's order: Open the thread, Snooze, Direction, Dismiss. The last three change state,
+	// which the server refuses to this frame (inlineVerdict in app.ts), so each opens the item on the full queue page, where it works. A secret and a
+	// card pointer are settled in their own thread: they get the thread link and Snooze.
+	const actions = (it, settles) => {
+		const row = el("div", "dq-actions");
+		const own = threadLink(it);
+		if (own) row.append(own);
+		for (const name of settles ? ["Snooze", "Direction", "Dismiss"] : ["Snooze"]) row.append(linkOut(name, `/item/${encodeURIComponent(it.id)}`));
+		return row;
+	};
+
 	function card(it) {
 		const c = el("div", "dq-card");
 		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
@@ -200,15 +224,14 @@
 			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; ev.append(i); }
 			c.append(ev);
 		}
-		const own = threadLink(it);
 		if (it.secret) {
 			// The server says `ended` once no secret box waits in the thread (it timed out, or was cancelled or answered): never point at a box that is gone.
 			if (it.secretRequest === "ended") c.append(el("div", "dq-msg dq-expired", "Request expired. Its secret box is closed: ask the thread to reopen it."));
 			else c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here."));
-			if (own) c.append(own);
+			c.append(actions(it, false));
 			return c;
-		}
-		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); if (own) c.append(own); return c; }
+			}
+			if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); c.append(actions(it, false)); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
@@ -250,8 +273,7 @@
 				else { msg.className = "dq-msg dq-bad"; msg.textContent = b.error || `HTTP ${r.status}`; go.disabled = false; }
 			} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; go.disabled = false; }
 		});
-		c.append(note, go, msg);
-		if (own) c.append(own);
+		c.append(note, go, msg, actions(it, true));
 		return c;
 	}
 	if (DASH) { dash(); return; }
@@ -274,10 +296,28 @@
 		// One line per machine the queue can't reach (a sleeping laptop), so "clear" never claims more than it can see.
 		const away = el("div", "dq-msg dq-away");
 		panes.Waiting.append(away);
+		// The Snoozed section: collapsed until opened, and it stays as the reader left it across refreshes. Un-snoozing is done on the full queue page.
+		const later = el("details", "dq-snoozed");
+		later.style.display = "none";
 		const cards = new Map(); // item ID -> its card; kept while he is choosing, so a refresh never resets his pick
 		let lastHealth, lastHealthLimits;
 		let focused = false;
 		const bad = (pane, e) => pane.replaceChildren(el("div", "dq-msg dq-bad", `Could not reach the queue: ${e?.message ?? e}`));
+		function paintSnoozed(rows) {
+			later.style.display = rows.length ? "" : "none";
+			if (!rows.length) return;
+			const body = rows.map((it) => {
+				const row = el("div", "dq-row");
+				const links = el("div", "dq-actions");
+				const own = threadLink(it);
+				if (own) links.append(own);
+				links.append(linkOut("Un-snooze", `/item/${encodeURIComponent(it.id)}`));
+				row.append(el("div", "dq-l", it.title), el("div", "dq-meta", `${it.thread} · returns ${returnsAt(it.snooze.until)}`), links);
+				return row;
+			});
+			later.replaceChildren(el("summary", "", `SNOOZED · ${rows.length}`), ...body);
+			panes.Waiting.append(later);
+		}
 		async function waiting() {
 			try {
 				const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
@@ -304,6 +344,7 @@
 				}
 				panes.Waiting.querySelector(".dq-empty")?.remove();
 				if (!cards.size) panes.Waiting.append(el("div", "dq-empty", "Nothing waiting. The queue is clear."));
+				paintSnoozed(q.snoozed || []);
 				if (ITEM && !focused && cards.has(ITEM)) { focused = true; cards.get(ITEM).classList.add("dq-focus"); }
 			} catch (e) {
 				paintHealth(health, lastHealth ? { ...lastHealth, unknown: [...(lastHealth.unknown || []), "Queue refresh unavailable"] } : null, lastHealthLimits);
@@ -331,7 +372,7 @@
 				panes.Recent.replaceChildren(...items.map((it) => {
 					const row = el("div", "dq-row");
 					const when = it.at ? new Date(it.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-					const how = it.status === "answered-on-card" ? "answered on its question card" : `${it.answer?.label ?? ""}${it.answer?.note ? ` · ${it.answer.note}` : ""}`;
+					const how = it.status === "answered-on-card" ? "answered on its question card" : it.status === "dismissed" ? `dismissed${it.dismissal?.note ? ` · ${it.dismissal.note}` : ""}` : `${it.answer?.label ?? ""}${it.answer?.note ? ` · ${it.answer.note}` : ""}`;
 					row.append(el("div", "dq-meta", `${it.id} · ${when}`), el("div", "dq-l", it.title), el("div", "dq-ctx", how));
 					return row;
 				}));

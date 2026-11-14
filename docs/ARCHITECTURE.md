@@ -455,6 +455,27 @@ would-be notifications in the `sweep` log event.
 (`relays`) and its evidence rows. A question is answered when its claim exists, and `resolved` when that wake is delivered (or the
 direct send is delivered); set aside with "not now" it is `acknowledged`, still answerable and ranked last.
 
+**Snooze, direction and dismiss** (`src/core/snooze.ts`, `src/core/questions.ts`, the routes in `src/web/app.ts`). Three more things can happen to
+an open question, and none needs a new table or a schema change: they live in the item's JSON payload and in the claim's answer JSON, which older
+builds ignore.
+
+- **Snooze** puts a question off until a time. The time is `snoozedUntil` in the item's payload, and `questionStates(store, now)` reads it
+  against the clock, so a question is on the active list again the moment `now` reaches it: nothing is rewritten and no timer has to fire, which
+  is why a restart, or a daemon that is down, changes nothing about when it returns. `ranked` leaves a snoozed item out and `snoozed` lists it.
+  The item stays `open`, no claim is made, and its afk hold stays open (`reconcileItemHolds` closes holds only for an answered, directed or
+  dismissed question) with a note of when it returns. What the daemon adds is the notice: each tick, `returnDueSnoozes` records every return once
+  (`snoozeReturned`, written before the notice, so a crash loses at most one notice and never repeats one), tells the holds, and the engine shows
+  an urgent question where the operator reads again, through the adapter's `post` (the daemon passes ask.ts's `postQuestion`, the pinned view).
+  A question that can wait comes back silently. Answering, directing or dismissing a snoozed item clears its snooze in the same transaction.
+- **Direction** is an answer with no option: a note, `choice: -1`, `kind: "direction"`. It takes the same one-wake claim as any answer and never
+  the direct thread relay (`answerRoute` returns `direct: false` for it), so the Steward reads the note.
+- **Dismiss** takes the same claim, so it is sent once and survives a crash, but the answer JSON carries `kind: "dismissed"` and
+  `questionStates` reads it back as status `dismissed` with a `dismissal`, never as an `answer`: it is not an answer or a ruling, and
+  `settled.ts` skips it. The Steward's wake says dismissed (`dismissedWakeText`), still under the `[chamberlain] answer:` head.
+
+All four routes (`snooze`, `unsnooze`, `direction`, `dismiss`) change state, so they are the full page's alone: a request needs the page's key
+and the page's own origin as an answer does, and `inlineVerdict` refuses them to an inline frame, whatever key it holds ([SECURITY.md](SECURITY.md)).
+
 ### Queue first, hold second, settled never twice
 
 Anything that waits on the operator is a **question** first and a **hold** second, and neither is made for something already

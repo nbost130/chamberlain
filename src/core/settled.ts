@@ -24,7 +24,7 @@
  * never silently.
  */
 import { principal, readSettings, type SettledMatch } from "./config.ts";
-import { questionStates } from "./questions.ts";
+import { questionStates, type QuestionState } from "./questions.ts";
 import { isExpired, readRulings, type Clock } from "./rulings.ts";
 import type { Store } from "./store.ts";
 
@@ -210,15 +210,21 @@ export function names(text: string, title: string | undefined): boolean {
 
 /* ---------- the three sources ---------- */
 
+/** What a settled question's answer says on one line: its option or direction, its note and any ruling it saved. */
+function queueAnswerText(q: QuestionState): string {
+	if (q.status === "answered-on-card") return "answered on its question card";
+	const note = q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : "";
+	const ruling = q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : "";
+	return `answered "${q.answer?.label ?? "?"}"${note}${ruling}`;
+}
+
 function queueRecords(store: Store): SettledRecord[] {
 	const out: SettledRecord[] = [];
 	for (const q of questionStates(store).values()) {
-		if (q.status === "open") continue;
+		// A dismissed item was never answered: it is not a ruling and answers no later question, so a lookup never sees it.
+		if (q.status === "open" || q.status === "dismissed") continue;
 		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
-		const answer =
-			q.status === "answered-on-card"
-				? "answered on its question card"
-				: `answered "${q.answer?.label ?? "?"}"${q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : ""}${q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : ""}`;
+		const answer = queueAnswerText(q);
 		out.push({
 			source: "queue",
 			date,

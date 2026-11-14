@@ -22,6 +22,7 @@ import {
 	type RelayLock,
 } from "./core/singleton.ts";
 import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
+import { postQuestion } from "./ask.ts";
 
 /** Runs the daemon until it is stopped. It takes no arguments: its settings are the environment and the config directory. */
 export async function main(_argv: string[] = process.argv.slice(2)) {
@@ -84,6 +85,9 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 		stewardTokens: setting("stewardTokens", CONF) === true,
 		exclude: setting("exclude", CONF) ?? [],
 		log,
+		// A snoozed urgent question that returns is shown where the operator reads, in the pinned view like a new one (ask.ts).
+		post: (item, adapter) =>
+			postQuestion(item, adapter, (line) => log("snooze-post-note", { line: line.slice(0, 200) })),
 		sweepPromptFile: SWEEP_PROMPT_FILE,
 		// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).
 		gh: ghRead,

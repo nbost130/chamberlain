@@ -167,6 +167,20 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `answerTokens` | Server name to an operate-token file in `secrets/`: cards on that server become answerable from the page. Without one a server is read-only. |
 | `publicBase` | An `https://` base (for example from `tailscale serve`) used in inline views when T3 is loaded over https. |
 
+**Snooze, Direction and Dismiss.** Every question on the queue page has a quiet row of small buttons along its bottom edge: Open thread (the link that used to
+sit with the crumbs), Snooze, Direction and Dismiss. A secret and a card pointer, which are settled in their own thread, get only the thread link and Snooze.
+
+- **Snooze** offers 1 hour, later today, tomorrow morning, next week and a time of your own, as T3's thread snooze does. The page works each out in the browser's own
+  time zone and sends an absolute time (within a year). A snoozed question leaves the active list for a **Snoozed** section, collapsed until you open it, with when each
+  one returns and an Un-snooze button, and it comes back by itself at that time, even if Chamberlain was restarted in between. An urgent question is shown again in the Decisions thread when
+  it returns (the daemon does that on its once-a-minute tick; a question with `"urgent": false` returns silently). It is not answered, so its afk hold stays open, with a note of the return time.
+- **Direction** sends the note box's text and picks no option. It counts as an answer: the Steward gets a `[chamberlain] answer:` wake that says "direction, no option chosen" and carries
+  the note, the question leaves the queue and its hold closes. It always goes to the Steward, never straight to the thread. The note is required.
+- **Dismiss** ("already handled / no longer needed") asks first, takes the note box's text if there is any, closes the question and its hold, and sends the Steward a short wake that says dismissed. It is
+  recorded as dismissed, not answered: it never counts as an answer or a ruling, and `ask` and `afk hold` never find it when they look for what is settled.
+
+The Decisions view in T3 shows the same row as links that open the question on the full page, because the view may read and plain-answer a question and nothing else ([SECURITY.md](SECURITY.md)); its Snoozed section is read-only.
+
 **Thread links.** Every card that comes from a thread links to it. The link is the adapter's (`threadLinks` and `mirrorLinks` above
 override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the
 adapter does not issue (T3: a UUID, `mcp:<uuid>`, `mcp:launch:<64 hex>`, `thread:<kind>:...`, `import:<instance>:<session>`), get no

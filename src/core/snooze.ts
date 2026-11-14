@@ -1,0 +1,106 @@
+/**
+ * Snooze: a question the principal cannot act on now goes off the active list until a time they set, into the page's Snoozed
+ * section. It is not answered, so nothing about it changes but where it shows: its item stays open, its claim is never made and
+ * its afk hold stays open, with a note of when it returns.
+ *
+ * The time is the item's own (`snoozedUntil` in its payload) and the active list reads it against a clock (`questionStates`), so a
+ * snoozed item is back on the list the moment its time passes, with no timer and nothing to run: a restart, or a daemon that is
+ * down, changes nothing. The daemon's one extra job is the notice: `returnDueSnoozes` runs on its tick and hands back each returned
+ * item once, so an urgent one can be shown where the operator reads again. A snooze ends four ways: its time passes, the principal
+ * un-snoozes, an answer, direction or dismissal settles the item (the page clears it), or the card behind a pointer resolves.
+ */
+import { heldForItem, heldId, heldOpen, noteHeld } from "./afk.ts";
+import { QUEUE, type QuestionState, questionStates } from "./questions.ts";
+import type { Store } from "./store.ts";
+
+/** The longest a snooze may last: a year. A mistyped year would hide an item for good. */
+export const SNOOZE_MAX_MS = 366 * 86_400_000;
+/** The shortest: a snooze that ends before the page reloads is no snooze. */
+export const SNOOZE_MIN_MS = 30_000;
+
+/** Pure: the time a snooze request names, as an ISO time, or why it is refused. Only an absolute time counts: the page works out "1 hour" and "tomorrow morning" in the browser's own time zone. */
+export function parseSnoozeUntil(
+	raw: unknown,
+	now: number,
+): { ok: true; until: string } | { ok: false; error: string } {
+	if (typeof raw !== "string" || !raw.trim()) return { ok: false, error: "until must be a date and time" };
+	const t = Date.parse(raw);
+	if (Number.isNaN(t)) return { ok: false, error: "until is not a date and time" };
+	if (t < now + SNOOZE_MIN_MS) return { ok: false, error: "until must be in the future" };
+	if (t > now + SNOOZE_MAX_MS) return { ok: false, error: "until is more than a year away" };
+	return { ok: true, until: new Date(t).toISOString() };
+}
+
+/** Notes each open hold that waits on this item. A hold is never closed, rewritten or duplicated by a snooze. */
+function noteHolds(store: Store, id: string, text: string, now: Date) {
+	for (const h of heldOpen(store)) if (heldForItem(h, id)) noteHeld(store, heldId(h), text, now);
+}
+
+/** Snoozes an open item until `until` (an ISO time, already checked), replacing any earlier snooze. Its holds stay open and are told when it returns. */
+export function snoozeQuestion(store: Store, id: string, until: string, now = Date.now()) {
+	store.tx(() => {
+		store.items.patch(QUEUE, id, {
+			snoozedUntil: until,
+			snoozedAt: new Date(now).toISOString(),
+			snoozeReturned: undefined,
+		});
+		noteHolds(
+			store,
+			id,
+			`Snoozed on the queue until ${until.slice(0, 16)}Z. This hold stays open: the item is not answered.`,
+			new Date(now),
+		);
+	});
+}
+
+/** Clears an item's snooze and says nothing: the answer, direction and dismissal paths use it, because settling an item ends its snooze. */
+export const clearSnooze = (store: Store, id: string) =>
+	store.items.patch(QUEUE, id, { snoozedUntil: undefined, snoozedAt: undefined, snoozeReturned: undefined });
+
+/** Ends a snooze at once: the item is on the active list. */
+export function unsnoozeQuestion(store: Store, id: string, now = Date.now()) {
+	store.tx(() => {
+		clearSnooze(store, id);
+		noteHolds(store, id, "Un-snoozed on the queue: back on the active list.", new Date(now));
+	});
+}
+
+/** A snoozed item whose time has passed, with the time it was snoozed until. */
+type Due = { question: QuestionState; until: string };
+
+/** The items whose snooze has ended and that the daemon has not yet handled, soonest return first. */
+export function dueSnoozes(store: Store, now: number): QuestionState[] {
+	return dueOf(store, now).map((d) => d.question);
+}
+
+function dueOf(store: Store, now: number): Due[] {
+	const due: Due[] = [];
+	for (const question of questionStates(store, now).values()) {
+		const { snooze } = question;
+		if (question.status === "open" && snooze && !snooze.active && !snooze.returned)
+			due.push({ question, until: snooze.until });
+	}
+	return due.sort((a, b) => a.until.localeCompare(b.until));
+}
+
+/**
+ * Handles each item whose snooze has ended, once: records it, tells its holds and returns it so the caller can notify. The record
+ * is written before the notice, as the daemon's other notices are, so a crash loses at most one notice and never repeats one.
+ * The caller notifies only the urgent ones (`isUrgent`): a question that can wait (`urgent: false`) comes back silently, as it was filed.
+ */
+export function returnDueSnoozes(store: Store, now = Date.now()): QuestionState[] {
+	const back: QuestionState[] = [];
+	for (const { question, until } of dueOf(store, now)) {
+		store.tx(() => {
+			store.items.patch(QUEUE, question.id, { snoozeReturned: until });
+			noteHolds(
+				store,
+				question.id,
+				`Snooze ended (${until.slice(0, 16)}Z): the item is back on the active list.`,
+				new Date(now),
+			);
+		});
+		back.push(question);
+	}
+	return back;
+}

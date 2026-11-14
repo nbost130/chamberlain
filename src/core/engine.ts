@@ -15,13 +15,15 @@ import {
 	unverifiedAlarm,
 	type CardThreadRead,
 } from "./card-hold.ts";
-import type { Question } from "./questions.ts";
+import { isUrgent, plainQuestion, type Question } from "./questions.ts";
+import { returnDueSnoozes } from "./snooze.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import {
 	has,
 	normalizeThread,
 	type Adapter,
 	type Inspector,
+	type PostResult,
 	type ThreadEvent,
 	type ThreadState,
 	type WaitingItem,
@@ -147,6 +149,8 @@ export type EngineDeps = {
 	relay?: Partial<Pick<RelayDeps, "retryAfterMs" | "maxAttempts" | "staleAfterMs" | "now" | "ceilingMs">>;
 	/** Runs `ask.ts` for the Steward-health hand-off question, asked only when the adapter cannot start the hand-off itself (no `handoffInstruction`). Undefined: that question is not asked. */
 	ask?: (raw: object) => Promise<void>;
+	/** Shows a question where the operator reads, for a snoozed urgent one that returned. Default: the adapter's one-line notice; the daemon passes the pinned view (ask.ts `postQuestion`). */
+	post?: (item: Question, adapter: Adapter) => Promise<PostResult>;
 	/** The Steward's compaction size, in tokens. */
 	compactAt?: number;
 	/** Where the full-sweep prompt template lives when the config directory has no sweep-prompt.md. */
@@ -1109,6 +1113,28 @@ export function createEngine(d: EngineDeps) {
 		return reconcilingCards;
 	}
 
+	/**
+	 * Snoozed questions whose time has come (src/core/snooze.ts): each is recorded once, its holds are told, and an urgent one is shown where the
+	 * operator reads again, as a new question is. A question that can wait comes back silently. Best effort: it is on the active list either way.
+	 */
+	async function snoozeReturnTick() {
+		try {
+			for (const q of returnDueSnoozes(store, d.relay?.now?.() ?? Date.now())) {
+				const urgent = isUrgent(q);
+				log("snooze-returned", { id: q.id, notified: urgent && !DRY });
+				if (!urgent || DRY) continue;
+				await (d.post ?? ((item: Question, a: Adapter) => a.post(item, {})))(plainQuestion(q), homeAdapter).then(
+					(r) => {
+						if (!r.ok) log("snooze-post-failed", { id: q.id, detail: clip(r.detail, 200) });
+					},
+					(e) => log("snooze-post-failed", { id: q.id, detail: String(e).slice(0, 200) }),
+				);
+			}
+		} catch (e) {
+			log("snooze-return-error", { error: String(e).slice(0, 200) });
+		}
+	}
+
 	/** One pass of the once-a-minute housekeeping. The interval runs it; tests call it. */
 	async function tick() {
 		try {
@@ -1126,9 +1152,11 @@ export function createEngine(d: EngineDeps) {
 			relay.pass(),
 			stewardCheck().catch((e) => log("steward-check-error", { error: String(e) })),
 			cardReconcileTick(),
+			snoozeReturnTick(),
 		];
 		if (d.housekeeping !== false) {
 			checks.push(holdReconcileTick());
+
 			if (deskLane) {
 				try {
 					drainAlertDesk({

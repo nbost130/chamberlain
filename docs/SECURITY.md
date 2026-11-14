@@ -39,7 +39,9 @@ it is deliberately conservative.
   an API call does not stand in for it. The token is a capability: anyone who can read that thread can use it, as you can. Even with it
   the **server** limits a frame, by route and by field (not the page's own script, which an attacker would not run): a `null`-origin
   request may `GET /api/queue`, `/api/recent` and `/api/rulings`, and `POST /api/items/<id>/answer` with a `choice` and an optional `note`
-  and **no other field**. It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
+  and **no other field**. It **cannot** snooze, un-snooze, direct or dismiss an item (`POST /api/items/<id>/snooze|unsnooze|direction|dismiss`
+  are the full page's alone: the page's key from the page's own origin, with the guard header and a JSON body, as an answer to a card needs; a
+  frame's request for one is refused with 403 and writes nothing). It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
   nothing), answer a mirrored card or an approval (refused, however exact the fingerprint), read one item on its own
   (`GET /api/items/<id>` is refused), batch-accept, or change anything else. Cards, approvals and rulings are done on the full page.
 - **What the page will and won't answer.** Question cards and one-time approvals ("approve once" or "decline", never

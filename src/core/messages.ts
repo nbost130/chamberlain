@@ -120,6 +120,10 @@ export const idleThreadsWake = (count: number, block: string, classified = false
 export const answerWakeText = (itemId: string, body: string) =>
 	`[chamberlain] answer: ${Principal()} answered decision-queue item ${itemId} on the queue page. These are their choices, from the page's record. One wake carries each item; if this item ID reaches you twice, the second is a repeat:\n<<<\n${body}\n>>>`;
 
+/** The head of the wake for a dismissed item: still an `[chamberlain] answer:` wake, so it rides the same path, but it says it answers nothing. */
+export const dismissedWakeText = (itemId: string, body: string) =>
+	`[chamberlain] answer: ${Principal()} dismissed decision-queue item ${itemId} on the queue page. This is not an answer: it settles nothing. One wake carries each item; if this item ID reaches you twice, the second is a repeat:\n<<<\n${body}\n>>>`;
+
 /** The head of a digest: wakes held while the Steward was busy, arriving as one. */
 export const digestHead = (count: number, folded: number) =>
 	`[chamberlain] digest: ${count} wake${count === 1 ? "" : "s"} were held while you were busy and arrive together as this one wake, oldest first. Treat each item below as its own wake; each keeps its delivery ID, and if one reaches you twice the second is a repeat.${folded ? ` ${folded} earlier wake${folded === 1 ? "" : "s"} about the same thread and kind ${folded === 1 ? "was" : "were"} folded into the latest, which is all that is kept.` : ""}`;

@@ -18,6 +18,7 @@ import {
 	pageClaim,
 	questionStates,
 	ranked,
+	snoozed,
 	readRelay,
 	recordAnswerDelivered,
 	recoverClaims,
@@ -49,9 +50,11 @@ import {
 	stageRulings,
 	type Clock,
 } from "../core/rulings.ts";
+import { clearSnooze } from "../core/snooze.ts";
 import type { Store } from "../core/store.ts";
 import type { WaitingCard } from "../core/adapter.ts";
 import { resolveEvidence } from "./evidence.ts";
+import { createItemActions, ITEM_ACTIONS, takenReply, unsettleable } from "./queue-actions.ts";
 import { openPage, type Linker } from "./thread-links.ts";
 import { checkCard, needsConfirmation, type SendToThread } from "./waiting.ts";
 
@@ -156,8 +159,10 @@ export function createApp(d: AppDeps) {
 		q.finally(() => background.delete(q));
 	};
 
-	const state = () => questionStates(d.store);
 	const clock: Clock = () => d.now?.() ?? Date.now();
+	/** Every question as it stands now: a snooze is read against the clock, so one whose time has passed is on the active list. */
+	const state = () => questionStates(d.store, clock());
+	const itemActions = createItemActions({ store: d.store, clock, log: d.log, serial });
 	const rulings = () => readRulings(d.store);
 	const decisions = () => d.store.decisions.list();
 
@@ -314,23 +319,8 @@ export function createApp(d: AppDeps) {
 			}
 			const i = state().get(id);
 			if (!i) return { status: 404, body: { error: "no such item" } };
-			if (i.status !== "open")
-				return {
-					status: 409,
-					body: { error: i.status === "answered" ? "already answered" : "already answered on its question card in T3" },
-				};
-			if (i.secret)
-				return { status: 400, body: { error: "a secret is entered in its own thread, never on this page" } };
-			// A card pointer closes only when its card does. An answer here would take it off the queue (and its hold off the ledger) while the
-			// card still waits, so it is refused, and the refusal says where to act.
-			if (i.cardRequest)
-				return {
-					status: 409,
-					body: {
-						error:
-							"this question points to a question card waiting in its thread: act on the card itself; this question and its hold close only when the card does",
-					},
-				};
+			const refused = unsettleable(i);
+			if (refused) return refused;
 			if (!Number.isInteger(body.choice) || body.choice < 0 || body.choice >= i.options.length)
 				return { status: 400, body: { error: "choose one of the options" } };
 			const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 4000) : undefined;
@@ -356,12 +346,8 @@ export function createApp(d: AppDeps) {
 						error: `the proposed ruling expired on ${i.proposedExpires}: save it without a ruling, or write a new one`,
 					},
 				};
-			const taken = (owner: string) => ({
-				status: 409,
-				body: { error: owner === PAGE ? "already answered" : "already answered on its question card in T3" },
-			});
 			const held = wokenBy(d.store, i.id);
-			if (held !== undefined) return taken(held);
+			if (held !== undefined) return takenReply(held);
 			// Every refusal comes before the claim, and a refused answer writes nothing. The claim, the answer, the ruling it saves and
 			// the wake's outbox row are ONE transaction: they commit together or not at all, so no crash can leave the answer half made.
 			// An item whose one wake is already claimed (by an earlier answer, in this process or another) refuses this one.
@@ -397,13 +383,15 @@ export function createApp(d: AppDeps) {
 					return;
 				}
 				if (ruling) staged.commit();
+				// Answering a snoozed item (from another surface, or one that returned meanwhile) ends its snooze.
+				if (i.snooze) clearSnooze(d.store, i.id);
 				// A thread-routed answer's wake is only its fallback: it is written if the direct send fails (follow).
 				if (!c.relay) enqueueClaim(d.store, c);
 				made.claim = c;
 				crashPoint("before-commit");
 			});
 			const claim = made.claim;
-			if (!claim) return taken(made.lost?.owner ?? "");
+			if (!claim) return takenReply(made.lost?.owner ?? "");
 			crashPoint("committed");
 			const a = claim.answer!;
 			d.log("answered", { id: i.id, choice: a.choice, by, ruling: a.ruling?.id });
@@ -498,9 +486,11 @@ export function createApp(d: AppDeps) {
 		if (req.method === "GET" && url.pathname === "/api/queue") {
 			const s = state();
 			const open = ranked(s.values()).map(view);
+			const later = snoozed(s.values()).map(view);
 			const list = rulings();
 			return json({
 				items: open,
+				snoozed: later,
 				cards: (d.mirror?.list() ?? []).map(cardView),
 				unreachable: d.mirror?.unreachable?.() ?? [],
 				health: readHealth(d.store) ?? null,
@@ -518,7 +508,7 @@ export function createApp(d: AppDeps) {
 		if (req.method === "GET" && url.pathname === "/api/recent") {
 			const done = [...state().values()]
 				.filter((i) => i.status !== "open")
-				.map((i) => ({ ...view(i), at: i.answer?.t ?? i.createdAt }));
+				.map((i) => ({ ...view(i), at: i.answer?.t ?? i.dismissal?.t ?? i.createdAt }));
 			done.sort((a, b) => String(b.at).localeCompare(String(a.at)));
 			return json({ items: done.slice(0, 20) });
 		}
@@ -602,6 +592,13 @@ export function createApp(d: AppDeps) {
 		}
 		if (parts[1] === "items" && parts[2] && parts[3] === "answer") {
 			const r = await answer(parts[2], body as unknown as AnswerIn, "page", inline);
+			return json(r.body, r.status);
+		}
+		if (parts[1] === "items" && parts[2] && parts.length === 4 && ITEM_ACTIONS.has(String(parts[3]))) {
+			// Snooze, direction and dismiss change state, so they are the full page's alone (see inlineVerdict): the second lock on the same door.
+			if (inline)
+				return fail(403, "refused: snooze, direction and dismiss are done on the full page, not in an inline frame");
+			const r = await itemActions.run(parts[2], String(parts[3]), body);
 			return json(r.body, r.status);
 		}
 		if (parts[1] === "items" && parts[2] && parts[3] === "not-now") {

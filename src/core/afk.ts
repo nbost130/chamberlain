@@ -337,6 +337,10 @@ export function main(argv: string[] = process.argv.slice(2)) {
 			process.exit(2);
 		}
 		// A hold on a question already answered waits on nothing: the answer is what the hold was for.
+		if (queued.status === "dismissed") {
+			console.error(`afk.ts hold: refused, ${item} was dismissed: nothing waits on ${principal()}.`);
+			process.exit(2);
+		}
 		if (queued.status !== "open") {
 			console.error(
 				`afk.ts hold: refused, ${item} is already answered (${queued.answer ? `"${queued.answer.label}"` : "on its card"}). Act on the answer; nothing waits on ${principal()}.`,

@@ -33,6 +33,7 @@ import { CONF, STATE } from "./core/config.ts";
 import { readToken } from "./core/capability.ts";
 import { cfg } from "./core/layout.ts";
 import { homeAdapter } from "./adapters/index.ts";
+import type { Adapter, PostResult } from "./core/adapter.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
 import { expiresProblem, isExpired } from "./core/rulings.ts";
@@ -230,6 +231,34 @@ export async function queueUp(base: string, timeoutMs = 3000): Promise<boolean> 
 	}
 }
 
+/**
+ * Shows a question where the operator reads, through the adapter: the pinned view when the page answers and has a key, else a one-line
+ * notice. The daemon uses it too, when a snoozed urgent question returns (src/core/snooze.ts). `say` hears why a view was not posted.
+ */
+export async function postQuestion(
+	item: Question,
+	adapter: Adapter,
+	say: (line: string) => void = (l) => console.error(l),
+): Promise<PostResult> {
+	const base = queueBase();
+	const up = base !== undefined && (await queueUp(base));
+	// The view's links carry the page's key. The page makes it when it starts, so a page that answers has one; one that cannot be read
+	// (a wrong mode) or is missing gets the notice, with the reason on stderr, never a link that would not work.
+	let key: string | undefined;
+	if (up) {
+		try {
+			key = readToken(CONF);
+		} catch (e) {
+			say(
+				`the page's key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
+			);
+		}
+		if (!key) say("the page has no key yet: run `chamberlain web link`; posting a notice instead of the view");
+	}
+	const inline = up && key !== undefined;
+	return adapter.post(item, { queueUrl: inline ? base : undefined, capability: inline ? key : undefined });
+}
+
 export async function main(argv: string[] = process.argv.slice(2)) {
 	startup();
 	const arg = argv[0];
@@ -267,25 +296,8 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 		console.log(`${item.id} (on the queue page, not urgent: no notification sent)`);
 		return;
 	}
-	const base = queueBase();
-	const up = base !== undefined && (await queueUp(base));
-	// The view's links carry the page's key. The page makes it when it starts, so a page that answers has one; one that cannot be read
-	// (a wrong mode) or is missing gets the notice, with the reason on stderr, never a link that would not work.
-	let key: string | undefined;
-	if (up) {
-		try {
-			key = readToken(CONF);
-		} catch (e) {
-			console.error(
-				`the page's key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
-			);
-		}
-		if (!key)
-			console.error("the page has no key yet: run `chamberlain web link`; posting a notice instead of the view");
-	}
-	const inline = up && key !== undefined;
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });
-	const card = await adapter.post(item, { queueUrl: inline ? base : undefined, capability: inline ? key : undefined });
+	const card = await postQuestion(item, adapter);
 	if (!card.ok) {
 		console.error(`${item.id} is on the queue page, but the question did not post: ${card.detail}`);
 		process.exit(1);

@@ -487,6 +487,10 @@ test("a rotation that comes on a refresh, with questions on screen, is said so i
 
 // ---- links out of the view: T3 Code's frame opens only http(s), so each one is the page's own address, signed with ?k= ----
 
+/** The three buttons after the thread link on a queue item: this frame cannot do them, so each opens the item on the full page, signed in. */
+const settleLinks = (id: string, key = "KEY", only: string[] = ["Snooze", "Direction", "Dismiss"]) =>
+	only.map((text) => ({ text, href: `http://queue.test/item/${id}?k=${key}`, target: "_blank" }));
+
 describe("links out of the view", () => {
 	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
 	const anchors = (dq: El) =>
@@ -518,14 +522,18 @@ describe("links out of the view", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+			...settleLinks("Q-ctx1"),
 		]);
 	});
-	test("a secret or a card pointer, answered in its thread, links to that thread", async () => {
+	test("a secret or a card pointer, answered in its thread, links to that thread and can be snoozed, nothing more", async () => {
 		const base = { ...item("x"), open: "/open/mac/t2" };
 		for (const extra of [{ secret: true }, { cardRequest: { requestId: "r" } }]) {
 			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
 			await settle();
-			expect(anchors(dq).map((a) => a.href)).toEqual(["http://queue.test/open/mac/t2?k=KEY"]);
+			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([
+				["Open the thread", "http://queue.test/open/mac/t2?k=KEY"],
+				["Snooze", "http://queue.test/item/Q-ctx1?k=KEY"],
+			]);
 		}
 	});
 	test("no /open path, no thread link: never a raw t3-thread:// or other custom-scheme href, which the frame cannot open", async () => {
@@ -534,7 +542,8 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [q], cards: [c] }), { src: SRC });
 		await settle();
 		const hrefs = anchors(dq).map((a) => a.href);
-		expect(hrefs).toEqual(["http://queue.test/?k=KEY"]);
+		expect(anchors(dq).map((a) => a.text)).toEqual(["Snooze", "Direction", "Dismiss", "Open the queue page"]);
+		expect(hrefs[3]).toBe("http://queue.test/?k=KEY");
 		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
 	});
 });
@@ -558,7 +567,7 @@ describe("the thread link inside T3's phone app", () => {
 	test("at the top of T3's web view, a question's thread link is the app link itself, opened in place (no new window)", async () => {
 		const dq = run(() => ({ items: [q] }), { src: SRC, window: top() });
 		await settle();
-		expect(anchors(dq)).toEqual([{ text: "Open the thread", href: APP, target: "" }]);
+		expect(anchors(dq)).toEqual([{ text: "Open the thread", href: APP, target: "" }, ...settleLinks("Q-ctx1")]);
 	});
 	test("a mirrored card and a secret question get the app link too; the queue page link stays the page's own", async () => {
 		const c = { ...card("make", "sig-1"), open: "/open/main/t", app: APP };
@@ -567,6 +576,7 @@ describe("the thread link inside T3's phone app", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: APP, target: "" },
+			...settleLinks("Q-ctx1", "KEY", ["Snooze"]),
 			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
 			{ text: "Open the thread", href: APP, target: "" },
 		]);
@@ -585,6 +595,7 @@ describe("the thread link inside T3's phone app", () => {
 			await settle();
 			expect(anchors(dq)).toEqual([
 				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+				...settleLinks("Q-ctx1"),
 			]);
 		}
 	});
@@ -618,7 +629,14 @@ describe("the thread link inside T3's phone app", () => {
 				},
 			);
 			await settle();
-			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1?k=KEY"]]);
+			expect([app, anchors(dq).map((a) => a.href)]).toEqual([
+				app,
+				[
+					"http://queue.test/open/mithrandir/t1?k=KEY",
+					...settleLinks("Q-ctx1").map((a) => a.href),
+					...settleLinks("Q-ctx2").map((a) => a.href),
+				],
+			]);
 		}
 	});
 });
@@ -630,7 +648,7 @@ describe("a secret question whose secret box has closed", () => {
 		await settle();
 		expect(dq.textContent).toContain("Request expired. Its secret box is closed: ask the thread to reopen it.");
 		expect(dq.textContent).not.toContain("A secret is entered in its own thread");
-		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread"]);
+		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread", "Snooze"]);
 		expect(dq.all((e) => e.tag === "button" && e.className === "dq-go")).toEqual([]);
 	});
 	test("an open box, an unknown state or any other value reads as before", async () => {
@@ -649,4 +667,130 @@ describe("a secret question whose secret box has closed", () => {
 		await settle();
 		expect(dq.textContent).not.toContain("Request expired");
 	});
+});
+
+// ---- the Snoozed section and the item buttons: this view reads and links, and never changes state (the server refuses a frame) ----
+
+describe("the Snoozed section in the Decisions view", () => {
+	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
+	const snoozedItem = (id: string, until: string, over: Record<string, unknown> = {}) => ({
+		...item("x"),
+		id,
+		title: `Snoozed ${id}`,
+		open: "/open/main/t1",
+		snooze: { until, at: "2026-11-14T12:00:00.000Z", active: true, returned: false },
+		...over,
+	});
+	const section = (dq: El) => dq.querySelector(".dq-snoozed")!;
+	test("is collapsed by default, counts what is in it, and does not count toward what is waiting", async () => {
+		const dq = run(() => ({ items: [item("x")], snoozed: [snoozedItem("Q-snz1", "2026-11-15T09:00:00.000Z")] }), {
+			src: SRC,
+		});
+		await settle();
+		const s = section(dq);
+		expect(s.tag).toBe("details");
+		expect(s.open).toBe(false);
+		expect(s.style.display).toBe("");
+		expect(s.querySelector("summary")!.textContent).toBe("SNOOZED · 1");
+		expect(dq.querySelector(".dq-count")!.textContent).toBe("1 waiting");
+	});
+	test("each row says when the question returns and links to the full page, where it is un-snoozed; it offers nothing that changes state", async () => {
+		const calls: { method: string; path: string }[] = [];
+		const dq = run(() => ({ items: [], snoozed: [snoozedItem("Q-snz1", "2026-11-15T09:00:00.000Z")] }), {
+			src: SRC,
+			calls,
+		});
+		await settle();
+		const row = section(dq).querySelector(".dq-row")!;
+		expect(row.textContent).toContain("Snoozed Q-snz1");
+		expect(row.textContent).toContain("returns ");
+		expect(row.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
+			["Open the thread", "http://queue.test/open/main/t1?k=KEY"],
+			["Un-snooze", "http://queue.test/item/Q-snz1?k=KEY"],
+		]);
+		expect(row.all((e) => e.tag === "button")).toEqual([]);
+		expect(calls.every((c) => c.method === "GET")).toBe(true);
+	});
+	test("is hidden when nothing is snoozed, and stays open across a refresh when the reader opened it", async () => {
+		let snoozed: unknown[] = [];
+		const dq = run(() => ({ items: [], snoozed }), { src: SRC });
+		await settle();
+		expect(dq.querySelector(".dq-snoozed")).toBeNull();
+		snoozed = [snoozedItem("Q-snz1", "2026-11-15T09:00:00.000Z"), snoozedItem("Q-snz2", "2026-11-16T09:00:00.000Z")];
+		const refresh = () => dq.all((e) => e.tag === "button" && e.textContent === "Refresh")[0]!.listeners.click ?? [];
+		for (const fn of refresh()) await fn();
+		await settle();
+		expect(section(dq).style.display).toBe("");
+		expect(section(dq).querySelector("summary")!.textContent).toBe("SNOOZED · 2");
+		section(dq).open = true;
+		for (const fn of refresh()) await fn();
+		await settle();
+		expect(section(dq).open).toBe(true);
+		snoozed = [];
+		for (const fn of refresh()) await fn();
+		await settle();
+		expect(section(dq).style.display).toBe("none");
+	});
+	test("a snoozed question is not in the waiting list, and nothing answerable is drawn for it", async () => {
+		const dq = run(() => ({ items: [], snoozed: [snoozedItem("Q-snz1", "2026-11-15T09:00:00.000Z")] }), { src: SRC });
+		await settle();
+		expect(dq.all((e) => e.tag === "button" && e.className === "dq-go")).toEqual([]);
+		expect(dq.all((e) => e.tag === "textarea")).toEqual([]);
+	});
+});
+
+describe("one question's view (?item=) and the recent answers know snoozed and dismissed", () => {
+	test("a snoozed question says when it returns and links to it on the full page", async () => {
+		const later = {
+			...item("x"),
+			id: "Q-snz1",
+			snooze: { until: "2026-11-15T09:00:00.000Z", at: "2026-11-14T12:00:00.000Z", active: true, returned: false },
+		};
+		const dq = run(() => ({ items: [], snoozed: [later] }), { src: "http://queue.test/inline.js?item=Q-snz1&k=KEY" });
+		await settle();
+		expect(dq.textContent).toContain("Snoozed. It returns ");
+		expect(dq.querySelector(".dq-count")!.textContent).toBe("snoozed");
+		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Snooze"]);
+	});
+	test("a dismissed question says dismissed and that nothing was answered", async () => {
+		const gone = {
+			...item("x"),
+			id: "Q-dis1",
+			status: "dismissed",
+			dismissal: { note: "handled in the thread", t: "2026-11-14T12:00:00.000Z" },
+		};
+		const dq = run(() => ({ items: [] }), {
+			src: "http://queue.test/inline.js?item=Q-dis1&k=KEY",
+			recent: () => ({ items: [gone] }),
+		});
+		await settle();
+		expect(dq.textContent).toContain("Dismissed (handled in the thread). Nothing was answered.");
+		expect(dq.querySelector(".dq-count")!.textContent).toBe("dismissed");
+	});
+	test("the Recent tab lists a dismissed question as dismissed, with its note, never with an answer's label", async () => {
+		const gone = {
+			...item("x"),
+			id: "Q-dis1",
+			status: "dismissed",
+			dismissal: { note: "no longer needed", t: "2026-11-14T12:00:00.000Z" },
+			at: "2026-11-14T12:00:00.000Z",
+		};
+		const dq = run(() => ({ items: [] }), {
+			src: "http://queue.test/inline.js?view=decisions&k=KEY",
+			recent: () => ({ items: [gone] }),
+		});
+		await settle();
+		const recentTab = dq.all((e) => e.tag === "button" && e.textContent === "Recent")[0]!;
+		for (const fn of recentTab.listeners.click ?? []) await fn();
+		await settle();
+		expect(dq.textContent).toContain("dismissed · no longer needed");
+	});
+});
+
+test("the view's script never calls a route that changes an item's state: those are the full page's alone", () => {
+	const source = readFileSync(new URL("./static/inline.js", import.meta.url), "utf8");
+	expect(source).not.toMatch(/\/(snooze|unsnooze|direction|dismiss)["`'?]/);
+	expect(source).not.toMatch(/api\/items\/[^"'`]*\/(snooze|unsnooze|direction|dismiss)/);
+	// and the one POST it makes is the plain answer
+	expect([...source.matchAll(/method:\s*"POST"/g)]).toHaveLength(1);
 });

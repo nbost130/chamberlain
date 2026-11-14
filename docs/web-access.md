@@ -9,7 +9,7 @@ anything else that can reach the port: another user on the machine, or any peer 
 | --- | --- |
 | `app.js`, `app.css`, `inline.js` | Nothing: they are the page's own code and carry no data. |
 | The page (`/`, `/rulings`, `/item/<id>`, `/open/<server>/<threadId>`), the API, an item's evidence | The key: a signed cookie, the `x-decision-token` header, or (for a page load or an evidence image) `?k=<key>` in the address. For **evidence** the cookie counts only when the browser says the request comes from the page's own origin (`Sec-Fetch-Site: same-origin` or `none`): another port on the same host is "same-site", and cannot embed your evidence images with your cookie. The header and `?k=` are explicit and work as before. |
-| An inline frame (origin `null`) | The key in the `x-decision-token` header, nothing else. A cookie or `?k=` on an API call does not count. |
+| An inline frame (origin `null`) | The key in the `x-decision-token` header, nothing else. A cookie or `?k=` on an API call does not count. It may read and plain-answer a question, and **not** snooze, un-snooze, direct or dismiss one: those four routes need the full page's authority (the cookie, or the key from the page's own origin), the same as answering a card. |
 | A page on any other origin | Refused (`403`), key or not. |
 
 **Does the full page need the key too? Yes.** The page's HTML and script carry no data, but its API and evidence do, and the page is what you open in

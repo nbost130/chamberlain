@@ -26,7 +26,7 @@ import {
 	type Held,
 	type HoldRef,
 } from "./afk.ts";
-import { QUEUE, questionStates } from "./questions.ts";
+import { QUEUE, questionStates, type QuestionState } from "./questions.ts";
 import type { Store } from "./store.ts";
 
 /** How often the ref pass runs, and how many GitHub API requests it may spend (each request counts, not each ref). */
@@ -39,28 +39,29 @@ const STATE_KEY = "hold-reconcile";
 
 /* ---------- pass 1: queue items ---------- */
 
+/** How a settled question closed, in the words its holds are closed with, or undefined while it is open (a snoozed question is open). */
+function answeredHow(store: Store, q: QuestionState | undefined): { t: string | undefined; how: string } | undefined {
+	if (!q || q.status === "open") return undefined;
+	const at = (t: string | undefined) => (t ? ` at ${t.slice(0, 16)}Z` : "");
+	if (q.status === "answered-on-card") {
+		const resolvedAt = store.items.get(QUEUE, q.id)?.resolvedAt;
+		const t = resolvedAt ? new Date(resolvedAt).toISOString() : undefined;
+		return { t, how: `Answered in its question card${at(t)}` };
+	}
+	if (q.status === "dismissed") return { t: q.dismissal?.t, how: `Dismissed on the queue${at(q.dismissal?.t)}` };
+	const t = q.answer?.t;
+	return { t, how: `Answered${q.answer ? ` "${q.answer.label}"` : ""} on the queue${at(t)}` };
+}
+
 /**
- * Close the holds of every answered question, by the hold's structured `item` field only. A hold with no `item` is never
+ * Close the holds of every answered or dismissed question (a snoozed one is still open, so its hold stays), by the hold's structured `item` field only. A hold with no `item` is never
  * closed by an answer, whatever its text names: it closes through its other refs, or by hand. A daemon's card hold is closed
  * here only once its pointer question was closed by the card itself (answered-on-card): an answer to the pointer leaves it open.
  */
 export function reconcileItemHolds(store: Store, now = new Date()): { closed: number } {
 	if (!heldOpen(store).length) return { closed: 0 };
 	const qs = questionStates(store);
-	const answered = (id: string): { t: string | undefined; how: string } | undefined => {
-		const q = qs.get(id);
-		if (!q || q.status === "open") return undefined;
-		const resolvedAt = store.items.get(QUEUE, id)?.resolvedAt;
-		if (q.status === "answered-on-card") {
-			const t = resolvedAt ? new Date(resolvedAt).toISOString() : undefined;
-			return { t, how: `Answered in its question card${t ? ` at ${t.slice(0, 16)}Z` : ""}` };
-		}
-		const t = q.answer?.t;
-		return {
-			t,
-			how: `Answered${q.answer ? ` "${q.answer.label}"` : ""} on the queue${t ? ` at ${t.slice(0, 16)}Z` : ""}`,
-		};
-	};
+	const answered = (id: string) => answeredHow(store, qs.get(id));
 	const closed = closeHeldWhere(
 		store,
 		(h) => {

@@ -1,7 +1,7 @@
 # Decisions thread: setup message
 
 The pinned Decisions thread shows the decision queue as one live view with Waiting, Rulings and Recent tabs. It
-never shows a card, so nothing in it blocks. `chamberlain ask` posts every new question there, and only there
+never shows a card, so nothing in it blocks. Each question carries a quiet row of links along its bottom: Open the thread, then Snooze, Direction and Dismiss. The last three change state, which this view may not do, so each opens the question on the full queue page, where it works. Snoozed questions are listed in a collapsed Snoozed section, with when each returns. `chamberlain ask` posts every new question there, and only there
 (`threads.decisions` in `~/.config/chamberlain/config.json` names the thread): the live view when the queue page is up, or a one-line
 notice when it is down. The page keeps the title at "Decisions · N waiting" once `decisionsServer` in the `web` section of `config.json` names
 an orchestration:operate token.
