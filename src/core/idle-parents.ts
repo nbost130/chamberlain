@@ -3,8 +3,10 @@
  * Steward in one compact list. A turn-end wake can miss a thread (its closing words matched no rule, or the wake went to a
  * Steward that was busy), and a thread that waits for a word never moves on its own; this check is the net under those misses.
  *
- * It runs on its own timer (`intervalMinutes`, default 15), not on the two-hourly routine sweep (src/core/engine-idle.ts), and it
- * calls no model: selection and ordering are plain code. `selectIdleThreads` is the one place that decides which threads are idle,
+ * It runs on its own timer (`intervalMinutes`, default 15), not on the two-hourly routine sweep (src/core/engine-idle.ts). Selection
+ * and ordering are plain code. An optional classifier (`classifier`, off by default; src/core/classifier/) can sort the selection: in
+ * `live` mode only the threads it calls escalate, nudge or unknown are reported, tagged, and the settled ones go into one digest line a
+ * day; in `shadow` mode it only records what it would have done, and the report is exactly as without it. `selectIdleThreads` is the one place that decides which threads are idle,
  * and it returns plain records, so anything that later wants to classify or record a thread's disposition starts from them.
  * Who started the thread's last turn does not matter: a thread the principal asked a question of and that then sat on a half-answer
  * is reported like any other. (The turn-ended wake skips such turns on purpose; this check is what catches the ones that stall.)
@@ -15,10 +17,12 @@
  * reads as an ask (`looksLikeAsk`) come first.
  *
  * Config (`sweep.idleParents` in config.json): `enabled` (default true), `intervalMinutes` (15), `thresholdMinutes` (30), `maxThreads`
- * (10, the most NEW threads one wake lists; the rest are listed on a later tick).
+ * (10, the most NEW threads one wake lists; the rest are listed on a later tick), `classifier` (src/core/classifier/config.ts).
  */
 import { createHash } from "node:crypto";
 import type { LastAssistant, ThreadState } from "./adapter.ts";
+import type { Classified } from "./classifier/classify.ts";
+import { type ClassifierConfig, CLASSIFIER_DEFAULTS, parseClassifier } from "./classifier/config.ts";
 import { looksLikeAsk } from "./decide.ts";
 import type { Finding, ItemSource } from "./source.ts";
 import type { Store } from "./store.ts";
@@ -32,20 +36,22 @@ export type IdleParentsConfig = {
 	intervalMinutes: number;
 	thresholdMinutes: number;
 	maxThreads: number;
+	classifier: ClassifierConfig;
 };
 export const IDLE_PARENTS_DEFAULTS: IdleParentsConfig = {
 	enabled: true,
 	intervalMinutes: 15,
 	thresholdMinutes: 30,
 	maxThreads: 10,
+	classifier: CLASSIFIER_DEFAULTS,
 };
 /** How much of the last message a finding carries. The tail, because that is where a question sits. */
 export const EXCERPT_CHARS = 300;
 
-const KEYS = ["enabled", "intervalMinutes", "thresholdMinutes", "maxThreads"];
+const KEYS = ["enabled", "intervalMinutes", "thresholdMinutes", "maxThreads", "classifier"];
 /** Pure: the `sweep.idleParents` section, with defaults for what it leaves out. Anything it does not understand throws. */
 export function parseIdleParents(raw: unknown): IdleParentsConfig {
-	if (raw === undefined) return { ...IDLE_PARENTS_DEFAULTS };
+	if (raw === undefined) return { ...IDLE_PARENTS_DEFAULTS, classifier: parseClassifier(undefined) };
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("sweep.idleParents: expected an object");
 	const o = raw as Record<string, unknown>;
 	for (const k of Object.keys(o))
@@ -64,6 +70,7 @@ export function parseIdleParents(raw: unknown): IdleParentsConfig {
 		intervalMinutes: num("intervalMinutes", false),
 		thresholdMinutes: num("thresholdMinutes", false),
 		maxThreads: num("maxThreads", true),
+		classifier: parseClassifier(o.classifier),
 	};
 }
 
@@ -87,7 +94,10 @@ export function idleParentCandidate(th: ThreadState, skip: ReadonlySet<string>, 
 	);
 }
 
-/** One idle thread, as plain data. `lastMessage` is the whole text; `lastMessageHash` names that message (id and text). */
+/**
+ * One idle thread, as plain data. `lastMessage` is the whole text; `lastMessageHash` names that message (id and text). `previous` is the
+ * user message before it and who wrote it (`none`: there is none, or the adapter cannot say); only the classifier reads it.
+ */
 export type IdleThread = {
 	server: string;
 	threadId: string;
@@ -96,6 +106,7 @@ export type IdleThread = {
 	lastMessage: string;
 	lastMessageHash: string;
 	looksLikeAsk: boolean;
+	previous: { from: "human" | "agent" | "none"; text: string };
 };
 
 /** What a watcher offers the selection: its threads as it last saw them, and how to read one thread's last message. */
@@ -166,6 +177,7 @@ export async function selectIdleThreads(
 					lastMessage: last.text,
 					lastMessageHash: messageHash(last),
 					looksLikeAsk: looksLikeAsk(last.text),
+					previous: last.previous ? { from: last.previous.by, text: last.previous.text } : { from: "none", text: "" },
 				});
 			} catch (e) {
 				src.readFailed?.(th.id, e);
@@ -181,16 +193,42 @@ export async function selectIdleThreads(
 /** Pure: the last of a message, whitespace collapsed, cut at the start so the end (where an ask is) stays. */
 export function excerptOf(text: string, max = EXCERPT_CHARS): string {
 	const flat = text.replace(/\s+/g, " ").trim();
-	return flat.length > max ? `…${flat.slice(-max)}` : flat;
+	return flat.length > max ? `…${flat.slice(-max).toWellFormed()}` : flat;
 }
 
-const clipTitle = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
+const clipTitle = (s: string) => (s.length > 80 ? `${s.slice(0, 79).toWellFormed()}…` : s);
 /** Pure: the item key of one thread at one last message. */
 export const idleKey = (t: Pick<IdleThread, "server" | "threadId" | "lastMessageHash">) =>
 	`${t.server}:${t.threadId}:${t.lastMessageHash}`;
 /** Pure: how one idle thread reads in the wake. */
 export const idleText = (t: IdleThread) =>
 	`${t.looksLikeAsk ? "[ASKING] " : ""}thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`;
+/** Pure: the tag a live classification puts first: the action and the questions that fired, e.g. `[ESCALATE asks_decision 0.98]`. */
+export const classTag = (c: Pick<Classified, "action" | "reasons">) =>
+	`[${c.action.toUpperCase()}${c.reasons.map((r) => ` ${r.id} ${r.p.toFixed(2)}`).join(",")}]`;
+/** Pure: how a thread the classifier sorted reads in a live wake. Unknown (unclassified) reads exactly as without the classifier. */
+export const classifiedText = (t: IdleThread, c: Classified | undefined) =>
+	c && (c.action === "escalate" || c.action === "nudge")
+		? `${classTag(c)} thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`
+		: idleText(t);
+
+/** The item key of the day's settled digest line: one per UTC day. */
+export const DIGEST_PREFIX = "settled-digest:";
+export const digestKey = (day: string) => `${DIGEST_PREFIX}${day}`;
+const DIGEST_TITLES = 12;
+/** Pure: the digest line for the threads a live classifier called settled. */
+export const digestText = (settled: readonly IdleThread[]) => {
+	const shown = settled
+		.slice(0, DIGEST_TITLES)
+		.map((t) => `"${clipTitle(t.title)}" on ${t.server}`)
+		.join(", ");
+	const more = settled.length > DIGEST_TITLES ? `, and ${settled.length - DIGEST_TITLES} more` : "";
+	return `${settled.length} idle thread${settled.length === 1 ? "" : "s"} look${settled.length === 1 ? "s" : ""} finished (the classifier's settle; not reported one by one): ${shown}${more}.`;
+};
+
+/** What a classifier run gives the findings: its mode, the UTC day, and a disposition per item key (absent: unclassified). */
+export type IdleClassification = { mode: "shadow" | "live"; day: string; byKey: ReadonlyMap<string, Classified> };
+const RANK: Record<string, number> = { escalate: 0, nudge: 1, unknown: 2 };
 
 /** What the check holds as items, open or resolved: a key, the text it last carried, and whether it has resolved. */
 export type PriorFinding = { dedupKey: string; text: string; resolved?: boolean };
@@ -213,15 +251,35 @@ export function idleParentFindings(
 	sel: IdleSelection,
 	cfg: Pick<IdleParentsConfig, "maxThreads">,
 	prior: readonly PriorFinding[] = [],
+	cls?: IdleClassification,
 ): Finding[] {
 	const known = new Set(prior.map((p) => p.dedupKey));
 	let fresh = 0;
 	const out: Finding[] = [];
-	for (const t of sel.threads) {
+	// Live: only escalate, nudge and unknown are reported, in that order and then by idle time; settle goes into the day's digest line.
+	const live = cls?.mode === "live";
+	const actionOf = (t: IdleThread) => cls?.byKey.get(idleKey(t))?.action ?? "unknown";
+	const threads = live
+		? sel.threads
+				.filter((t) => actionOf(t) in RANK)
+				.sort(
+					(a, b) =>
+						RANK[actionOf(a)]! - RANK[actionOf(b)]! ||
+						b.idleMinutes - a.idleMinutes ||
+						(`${a.server}\0${a.threadId}` < `${b.server}\0${b.threadId}` ? -1 : 1),
+				)
+		: sel.threads;
+	for (const t of threads) {
 		const dedupKey = idleKey(t);
 		const seen = known.has(dedupKey);
 		if (!seen && ++fresh > cfg.maxThreads) continue;
-		out.push({ dedupKey, text: idleText(t), ...(seen ? { alreadyReported: true } : {}) });
+		const text = live ? classifiedText(t, cls!.byKey.get(dedupKey)) : idleText(t);
+		out.push({ dedupKey, text, ...(seen ? { alreadyReported: true } : {}) });
+	}
+	if (live) {
+		const settled = sel.threads.filter((t) => actionOf(t) === "settle");
+		const key = digestKey(cls!.day);
+		if (settled.length && !known.has(key)) out.push({ dedupKey: key, text: digestText(settled) });
 	}
 	const have = new Set(out.map((f) => f.dedupKey));
 	for (const u of sel.unreadable) {
@@ -238,9 +296,15 @@ export function idleParentsSource(o: {
 	cfg: Pick<IdleParentsConfig, "maxThreads">;
 	select: () => Promise<IdleSelection>;
 	prior: () => PriorFinding[];
+	/** The classifier, when it is on: a disposition per selected thread. It never throws (src/core/classifier/classify.ts). */
+	classify?: (threads: readonly IdleThread[]) => Promise<IdleClassification>;
 }): ItemSource {
 	return {
 		name: IDLE_PARENTS_SOURCE,
-		run: async () => idleParentFindings(await o.select(), o.cfg, o.prior()),
+		run: async () => {
+			const sel = await o.select();
+			const cls = o.classify ? await o.classify(sel.threads) : undefined;
+			return idleParentFindings(sel, o.cfg, o.prior(), cls);
+		},
 	};
 }

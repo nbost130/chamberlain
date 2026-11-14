@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import {
@@ -193,7 +194,13 @@ describe("sweep.json", () => {
 		expect(c).toEqual({
 			schemaVersion: 2,
 			checks: [{ name: "disk", command: ["/usr/bin/df", "-k"], timeoutMs: 5000 }],
-			idleParents: { enabled: true, intervalMinutes: 15, thresholdMinutes: 30, maxThreads: 10 },
+			idleParents: {
+				enabled: true,
+				intervalMinutes: 15,
+				thresholdMinutes: 30,
+				maxThreads: 10,
+				classifier: CLASSIFIER_DEFAULTS,
+			},
 		});
 	});
 	test("a check may be set to shadow or silenced, and an unknown mode is refused", () => {
