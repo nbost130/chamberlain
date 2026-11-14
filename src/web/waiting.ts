@@ -84,12 +84,20 @@ export type WaitingDeps = {
 	log: (event: string, data?: Record<string, unknown>) => void;
 	/** The longest one server's read may take; tests shorten it. */
 	timeoutMs?: number;
+	/** The clock a read's start is taken from (`secretRequest` compares it with a question's age). Default Date.now; tests move it. */
+	now?: () => number;
 };
+
+/** What `secretRequest` is asked about: a secret question's thread, the card it points to (if any) and when it was asked. */
+export type SecretAsk = { server: string; threadId?: string; cardRequest?: string; createdAt: string };
 
 export function createWaiting(d: WaitingDeps) {
 	const byServer = new Map<string, WaitingCard[]>();
 	/** server -> when it was first found unreachable (a sleeping laptop), cleared when a read succeeds again. */
 	const failing = new Map<string, string>();
+	/** server -> when its last read that succeeded STARTED (ms): only a read begun after a question can say its box is gone. */
+	const readAt = new Map<string, number>();
+	const now = d.now ?? Date.now;
 	let polling = false;
 
 	/**
@@ -110,6 +118,7 @@ export function createWaiting(d: WaitingDeps) {
 		const skipThreads = d.skipThreads();
 		for (const { server, adapter } of d.servers()) {
 			if (!has(adapter, "listWaiting")) continue;
+			const started = now();
 			try {
 				const cards = await within(
 					adapter.listWaiting({ skipThreads, ...(d.links?.[server.name] ? { linkBase: d.links[server.name] } : {}) }),
@@ -128,6 +137,7 @@ export function createWaiting(d: WaitingDeps) {
 								why: c.why ?? `answer it in its thread on ${server.name}`,
 							})),
 				);
+				readAt.set(server.name, started);
 				if (failing.delete(server.name)) d.log("mirror-recovered", { server: server.name });
 			} catch (e) {
 				if (!failing.has(server.name))
@@ -143,6 +153,32 @@ export function createWaiting(d: WaitingDeps) {
 	const list = () => [...byServer.values()].flat();
 	/** Servers whose last read failed, so the view can say its list may be missing what waits there. */
 	const unreachable = () => [...failing].map(([server, since]) => ({ server, since }));
+
+	/**
+	 * Is the secret box a secret question points at still open in its thread? Read from what `listWaiting` lists, which for a secret is
+	 * the backend's own word that the box waits on the operator now (T3 lists a secret request only while it is pending and the agent that
+	 * asked is still waiting on it; a box that timed out, was cancelled, declined or saved is not listed).
+	 *   - `open`: the thread lists a waiting secret request (the question's own card, when it points to one).
+	 *   - `ended`: it lists none, by a read of that server that succeeded and STARTED after the question was asked.
+	 *   - undefined: the reads cannot tell: no thread on the question, a server not mirrored, not yet read since the question was asked, or
+	 *     unreachable now; or the thread is one the mirror never lists (the Decisions thread). The card then says what it always said.
+	 * This only labels a card. It closes nothing: a card hold still closes only on its own terminal evidence (src/core/card-hold.ts).
+	 */
+	function secretRequest(q: SecretAsk): "open" | "ended" | undefined {
+		if (!q.threadId) return undefined;
+		const at = readAt.get(q.server);
+		const asked = Date.parse(q.createdAt);
+		if (at === undefined || failing.has(q.server) || !Number.isFinite(asked) || at <= asked) return undefined;
+		if (d.skipThreads().includes(q.threadId)) return undefined;
+		const waits = (byServer.get(q.server) ?? []).some(
+			(c) =>
+				c.type === "secret" &&
+				c.server === q.server &&
+				c.threadId === q.threadId &&
+				(!q.cardRequest || c.requestId === q.cardRequest),
+		);
+		return waits ? "open" : "ended";
+	}
 
 	/**
 	 * Answers a listed card with one of its options. The checks here are the core's: the card is still listed, it is an
@@ -198,7 +234,7 @@ export function createWaiting(d: WaitingDeps) {
 		}
 	}
 
-	return { poll, list, answer, unreachable };
+	return { poll, list, answer, unreachable, secretRequest };
 }
 export type Waiting = ReturnType<typeof createWaiting>;
 

@@ -179,13 +179,14 @@ function contextHtml(text) {
 
 // A thread's link: only the page's own /open route (it sends the device on to the app, src/web/thread-links.ts). No browser opens a
 // t3-thread:// link, and a card's raw link is never made an href: without /open there is no link, as in the inline view.
+// Opened in this tab: a tap on it is redirected straight to the app, and if no app takes it the browser stays on this page.
 const threadHref = (x) => (typeof x.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? x.open : undefined);
 function detailHtml() {
 	const i = current();
 	const v = visible();
 	if (!i) return `<section class="detail" aria-label="Selected decision"><div class="empty">Pick a decision on the left.</div></section>`;
 	const kind = KINDS.find((k) => k.kind === i.kind);
-	const link = threadHref(i) ? `<a class="open" href="${esc(threadHref(i))}" target="_blank" rel="noopener">Open thread</a>` : `<span class="open">${esc(i.server)} · ${esc(i.threadId || "")}</span>`;
+	const link = threadHref(i) ? `<a class="open" href="${esc(threadHref(i))}">Open thread</a>` : `<span class="open">${esc(i.server)} · ${esc(i.threadId || "")}</span>`;
 	const pos = S.done + S.sel + 1, total = S.total || v.length;
 	const mtop = `<div class="mtop"><a href="/" data-nav="/" aria-label="Back to decisions">${ICON.back}</a><span class="pos">${S.sel + 1} of ${v.length}</span><div class="bar" aria-hidden="true">${Array.from({ length: Math.min(total, 12) }, (_, k) => `<span class="${k < S.done ? "done" : k === pos - 1 ? "here" : ""}"></span>`).join("")}</div></div>`;
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
@@ -194,14 +195,14 @@ function detailHtml() {
 		// A card pointer is never answered here: the card is acted on in its own thread, and this question closes only when the card does.
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
 			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
-			${threadHref(i) ? `<a href="${esc(threadHref(i))}" target="_blank" rel="noopener">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
+			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
 		</section>`;
 	}
 	if (i.secret) {
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
-			<div class="secret"><b>This needs a secret.</b><span>Enter it in its own thread. This page never takes a secret value, and the Steward never sees one.</span>
-			${threadHref(i) ? `<a href="${esc(threadHref(i))}" target="_blank" rel="noopener">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
+			<div class="secret"><b>This needs a secret.</b>${i.secretRequest === "ended" ? `<span class="expired">Request expired. Its secret box is closed: ask the thread to reopen it.</span>` : `<span>Enter it in its own thread. This page never takes a secret value, and the Steward never sees one.</span>`}
+			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
 		</section>`;
 	}
@@ -271,7 +272,7 @@ const confirmable = (c) => c.type === "approval" || c.type === "goal";
 const cardPick = (c) => S.cpick[c.id] ?? (Number.isInteger(c.recommended) ? c.recommended : -1);
 const armedFor = (c) => { const a = S.carm[c.id]; return a && a.choice === cardPick(c) && a.sig === c.sig && a.expiresAt > Date.now() ? a : undefined; };
 function cardHtml(c) {
-	const head = `<div class="crumbs"><span class="chip ${esc(c.type)}">${esc(CARD_KIND[c.type] || c.type)}</span><span>${esc(c.threadTitle)}</span><span>${esc(c.server)}</span>${threadHref(c) ? `<a class="open" href="${esc(threadHref(c))}" target="_blank" rel="noopener">Open thread</a>` : ""}</div>
+	const head = `<div class="crumbs"><span class="chip ${esc(c.type)}">${esc(CARD_KIND[c.type] || c.type)}</span><span>${esc(c.threadTitle)}</span><span>${esc(c.server)}</span>${threadHref(c) ? `<a class="open" href="${esc(threadHref(c))}">Open thread</a>` : ""}</div>
 		<div class="headline"><h1>${esc(c.header || "Question")}</h1>${c.question ? contextHtml(c.question) : ""}</div>${c.command ? `<pre class="cmd">${esc(c.command)}</pre>` : ""}`;
 	if (!c.answerable) return `<article class="ccard" data-card="${esc(c.id)}">${head}<div class="secret"><span>${esc(c.why || "Answer it in its thread.")}</span></div></article>`;
 	const pick = cardPick(c), armed = armedFor(c);

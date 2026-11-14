@@ -115,6 +115,8 @@ function run(
 		headers?: Record<string, string>[];
 		/** The status every reply has (default 200); a function is asked on each call. */
 		status?: number | (() => number);
+		/** The view's `window`. Absent: the script sees none, as no test before needed one (it reads as a frame). */
+		window?: unknown;
 	} = {},
 ) {
 	const body = new El("body");
@@ -152,8 +154,9 @@ function run(
 		"fetch",
 		"setInterval",
 		"URL",
+		"window",
 		readFileSync(new URL("./static/inline.js", import.meta.url), "utf8"),
-	)(document, fetch, () => 0, URL);
+	)(document, fetch, () => 0, URL, o.window);
 	return dq;
 }
 const settle = () => new Promise((r) => setTimeout(r, 5));
@@ -533,5 +536,117 @@ describe("links out of the view", () => {
 		const hrefs = anchors(dq).map((a) => a.href);
 		expect(hrefs).toEqual(["http://queue.test/?k=KEY"]);
 		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
+	});
+});
+
+// ---- inside T3's phone app: the view is the top document of the app's web view, so a thread opens in the app, no browser ----
+
+describe("the thread link inside T3's phone app", () => {
+	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
+	const APP = "t3code://threads/env-home/11111111-2222-3333-4444-555555555555";
+	/** The phone app's web view: this page is its top document. */
+	const top = () => {
+		const w: { parent?: unknown } = {};
+		w.parent = w;
+		return w;
+	};
+	/** T3's web and desktop clients: a sandboxed frame inside the app's page. */
+	const framed = () => ({ parent: {} });
+	const anchors = (dq: El) =>
+		dq.all((e) => e.tag === "a").map((a) => ({ text: a.textContent, href: a.href, target: a.target }));
+	const q = { ...item("x"), server: "mithrandir", threadId: "t1", open: "/open/mithrandir/t1", app: APP };
+	test("at the top of T3's web view, a question's thread link is the app link itself, opened in place (no new window)", async () => {
+		const dq = run(() => ({ items: [q] }), { src: SRC, window: top() });
+		await settle();
+		expect(anchors(dq)).toEqual([{ text: "Open the thread", href: APP, target: "" }]);
+	});
+	test("a mirrored card and a secret question get the app link too; the queue page link stays the page's own", async () => {
+		const c = { ...card("make", "sig-1"), open: "/open/main/t", app: APP };
+		const s = { ...q, secret: true };
+		const dq = run(() => ({ items: [s], cards: [c] }), { src: SRC, window: top() });
+		await settle();
+		expect(anchors(dq)).toEqual([
+			{ text: "Open the thread", href: APP, target: "" },
+			{ text: "Open the queue page", href: "http://queue.test/?k=KEY", target: "_blank" },
+			{ text: "Open the thread", href: APP, target: "" },
+		]);
+	});
+	test("in a frame (T3's web and desktop clients), the link goes through /open, which the frame can open", async () => {
+		for (const window of [
+			framed(),
+			undefined,
+			{
+				get parent() {
+					throw Error("cross-origin");
+				},
+			},
+		]) {
+			const dq = run(() => ({ items: [q] }), { src: SRC, window });
+			await settle();
+			expect(anchors(dq)).toEqual([
+				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
+			]);
+		}
+	});
+	test("an app link of any other shape is never an href: the view falls back to /open, or no link", async () => {
+		for (const app of [
+			"javascript://threads/%0aalert(1)",
+			"javascript:alert(1)",
+			"JavaScript://x/y",
+			"data://text/html,x",
+			"vbscript://x",
+			"file:///etc/passwd",
+			"https://evil.example/t",
+			"t3code:threads/e/t",
+			" t3code://threads/e/t",
+			't3code://threads/e/t"><img src=x onerror=alert(1)>',
+			"T3CODE://threads/e/t",
+			`t3code://${"a".repeat(1100)}`,
+			42,
+			{ toString: () => APP },
+		]) {
+			const dq = run(
+				() => ({
+					items: [
+						{ ...q, app },
+						{ ...q, id: "Q-ctx2", app, open: undefined },
+					],
+				}),
+				{
+					src: SRC,
+					window: top(),
+				},
+			);
+			await settle();
+			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1?k=KEY"]]);
+		}
+	});
+});
+
+describe("a secret question whose secret box has closed", () => {
+	const secret = (over: Record<string, unknown> = {}) => ({ ...item("x"), secret: true, open: "/open/m/t1", ...over });
+	test("says the request expired and to ask the thread to reopen it, instead of pointing at a box that is gone", async () => {
+		const dq = run(() => ({ items: [secret({ secretRequest: "ended" })] }));
+		await settle();
+		expect(dq.textContent).toContain("Request expired. Its secret box is closed: ask the thread to reopen it.");
+		expect(dq.textContent).not.toContain("A secret is entered in its own thread");
+		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread"]);
+		expect(dq.all((e) => e.tag === "button" && e.className === "dq-go")).toEqual([]);
+	});
+	test("an open box, an unknown state or any other value reads as before", async () => {
+		for (const state of ["open", undefined, "ENDED", "<b>ended</b>", true]) {
+			const dq = run(() => ({ items: [secret({ secretRequest: state })] }));
+			await settle();
+			expect([state, dq.textContent.includes("A secret is entered in its own thread, never here.")]).toEqual([
+				state,
+				true,
+			]);
+			expect([state, dq.textContent.includes("Request expired")]).toEqual([state, false]);
+		}
+	});
+	test("a plain question never shows the note, whatever it carries", async () => {
+		const dq = run(() => ({ items: [{ ...item("x"), secretRequest: "ended" }] }));
+		await settle();
+		expect(dq.textContent).not.toContain("Request expired");
 	});
 });

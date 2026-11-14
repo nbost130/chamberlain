@@ -32,7 +32,7 @@ reads the key (it never makes one: with none, because the page has never started
 Treat them like a password: anyone who holds one can read the queue and answer for you. They are never in a log: `chamberlain web` prints the address without a key and tells you to run this command.
 
 Every link Chamberlain makes itself carries the key: `chamberlain ask` puts it in the view it posts to the Decisions thread (with the page up but no key yet, it posts the
-one-line notice and says so on stderr, never a link that cannot work), and the inline view passes it on every call and on its evidence images and its "Open the queue page" and "Open the thread" links (the second goes through `/open/<server>/<threadId>`, see [CONFIGURATION.md](CONFIGURATION.md)).
+one-line notice and says so on stderr, never a link that cannot work), and the inline view passes it on every call and on its evidence images and its "Open the queue page" and "Open the thread" links (the second goes through `/open/<server>/<threadId>`, except in T3 Code's phone app, where it is the thread's app link and carries no key; see [CONFIGURATION.md](CONFIGURATION.md)). A tap on an `/open` link that carries `?k=` sets the cookie and redirects straight to the thread's app link: the key is never in that `Location`.
 
 ## Rotating it
 
