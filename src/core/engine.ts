@@ -96,6 +96,7 @@ import {
 	liveHealth,
 	type Health,
 } from "./steward-health.ts";
+import { usageTicker } from "./steward-tokens.ts";
 import { BUSY_TURNS, commitsAhead, SWEEP_MS, type BusyFact } from "./sweep.ts";
 
 /** One configured server and the adapter that serves it. */
@@ -152,6 +153,8 @@ export type EngineDeps = {
 	housekeeping?: boolean;
 	/** Stalled-thread recovery (src/core/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
 	recover?: boolean | Partial<RecoverTiming>;
+	/** The Steward's token usage per wake (src/core/steward-tokens.ts). OFF unless asked (`stewardTokens`): when on, the daemon re-reads the Steward's transcript hourly and upserts its per-wake rows. */
+	stewardTokens?: boolean;
 	/** Runs the operator's alert command for an alarm. Default: executes it. A test passes `noAlert` (the `noAlert` helper in the testing directory) so it never reaches a real one. */
 	alert?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => void;
 	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
@@ -953,6 +956,11 @@ export function createEngine(d: EngineDeps) {
 			})
 		: undefined;
 
+	const usageTick =
+		d.stewardTokens && has(homeAdapter, "transcriptPath")
+			? usageTicker({ store, find: () => homeAdapter.transcriptPath!() })
+			: undefined;
+
 	/**
 	 * The held ledger's reconciler (src/core/hold-reconcile.ts). Items: every tick, database only. Refs: every ten minutes,
 	 * against GitHub and the watchers' thread tables.
@@ -1102,6 +1110,8 @@ export function createEngine(d: EngineDeps) {
 				}
 			}
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
+			if (usageTick)
+				checks.push(usageTick().catch((e) => log("steward-usage-error", { error: String(e).slice(0, 200) })));
 			checks.push(
 				sweep.tick().catch((e) => {
 					log("sweep-error", { error: String(e) });

@@ -48,7 +48,7 @@ const ABOUT: Record<CommandName, string> = {
 		"config migrate|revert [--dry-run]: move the old files into config.json and secrets/, or back; config show; config get <key>",
 	brief: "print the Steward's hand-off (steward) or the Alert Desk's prompt (desk)",
 	wakes: "wakes that stopped sending: list|retry|cancel",
-	"steward-health": "print the Steward's health",
+	"steward-health": "print the Steward's health; steward-health tokens: its token usage per wake (needs stewardTokens)",
 	"desk-allowlist": "the Alert Desk's command allowlist: hook|check '<command>'",
 	peek: "the end of a thread in plain lines",
 	t3x: "act on a T3 thread by hand: threads|read|respond|send",

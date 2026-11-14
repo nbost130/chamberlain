@@ -78,6 +78,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `maxAttempts` | `CHAMBERLAIN_MAX_ATTEMPTS` | `3` | The most attempts (POSTs) one outbox row gets, a positive whole number. Every outcome counts, a refusal and a timeout included. At the limit the row is a dead letter, kept and not sent again until `chamberlain wakes retry` or `cancel` (see [DELIVERY.md](DELIVERY.md#dead-letters)). |
 | `gh` | `CHAMBERLAIN_GH` | `gh` | The command the held-for-return reconciler uses for its GitHub reads (`gh api <path> --jq <filter>`): another `gh`, or a wrapper that adds your credentials. |
 | `healthFormatPattern` | `CHAMBERLAIN_HEALTH_FORMAT_PATTERN` | none | A regular expression enabling the optional reply-format health signal ([`steward-health.md`](steward-health.md)). |
+| `stewardTokens` | `CHAMBERLAIN_STEWARD_TOKENS` | off | `true` (`1` in the variable): measure what the Steward spends per wake. The daemon re-reads the Steward's Claude Code transcript hourly and stores one row per wake (tokens and model requests, never text) in the database; `chamberlain steward-health tokens` reports tokens per wake by kind, the cost of a full sweep and the context trend, and `chamberlain steward-health tokens backfill` reads past Steward sessions. Off: nothing is read, stored or shown. See [`steward-health.md`](steward-health.md#tokens-per-wake). |
 
 **Sections.** Objects and lists have no environment override.
 
