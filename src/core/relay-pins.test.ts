@@ -169,7 +169,51 @@ describe("a Steward row that waits on the rights: what stops it, and what is lef
 	});
 });
 
+describe("a state that keeps moving under the relay", () => {
+	test("each round's prerequisite is for the newest state; after three rounds the row waits for the next pass and uses no attempt", async () => {
+		let calls = 0;
+		const w = world({
+			rightsNow: async () => {
+				calls++;
+				const now = { ...STATE, session: `s${calls}` };
+				return {
+					...now,
+					wake: (forId: string) => ({
+						message: `[chamberlain] rights for ${forId}`,
+						stamp: { ...now, at: "now", used: 10, full: true as const },
+					}),
+				};
+			},
+		});
+		w.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [POINTER] });
+		expect(await w.relay.pass()).toEqual([]);
+		expect(w.posts).toHaveLength(3);
+		expect(w.posts.every((id) => id.startsWith("w1:rights-first:"))).toBe(true);
+		expect(w.base.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+	});
+});
+
 describe("the relay's other quiet paths", () => {
+	test("an onDelivered hook that throws is logged per member and the row stays delivered", async () => {
+		const base = memStore();
+		const events: string[] = [];
+		const relay = createRelay({
+			store: base,
+			lock: testRelayLock(base),
+			gate: () => "idle",
+			log: (event) => events.push(event),
+			alarm: () => {},
+			wake: { ready: () => true, send: async () => ({ ok: true, status: 202 }) },
+			onDelivered: () => {
+				throw Error("hook broke");
+			},
+		});
+		createOutbox({ store: base, log: () => {} }).deliver("m", "w1");
+		expect(await relay.pass()).toEqual(["w1"]);
+		expect(events).toContain("on-delivered-error");
+		expect(base.wakes.find("w1")?.status).toBe("delivered");
+	});
+
 	test("held wakes whose compose finds nothing leave them held and say nothing", async () => {
 		const w = world({ over: (s) => ({ ...s, wakes: { ...s.wakes, compose: () => undefined } }) });
 		w.outbox.deliver("a", "h1", { kind: "turn_ended", thread: "t1" });
