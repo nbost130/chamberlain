@@ -10,6 +10,7 @@ import { has } from "../core/adapter.ts";
 import { releaseCardAnswer, reserveCardAnswer, settleCardAnswer } from "../core/card-answers.ts";
 import type { ServerEntry } from "../core/servers.ts";
 import type { Store } from "../core/store.ts";
+import { within } from "../core/within.ts";
 
 /** One configured server and the adapter that serves it. */
 export type ServerAdapter = { server: ServerEntry; adapter: Adapter };
@@ -39,16 +40,6 @@ export function withAnswerRights<S extends { name: string; origin?: unknown }>(
 
 /** A call that hasn't answered by then fails, so one hung server can't stall the poll. */
 export const POLL_TIMEOUT_MS = 90_000;
-function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	return Promise.race([
-		p,
-		new Promise<never>((_, reject) => {
-			timer = setTimeout(() => reject(Error(`${what} timed out after ${ms} ms`)), ms);
-		}),
-	]).finally(() => clearTimeout(timer));
-}
-
 /**
  * Pure: the checks every card answer meets, in the order they are told: the card is still listed, it is an answerable kind (a
  * secret or link request never is, whatever it claims), the choice is one of its options, and the fingerprint is the one the operator
