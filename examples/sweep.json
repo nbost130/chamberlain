@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 2,
-  "checks": [
-    { "name": "disk", "command": ["/bin/sh", "examples/sweep-check.sh"], "timeoutMs": 20000, "mode": "live" }
-  ]
-}

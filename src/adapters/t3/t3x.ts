@@ -8,8 +8,7 @@
  *   bun src/adapters/t3/t3x.ts respond <server> <threadId> "<question header>=<option label>" ...
  *   bun src/adapters/t3/t3x.ts send    <server> <threadId> <text>
  */
-import { readFileSync, statSync } from "node:fs";
-import { isPrivateFile } from "../../core/private.ts";
+import { readSecret } from "../../core/layout.ts";
 import { CONF } from "../../core/config.ts";
 import { startup } from "../../core/migrate.ts";
 import { connect, type Rpc } from "./rpc.ts";
@@ -20,9 +19,9 @@ import { t3Server, type T3Server } from "./server.ts";
 type Server = T3Server;
 
 function priv(name: string): string {
-	const p = `${CONF}/${name}`;
-	if (!isPrivateFile(statSync(p))) throw Error(`${name} must be a regular file with mode exactly 0600`);
-	return readFileSync(p, "utf8").trim();
+	const v = readSecret(CONF, name);
+	if (!v) throw Error(`${name}: no such secret (looked in ${CONF}/secrets/ and the config directory)`);
+	return v;
 }
 export async function main(argv: string[] = process.argv.slice(2)) {
 	startup();

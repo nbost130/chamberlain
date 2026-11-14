@@ -937,7 +937,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 	});
 });
 
-describe("recovery is OFF unless asked for, and the production launcher asks only with CHAMBERLAIN_RECOVER=1", () => {
+describe("recovery is OFF unless asked for, and the production launcher asks only with `recover` (CHAMBERLAIN_RECOVER=1 or config.json)", () => {
 	test("an engine built without `recover` keeps the plain failed wake and retries nothing", async () => {
 		const r = rig();
 		r.fake.threads.set("t1", {
@@ -952,9 +952,9 @@ describe("recovery is OFF unless asked for, and the production launcher asks onl
 		expect(r.fake.sends).toEqual([]);
 		expect(r.store.state.get("recover")).toBeUndefined();
 	});
-	test("the daemon launcher turns it on only for CHAMBERLAIN_RECOVER=1", () => {
+	test("the daemon launcher turns it on only for `recover` being true", () => {
 		const src = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
-		expect(src).toContain('recover: process.env.CHAMBERLAIN_RECOVER === "1"');
+		expect(src).toContain('recover: setting("recover", CONF) === true');
 	});
 });
 

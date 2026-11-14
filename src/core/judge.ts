@@ -16,7 +16,7 @@
  *
  * A judge that cannot answer never blocks anything: the caller gets `{ ok: false }` and sends the question on to a person.
  */
-import { readFileSync } from "node:fs";
+import { cfg } from "./layout.ts";
 
 /** A backend's name: the operator's own, as written in judge.json. */
 export type JudgeBackend = string;
@@ -85,9 +85,9 @@ export function parseJudgeConfig(
 
 export function readJudgeConfig(conf: string): { config: JudgeConfig; error?: string } {
 	try {
-		return parseJudgeConfig(readFileSync(`${conf}/judge.json`, "utf8"));
+		const v = cfg(conf, "judge");
+		return v === undefined ? { config: defaultJudgeConfig() } : parseJudgeConfig(JSON.stringify(v));
 	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code === "ENOENT") return { config: defaultJudgeConfig() };
 		return { config: defaultJudgeConfig(), error: `judge.json: ${String(e).slice(0, 120)}` };
 	}
 }

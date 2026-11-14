@@ -33,6 +33,7 @@
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile, modeText } from "./private.ts";
+import { cfg as cfgValue } from "./layout.ts";
 import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
 
 /** The 0.1 selector: a section, whole or by line prefixes. */
@@ -243,10 +244,9 @@ const regular = (p: string, what: string) => {
  * it. A source is copied whole only when its `sections` is "whole".
  */
 export function loadOperatingRules(conf: string, warn: (msg: string) => void = (m) => console.error(m)): string {
-	const cfg = `${conf}/operating-rules.json`;
-	if (existsSync(cfg)) {
-		regular(cfg, "operating-rules.json");
-		const c = parseRulesConfig(JSON.parse(readFileSync(cfg, "utf8")));
+	const raw = cfgValue(conf, "operatingRules");
+	if (raw !== undefined) {
+		const c = parseRulesConfig(raw);
 		const parts = c.sources.map((src) => {
 			const text = readFileSync(tilde(src.path), "utf8");
 			return src.sections === "whole" ? text.trimEnd() : excerptEach(text, src.sections, src.path, warn);

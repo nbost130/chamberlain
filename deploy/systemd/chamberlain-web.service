@@ -1,7 +1,7 @@
 # The decision-queue page. An EXAMPLE: edit the paths, then
 #   cp deploy/systemd/chamberlain-web.service ~/.config/systemd/user/ && systemctl --user daemon-reload
 #   systemctl --user enable --now chamberlain-web.service
-# Needs ~/.config/chamberlain/web.json (mode 0600) with {"schemaVersion": 2, "host": "<loopback or Tailscale IP>", "port": 3790}.
+# Needs a "web" section in ~/.config/chamberlain/config.json: {"web": {"host": "<loopback or Tailscale IP>", "port": 3790}}.
 # The server refuses to start with no address, a wildcard one, or any address outside loopback and Tailscale ranges.
 # Without a "decisionsServer" operate token the page still answers; it just can't rename the Decisions thread or settle cards.
 [Unit]

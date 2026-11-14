@@ -4,12 +4,13 @@
  * Steward has such a transcript: any other provider is reported as unavailable, never as healthy.
  */
 import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Transcript } from "../../core/adapter.ts";
+import { thread as stewardThread } from "../../core/layout.ts";
 
 export function resolveSteward(dbPath: string, conf: string): { thread: string; session: string; project: string } {
-	const thread = readFileSync(join(conf, "steward-thread"), "utf8").trim();
+	const thread = stewardThread(conf, "steward");
+	if (!thread) throw Error("no Steward thread is set (threads.steward in config.json)");
 	const db = new Database(dbPath, { readonly: true });
 	try {
 		const row = db

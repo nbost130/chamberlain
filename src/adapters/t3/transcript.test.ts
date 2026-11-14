@@ -11,7 +11,7 @@ test("identity follows the active provider thread, not newest transcript", () =>
 		path = `${dir}/state.sqlite`;
 	const db = new Database(path);
 	try {
-		writeFileSync(`${dir}/steward-thread`, "steward");
+		writeFileSync(`${dir}/steward-thread`, "steward", { mode: 0o600 });
 		db.exec(
 			"create table orchestration_v2_projection_threads(thread_id text, active_provider_thread_id text); create table orchestration_v2_projection_provider_threads(provider_thread_id text, provider_session_id text, payload_json text); create table orchestration_v2_projection_provider_sessions(provider_session_id text, payload_json text)",
 		);
@@ -41,7 +41,7 @@ test("the transcript is the Claude Code file for that session under the Steward'
 		path = `${dir}/state.sqlite`;
 	const db = new Database(path);
 	try {
-		writeFileSync(`${dir}/steward-thread`, "steward");
+		writeFileSync(`${dir}/steward-thread`, "steward", { mode: 0o600 });
 		db.exec(
 			"create table orchestration_v2_projection_threads(thread_id text, active_provider_thread_id text); create table orchestration_v2_projection_provider_threads(provider_thread_id text, provider_session_id text, payload_json text); create table orchestration_v2_projection_provider_sessions(provider_session_id text, payload_json text)",
 		);

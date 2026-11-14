@@ -3,8 +3,7 @@
  * tabbed view (the page, inline) and never a question card, so nothing in that thread blocks. With the page down it
  * is a one-line notice. The queue item is already recorded, so a failed post leaves the question on the page.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isPrivateFile } from "../../core/private.ts";
+import { thread as configThread } from "../../core/layout.ts";
 import { CONF, PrincipalPoss } from "../../core/config.ts";
 import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
 import { cardTag, type Question } from "../../core/questions.ts";
@@ -45,20 +44,13 @@ export function decisionsDownMessage(i: Question): string {
 	].join("\n");
 }
 
-function threadFile(name: string, conf = CONF): string | undefined {
-	const p = `${conf}/${name}`;
-	if (!existsSync(p)) return undefined;
-	if (!isPrivateFile(statSync(p))) throw Error(`${name} must be a regular file with mode exactly 0600`);
-	return readFileSync(p, "utf8").trim() || undefined;
-}
-
 /**
  * Posts the question to the pinned Decisions thread, never a card: the live view when the queue server is up (base
  * given), else a one-line notice. The older Questions thread (cards) is no longer used for new questions. The queue item is already recorded, so a failed post leaves the question on the page.
  */
 export function postCard(i: Question, conf = CONF, base?: string): PostResult {
-	const thread = threadFile("decisions-thread", conf);
-	if (!thread) throw Error("ask: decisions-thread is missing or empty");
+	const thread = configThread(conf, "decisions");
+	if (!thread) throw Error("ask: the Decisions thread is not set (threads.decisions in config.json)");
 	const text = base ? decisionsMessage(i, base) : decisionsDownMessage(i);
 	const r = pingViaCli(thread, text);
 	return { ok: r.ok, detail: r.detail, where: base ? "view" : "notice" };

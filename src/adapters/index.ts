@@ -8,7 +8,7 @@
  */
 import { CONF, STATE } from "../core/config.ts";
 import type { Adapter, AdapterEntry, AdapterEnv } from "../core/adapter.ts";
-import { privateFile } from "../core/private.ts";
+import { readNamed, thread } from "../core/layout.ts";
 import { homeServer, readServers, type ServerEntry } from "../core/servers.ts";
 import { defaultT3Server, t3Entry } from "./t3/index.ts";
 
@@ -26,7 +26,7 @@ export function adapterEntry(name: string): AdapterEntry {
 	return e;
 }
 
-/** servers.json, or one T3 server named "local" at CHAMBERLAIN_T3_ORIGIN with its token in `read-token`. */
+/** The `servers` list of config.json, or one T3 server named "local" at `t3Origin` (CHAMBERLAIN_T3_ORIGIN) with its token in the `read-token` secret. */
 export const loadServers = (conf = CONF): ServerEntry[] => readServers(conf) ?? [defaultT3Server()];
 
 export type EnvParts = {
@@ -46,8 +46,8 @@ export function adapterEnv(server: ServerEntry, p: EnvParts = {}): AdapterEnv {
 		...(p.store ? { store: p.store } : {}),
 		log: p.log ?? (() => {}),
 		alarm: p.alarm ?? (() => {}),
-		steward: () => privateFile(conf, "steward-thread"),
-		readPrivate: (name) => privateFile(conf, name),
+		steward: () => thread(conf, "steward"),
+		readPrivate: (name) => readNamed(conf, name),
 	};
 }
 

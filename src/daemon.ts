@@ -11,6 +11,7 @@ import { createEngine } from "./core/engine.ts";
 import { ghRead } from "./core/gh.ts";
 import { maintain } from "./core/maintain.ts";
 import { makeLog } from "./core/log.ts";
+import { setting } from "./core/layout.ts";
 import { startup } from "./core/migrate.ts";
 import {
 	holdRelayLock,
@@ -77,12 +78,9 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 		store,
 		servers,
 		dry: process.env.CHAMBERLAIN_DRY === "1",
-		// Stalled-thread recovery is OFF until CHAMBERLAIN_RECOVER=1 (src/core/recover.ts): merging it changes nothing until it is turned on.
-		recover: process.env.CHAMBERLAIN_RECOVER === "1",
-		exclude: (process.env.CHAMBERLAIN_EXCLUDE ?? "")
-			.split(",")
-			.map((s) => s.trim())
-			.filter(Boolean),
+		// Stalled-thread recovery is OFF until `recover` (CHAMBERLAIN_RECOVER=1 or config.json, src/core/recover.ts): merging it changes nothing until it is turned on.
+		recover: setting("recover", CONF) === true,
+		exclude: setting("exclude", CONF) ?? [],
 		log,
 		sweepPromptFile: SWEEP_PROMPT_FILE,
 		// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).

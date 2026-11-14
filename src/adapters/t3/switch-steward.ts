@@ -1,11 +1,14 @@
 /**
  * Make this thread the wake target: the last step of a hand-off, and the flip itself.
- * The old URL stays in wake-url.prev, so rollback is one rename.
+ * The new Steward thread writes its webhook to secrets/wake-url.steward. The old URL stays in secrets/wake-url.prev, so rollback is one rename,
+ * and the thread id is set in config.json (`threads.steward`).
  *
  *   bun src/adapters/t3/switch-steward.ts <threadId>
  */
-import { chmodSync, copyFileSync, existsSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, renameSync } from "node:fs";
 import { CONF } from "../../core/config.ts";
+import { setThread } from "../../core/config-migrate.ts";
+import { ensureSecretsDir, secretPath } from "../../core/layout.ts";
 
 export function main(argv: string[] = process.argv.slice(2)) {
 	const threadId = argv[0];
@@ -13,12 +16,17 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		console.error("usage: switch-steward.ts <threadId>");
 		process.exit(2);
 	}
-	const next = `${CONF}/wake-url.steward`;
-	if (!existsSync(next)) throw Error("no wake-url.steward: the new thread has not written its webhook");
-	if (existsSync(`${CONF}/wake-url`)) copyFileSync(`${CONF}/wake-url`, `${CONF}/wake-url.prev`);
+	const next = secretPath(CONF, "wake-url.steward");
+	if (!next) throw Error("no wake-url.steward: the new thread has not written its webhook");
+	const dir = ensureSecretsDir(CONF);
+	const current = secretPath(CONF, "wake-url");
+	if (current) {
+		copyFileSync(current, `${dir}/wake-url.prev`);
+		chmodSync(`${dir}/wake-url.prev`, 0o600);
+	}
 	chmodSync(next, 0o600);
-	renameSync(next, `${CONF}/wake-url`);
-	writeFileSync(`${CONF}/steward-thread`, `${threadId}\n`, { mode: 0o600 });
+	renameSync(next, `${dir}/wake-url`);
+	setThread(CONF, "steward", threadId);
 	console.log("steward switched");
 }
 

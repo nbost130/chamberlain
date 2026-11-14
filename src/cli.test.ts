@@ -132,7 +132,7 @@ describe("the new Steward's first message names commands that exist in the build
 			"`chamberlain brief steward --mode live`",
 			"`chamberlain brief wake-prompt`",
 			"`chamberlain switch-steward <your thread id>`",
-			"/home/u/.config/chamberlain/wake-url.steward",
+			"/home/u/.config/chamberlain/secrets/wake-url.steward",
 		])
 			expect(out.includes(c), `missing: ${c}`).toBe(true);
 		expect(out).not.toMatch(/\{\{|bun |<!--/);

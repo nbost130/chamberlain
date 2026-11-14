@@ -15,7 +15,7 @@ import { defaultStore } from "../core/default-store.ts";
 import { makeLog } from "../core/log.ts";
 import { maintain } from "../core/maintain.ts";
 import { startup } from "../core/migrate.ts";
-import { privateFile as readPrivateFile } from "../core/private.ts";
+import { readNamed } from "../core/layout.ts";
 import type { ServerEntry } from "../core/servers.ts";
 import { loadServers, makeAdapter } from "../adapters/index.ts";
 import type { Adapter } from "../core/adapter.ts";
@@ -55,7 +55,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 
 	const store = defaultStore();
 	const log = makeLog(store, { src: "queue-web" });
-	const privateFile = (name: string) => readPrivateFile(CONF, name);
+	const privateFile = (name: string) => readNamed(CONF, name);
 	// The daemon raises alarms; the page only logs them, so a page problem never alerts the principal twice.
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
 	startup({ migrate: true, log });

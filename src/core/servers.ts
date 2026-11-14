@@ -1,11 +1,9 @@
 /**
- * servers.json: the servers Chamberlain watches, each served by one adapter (src/adapters/). `{"schemaVersion": 2,
- * "servers": [...]}`. Version 1 had no `adapter` (every server was T3 Code); it is still read, as `adapter: "t3"`, and
- * src/core/migrate.ts rewrites it.
+ * The `servers` list of config.json (once servers.json: `{"schemaVersion": 2, "servers": [...]}`): the servers Chamberlain watches, each
+ * served by one adapter (src/adapters/). Version 1 had no `adapter` (every server was T3 Code); it is still read, as `adapter: "t3"`.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isPrivateFile, modeText } from "./private.ts";
 import { CONF } from "./config.ts";
+import { cfg } from "./layout.ts";
 import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
 
 /** The adapter a server entry names when it names none: every server was T3 Code before adapters existed. */
@@ -56,14 +54,10 @@ export function parseServers(raw: unknown): ServerEntry[] {
 
 export const serversDoc = (servers: ServerEntry[]) => ({ schemaVersion: SCHEMA_VERSION, servers });
 
-/** The file's entries, or `undefined` when there is no file. It must be a private regular file (0600). */
+/** The `servers` list of config.json (else the legacy servers.json), parsed, or `undefined` when neither has one. */
 export function readServers(conf = CONF): ServerEntry[] | undefined {
-	const p = `${conf}/servers.json`;
-	if (!existsSync(p)) return undefined;
-	const st = statSync(p);
-	if (!isPrivateFile(st))
-		throw Error(`servers.json must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
-	return parseServers(JSON.parse(readFileSync(p, "utf8")));
+	const list = cfg(conf, "servers");
+	return list === undefined ? undefined : parseServers({ schemaVersion: SCHEMA_VERSION, servers: list });
 }
 
 /** The server the Steward runs on: the one with no `environmentId`, else the first. Its adapter wakes the Steward. */

@@ -1,36 +1,100 @@
 # Configuration reference
 
-Everything lives in two directories. Create the directory 0700 and its files 0600, and note that
-**every file that holds a token, a URL or a command must be mode 0600 or Chamberlain refuses to read it**.
+Everything lives in two directories. The config directory is mode **0700**. In it, one file, `config.json`, holds every setting that is not a
+secret, and one directory, `secrets/` (also 0700), holds a file per secret (mode **0600**: Chamberlain refuses a token or a URL that anyone else can read).
+
+Coming from the file-per-setting layout of the first releases (`settings.json`, `servers.json`, `web.json`, one file per token)?
+The daemon and the page convert it for you the first time they start, and leave your old files where they are.
+[config-migration.md](config-migration.md) maps every old file and variable to its new place.
 
 ## Config directory `~/.config/chamberlain` (`CHAMBERLAIN_CONF`)
 
+| Path | Required | What it is |
+| --- | --- | --- |
+| `config.json` | for the page, servers and anything beyond the defaults | Every setting that is not a secret: thread ids, the server list, the page, sweep checks, the Alert Desk, operating rules and the tunables below. Mode 0600 or 0644, owned by you, never group- or world-writable (it names commands the daemon runs). It has its own `schemaVersion` (now 1), and a key this build does not know is refused. |
+| `secrets/` | T3 adapter: yes | One file per secret, mode 0600, in a 0700 directory. The names are listed below. A file is one value; a trailing newline is dropped. Never logged. |
+| `decision-rights.md` | recommended | Your standing rules, in your words, verbatim in a wake whenever it may be new to the Steward (a one-line pointer otherwise). Without it a wake tells the Steward to hold anything on the ASK list. |
+| `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`steward-sweep-prompt.md`](steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
+| `alert-desk-prompt.md` | optional | Replaces the bundled Alert Desk prompt. |
+| `operating-rules.md` | optional | Operating rules copied whole into the hand-off (the `operatingRules` section below is the other way). |
+| `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See below. |
+| `daemon.env` | optional | `KEY=value` lines for systemd's `EnvironmentFile`. It stays where the unit files point; a variable in it overrides the key of the same name in `config.json`. |
+
+The prose files stay files because you edit them as text. The away record, the rulings (ids R1, R2, ...), the butlers and everything held for your
+return are rows in the database (below), written by `chamberlain afk`, `chamberlain ruling`, `chamberlain butler` and the page.
+
+`chamberlain config show` prints the effective configuration, key by key, with where each value comes from (the environment, `config.json`, or an
+old file still being read) and every secret by name; `chamberlain config migrate [--dry-run]` converts an old directory.
+
+### `secrets/`
+
+One file per secret, in the T3 adapter's names. A `tokenFile` or `operateTokenFile` in the config names a file in this directory.
+
 | File | Required | What it is |
 | --- | --- | --- |
-| `read-token` | T3 adapter: yes (or per-server `tokenFile`) | An `orchestration:read` token for the default server. Never logged. |
-| `wake-url` | T3 adapter: to deliver | The webhook URL of the scheduled task bound to the Steward's thread. Never logged. |
-| `steward-thread` | recommended | The Steward's thread id (for another adapter, whatever id it uses for the Steward). The daemon never wakes the Steward about itself, and uses it for the busy gate, stall alarm and compaction. |
-| `decision-rights.md` | recommended | Your standing rules, in your words, verbatim in a wake whenever it may be new to the Steward (a one-line pointer otherwise). Without it a wake tells the Steward to hold anything on the ASK list. |
-| `decisions-thread` | T3 adapter: for the inline view | The pinned Decisions thread's id. `chamberlain ask` posts there and refuses to run without it. |
-| `compact-url` | T3 adapter: optional | Webhook whose task prompt is `/compact`. Without it the daemon only alarms that the Steward is over its size. |
-| `settings.json` | optional | See below. |
-| `servers.json` | optional | The T3 servers to watch. See below. |
-| `web.json` | for the page | The page's bind address and options. See below. |
-| `sweep.json` | optional | Your own routine checks. See below. |
-| `judge.json` | optional | Which backend judges each trigger, with backend names of your own: `{"triggers": {"stalled-recovery": {"backend": "small-model"}}, "backends": {"small-model": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. There is **no default**: without this file nothing is judged, the daemon logs `judge-off` with why at start, and a second failure goes to the Steward unjudged. Only error text, scrubbed, is ever sent. |
-| `sweep-prompt.md` | optional | Replaces the bundled full-sweep prompt ([`steward-sweep-prompt.md`](steward-sweep-prompt.md)). `{{principalName}}` is substituted. |
-| `operating-rules.json` / `operating-rules.md` | optional | Operating rules copied into the hand-off: `operating-rules.md` whole, or excerpts of your own files listed in `operating-rules.json`. See below. |
-| `brief.d/*.md` | optional | Brief fragments: your own sections, appended to the Steward's hand-off. See below. |
+| `read-token` | T3 adapter: yes (or a `tokenFile` per server) | An `orchestration:read` token for the default server. |
+| `<name>-token` | per server | Any `tokenFile` or `operateTokenFile` a server entry, `web.decisionsServer` or `web.answerTokens` names. |
+| `wake-url` | T3 adapter: to deliver | The webhook URL of the scheduled task bound to the Steward's thread. A URL that starts an agent turn is a secret. |
+| `compact-url` | optional | Webhook whose task prompt is `/compact`. Without it the daemon only alarms that the Steward is over its size. |
+| `desk-wake-url` | Alert Desk | The webhook bound to the Alert Desk thread. Without it the desk is off. |
 | `wake-url.steward`, `wake-url.prev` | transient | Used by `chamberlain switch-steward` during a hand-off; the old URL is kept for one-rename rollback. |
-| `*-token` files | optional | Any `tokenFile` or `operateTokenFile` a server or `web.json` names. |
-| `daemon.env` | optional | `KEY=value` lines for systemd's `EnvironmentFile`. |
-| `alert-desk.json` | optional | The Alert Desk's settings: its windows and cap, the morning hour, and the commands and gatherer agent it may use. See [alert-desk.md](alert-desk.md). |
 
-The away record, the rulings (ids R1, R2, ...), the butlers and everything held for your return are rows in the database (below),
-written by `chamberlain afk`, `chamberlain ruling`, `chamberlain butler` and the page.
+The old place for these, the config directory itself, is still read when `secrets/` lacks the file, with one `config-deprecated` line in the events log.
 
-**`operating-rules.json`** lifts the lines a Steward acts on out of your own markdown files when the hand-off
-is built, so there is no second copy to drift ([`examples/operating-rules.json`](../examples/operating-rules.json)):
+### `config.json`
+
+```json
+{
+  "schemaVersion": 1,
+  "principal": "Ada",
+  "alertCmd": "~/bin/notify-me",
+  "threads": { "steward": "<thread id>", "decisions": "<thread id>" },
+  "servers": [ { "name": "main", "adapter": "t3", "origin": "http://127.0.0.1:3773", "tokenFile": "read-token" } ],
+  "web": { "host": "127.0.0.1", "port": 3790 }
+}
+```
+
+[`examples/config.json`](../examples/config.json) is a longer one. Setting a key to `null` says "none" and stops the fallback to an old file for that key.
+
+**Scalar keys.** Each can be overridden by an environment variable, and **one rule names it: `CHAMBERLAIN_` + the key in UPPER_SNAKE_CASE**
+(`stallMs` is `CHAMBERLAIN_STALL_MS`, `t3StateDb` is `CHAMBERLAIN_T3_STATE_DB`). The environment wins, then `config.json`, then the default.
+A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not read as zero. A list is comma-separated, and a boolean is `1` or `true`.
+
+| Key | Environment | Default | Meaning |
+| --- | --- | --- | --- |
+| `principal` | `CHAMBERLAIN_PRINCIPAL` | `the operator` | What wakes, the hand-off and away mode call you. |
+| `t3Dir` | `CHAMBERLAIN_T3_DIR` | `~/.t3` | T3's base directory (CLI under `bin/`, runtime under `runtime/versions/`). |
+| `t3StateDb` | `CHAMBERLAIN_T3_STATE_DB` | `<t3Dir>/userdata/statev2.sqlite` | T3's state database, opened read-only. |
+| `t3Origin` | `CHAMBERLAIN_T3_ORIGIN` | `http://127.0.0.1:3773` | The origin of the one default server when there is no `servers` list. |
+| `alertCmd` | `CHAMBERLAIN_ALERT_CMD` | none | Run for each alarm as `<command> warning <title> <summary>`, with `CHAMBERLAIN_ALARM_KEY` (the alarm's stable key, to de-duplicate on) in its environment. Without one, alarms are only logged. |
+| `compactTokens` | `CHAMBERLAIN_COMPACT_TOKENS` | `350000` | Steward context size above which the daemon sends `/compact`. |
+| `recover` | `CHAMBERLAIN_RECOVER` | off | `true` / `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge`; without one, to the Steward unjudged). Needs the server's operate token. See [GLOSSARY.md](GLOSSARY.md#recovering-a-failed-thread). |
+| `exclude` | `CHAMBERLAIN_EXCLUDE` | none | Thread ids to never wake about (a list; comma-separated in the variable). |
+| `reportQuietMs` | `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn must stay quiet before it is reported (a PR update often follows). |
+| `reportHoldMs` | `CHAMBERLAIN_REPORT_HOLD_MS` | `3600000` | How long a report waits on a thread's own background work before it goes anyway. |
+| `stallMs` | `CHAMBERLAIN_STALL_MS` | `1200000` | How long queued wakes may sit with nothing moving in the Steward's thread before an alarm. |
+| `cardUnverifiedAlarmMs` | `CHAMBERLAIN_CARD_UNVERIFIED_ALARM_MS` | `86400000` (24 hours) | How long a question card the daemon holds may go with no evidence (not seen waiting, not seen resolved in its thread) before it raises an alarm naming the hold and the command that closes it by hand. |
+| `maxAttempts` | `CHAMBERLAIN_MAX_ATTEMPTS` | `3` | The most attempts (POSTs) one outbox row gets, a positive whole number. Every outcome counts, a refusal and a timeout included. At the limit the row is a dead letter, kept and not sent again until `chamberlain wakes retry` or `cancel` (see [DELIVERY.md](DELIVERY.md#dead-letters)). |
+| `gh` | `CHAMBERLAIN_GH` | `gh` | The command the held-for-return reconciler uses for its GitHub reads (`gh api <path> --jq <filter>`): another `gh`, or a wrapper that adds your credentials. |
+| `healthFormatPattern` | `CHAMBERLAIN_HEALTH_FORMAT_PATTERN` | none | A regular expression enabling the optional reply-format health signal ([`steward-health.md`](steward-health.md)). |
+
+**Sections.** Objects and lists have no environment override.
+
+| Key | What it holds |
+| --- | --- |
+| `threads` | `steward`, `decisions` and `desk`: the thread ids. `steward` is the Steward's thread (for another adapter, whatever id it uses for the Steward): the daemon never wakes the Steward about itself, and uses it for the busy gate, stall alarm and compaction. `decisions` is the pinned Decisions thread: `chamberlain ask` posts there and refuses to run without it. `desk` is the Alert Desk's thread, for its busy gate. `chamberlain switch-steward` writes `steward`. |
+| `settledMatch` | How `chamberlain ask` and `chamberlain afk hold` decide a question is already settled ([ARCHITECTURE.md, "Queue first, hold second"](ARCHITECTURE.md#queue-first-hold-second-settled-never-twice)): `{"titleOverlap": true, "ignoreWords": []}`. `titleOverlap: false` matches on exact refs only; `ignoreWords` lists words (a project or product name) that head many unrelated questions and so say nothing about the topic. |
+| `servers` | The T3 servers to watch. See below. |
+| `web` | The page's bind address and options. See below. |
+| `sweep` | Your own routine checks. See below. |
+| `alertDesk` | The Alert Desk's settings: its windows and cap, the morning hour, and the commands and gatherer agent it may use. See [alert-desk.md](alert-desk.md). |
+| `operatingRules` | Operating rules copied into the hand-off: excerpts of your own files. See below. |
+| `judge` | Which backend judges each trigger, with backend names of your own: `{"triggers": {"stalled-recovery": {"backend": "small-model"}}, "backends": {"small-model": {"command": [...]}}}`. A backend's command takes the system prompt and the user prompt as its last two arguments and prints `{"verdict", "reason"}`. There is **no default**: without it nothing is judged, the daemon logs `judge-off` with why at start, and a second failure goes to the Steward unjudged. Only error text, scrubbed, is ever sent. |
+
+Errors from a section still name the old file the section came from (`web.json: no bind address`, `sweep.json: check disk needs ...`): read that as the `web` or `sweep` section of `config.json`.
+
+**`operatingRules`** lifts the lines a Steward acts on out of your own markdown files when the hand-off
+is built, so there is no second copy to drift (the value of the `operatingRules` key; [`examples/operating-rules.json`](../examples/operating-rules.json) is one on its own):
 
 ```json
 { "schemaVersion": 2,
@@ -42,7 +106,7 @@ is built, so there is no second copy to drift ([`examples/operating-rules.json`]
       "sections": [ ["Secrets", "whole"], ["Working style", ["- Whole issue", "- Smallest change"]] ] } ] }
 ```
 
-- `sources` are read in order, and each one's selectors in order; `intro`, if set, comes first.
+- `operatingRules` has `sources`, read in order, and each one's selectors in order; `intro`, if set, comes first.
 - `[heading, "whole" | [line prefixes]]` takes the `## heading` section, every line or one line per prefix.
   `{ "section": heading, "lines": ..., "as": heading }` is the same with a heading of its own.
 - `{ "table": heading, "rows": "whole" | [row prefixes], "as": heading }` takes the one markdown table under `## heading`: its
@@ -73,31 +137,20 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
   `## Open work at hand-over` section. Blank lines at a fragment's start and end are dropped, so fragments sit exactly one
   blank line apart. Nothing is substituted in a fragment.
 
-**`settings.json`** (all keys optional; each has an environment override):
-
-| Key | Environment | Default | Meaning |
-| --- | --- | --- | --- |
-| `principalName` | `CHAMBERLAIN_PRINCIPAL` | `the operator` | What wakes, the hand-off and away mode call you. |
-| `t3BaseDir` | `CHAMBERLAIN_T3_DIR` | `~/.t3` | T3's base directory (CLI under `bin/`, runtime under `runtime/versions/`). |
-| `t3StateDb` | `CHAMBERLAIN_T3_STATE_DB` | `<t3BaseDir>/userdata/statev2.sqlite` | T3's state database, opened read-only. |
-| `alertCommand` | `CHAMBERLAIN_ALERT_CMD` | none | Run for each alarm as `<command> warning <title> <summary>`, with `CHAMBERLAIN_ALARM_KEY` (the alarm's stable key, to de-duplicate on) in its environment. Without one, alarms are only logged. |
-| `compactTokens` | `CHAMBERLAIN_COMPACT_TOKENS` | `350000` | Steward context size above which the daemon sends `/compact`. |
-| `settledMatch` | none | `{"titleOverlap": true, "ignoreWords": []}` | How `chamberlain ask` and `chamberlain afk hold` decide a question is already settled ([ARCHITECTURE.md, "Queue first, hold second"](ARCHITECTURE.md#queue-first-hold-second-settled-never-twice)). `titleOverlap: false` matches on exact refs only; `ignoreWords` lists words (a project or product name) that head many unrelated questions and so say nothing about the topic. |
-
-**`servers.json`**: `{ "schemaVersion": 2, "servers": [ ... ] }`. One watcher runs per server, through the adapter the entry names; every wake carries `server:`. The Steward's own server (the one with no `environmentId`, else the first) is the one whose adapter wakes it.
+**`servers`**: a list of server entries. One watcher runs per server, through the adapter the entry names; every wake carries `server:`. The Steward's own server (the one with no `environmentId`, else the first) is the one whose adapter wakes it.
 
 | Field | Meaning |
 | --- | --- |
 | `name` | A short unique name used in wakes, queue items and logs. |
 | `adapter` | Which adapter serves it (see [`ADAPTERS.md`](ADAPTERS.md)). Default `"t3"`. |
 | `origin` | T3 adapter: the server's origin, for example `http://127.0.0.1:3773`. |
-| `tokenFile` | T3 adapter: file in the config directory with an `orchestration:read` token. |
-| `operateTokenFile` | Ignored by the page (answer rights come only from `web.json`); read by `chamberlain debug t3x`. |
+| `tokenFile` | T3 adapter: file in `secrets/` with an `orchestration:read` token. |
+| `operateTokenFile` | Ignored by the page (answer rights come only from the `web` section); read by `chamberlain debug t3x`. File in `secrets/`. |
 | `environmentId` | Set for a server other than the Steward's own: the Steward passes it to the `t3_*` tools. The one without it is "this server". |
 | `mayBeOffline` | A laptop that sleeps: no alarm when its socket stays down. |
 | `sshHost` | `user@host` reachable by key-based ssh, so `git` can be asked about a worktree path on that machine. |
 
-**`web.json`** (mode 0600; the page refuses to start otherwise):
+**`web`** (the page refuses to start without it):
 
 | Key | Meaning |
 | --- | --- |
@@ -106,14 +159,14 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `allowedHosts` | Extra `Host` header names to accept, such as the machine's MagicDNS name. |
 | `threadLinks` | Server name to the T3 web URL prefix a thread id is appended to, for "Open thread" links. |
 | `mirrorLinks` | Server name to the link base used for mirrored cards (`t3-thread://v2/<environmentId>/`). |
-| `decisionsServer` | `{ "origin": "...", "operateTokenFile": "..." }`: the T3 server hosting the Decisions thread, with an `orchestration:operate` token. Enables the "Decisions · N waiting" title and settling cards. |
-| `answerTokens` | Server name to an operate-token file: cards on that server become answerable from the page. Without one a server is read-only. |
+| `decisionsServer` | `{ "origin": "...", "operateTokenFile": "..." }` (the token file is in `secrets/`): the T3 server hosting the Decisions thread, with an `orchestration:operate` token. Enables the "Decisions · N waiting" title and settling cards. |
+| `answerTokens` | Server name to an operate-token file in `secrets/`: cards on that server become answerable from the page. Without one a server is read-only. |
 | `publicBase` | An `https://` base (for example from `tailscale serve`) used in inline views when T3 is loaded over https. |
 
-**`sweep.json`** lists your own routine checks, run every two hours:
+**`sweep`** lists your own routine checks, run every two hours:
 
 ```json
-{ "schemaVersion": 2, "checks": [ { "name": "disk", "command": ["/path/to/check-disk.sh"], "timeoutMs": 20000, "mode": "live" } ] }
+{ "sweep": { "checks": [ { "name": "disk", "command": ["/path/to/check-disk.sh"], "timeoutMs": 20000, "mode": "live" } ] } }
 ```
 
 A check is an **item source** (the word is Nagios's and Sensu's: a command run on a schedule that reports a status): it
@@ -143,7 +196,7 @@ directory follows the same rule (`$CHAMBERLAIN_CONF`, else `$XDG_CONFIG_HOME/cha
 Chamberlain keeps no cache files today; `$XDG_CACHE_HOME/chamberlain` is reserved for any it might, and is safe to delete.
 
 ```
-~/.config/chamberlain/        what you write: tokens, URLs, settings.json, servers.json, web.json, sweep.json, decision-rights.md (files mode 0600)
+~/.config/chamberlain/        what you write: config.json, secrets/ (a file per token or URL, mode 0600), decision-rights.md
 ~/.local/state/chamberlain/   what Chamberlain writes, and what a backup must keep
   chamberlain.db              the one SQLite database (mode 0600), with chamberlain.db-wal and -shm beside it while it is open
   evidence/<item>/            the screenshots and recordings the database's evidence rows point to
@@ -182,30 +235,23 @@ the state directory taken while the daemon is writing can catch the database and
 
 ## Environment variables
 
-Each overrides the setting or default named. The daemon, the page and the command-line tools all read them.
+**The naming rule.** A scalar key of `config.json` is overridden by `CHAMBERLAIN_` + its name in UPPER_SNAKE_CASE; the
+table under "Scalar keys" above lists them all. The daemon, the page and the command-line tools all read them. These are the ones
+that are not config keys:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `CHAMBERLAIN_CONF`, `CHAMBERLAIN_STATE` | `$XDG_CONFIG_HOME/chamberlain`, `$XDG_STATE_HOME/chamberlain` (else `~/.config/chamberlain`, `~/.local/state/chamberlain`) | The two directories. Point them at scratch directories to try things out without touching your real ones. |
-| `CHAMBERLAIN_T3_ORIGIN` | `http://127.0.0.1:3773` | The origin of the one default server when there is no `servers.json`. |
-| `CHAMBERLAIN_T3_DIR`, `CHAMBERLAIN_T3_STATE_DB`, `CHAMBERLAIN_PRINCIPAL`, `CHAMBERLAIN_ALERT_CMD`, `CHAMBERLAIN_COMPACT_TOKENS` | see `settings.json` | Overrides for the settings above. |
-| `CHAMBERLAIN_ALARM_KEY` | set by Chamberlain | Not for you to set. It is in the environment of your `alertCommand` when Chamberlain runs it: the alarm's stable key (for example `steward-stalled`), so a command that pages someone can de-duplicate on it. |
-| `CHAMBERLAIN_DRY` | unset | `1`: the daemon watches and logs, and posts nothing. |
+| `CHAMBERLAIN_CONF`, `CHAMBERLAIN_STATE` | `$XDG_CONFIG_HOME/chamberlain`, `$XDG_STATE_HOME/chamberlain` (else `~/.config/chamberlain`, `~/.local/state/chamberlain`) | The two directories. They name where `config.json` is, so they are never keys in it. Point them at scratch directories to try things out without touching your real ones. |
+| `CHAMBERLAIN_DRY` | unset | `1`: the daemon watches and logs, and posts nothing. A switch for one run, so not a key. |
 | `CHAMBERLAIN_VERBOSE` | unset | Also print each log line to stdout. |
-| `CHAMBERLAIN_EXCLUDE` | unset | Comma-separated thread ids to never wake about. |
-| `CHAMBERLAIN_RECOVER` | unset (off) | `1`: turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge.json`; without it, to the Steward unjudged). Needs the server's operate token. See [GLOSSARY.md](GLOSSARY.md#recovering-a-failed-thread). |
-| `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn must stay quiet before it is reported (a PR update often follows). |
-| `CHAMBERLAIN_REPORT_HOLD_MS` | `3600000` | How long a report waits on a thread's own background work before it goes anyway. |
-| `CHAMBERLAIN_STALL_MS` | `1200000` | How long queued wakes may sit with nothing moving in the Steward's thread before an alarm. |
-| `CHAMBERLAIN_CARD_UNVERIFIED_ALARM_MS` | `86400000` (24 hours) | How long a question card the daemon holds may go with no evidence (not seen waiting, not seen resolved in its thread) before it raises an alarm naming the hold and the command that closes it by hand. |
-| `CHAMBERLAIN_MAX_ATTEMPTS` | `3` | The most attempts (POSTs) one outbox row gets, a positive whole number. Every outcome counts, a refusal and a timeout included. At the limit the row is a dead letter, kept and not sent again until `chamberlain wakes retry` or `cancel` (see [DELIVERY.md](DELIVERY.md#dead-letters)). |
-| `CHAMBERLAIN_GH` | `gh` | The command the held-for-return reconciler uses for its GitHub reads (`gh api <path> --jq <filter>`): another `gh`, or a wrapper that adds your credentials. |
-| `CHAMBERLAIN_HEALTH_FORMAT_PATTERN` | unset | A regular expression enabling the optional reply-format health signal ([`steward-health.md`](steward-health.md)). |
-| `T3CODE_CLI_PATH` | auto | The `t3` binary `chamberlain ask` uses; otherwise `<t3BaseDir>/bin/t3`, then the newest installed runtime. |
+| `CHAMBERLAIN_ALARM_KEY` | set by Chamberlain | Not for you to set. It is in the environment of your `alertCmd` when Chamberlain runs it: the alarm's stable key (for example `steward-stalled`), so a command that pages someone can de-duplicate on it. |
+| `T3CODE_CLI_PATH` | auto | The `t3` binary `chamberlain ask` uses; otherwise `<t3Dir>/bin/t3`, then the newest installed runtime. |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where to find the Steward's Claude Code transcripts for health measurement. |
 | `ALERT_DESK_INBOX` | `~/.cache/alert-desk/inbox.jsonl` | The Alert Desk's inbox file. See [alert-desk.md](alert-desk.md). |
 | `DESK_ASK_PATH` | unset | The Alert Desk files a decision with `bun $DESK_ASK_PATH`; unset, with this build's own `chamberlain ask`. The hook and the standing prompt must see the same value. See [alert-desk.md](alert-desk.md). |
 | `DESK_LOG_DIRS` | unset | Colon-separated extra directories the Alert Desk may read files from, besides `/var/log` and `~/.cache/alert-desk`. |
+
+The `ALERT_DESK_*` and `DESK_*` variables belong to the Alert Desk's own processes (its hook and its writers), which are not Chamberlain's, so they are not keys.
 
 ## Command-line tools
 
@@ -226,6 +272,7 @@ The standalone binary is one command, `chamberlain <name>`; from a checkout each
 | `chamberlain wakes list\|retry <id>\|cancel <id>` | you | The outbox: what is pending, held and dead-lettered; retry a dead letter; cancel a row for good. See [DELIVERY.md](DELIVERY.md#dead-letters). |
 | `chamberlain butler start\|stop\|list` | the Steward | The butler ledger. |
 | `chamberlain steward-health` | you | Read-only Steward health report. |
-| `chamberlain migrate [--check]` | you | Check every config file's schema version and upgrade old ones. (The database migrates itself when opened.) |
+| `chamberlain config migrate [--dry-run]`, `config show` | you | `migrate` converts the old file-per-setting layout into `config.json` and `secrets/`, and leaves the old files where they are; `--dry-run` prints what it would do. `show` prints every key with where its value comes from, and every secret by name. See [config-migration.md](config-migration.md). |
+| `chamberlain migrate [--check]` | you | Check every old-layout config file's schema version and upgrade old ones. (The database migrates itself when opened.) |
 | `chamberlain switch-steward <threadId>` | the Steward | The last step of a hand-off: make this thread the wake target. |
 | `chamberlain debug <command>` | you | Diagnostic commands, listed by `chamberlain debug help`: `peek <server> <threadId>` (the end of a thread in plain lines, a tenth of what `t3_thread_read` costs), `t3x threads\|read\|respond\|send <server>` (act on a thread on any configured server), `queue-waits [--hours N] [--store FILE]` (how long wakes sat before the Steward started on them), `compat [origin]` (a T3 server's version and whether it is in the tested range), `synthetic-wake` (queue one wake shaped like the daemon's, as an outbox row, so the running daemon sends it and the whole path is proved), `desk-allowlist hook\|check '<command>'` (the Alert Desk's command allowlist). The old top-level names (`chamberlain peek`, and so on) still work. |

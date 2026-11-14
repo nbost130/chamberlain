@@ -4,8 +4,11 @@
  */
 import { Database } from "bun:sqlite";
 import type { Gate } from "../../core/hold.ts";
+import { setting } from "../../core/layout.ts";
 
-export const STALL_MS = Number(process.env.CHAMBERLAIN_STALL_MS ?? 20 * 60_000);
+export const STALL_MS = 20 * 60_000;
+/** The stall window in force: `stallMs` (CHAMBERLAIN_STALL_MS, else config.json), else the default above. */
+export const currentStallMs = (): number => setting("stallMs") ?? STALL_MS;
 export type StewardQueue = {
 	queued: number /** Turns the Steward is working on right now. Optional so a literal built without it still reads as none. */;
 	running?: number;
@@ -66,13 +69,13 @@ export function queueGate(q: StewardQueue | undefined): Gate {
 }
 
 /** Pure: wakes have waited past the limit and nothing in the thread has moved in that time. A long turn that is working keeps moving. */
-export function queueStalled(q: StewardQueue, now: number, stallMs = STALL_MS): boolean {
+export function queueStalled(q: StewardQueue, now: number, stallMs = currentStallMs()): boolean {
 	if (!q.queued || !q.oldestQueuedAt || now - Date.parse(q.oldestQueuedAt) < stallMs) return false;
 	return !q.lastActivityAt || now - Date.parse(q.lastActivityAt) >= stallMs;
 }
 
 /** Pure: why a compact must not be sent now. It would only join the queue behind whatever is holding it. */
-export function compactBlocked(q: StewardQueue, now: number, stallMs = STALL_MS): string | undefined {
+export function compactBlocked(q: StewardQueue, now: number, stallMs = currentStallMs()): string | undefined {
 	if (q.compactPending) return "one is already queued or running";
 	if (q.openCardSince) return "the Steward has its own card open";
 	if (queueStalled(q, now, stallMs)) return "the queue has stopped moving";

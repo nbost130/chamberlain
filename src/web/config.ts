@@ -1,6 +1,5 @@
-/** The queue page's config: ~/.config/chamberlain/web.json. It must name the one address to bind, never a wildcard. */
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isPrivateFile, modeText } from "../core/private.ts";
+/** The queue page's config: the `web` section of ~/.config/chamberlain/config.json. It must name the one address to bind, never a wildcard. */
+import { CONFIG_FILE, cfg } from "../core/layout.ts";
 import { SCHEMA_VERSION, checkVersion } from "../core/schema.ts";
 
 export type WebConfig = {
@@ -185,17 +184,12 @@ export function parseConfig(raw: unknown): WebConfig {
 	};
 }
 
-/** web.json names the operate token file and the bind address, so like the other config files it must be a private regular file. */
+/** The page's config: the `web` section of config.json (else the legacy web.json). Without one the page does not start. */
 export function loadConfig(conf: string): WebConfig {
-	const p = `${conf}/web.json`;
-	if (!existsSync(p))
+	const w = cfg(conf, "web");
+	if (w === undefined)
 		throw Error(
-			`no ${p}. Write {"schemaVersion": 1, "host": "<Tailscale IP>", "port": 3790} there first (mode 0600); the page never binds without an address.`,
+			`no "web" section in ${conf}/${CONFIG_FILE}. Add {"web": {"host": "<Tailscale IP>", "port": 3790}} there first; the page never binds without an address.`,
 		);
-	const st = statSync(p);
-	if (!isPrivateFile(st))
-		throw Error(
-			`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`,
-		);
-	return parseConfig(JSON.parse(readFileSync(p, "utf8")));
+	return parseConfig(w);
 }

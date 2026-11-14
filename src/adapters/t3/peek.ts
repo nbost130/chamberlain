@@ -4,8 +4,8 @@
  *
  *   bun src/adapters/t3/peek.ts <server> <threadId> [messages=3] [chars=400]
  */
-import { readFileSync } from "node:fs";
 import { CONF, principal } from "../../core/config.ts";
+import { readSecret } from "../../core/layout.ts";
 import { connect } from "./rpc.ts";
 import { readServers } from "../../core/servers.ts";
 import { t3Server } from "./server.ts";
@@ -43,7 +43,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 		console.error(`usage: peek <${servers.map((s) => s.name).join("|")}> <threadId> [messages] [chars]`);
 		process.exit(2);
 	}
-	const rpc = await connect(srv.origin, readFileSync(`${CONF}/${srv.tokenFile}`, "utf8").trim());
+	const rpc = await connect(srv.origin, readSecret(CONF, srv.tokenFile) ?? "");
 	const p = (await rpc.request("orchestration.getThreadProjection", { threadId })) as { turnItems?: Item[] };
 	console.log(peekLines(p.turnItems ?? [], Number(n) || 3, Number(chars) || 400).join("\n"));
 	process.exit(0);

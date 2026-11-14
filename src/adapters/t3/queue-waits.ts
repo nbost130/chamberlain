@@ -17,6 +17,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { CONF, STATE } from "../../core/config.ts";
+import { thread } from "../../core/layout.ts";
 import { openStore } from "../../core/sqlite-store.ts";
 import { dbPath as storeDbPath } from "../../core/store.ts";
 import { t3StateDbPath } from "./settings.ts";
@@ -284,9 +285,8 @@ export function main(argv: string[] = process.argv.slice(2)) {
 	const dbPath = arg(argv, "--db") ?? t3StateDbPath();
 	let steward = arg(argv, "--steward");
 	if (!steward) {
-		try {
-			steward = readFileSync(`${CONF}/steward-thread`, "utf8").trim();
-		} catch {
+		steward = thread(CONF, "steward");
+		if (!steward) {
 			console.error("no Steward thread: pass --steward THREAD_ID");
 			process.exit(2);
 		}

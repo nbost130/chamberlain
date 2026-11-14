@@ -7,6 +7,8 @@
  * Chamberlain relies on T3 internals (see docs/upstream-asks.md): the orchestration protocol over /ws, the shell
  * stream, `runtime-request.respond`, and a read-only look at T3's `statev2.sqlite`. A newer T3 can change any of them.
  */
+import { setting } from "../../core/layout.ts";
+
 export const T3_TESTED = {
 	/** Oldest and newest T3 server version exercised, inclusive. */
 	min: "0.1.8",
@@ -51,7 +53,7 @@ export async function readEnvironment(
 }
 
 export async function main(argv: string[] = process.argv.slice(2)) {
-	const origin = argv[0] ?? process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773";
+	const origin = argv[0] ?? setting("t3Origin") ?? "http://127.0.0.1:3773";
 	const env = await readEnvironment(origin);
 	console.log(
 		`${origin}: T3 ${String(env?.serverVersion ?? "unknown")}, protocol ${String(env?.orchestrationProtocolVersion ?? "unknown")}; tested ${T3_TESTED.min} to ${T3_TESTED.max}, protocol ${T3_TESTED.orchestrationProtocol}`,

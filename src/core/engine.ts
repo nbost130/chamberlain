@@ -74,7 +74,7 @@ import type { Gate } from "./hold.ts";
 import { failedRead, skipEvent, type InstructionRead } from "./history.ts";
 import { recordAnswerDelivered } from "./questions.ts";
 import { makeLog, type Log } from "./log.ts";
-import { privateFile as readPrivateFile } from "./private.ts";
+import { readNamed, setting } from "./layout.ts";
 import { settleReport } from "./report.ts";
 import {
 	epochOf,
@@ -113,13 +113,17 @@ export type EngineTiming = {
 	/** How long a card hold may go with no evidence (not seen waiting, not seen resolved) before the engine raises an alarm. */
 	cardUnverifiedAlarmMs: number;
 };
-export const DEFAULT_TIMING: EngineTiming = {
+/**
+ * The timings in force: `reportQuietMs` and `cardUnverifiedAlarmMs` from the environment or config.json (src/core/layout.ts), else the defaults.
+ * CHAMBERLAIN_TICK_MS is a test knob and stays environment-only.
+ */
+export const defaultTiming = (): EngineTiming => ({
 	debounceMs: 2500,
 	lagMs: 3000,
-	quietMs: Number(process.env.CHAMBERLAIN_REPORT_QUIET_MS ?? 180_000),
+	quietMs: setting("reportQuietMs") ?? 180_000,
 	tickMs: Number(process.env.CHAMBERLAIN_TICK_MS ?? 60_000),
-	cardUnverifiedAlarmMs: Number(process.env.CHAMBERLAIN_CARD_UNVERIFIED_ALARM_MS ?? 24 * 3_600_000),
-};
+	cardUnverifiedAlarmMs: setting("cardUnverifiedAlarmMs") ?? 24 * 3_600_000,
+});
 
 export type EngineDeps = {
 	conf: string;
@@ -166,10 +170,10 @@ const TOKEN_ALARM_WINDOW_MS = 6 * 3600_000;
 export function createEngine(d: EngineDeps) {
 	const { conf, store } = d;
 	const DRY = d.dry === true;
-	const t: EngineTiming = { ...DEFAULT_TIMING, ...d.timing };
+	const t: EngineTiming = { ...defaultTiming(), ...d.timing };
 	const EXCLUDE = new Set(d.exclude ?? []);
 	const log: Log = d.log ?? makeLog(store);
-	const privateFile = (name: string) => readPrivateFile(conf, name);
+	const privateFile = (name: string) => readNamed(conf, name);
 	const home = homeServer(d.servers.map((x) => x.server));
 	const homeAdapter = d.servers.find((x) => x.server === home)!.adapter;
 

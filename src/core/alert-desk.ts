@@ -43,7 +43,7 @@ import { selfCommand } from "./config.ts";
 import { type ShapeSet, describeShape, parseGatherer, parseShapes } from "./desk-shapes.ts";
 import type { Outbox, WakeDraft } from "./deliver.ts";
 import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
-import { authorityProblem } from "./private.ts";
+import { CONFIG_FILE, cfg, configValue } from "./layout.ts";
 import type { Item, Store } from "./store.ts";
 
 export const ALERT_DESK = "alert-desk";
@@ -117,9 +117,10 @@ export function parseConfig(raw: unknown): DeskConfig {
 		startAt: o.startAt === "beginning" ? "beginning" : DEFAULTS.startAt,
 	};
 }
+/** The desk's settings: the `alertDesk` section of config.json (else the legacy alert-desk.json), or the defaults. */
 export function readConfig(conf: string): DeskConfig {
 	try {
-		return parseConfig(JSON.parse(readFileSync(configPath(conf), "utf8")));
+		return parseConfig(cfg(conf, "alertDesk"));
 	} catch {
 		return { ...DEFAULTS };
 	}
@@ -194,29 +195,28 @@ export function parseOperator(raw: unknown, warn: (msg: string) => void = () => 
 	};
 }
 
-/** The operator's additions in `<conf>/alert-desk.json`, or none (with a warning saying why) when the file is not the operator's alone. */
+/**
+ * The operator's additions in the `alertDesk` section of config.json (else the legacy alert-desk.json), or none (with a warning saying why)
+ * when the file is not the operator's alone. config.json is checked when it is read (src/core/layout.ts `readConfigFile`).
+ */
 export function readOperator(conf: string, warn: (msg: string) => void = () => {}): DeskOperator {
-	const path = configPath(conf);
-	let fd: number;
+	let v: ReturnType<typeof configValue>;
 	try {
-		fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+		v = configValue(conf, "alertDesk");
 	} catch (e) {
-		if ((e as NodeJS.ErrnoException).code !== "ENOENT")
-			warn(`alert desk: ignoring the operator's settings in ${path}: ${(e as Error).message}`);
+		warn(`alert desk: ignoring the operator's settings in ${conf}/${CONFIG_FILE}: ${(e as Error).message}`);
+		return NONE();
+	}
+	if (!v) return NONE();
+	if (v.trust) {
+		warn(`alert desk: ignoring the operator's settings in ${conf}/${v.file}: ${v.trust}`);
 		return NONE();
 	}
 	try {
-		const bad = authorityProblem(fstatSync(fd), "file");
-		if (bad) {
-			warn(`alert desk: ignoring the operator's settings in ${path}: ${bad}`);
-			return NONE();
-		}
-		return parseOperator(JSON.parse(readFileSync(fd, "utf8")), warn);
+		return parseOperator(v.value, warn);
 	} catch (e) {
-		warn(`alert desk: ignoring the operator's settings in ${path}: ${(e as Error).message}`);
+		warn(`alert desk: ignoring the operator's settings in ${conf}/${v.file}: ${(e as Error).message}`);
 		return NONE();
-	} finally {
-		closeSync(fd);
 	}
 }
 

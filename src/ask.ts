@@ -30,6 +30,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { CONF, STATE } from "./core/config.ts";
+import { cfg } from "./core/layout.ts";
 import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
@@ -203,7 +204,7 @@ export function stageEvidence(item: Question, state = STATE): Question {
 /** The queue page's base URL from web.json, or undefined when the page is not configured (then no inline view). */
 export function queueBase(conf = CONF): string | undefined {
 	try {
-		const w = JSON.parse(readFileSync(`${conf}/web.json`, "utf8")) as {
+		const w = (cfg(conf, "web") ?? {}) as {
 			host?: string;
 			port?: number;
 			publicBase?: string;
