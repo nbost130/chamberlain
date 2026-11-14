@@ -12,7 +12,7 @@ The prose you edit (`decision-rights.md`, `brief.d/`) stays as files, and so doe
 
 It moves instead of copying because a stale old file is read by tools outside Chamberlain (the Steward's hand-off reads `steward-thread`), and after a
 Steward switch it would name a retired Steward. A crash at any step leaves every value readable, and the next start finishes the job.
-**After the move nothing reads an old name.** The `.migrated` files are your safety copy (every key, even one this build never read): delete them whenever you like.
+**After the move nothing reads an old name.** Keep the `.migrated` files: they hold every key (even one this build never read), and `config revert` needs them to restore the old layout. Deleting them is safe for this build but makes revert incomplete.
 A file the migration could not move (a problem, printed by `config migrate`) is the one exception: it is still read from its old place, as a fallback, with one `config-deprecated` line in the events log.
 (One older step is separate: the daemon and the page still upgrade an old file that has no `schemaVersion`, or version 1, in place with a `.bak` beside it, as they always did.)
 To do it by hand, or to see what it will do first: `chamberlain config migrate --dry-run`, then `chamberlain config migrate`.
@@ -139,7 +139,7 @@ A script that read `steward-thread` should run `chamberlain config get threads.s
 
    `config-migrated` (once, with the key, secret and renamed-file names), and no `config-deprecated`, `config-migrate-failed` or `config-legacy-reappeared`.
    (The very first start of the page can log one `config-deprecated`: it reads `web` before the migration has run.)
-4. **Nothing is left to delete.** The old files are gone from their old names (`ls ~/.config/chamberlain`). The `<name>.migrated` files are your safety copy: delete them when you are satisfied.
+4. **Nothing is left to delete.** The old files are gone from their old names (`ls ~/.config/chamberlain`). Keep the `<name>.migrated` files: `config revert` needs them to restore the old layout. Deleting them is safe for this build but makes revert incomplete.
    Keep `decision-rights.md`, `brief.d/` and `daemon.env`, which were never moved.
 
 ## Things that behave a little differently

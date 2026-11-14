@@ -390,10 +390,27 @@ export function migratedNames(conf: string): Set<string> {
 }
 
 /**
+ * The journal of a migration in progress: written before the first secret moves, and removed only after the last non-secret file has been set aside.
+ * It names the secrets that run moves and the files it will rename, so a crash at any step can be finished, and so a file that is merely waiting for
+ * its rename (`pending`) can be told from one that was written again afterwards (`reappeared`): the record in config.json says a file was migrated,
+ * the journal says its rename is still to come, and a file the record lists that is not in the journal is a stranger.
+ */
+export const JOURNAL = ".config-migrating";
+export function readJournal(conf: string): { secrets: string[]; renames: string[] } {
+	try {
+		const j = JSON.parse(readFileSync(`${conf}/${JOURNAL}`, "utf8")) as { secrets?: unknown; renames?: unknown };
+		const names = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+		return { secrets: names(j.secrets), renames: names(j.renames) };
+	} catch {
+		return { secrets: [], renames: [] }; // no journal, or one that cannot be read
+	}
+}
+
+/**
  * What an old file's name holds now:
  *   absent      nothing is at the old name;
  *   usable      never migrated: it is still read, as a fallback, with a deprecation notice;
- *   pending     migrated and its rename to `<name>.migrated` is still to come (a crash between the two steps): not read, config.json has the value;
+ *   pending     migrated and its rename to `<name>.migrated` is still to come (the journal says so: a crash between the two steps): not read, config.json has the value;
  *   reappeared  migrated, and something wrote the old name again afterwards: NEVER read.
  */
 export type OldState = "absent" | "usable" | "pending" | "reappeared";
@@ -406,7 +423,8 @@ export function oldFileState(conf: string, name: string, secret: boolean): OldSt
 	if (secret)
 		return existsSync(`${conf}/${SECRETS_DIR}/${name}`) || migratedNames(conf).has(name) ? "reappeared" : "usable";
 	if (!migratedNames(conf).has(name)) return "usable";
-	return existsSync(`${conf}/${name}${MIGRATED_SUFFIX}`) ? "reappeared" : "pending";
+	// Listed as migrated: it is waiting for its rename only if the journal says so. Whether a `.migrated` file exists is not the question (it may have been deleted).
+	return readJournal(conf).renames.includes(name) ? "pending" : "reappeared";
 }
 
 /** The old names present at their old place that Chamberlain will never read, because the migration moved them. */

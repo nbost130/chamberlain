@@ -155,7 +155,7 @@ export function showLines(conf = CONF, env = process.env): string[] {
 	const list = (dir: string, label: string, only: (n: string) => boolean) => {
 		try {
 			for (const e of readdirSync(dir, { withFileTypes: true })) {
-				if (!e.isFile() || !only(e.name) || seen.has(e.name)) continue;
+				if (!e.isFile() || /\.tmp-\d+$/.test(e.name) || !only(e.name) || seen.has(e.name)) continue;
 				seen.add(e.name);
 				const ok = isPrivateSecret(`${dir}/${e.name}`);
 				out.push(`  ${e.name.padEnd(28)} ${label}${ok ? "" : "   MODE NOT 0600: refused"}`);
@@ -192,6 +192,7 @@ export function main(argv: string[] = process.argv.slice(2)): void {
 		const r = revertLayout(CONF, { dryRun });
 		if (r.skipped) console.log(`not reverted: ${r.skipped}`);
 		for (const l of r.done) console.log(l);
+		for (const n of r.notes) console.log(`note: ${n}`);
 		for (const p of r.problems) console.log(`PROBLEM: ${p}`);
 		if (r.skipped || r.problems.length) process.exitCode = 1;
 		return;
