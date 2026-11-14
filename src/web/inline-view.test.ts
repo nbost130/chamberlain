@@ -113,8 +113,8 @@ function run(
 		calls?: { method: string; path: string; body?: unknown }[];
 		/** Collects the headers each call sent. */
 		headers?: Record<string, string>[];
-		/** The status every reply has (default 200). */
-		status?: number;
+		/** The status every reply has (default 200); a function is asked on each call. */
+		status?: number | (() => number);
 	} = {},
 ) {
 	const body = new El("body");
@@ -129,6 +129,7 @@ function run(
 		getElementById: (id: string) => (id === "dq" ? dq : null),
 	};
 	const fetch = async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+		const status = () => (typeof o.status === "function" ? o.status() : (o.status ?? 200));
 		o.headers?.push(init?.headers ?? {});
 		o.calls?.push({
 			method: init?.method ?? "GET",
@@ -136,8 +137,8 @@ function run(
 			...(init?.body ? { body: JSON.parse(init.body) } : {}),
 		});
 		return {
-			ok: (o.status ?? 200) < 400,
-			status: o.status ?? 200,
+			ok: status() < 400,
+			status: status(),
 			json: async () =>
 				url.endsWith("/api/queue")
 					? queue()
@@ -459,4 +460,24 @@ test("a view whose key was rotated says so, instead of showing an empty queue", 
 	expect(dq.textContent).toContain("key no longer works");
 	expect(dq.textContent).toContain("chamberlain web link");
 	expect(dq.textContent).not.toContain("Nothing waiting");
+});
+
+test("a rotation that comes on a refresh, with questions on screen, is said so in a banner that stays", async () => {
+	let status = 200;
+	const dq = run(() => ({ items: [item("x")] }), {
+		src: "http://queue.test/inline.js?view=decisions&k=old",
+		status: () => status,
+	});
+	await settle();
+	expect(dq.all((e) => e.tag === "textarea").length).toBeGreaterThan(0); // the card is showing
+	expect(dq.textContent).not.toContain("key no longer works");
+	status = 401; // the key was rotated since
+	const refresh = dq.all((e) => e.className.split(" ").includes("dq-reload"))[0]!;
+	for (const f of refresh.listeners.click ?? []) await f();
+	await settle();
+	expect(dq.all((e) => e.className.split(" ").includes("dq-locked"))).toHaveLength(1);
+	expect(dq.textContent).toContain("chamberlain web link");
+	for (const f of refresh.listeners.click ?? []) await f(); // a second refresh does not stack a second banner
+	await settle();
+	expect(dq.all((e) => e.className.split(" ").includes("dq-locked"))).toHaveLength(1);
 });

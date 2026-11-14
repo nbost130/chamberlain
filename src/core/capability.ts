@@ -14,7 +14,7 @@
  *   - `chamberlain web rotate-token` replaces the file: every old link, cookie and already-rendered view stops working at once.
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { closeSync, constants, openSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { linkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { SECRETS_DIR, ensureSecretsDir, readSecret } from "./layout.ts";
 
 /** The secret's name in `secrets/`. */
@@ -91,7 +91,7 @@ export function readToken(conf: string): string | undefined {
 }
 
 /**
- * The token, made now if the install has none: written with O_EXCL (two starting processes cannot each make one), mode 0600. A file that
+ * The token, made now if the install has none: published atomically (a complete file, hard-linked into place, so two starting processes get the same one), mode 0600. A file that
  * exists but holds less than a token (empty after a crash, or written by hand) is an error, never silently replaced: rotate it.
  */
 export function ensureToken(conf: string): string {
@@ -105,23 +105,23 @@ export function ensureToken(conf: string): string {
 			);
 		return have;
 	}
-	if (!statSafe(p)) {
-		const token = newToken();
-		try {
-			const fd = openSync(p, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-			try {
-				writeSync(fd, `${token}\n`);
-			} finally {
-				closeSync(fd);
-			}
-			return token;
-		} catch (e) {
-			if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-			const raced = readSecret(conf, TOKEN_FILE);
-			if (raced && raced.length >= MIN_TOKEN_CHARS) return raced;
-		}
+	if (statSafe(p)) return rotateToken(conf); // there, but empty (a crash before the change to atomic creation): replace it
+	// Published whole or not at all: the token is written to a file of its own and HARD-LINKED to its name, which fails if the name exists. A
+	// process that finds the name therefore always finds a complete token, and two processes starting together end up with the same one.
+	const token = newToken();
+	const tmp = `${dir}/${TOKEN_FILE}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
+	writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
+	try {
+		linkSync(tmp, p);
+		return token;
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+		const raced = readSecret(conf, TOKEN_FILE);
+		if (raced && raced.length >= MIN_TOKEN_CHARS) return raced;
+		throw Error(`${SECRETS_DIR}/${TOKEN_FILE} appeared but holds no token: run \`chamberlain web rotate-token\``);
+	} finally {
+		rmSync(tmp, { force: true });
 	}
-	return rotateToken(conf);
 }
 const statSafe = (p: string) => {
 	try {

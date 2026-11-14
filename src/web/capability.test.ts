@@ -3,7 +3,7 @@
  * Each test drives the real handler (createApp) with a real capability over a token it can rotate.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { COOKIE_MAX_AGE_S, TOKEN_HEADER, newToken } from "../core/capability.ts";
 import { askQuestion, type Question } from "../core/questions.ts";
@@ -36,6 +36,15 @@ function setup() {
 		createdAt: "2026-11-09T10:00:00.000Z",
 	};
 	askQuestion(store, item);
+	// a second question with a real evidence file, so that "served" means a file's bytes and not a 404
+	mkdirSync(`${root}/state/evidence/Q-evid`, { recursive: true });
+	writeFileSync(`${root}/state/evidence/Q-evid/shot.png`, "PNGBYTES");
+	askQuestion(store, {
+		...item,
+		id: "Q-evid",
+		title: "With a picture",
+		evidence: [{ type: "image", path: "shot.png", caption: "a shot" }],
+	});
 	const logs: unknown[] = [];
 	const token = newToken();
 	const cap = memoryCapability(token, { now: 1_800_000_000_000 });
@@ -92,6 +101,18 @@ describe("a request with no token is refused", () => {
 	});
 });
 
+describe("the refusal is plain text, not JSON", () => {
+	test("so a frame still running the previous build's script, which reads every reply as JSON, fails loudly and does not show an empty queue", async () => {
+		const s = setup();
+		const r = await s.get("/api/queue", { origin: "null" });
+		expect(r.status).toBe(401);
+		expect(r.headers.get("content-type")).toStartWith("text/plain");
+		const body = await r.text();
+		expect(body).toContain("chamberlain web link");
+		expect(() => JSON.parse(body)).toThrow();
+	});
+});
+
 describe("a bad token is refused", () => {
 	test("in the header, in a link, and in a cookie", async () => {
 		const s = setup();
@@ -136,9 +157,17 @@ describe("a good token is served", () => {
 		expect((await s.get("/evidence/Q-abcd/none.png", { cookie })).status).toBe(404); // authorised, and there is no such file
 		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 }, { cookie, origin: ORIGIN })).status).toBe(200);
 	});
-	test("an <img> may carry the key as ?k= (a header is not possible there)", async () => {
+	test("an <img> may carry the key as ?k= (a header is not possible there), and the evidence file's bytes come back; without it they do not", async () => {
 		const s = setup();
-		expect((await s.get(`/evidence/Q-abcd/none.png?k=${s.token}`)).status).toBe(404);
+		const img = await s.get(`/evidence/Q-evid/shot.png?k=${s.token}`);
+		expect(img.status).toBe(200);
+		expect(await img.text()).toBe("PNGBYTES");
+		expect((await s.get("/evidence/Q-evid/shot.png")).status).toBe(401);
+		expect((await s.get("/evidence/Q-evid/shot.png", key(s.token))).status).toBe(200);
+		const cookie = cookieFrom(
+			await s.app.fetch(new Request(`${ORIGIN}/?k=${s.token}`, { headers: { host: HOST }, redirect: "manual" })),
+		);
+		expect(await (await s.get("/evidence/Q-evid/shot.png", { cookie })).text()).toBe("PNGBYTES");
 		expect((await s.get(`/api/queue?k=${s.token}`)).status).toBe(401); // never for the API
 	});
 	test("the cookie lasts a year and a bit, then is refused", async () => {

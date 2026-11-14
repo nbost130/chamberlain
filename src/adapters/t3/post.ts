@@ -58,8 +58,8 @@ export function postCard(i: Question, conf = CONF, base?: string, token?: string
 	// A view needs the page's address AND its key: with either missing the operator gets the one-line notice, never a link that cannot work.
 	const view = base !== undefined && token !== undefined;
 	const text = view ? decisionsMessage(i, base, token) : decisionsDownMessage(i);
-	const r = pingViaCli(thread, text);
-	return { ok: r.ok, detail: withoutToken(r.detail, token), where: view ? "view" : "notice" };
+	const r = pingViaCli(thread, text, undefined, (out) => withoutToken(out, token));
+	return { ok: r.ok, detail: r.detail, where: view ? "view" : "notice" };
 }
 
 /** The adapter's `post`: the Decisions thread message, sent with the T3 CLI. */

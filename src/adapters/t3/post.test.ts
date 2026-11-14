@@ -80,6 +80,17 @@ describe("postCard sends only to the Decisions thread", () => {
 		expect(postCard(item("Q-abcd"), conf, "http://q.test").where).toBe("notice");
 		expect(sent()).not.toContain("inline.js");
 	});
+	test("a key the CLI prints is removed BEFORE the output is cut to 300 characters, so a cut cannot leave a piece of it", () => {
+		const { conf } = setup(true);
+		// 270 characters, then the key: the cut at 300 falls inside the key
+		writeFileSync(`${conf}/t3`, `#!/bin/sh\nprintf '%s%s' "${"x".repeat(270)}" "${KEY}"\ncat > /dev/null\n`, {
+			mode: 0o700,
+		});
+		const r = postCard(item("Q-abcd"), conf, "http://q.test", KEY);
+		expect(r.detail.length).toBeLessThanOrEqual(300);
+		expect(r.detail).not.toContain(KEY.slice(0, 8));
+		expect(r.detail).toContain("[token]");
+	});
 	test("a key the CLI echoes back is not returned in the result", () => {
 		const { conf } = setup(true);
 		writeFileSync(`${conf}/t3`, `#!/bin/sh\necho "sent: ${KEY}"\ncat > /dev/null\n`, { mode: 0o700 });

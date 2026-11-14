@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { TOKEN_FILE } from "../core/capability.ts";
-import { linkLines, pageBases } from "./server.ts";
+import { acceptedHosts, linkLines, linkTargets, pageBases } from "./server.ts";
 
 const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 const dirs: string[] = [];
@@ -60,6 +60,19 @@ describe("chamberlain web link and rotate-token", () => {
 			expect(text).toContain(`<script src="${b}/inline.js?view=decisions&amp;k=TOK"></script>`);
 		}
 		expect(pageBases({ host: "::1", port: 3790 })).toEqual(["http://[::1]:3790"]);
+	});
+
+	test("a publicBase whose host the page would refuse (421) is not printed, and is named", () => {
+		const cfg = { host: "127.0.0.1", port: 3790, publicBase: "https://box.example.ts.net" };
+		const t = linkTargets(cfg);
+		expect(t.bases).toEqual(["http://127.0.0.1:3790"]);
+		expect(t.skipped.join()).toContain('add "box.example.ts.net" to "allowedHosts"');
+		const text = linkLines(t.bases, "TOK", t.skipped).join("\n");
+		expect(text).not.toContain("https://box.example.ts.net/?k=");
+		expect(text).toContain("Not printed, because the page would refuse it");
+		// and every address that IS printed passes the page's own Host check
+		for (const c of [cfg, { ...cfg, allowedHosts: ["box.example.ts.net"] }])
+			for (const b of linkTargets(c).bases) expect(acceptedHosts(c)).toContain(new URL(b).host);
 	});
 
 	test("link makes the token on first use (0600 in secrets/) and prints links that carry it; rotate-token ends the old one", () => {

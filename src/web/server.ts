@@ -29,20 +29,42 @@ import { loadConfig } from "./config.ts";
 import { titleKeeper } from "./title.ts";
 import { createWaiting, threadSender, withAnswerRights, type ServerAdapter } from "./waiting.ts";
 
-/** The addresses the page answers on, as links: the one `publicBase` names (an https address from `tailscale serve`), the bind address, and every allowed host name. */
-export function pageBases(cfg: { host: string; port: number; allowedHosts?: string[]; publicBase?: string }): string[] {
+/** The Host header values the page accepts: its bind address and every allowed host name, bare and with the port. Anything else gets 421. */
+export function acceptedHosts(cfg: { host: string; port: number; allowedHosts?: string[] }): string[] {
 	const hostPort = cfg.host.includes(":") ? `[${cfg.host}]:${cfg.port}` : `${cfg.host}:${cfg.port}`;
-	return [
-		...new Set([
-			...(cfg.publicBase && /^https:\/\/[^/\s]+$/.test(cfg.publicBase) ? [cfg.publicBase] : []),
-			`http://${hostPort}`,
-			...(cfg.allowedHosts ?? []).map((h) => `http://${h}:${cfg.port}`),
-		]),
-	];
+	return [hostPort, ...(cfg.allowedHosts ?? []).flatMap((h) => [h, `${h}:${cfg.port}`])];
+}
+
+/**
+ * The addresses the page answers on, as links: the one `publicBase` names (an https address from `tailscale serve`), the bind address, and every
+ * allowed host name. A `publicBase` whose host the page would refuse (421, because it is not in `allowedHosts`) is left out and named in `skipped`:
+ * a link that cannot work is not printed.
+ */
+export function pageBases(cfg: { host: string; port: number; allowedHosts?: string[]; publicBase?: string }): string[] {
+	return linkTargets(cfg).bases;
+}
+export function linkTargets(cfg: { host: string; port: number; allowedHosts?: string[]; publicBase?: string }): {
+	bases: string[];
+	skipped: string[];
+} {
+	const accepted = acceptedHosts(cfg);
+	const hostPort = accepted[0]!;
+	const skipped: string[] = [];
+	const bases: string[] = [];
+	if (cfg.publicBase && /^https:\/\/[^/\s]+$/.test(cfg.publicBase)) {
+		const h = new URL(cfg.publicBase).host;
+		if (accepted.includes(h)) bases.push(cfg.publicBase);
+		else
+			skipped.push(
+				`${cfg.publicBase} (add "${h}" to "allowedHosts" in the web section, or the page answers 421 on it)`,
+			);
+	}
+	bases.push(`http://${hostPort}`, ...(cfg.allowedHosts ?? []).map((h) => `http://${h}:${cfg.port}`));
+	return { bases: [...new Set(bases)], skipped };
 }
 
 /** Pure: what `chamberlain web link` prints. The token is in it, on purpose: it is the link. */
-export function linkLines(bases: string[], token: string): string[] {
+export function linkLines(bases: string[], token: string, skipped: string[] = []): string[] {
 	return [
 		"Open one of these on any device that can reach the page. It signs the browser in (a long-lived cookie) and then drops the key from the address:",
 		...bases.map((b) => `  ${pageLink(b, token)}`),
@@ -51,6 +73,7 @@ export function linkLines(bases: string[], token: string): string[] {
 		...bases.map((b) => `  <script src="${inlineScriptSrc(b, token).replaceAll("&", "&amp;")}"></script>`),
 		"",
 		"Treat these like a password: anyone who holds one can read the queue and answer for you. `chamberlain web rotate-token` ends them all.",
+		...skipped.map((x) => `Not printed, because the page would refuse it: ${x}`),
 	];
 }
 
@@ -153,7 +176,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 				links: cfg.mirrorLinks,
 				log,
 			});
-	const hostPort = cfg.host.includes(":") ? `[${cfg.host}]:${cfg.port}` : `${cfg.host}:${cfg.port}`;
+	const hostPort = acceptedHosts(cfg)[0]!;
 	const app = createApp({
 		capability: fileCapability(CONF),
 		store,
@@ -161,7 +184,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 		log,
 		// A thread-routed answer goes to its thread through its server's adapter (`send`), where it has the rights; test mode sends nothing.
 		sendToThread: TEST ? undefined : threadSender(servers),
-		hosts: [hostPort, ...(cfg.allowedHosts ?? []).flatMap((h) => [h, `${h}:${cfg.port}`])],
+		hosts: acceptedHosts(cfg),
 		threadLinks: cfg.threadLinks,
 		staticFiles: STATIC_FILES,
 		testMode: TEST,

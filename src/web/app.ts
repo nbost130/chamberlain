@@ -641,8 +641,13 @@ export function createApp(d: AppDeps) {
 	/** The page a browser without the key gets: static, and it says how to get one. */
 	const LOCKED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Decisions</title></head><body style="font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px"><h1 style="font-size:1.2rem">This page needs its link</h1><p>Open the link Chamberlain gave you. To get a fresh one, run <code>chamberlain web link</code> on the machine that runs Chamberlain.</p></body></html>`;
 	const locked = (inlineReply: boolean) => {
+		// Plain text, not JSON: a frame still running the previous build's script reads every reply as JSON, and would show an empty queue for a
+		// JSON error object. A text body makes it fail loudly ("could not reach the queue") instead.
 		const r = withSecurity(
-			fail(401, "locked: this request carries no valid key. Run `chamberlain web link` for a fresh link."),
+			new Response("Locked: this request carries no valid key. Run `chamberlain web link` for a fresh link.\n", {
+				status: 401,
+				headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+			}),
 		);
 		r.headers.set("www-authenticate", "Bearer");
 		return inlineReply ? inlineCors(r) : r;

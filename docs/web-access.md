@@ -51,15 +51,16 @@ Restart `chamberlain web` on the new build. It makes the token on that first sta
 | What you have | What happens | What to do |
 | --- | --- | --- |
 | The page's address in a **phone's or laptop's bookmark** (or home-screen icon) | It opens the static "this page needs its link" page (`401`), because the browser has no cookie yet. | Run `chamberlain web link` and open the page link **once** in that browser. The bookmark works again from then on, for 400 days, until a rotation. |
-| **Links already posted** into T3 threads (an old Decisions message with `inline.js?view=decisions...`) | The script still loads (it is static) but its calls carry no key, so it says **"this view's key no longer works ... run `chamberlain web link`"** and shows no questions. Nothing is lost: the questions are in the database and on the page. | New questions post views that carry the key on their own. To bring the pinned view back, re-send the Decisions thread's setup message with the script tag from `chamberlain web link`. |
-| **Inline cards already shown** in a thread | The same: the next refresh says the key no longer works. | Re-open the thread's latest message, or send the setup message again. |
+| **Links already posted** into T3 threads (an old Decisions message with `inline.js?view=decisions...`) | The script still loads (it is static) but its calls carry no key, so it says **"this view's key no longer works ... run `chamberlain web link`"** (in a banner that stays on screen) and shows no questions. Nothing is lost: the questions are in the database and on the page. | New questions post views that carry the key on their own. To bring the pinned view back, re-send the Decisions thread's setup message with the script tag from `chamberlain web link`. |
+| **Inline cards already shown** in a thread | A frame that is still running the previous build's script reads the page's `401` as an error and says **"could not reach the queue"** on its next refresh (never an empty queue: the reply is plain text on purpose). A frame that is re-rendered says "this view's key no longer works". Nothing on screen is the live queue. | Re-open the thread's latest message, or send the setup message again. |
 | `chamberlain ask`, the daemon, the Steward's wakes, `afk`, `ruling`, `decided`, every command-line tool | **Keep working, unchanged.** They read the database, not the page. | Nothing. |
 | Answers already given, rulings, the queue itself | Untouched: the database is not changed. | Nothing. |
 | A **page that is still the old build** | Ignores the key and answers as before. | Restart it on the new build. |
 
 **The one step that gets you back in: `chamberlain web link`, then open the link it prints.** For the Decisions thread, also paste the script tag it prints into the setup message.
 If you are not sure the upgrade worked: `curl -s -o /dev/null -w '%{http_code}\n' http://<host>:<port>/api/queue` should print `401`, and
-`curl -s -H "x-decision-token: $(cat ~/.config/chamberlain/secrets/web-token)" http://<host>:<port>/api/queue` should print the queue.
+`printf 'header = "x-decision-token: %s"\n' "$(cat ~/.config/chamberlain/secrets/web-token)" | curl -s -K - http://<host>:<port>/api/queue`
+should print the queue (the key goes in through stdin, not in the command line, where other users' `ps` would show it).
 
 ## Where the key is kept, and what it does not do
 

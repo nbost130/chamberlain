@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import {
 	COOKIE_MAX_AGE_S,
@@ -60,6 +70,33 @@ describe("the token", () => {
 		writeFileSync(`${c}/secrets/${TOKEN_FILE}`, `${t}\n`, { mode: 0o644 });
 		chmodSync(`${c}/secrets/${TOKEN_FILE}`, 0o644);
 		expect(() => ensureToken(c)).toThrow("0600");
+	});
+	test("eight processes starting together all end up with the same, complete token", async () => {
+		const c = conf();
+		const mod = new URL("./capability.ts", import.meta.url).pathname;
+		const procs = Array.from({ length: 8 }, () =>
+			Bun.spawn(
+				[
+					"bun",
+					"-e",
+					`import { ensureToken } from ${JSON.stringify(mod)}; process.stdout.write(ensureToken(process.argv[1]));`,
+					c,
+				],
+				{ stdout: "pipe", stderr: "pipe", env: process.env },
+			),
+		);
+		const outs = await Promise.all(
+			procs.map(async (p) => ({
+				out: await new Response(p.stdout).text(),
+				err: await new Response(p.stderr).text(),
+				code: await p.exited,
+			})),
+		);
+		for (const o of outs) expect(o.code, o.err).toBe(0);
+		const onDisk = readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8").trim();
+		expect(onDisk).toMatch(/^[A-Za-z0-9_-]{43}$/);
+		expect(new Set(outs.map((o) => o.out))).toEqual(new Set([onDisk]));
+		expect(readdirSync(`${c}/secrets`)).toEqual([TOKEN_FILE]); // no temporary file is left behind
 	});
 	test("rotating replaces it, 0600, and a running capability follows without a restart", () => {
 		const c = conf();

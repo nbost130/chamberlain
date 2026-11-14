@@ -15,9 +15,17 @@
 	const kq = KEY ? `?k=${encodeURIComponent(KEY)}` : "";
 	const authFetch = async (url, init = {}) => {
 		const r = await fetch(url, { ...init, headers: { ...(init.headers || {}), ...(KEY ? { "x-decision-token": KEY } : {}) } });
+		if (r.status === 401) showLocked();
 		if (r.status === 401) throw new Error("this view's key no longer works (it was rotated, or its link is old). Ask for a fresh view: run `chamberlain web link`, then send the Decisions setup message again");
 		return r;
 	};
+	// A banner that stays whatever else is on screen: a 401 can come on a refresh, with cards showing, and a "?" count alone would say nothing.
+	let lockedShown = false;
+	function showLocked() {
+		if (lockedShown) return;
+		lockedShown = true;
+		wrap.insertBefore(el("div", "dq-msg dq-bad dq-locked", "This view's key no longer works (it was rotated, or its link is old). Run `chamberlain web link` and send the Decisions setup message again to bring it back."), wrap.firstChild);
+	}
 	// ?item=Q-… shows that one question (a Questions-thread card); without it, the whole open queue.
 	const ITEM = /^Q-[a-z0-9]{4,16}$/.test(SRC.searchParams.get("item") ?? "") ? SRC.searchParams.get("item") : null;
 	// ?view=decisions is the pinned Decisions thread: Waiting, Rulings and Recent tabs that keep themselves current.
