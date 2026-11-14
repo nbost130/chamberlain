@@ -1,0 +1,49 @@
+# Rendered by scripts/render-formula.ts from the release's SHA256SUMS, then pushed to nbost130/homebrew-tap as Formula/chamberlain.rb.
+# Only the version, the four URLs and their checksums change between releases. Edit packaging/homebrew/chamberlain.rb.tmpl in the
+# chamberlain repo, not this file.
+class Chamberlain < Formula
+  desc "Watches T3 Code threads and wakes the Steward only when something needs it"
+  homepage "https://github.com/{{repo}}"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "{{url:darwin-arm64}}"
+      sha256 "{{sha256:darwin-arm64}}"
+    end
+    on_intel do
+      url "{{url:darwin-x64}}"
+      sha256 "{{sha256:darwin-x64}}"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "{{url:linux-arm64}}"
+      sha256 "{{sha256:linux-arm64}}"
+    end
+    on_intel do
+      url "{{url:linux-x64}}"
+      sha256 "{{sha256:linux-x64}}"
+    end
+  end
+
+  # The binary is a Bun runtime with the program appended to it. Stripping it would cut the program off.
+  skip_clean "bin/chamberlain"
+
+  def install
+    bin.install "chamberlain"
+  end
+
+  # `brew services start chamberlain` runs the daemon. Its settings are in ~/.config/chamberlain (see the README).
+  service do
+    run [opt_bin/"chamberlain", "daemon"]
+    keep_alive true
+    log_path var/"log/chamberlain.log"
+    error_log_path var/"log/chamberlain.log"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/chamberlain --version")
+  end
+end

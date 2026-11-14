@@ -11,8 +11,73 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Runs only on the push that creates a release (the merge of release-please's PR): builds the four standalone binaries from the
+  # release's tag, proves the linux-x64 one from an empty directory, attaches them and SHA256SUMS to the release, then updates the tap.
+  binaries:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      # Bun cross-compiles all four targets from this one runner.
+      - run: bun scripts/build.ts
+      - name: Smoke-test the linux-x64 binary from an empty directory
+        run: bun scripts/smoke.ts dist/chamberlain-*-linux-x64.tar.gz
+      - name: Check the checksums
+        run: cd dist && sha256sum -c SHA256SUMS
+      - name: Attach the binaries to the release
+        run: gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
+      # Always rendered, so a broken template fails here and not on the day the tap is first used.
+      - name: Render the Homebrew formula
+        run: bun scripts/render-formula.ts --sums dist/SHA256SUMS --out dist/chamberlain.rb
+      - name: Is the tap token set?
+        id: tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Homebrew tap not updated::The HOMEBREW_TAP_TOKEN secret is not set, so $TAG is released without updating nbost130/homebrew-tap. Create the repo and the secret, then re-run this job."
+          fi
+      - uses: actions/checkout@v4
+        if: ${{ steps.tap.outputs.enabled == 'true' }}
+        with:
+          repository: nbost130/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Push the formula to the tap
+        if: ${{ steps.tap.outputs.enabled == 'true' }}
+        run: |
+          mkdir -p tap/Formula
+          cp dist/chamberlain.rb tap/Formula/chamberlain.rb
+          cd tap
+          git add Formula/chamberlain.rb
+          if git diff --cached --quiet; then
+            echo "::notice title=Homebrew tap unchanged::Formula/chamberlain.rb already matches $TAG."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chamberlain ${TAG#v}"
+          git push

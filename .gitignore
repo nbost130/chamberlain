@@ -12,4 +12,6 @@ compact-url
 *-token
 daemon.env
 scratch/
+# scripts/build.ts output: the binaries, tarballs and SHA256SUMS.
+dist/
 .claude/worktrees/

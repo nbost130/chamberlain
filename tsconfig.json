@@ -1,1 +1,1 @@
-{ "compilerOptions": { "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "strict": true, "noEmit": true, "allowImportingTsExtensions": true, "skipLibCheck": true, "types": ["bun-types"] }, "include": ["src"] }
+{ "compilerOptions": { "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "strict": true, "noEmit": true, "allowImportingTsExtensions": true, "skipLibCheck": true, "types": ["bun-types"] }, "include": ["src", "scripts"] }
