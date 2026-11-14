@@ -1,7 +1,7 @@
 /** The T3 adapter's two settings (settings.json keys read by the adapter): where T3 keeps its files. */
 import { readSettings, tilde } from "../../core/config.ts";
 
-const HOME = process.env.HOME!;
+const HOME = process.env.HOME;
 /** T3's base directory: CHAMBERLAIN_T3_DIR, then settings.json, then ~/.t3. */
 export const t3BaseDir = (): string =>
 	tilde(process.env.CHAMBERLAIN_T3_DIR ?? readSettings().t3BaseDir ?? `${HOME}/.t3`);

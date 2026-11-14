@@ -98,11 +98,10 @@ const KEYS = [
 	"haiku",
 ];
 
-/** Pure: the section, with defaults for what it leaves out. Anything it does not understand throws. */
-export function parseClassifier(raw: unknown): ClassifierConfig {
-	const d = CLASSIFIER_DEFAULTS;
-	if (raw === undefined) return structuredClone(d);
-	const o = object(raw, W, KEYS);
+type Defaults = ClassifierConfig;
+
+/** The provider, the mode, the text-leaves-the-machine switch and the bank name: the checks that come first. */
+function parseGate(o: Obj, d: Defaults) {
 	const provider = o.provider ?? d.provider;
 	if (typeof provider !== "string" || !(PROVIDERS as readonly string[]).includes(provider))
 		throw Error(`${W}: provider must be one of ${PROVIDERS.join(", ")}`);
@@ -114,22 +113,30 @@ export function parseClassifier(raw: unknown): ClassifierConfig {
 			`${W}: provider "${provider}" sends thread text off this machine; set "allowTextToLeaveMachine": true to allow it, or use "rules" or "none"`,
 		);
 	const questions = str(o, "questions", W, d.questions);
+	return { provider: provider as ProviderName, mode: mode as ClassifierMode, allow, questions };
+}
 
+function parseThresholds(o: Obj, d: Defaults): Thresholds {
 	const thresholds: Thresholds = { ...d.thresholds };
 	if (o.thresholds !== undefined) {
 		if (!o.thresholds || typeof o.thresholds !== "object" || Array.isArray(o.thresholds))
 			throw Error(`${W}.thresholds: expected an object`);
 		for (const [k, v] of Object.entries(o.thresholds as Obj)) thresholds[k] = probability(v, `${W}.thresholds.${k}`);
 	}
+	return thresholds;
+}
 
+function parseSend(o: Obj, d: Defaults): SendConfig {
 	const sendW = `${W}.send`;
 	const so = o.send === undefined ? {} : object(o.send, sendW, ["lastChars", "previousChars", "title"]);
-	const send: SendConfig = {
+	return {
 		lastChars: num(so, "lastChars", sendW, d.send.lastChars, true),
 		previousChars: num(so, "previousChars", sendW, d.send.previousChars, true, true),
 		title: bool(so, "title", sendW, d.send.title),
 	};
+}
 
+function parseRedact(o: Obj, d: Defaults): RedactConfig {
 	const redW = `${W}.redact`;
 	const ro = o.redact === undefined ? {} : object(o.redact, redW, ["builtin", "command"]);
 	let command: string[] | null = null;
@@ -138,41 +145,59 @@ export function parseClassifier(raw: unknown): ClassifierConfig {
 			throw Error(`${redW}: command must be null or ["program", "arg", ...]`);
 		command = ro.command as string[];
 	}
-	const redact: RedactConfig = { builtin: bool(ro, "builtin", redW, d.redact.builtin), command };
+	return { builtin: bool(ro, "builtin", redW, d.redact.builtin), command };
+}
 
+function parseBudget(o: Obj, d: Defaults): ClassifierConfig["budget"] {
 	const budW = `${W}.budget`;
 	const bo = o.budget === undefined ? {} : object(o.budget, budW, ["maxPerRun", "maxCallsPerDay", "maxUsdPerDay"]);
-	const budget = {
+	return {
 		maxPerRun: num(bo, "maxPerRun", budW, d.budget.maxPerRun, true),
 		maxCallsPerDay: num(bo, "maxCallsPerDay", budW, d.budget.maxCallsPerDay, true),
 		maxUsdPerDay: num(bo, "maxUsdPerDay", budW, d.budget.maxUsdPerDay, false),
 	};
+}
 
-	for (const k of ["autoNudge", "autoSettle"] as const)
-		if (bool(o, k, W, false))
-			throw Error(`${W}: ${k} is designed but not in this build; leave it out or set it to false`);
-
+function parseJev(o: Obj, d: Defaults): ClassifierConfig["jev"] {
 	const jevW = `${W}.jev`;
 	const jo = o.jev === undefined ? {} : object(o.jev, jevW, ["model", "keyFile", "timeoutMs"]);
 	const keyFile = str(jo, "keyFile", jevW, d.jev.keyFile);
 	if (!/^[\w.-]+$/.test(keyFile) || keyFile.startsWith("."))
 		throw Error(`${jevW}: keyFile must be a plain file name in the config directory's secrets/`);
-	const jev = {
+	return {
 		model: str(jo, "model", jevW, d.jev.model),
 		keyFile,
 		timeoutMs: num(jo, "timeoutMs", jevW, d.jev.timeoutMs, true),
 	};
+}
 
+function parseHaiku(o: Obj, d: Defaults): ClassifierConfig["haiku"] {
 	const hW = `${W}.haiku`;
 	const ho = o.haiku === undefined ? {} : object(o.haiku, hW, ["command", "model", "timeoutMs"]);
-	const haiku = {
+	return {
 		command: str(ho, "command", hW, d.haiku.command),
 		model: str(ho, "model", hW, d.haiku.model),
 		timeoutMs: num(ho, "timeoutMs", hW, d.haiku.timeoutMs, true),
 	};
+}
 
+/** Pure: the section, with defaults for what it leaves out. Anything it does not understand throws. */
+export function parseClassifier(raw: unknown): ClassifierConfig {
+	const d = CLASSIFIER_DEFAULTS;
+	if (raw === undefined) return structuredClone(d);
+	const o = object(raw, W, KEYS);
+	const { provider, mode, allow, questions } = parseGate(o, d);
+	const thresholds = parseThresholds(o, d);
+	const send = parseSend(o, d);
+	const redact = parseRedact(o, d);
+	const budget = parseBudget(o, d);
+	for (const k of ["autoNudge", "autoSettle"] as const)
+		if (bool(o, k, W, false))
+			throw Error(`${W}: ${k} is designed but not in this build; leave it out or set it to false`);
+	const jev = parseJev(o, d);
+	const haiku = parseHaiku(o, d);
 	return {
-		provider: provider as ProviderName,
+		provider,
 		mode,
 		allowTextToLeaveMachine: allow,
 		questions,

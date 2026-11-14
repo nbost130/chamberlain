@@ -21,6 +21,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { readSecret } from "../../core/layout.ts";
+import { within as deadline } from "../../core/within.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
 import { t3BaseDir } from "./settings.ts";
@@ -48,20 +49,12 @@ export function sendFailure(error: unknown, dispatched: boolean, secrets: (strin
 /** Pure: a UUID-shaped ID fixed by its seed, so a retried send carries the same command and message IDs. */
 export const stableId = (seed: string) => {
 	const h = createHash("sha256").update(seed).digest("hex");
-	return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+	return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h.charAt(16), 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 };
 
 /** A call that hasn't answered by then fails, so one hung server can't stall the poll. */
 export const CALL_TIMEOUT_MS = 10_000;
-export function within<T>(p: Promise<T>, ms = CALL_TIMEOUT_MS, what = "T3 call"): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	return Promise.race([
-		p,
-		new Promise<never>((_, reject) => {
-			timer = setTimeout(() => reject(Error(`${what} timed out after ${ms} ms`)), ms);
-		}),
-	]).finally(() => clearTimeout(timer));
-}
+export const within = <T>(p: Promise<T>, ms = CALL_TIMEOUT_MS, what = "T3 call"): Promise<T> => deadline(p, ms, what);
 
 export const redact = (msg: string, secrets: (string | undefined)[]) =>
 	secrets.reduce<string>((m, s) => (s ? m.split(s).join("[redacted]") : m), msg);

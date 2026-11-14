@@ -129,7 +129,8 @@ export function threadViewAcross(snaps: MachineSnapshot[], id: string, server?: 
 		const t = s.get(id);
 		return t ? [t] : [];
 	});
-	return listed.length === 1 ? classifyThread(listed[0]!) : { state: "unknown" };
+	const [only] = listed;
+	return listed.length === 1 && only ? classifyThread(only) : { state: "unknown" };
 }
 /**
  * Fresh snapshots, one per server, each fetched now. A server whose fetch fails is reported unhealthy and says nothing; one
@@ -203,8 +204,8 @@ const RATE = /rate limit|\b429\b|abuse|secondary/i;
 const stamp = (v: unknown) =>
 	typeof v === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(v) ? `${v.slice(0, 16)}Z` : undefined;
 const parts = (ref: string) => {
-	const m = ref.match(/^([^/]+)\/([^#:]+)[#:](.+)$/);
-	return m ? { owner: m[1]!, repo: m[2]!, tail: m[3]! } : undefined;
+	const [, owner, repo, tail] = ref.match(/^([^/]+)\/([^#:]+)[#:](.+)$/) ?? [];
+	return owner !== undefined && repo !== undefined && tail !== undefined ? { owner, repo, tail } : undefined;
 };
 
 /** The refs of one hold that the reconciler acts on: well-formed fields only. A card's thread is `ref.threadId`, or the hold's own card link. */
@@ -232,57 +233,74 @@ export function refsOf(h: Held): { kind: Kind; key: string; value: string; serve
 	];
 }
 
-async function lookup(
-	kind: "pr" | "issue" | "branch",
-	value: string,
-	gh: GhRead,
-	seenLive: Record<string, Sighting>,
-	now: number,
-): Promise<Seen> {
-	const p = parts(value);
-	if (!p) return { state: "unknown", why: "malformed ref" };
-	const base = `repos/${p.owner}/${p.repo}`;
-	if (kind === "pr") {
-		const r = (await gh(`${base}/pulls/${p.tail}`, "{state:.state,merged_at:.merged_at,closed_at:.closed_at}")) as {
-			state?: unknown;
-			merged_at?: unknown;
-			closed_at?: unknown;
-		} | null;
-		if (r?.state === "open") return { state: "live" };
-		if (r?.state === "closed") {
-			const merged = stamp(r.merged_at);
-			if (merged) return { state: "done", saw: `PR ${value} merged ${merged}` };
-			const closed = stamp(r.closed_at);
-			if (closed && !r.merged_at) return { state: "done", saw: `PR ${value} closed ${closed}` };
-		}
-		return { state: "unknown", why: "PR state not readable" };
-	}
-	if (kind === "issue") {
-		const r = (await gh(
-			`${base}/issues/${p.tail}`,
-			"{state:.state,closed_at:.closed_at,pr:(.pull_request!=null)}",
-		)) as { state?: unknown; closed_at?: unknown; pr?: unknown } | null;
-		if (r?.pr !== false) return { state: "unknown", why: "reference is a pull request or unreadable" };
-		if (r.state === "open") return { state: "live" };
+type RepoRef = { owner: string; repo: string; tail: string };
+type GitHubKind = "pr" | "issue" | "branch";
+
+async function lookupPr(value: string, base: string, p: RepoRef, gh: GhRead): Promise<Seen> {
+	const r = (await gh(`${base}/pulls/${p.tail}`, "{state:.state,merged_at:.merged_at,closed_at:.closed_at}")) as {
+		state?: unknown;
+		merged_at?: unknown;
+		closed_at?: unknown;
+	} | null;
+	if (r?.state === "open") return { state: "live" };
+	if (r?.state === "closed") {
+		const merged = stamp(r.merged_at);
+		if (merged) return { state: "done", saw: `PR ${value} merged ${merged}` };
 		const closed = stamp(r.closed_at);
-		if (r.state === "closed" && closed) return { state: "done", saw: `issue ${value} closed ${closed}` };
-		return { state: "unknown", why: "issue state not readable" };
+		if (closed && !r.merged_at) return { state: "done", saw: `PR ${value} closed ${closed}` };
 	}
-	// A branch is known deleted only on the same repository it was seen on. A slug can be transferred, renamed or recreated, so
-	// the repository's numeric id is recorded when the branch is first seen, and an absent branch counts only when that same id
-	// answers under the same name. A redirect (a different name back) or a different id is unknown, never deleted.
-	const repo = (await gh(base, "{id:.id,full_name:.full_name}")) as { id?: unknown; full_name?: unknown } | null;
-	if (typeof repo?.id !== "number" || !Number.isInteger(repo.id) || typeof repo.full_name !== "string")
-		return { state: "unknown", why: "repository identity not readable" };
-	const seen = seenLive[value];
-	// The id is written once, at the first sighting, and never replaced. A later different id (a recreated or transferred
-	// repository under the same name) marks the ref in conflict for good: seeing the branch there cannot make it the old one again.
+	return { state: "unknown", why: "PR state not readable" };
+}
+
+async function lookupIssue(value: string, base: string, p: RepoRef, gh: GhRead): Promise<Seen> {
+	const r = (await gh(`${base}/issues/${p.tail}`, "{state:.state,closed_at:.closed_at,pr:(.pull_request!=null)}")) as {
+		state?: unknown;
+		closed_at?: unknown;
+		pr?: unknown;
+	} | null;
+	if (r?.pr !== false) return { state: "unknown", why: "reference is a pull request or unreadable" };
+	if (r.state === "open") return { state: "live" };
+	const closed = stamp(r.closed_at);
+	if (r.state === "closed" && closed) return { state: "done", saw: `issue ${value} closed ${closed}` };
+	return { state: "unknown", why: "issue state not readable" };
+}
+
+/**
+ * Whether the repository answering now is the one the branch was first seen on; undefined when it is. The id is written once, at
+ * the first sighting, and never replaced. A later different id (a recreated or transferred repository under the same name) marks the
+ * ref in conflict for good: seeing the branch there cannot make it the old one again.
+ */
+function repoMismatch(
+	seen: Sighting | undefined,
+	repo: { id: number; full_name: string },
+	p: RepoRef,
+): Seen | undefined {
 	if (seen && (seen.conflict || seen.repoId !== repo.id)) {
 		seen.conflict = true;
 		return { state: "unknown", why: `repository id changed from ${seen.repoId} to ${repo.id}` };
 	}
 	if (repo.full_name.toLowerCase() !== `${p.owner}/${p.repo}`.toLowerCase())
 		return { state: "unknown", why: `repository now answers as ${repo.full_name}` };
+	return undefined;
+}
+
+// A branch is known deleted only on the same repository it was seen on. A slug can be transferred, renamed or recreated, so
+// the repository's numeric id is recorded when the branch is first seen, and an absent branch counts only when that same id
+// answers under the same name. A redirect (a different name back) or a different id is unknown, never deleted.
+async function lookupBranch(
+	value: string,
+	base: string,
+	p: RepoRef,
+	gh: GhRead,
+	seenLive: Record<string, Sighting>,
+	now: number,
+): Promise<Seen> {
+	const repo = (await gh(base, "{id:.id,full_name:.full_name}")) as { id?: unknown; full_name?: unknown } | null;
+	if (typeof repo?.id !== "number" || !Number.isInteger(repo.id) || typeof repo.full_name !== "string")
+		return { state: "unknown", why: "repository identity not readable" };
+	const seen = seenLive[value];
+	const mismatch = repoMismatch(seen, { id: repo.id, full_name: repo.full_name }, p);
+	if (mismatch) return mismatch;
 	// matching-refs answers an empty list, not a 404, for a branch that is not there, so "gone" is never confused with "no access".
 	const r = await gh(
 		`${base}/git/matching-refs/heads/${p.tail}?per_page=100`,
@@ -302,6 +320,126 @@ async function lookup(
 	};
 }
 
+async function lookup(
+	kind: GitHubKind,
+	value: string,
+	gh: GhRead,
+	seenLive: Record<string, Sighting>,
+	now: number,
+): Promise<Seen> {
+	const p = parts(value);
+	if (!p) return { state: "unknown", why: "malformed ref" };
+	const base = `repos/${p.owner}/${p.repo}`;
+	if (kind === "pr") return lookupPr(value, base, p, gh);
+	if (kind === "issue") return lookupIssue(value, base, p, gh);
+	return lookupBranch(value, base, p, gh, seenLive, now);
+}
+
+type RefEntry = { kind: Kind; value: string; server?: string };
+/** What one ref pass has found and spent so far. */
+type Pass = {
+	now: number;
+	results: Map<string, Seen>;
+	checked: Record<string, number>;
+	seenLive: Record<string, Sighting>;
+	lookups: number;
+	requests: number;
+	errors: number;
+	backoff: boolean;
+	backoffUntil: number | undefined;
+};
+
+/** The distinct refs of every open hold, by key. */
+function openRefs(store: Store): Map<string, RefEntry> {
+	const refs = new Map<string, RefEntry>();
+	for (const h of heldOpen(store)) for (const r of refsOf(h)) refs.set(r.key, r);
+	return refs;
+}
+
+/** What a thread's view means for its hold. */
+function seenFromThread(v: ThreadView, value: string): Seen {
+	return v.state === "live"
+		? { state: "live" }
+		: v.state === "unknown"
+			? { state: "unknown", why: "thread not known" }
+			: { state: "done", saw: `thread ${value} ${v.saw}` };
+}
+
+/** Threads: one fresh snapshot per server, fetched now. Nothing cached is consulted, and a failed fetch leaves every thread unknown. */
+async function resolveThreads(pass: Pass, refs: Map<string, RefEntry>, snapshots: ReconcileDeps["snapshots"]) {
+	const wantsThreads = [...refs.values()].some((r) => r.kind === "thread");
+	let snaps: MachineSnapshot[] = [];
+	if (wantsThreads && snapshots) {
+		try {
+			snaps = await snapshots();
+		} catch {
+			pass.errors++;
+		}
+	}
+	for (const [key, r] of refs)
+		if (r.kind === "thread") pass.results.set(key, seenFromThread(threadViewAcross(snaps, r.value, r.server), r.value));
+}
+
+/** A failed lookup is counted and leaves its hold open; a rate-limit answer also starts the back-off. */
+function noteLookupFailure(pass: Pass, key: string, e: unknown) {
+	pass.errors++;
+	pass.results.set(key, { state: "unknown", why: `lookup failed: ${String(e).slice(0, 100)}` });
+	if (RATE.test(String(e))) {
+		pass.backoff = true;
+		pass.backoffUntil = pass.now + BACKOFF_MS;
+	}
+}
+
+/** A ref is looked up once however many holds name it; the least recently checked go first, so a cap never starves one. */
+async function lookupRemote(pass: Pass, gh: GhRead | undefined, refs: Map<string, RefEntry>) {
+	if (!gh) return;
+	const remote = [...refs]
+		.filter(([, r]) => r.kind !== "thread")
+		.sort((a, b) => (pass.checked[a[0]] ?? 0) - (pass.checked[b[0]] ?? 0));
+	/** Every call goes through here, so the budget counts requests actually made. */
+	const counted: GhRead = (path, jq) => {
+		pass.requests++;
+		return gh(path, jq);
+	};
+	for (const [key, r] of remote) {
+		// A branch costs two requests (repository identity, then the branch); a PR or an issue costs one. A ref that would
+		// overspend waits for the next pass, and the least recently checked go first so none starves.
+		if (pass.backoff || pass.requests + (r.kind === "branch" ? 2 : 1) > MAX_REQUESTS) break;
+		pass.lookups++;
+		pass.checked[key] = pass.now;
+		try {
+			pass.results.set(key, await lookup(r.kind as GitHubKind, r.value, counted, pass.seenLive, pass.now));
+		} catch (e) {
+			noteLookupFailure(pass, key, e);
+		}
+	}
+}
+
+/** Any one done ref closes its hold: each ref is the Steward's own statement of what the hold waits on. */
+function closeDoneHolds(store: Store, results: Map<string, Seen>, now: number): number {
+	return closeHeldWhere(
+		store,
+		(h) => {
+			const done = refsOf(h)
+				.map((r) => results.get(r.key))
+				.find((s): s is Extract<Seen, { state: "done" }> => s?.state === "done");
+			return done ? `${done.saw}; ${BY}.` : undefined;
+		},
+		new Date(now),
+	);
+}
+
+/** Remembers the pass for the next one, keeping only what the open holds still name. */
+function saveState(store: Store, pass: Pass, refs: Map<string, RefEntry>) {
+	const keep = new Set(refs.keys());
+	store.state.set(STATE_KEY, {
+		lastPassAt: pass.now,
+		...(pass.backoffUntil !== undefined && pass.backoffUntil > pass.now ? { backoffUntil: pass.backoffUntil } : {}),
+		checked: Object.fromEntries(Object.entries(pass.checked).filter(([k]) => keep.has(k))),
+		seenLive: Object.fromEntries(Object.entries(pass.seenLive).filter(([k]) => keep.has(`branch:${k}`))),
+	} satisfies State);
+}
+
 /**
  * The ref pass. Throttled to one per REF_PASS_MS (the engine may call it every tick). Never throws on a failed lookup: it is
  * counted and leaves its holds open.
@@ -312,82 +450,22 @@ export async function reconcileRefHolds(d: ReconcileDeps): Promise<RefPassResult
 	const st = store.state.get<State>(STATE_KEY) ?? {};
 	if (st.lastPassAt !== undefined && now - st.lastPassAt < REF_PASS_MS)
 		return { ran: false, closed: 0, lookups: 0, requests: 0, errors: 0 };
-	const refs = new Map<string, { kind: Kind; value: string; server?: string }>();
-	for (const h of heldOpen(store)) for (const r of refsOf(h)) refs.set(r.key, r);
-	const checked = st.checked ?? {};
-	const seenLive = { ...(st.seenLive ?? {}) };
-	const results = new Map<string, Seen>();
-	let lookups = 0;
-	let requests = 0;
-	/** Every call goes through here, so the budget counts requests actually made. */
-	const counted: GhRead = (path, jq) => {
-		requests++;
-		return d.gh!(path, jq);
+	const refs = openRefs(store);
+	const pass: Pass = {
+		now,
+		results: new Map(),
+		checked: st.checked ?? {},
+		seenLive: { ...(st.seenLive ?? {}) },
+		lookups: 0,
+		requests: 0,
+		errors: 0,
+		backoff: st.backoffUntil !== undefined && now < st.backoffUntil,
+		backoffUntil: st.backoffUntil,
 	};
-	let errors = 0;
-	let backoff = st.backoffUntil !== undefined && now < st.backoffUntil;
-	let backoffUntil = st.backoffUntil;
-
-	// Threads: one fresh snapshot per server, fetched now. Nothing cached is consulted, and a failed fetch leaves every thread unknown.
-	const wantsThreads = [...refs.values()].some((r) => r.kind === "thread");
-	let snaps: MachineSnapshot[] = [];
-	if (wantsThreads && d.snapshots) {
-		try {
-			snaps = await d.snapshots();
-		} catch {
-			errors++;
-		}
-	}
-	for (const [key, r] of refs)
-		if (r.kind === "thread") {
-			const v = threadViewAcross(snaps, r.value, r.server);
-			results.set(
-				key,
-				v.state === "live"
-					? { state: "live" }
-					: v.state === "unknown"
-						? { state: "unknown", why: "thread not known" }
-						: { state: "done", saw: `thread ${r.value} ${v.saw}` },
-			);
-		}
-	// A ref is looked up once however many holds name it; the least recently checked go first, so a cap never starves one.
-	const remote = d.gh
-		? [...refs].filter(([, r]) => r.kind !== "thread").sort((a, b) => (checked[a[0]] ?? 0) - (checked[b[0]] ?? 0))
-		: [];
-	for (const [key, r] of remote) {
-		// A branch costs two requests (repository identity, then the branch); a PR or an issue costs one. A ref that would
-		// overspend waits for the next pass, and the least recently checked go first so none starves.
-		if (backoff || requests + (r.kind === "branch" ? 2 : 1) > MAX_REQUESTS) break;
-		lookups++;
-		checked[key] = now;
-		try {
-			results.set(key, await lookup(r.kind as "pr" | "issue" | "branch", r.value, counted, seenLive, now));
-		} catch (e) {
-			errors++;
-			results.set(key, { state: "unknown", why: `lookup failed: ${String(e).slice(0, 100)}` });
-			if (RATE.test(String(e))) {
-				backoff = true;
-				backoffUntil = now + BACKOFF_MS;
-			}
-		}
-	}
-	// Any one done ref closes its hold: each ref is the Steward's own statement of what the hold waits on.
-	const closed = closeHeldWhere(
-		store,
-		(h) => {
-			const done = refsOf(h)
-				.map((r) => results.get(r.key))
-				.find((s): s is Extract<Seen, { state: "done" }> => s?.state === "done");
-			return done ? `${done.saw}; ${BY}.` : undefined;
-		},
-		new Date(now),
-	);
-	const keep = new Set(refs.keys());
-	store.state.set(STATE_KEY, {
-		lastPassAt: now,
-		...(backoffUntil !== undefined && backoffUntil > now ? { backoffUntil } : {}),
-		checked: Object.fromEntries(Object.entries(checked).filter(([k]) => keep.has(k))),
-		seenLive: Object.fromEntries(Object.entries(seenLive).filter(([k]) => keep.has(`branch:${k}`))),
-	} satisfies State);
+	await resolveThreads(pass, refs, d.snapshots);
+	await lookupRemote(pass, d.gh, refs);
+	const closed = closeDoneHolds(store, pass.results, now);
+	saveState(store, pass, refs);
+	const { lookups, requests, errors, backoff } = pass;
 	return { ran: true, closed, lookups, requests, errors, ...(backoff ? { backoff: true } : {}) };
 }

@@ -171,6 +171,25 @@ describe("answering", () => {
 		expect(a.answers).toEqual([]);
 	});
 
+	test("a listed card whose server has since left the server list is refused with a pointer to its thread", async () => {
+		const a = createFakeAdapter();
+		a.cards = [card()];
+		let pairs = [pair(a)];
+		const m = createWaiting({
+			store: memStore(),
+			servers: () => pairs,
+			skipThreads: () => [],
+			log: () => {},
+		});
+		await m.poll();
+		pairs = [];
+		expect(await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).toEqual({
+			status: 403,
+			body: { error: "answer it in its thread on ws" },
+		});
+		expect(a.answers).toEqual([]);
+	});
+
 	test("a good answer reaches the adapter once, drops the card, and is refused a second time", async () => {
 		const { a, m } = await ready();
 		expect(await m.answer("C-aaaaaaaaaaaa", 1, "sig-1")).toEqual({
