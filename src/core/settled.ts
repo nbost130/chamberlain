@@ -301,9 +301,29 @@ export function findSettled(
 	clock: Clock = Date.now,
 ): { matches: Settled[]; skipped: string[] } {
 	const { titleOverlap, ignore } = matchSettings(match);
+	const { records, skipped } = readRecords(store, clock());
+	const body = `${s.title}\n${s.context ?? ""}`;
+	const mine = subjectRefs(s, body);
+	const matches: Settled[] = [];
+	let malformed = 0;
+	for (const r of records) {
+		try {
+			const why = whyMatches(s, body, mine, r, titleOverlap, ignore);
+			if (why) matches.push({ source: r.source, date: r.date, id: r.id, answer: r.answer, why });
+		} catch {
+			// EMPTY_CATCH_OK: one malformed record (a title that is not text, say) is counted below and never hides the others.
+			malformed++;
+		}
+	}
+	if (malformed) skipped.push(`${malformed} malformed record${malformed === 1 ? "" : "s"}`);
+	matches.sort((a, b) => b.date.localeCompare(a.date));
+	return { matches, skipped };
+}
+
+/** The records of the three sources; a source that cannot be read is named in `skipped` and the others still count. */
+function readRecords(store: Store, nowMs: number): { records: SettledRecord[]; skipped: string[] } {
 	const skipped: string[] = [];
 	const records: SettledRecord[] = [];
-	const nowMs = clock();
 	for (const [name, read] of [
 		["questions", queueRecords],
 		["rulings", (st: Store) => rulingRecords(st, nowMs)],
@@ -315,7 +335,11 @@ export function findSettled(
 			skipped.push(`${name} (${String(e instanceof Error ? e.message : e).slice(0, 60)})`);
 		}
 	}
-	const body = `${s.title}\n${s.context ?? ""}`;
+	return { records, skipped };
+}
+
+/** The refs the subject names: those in its text, plus the PR, issue, item, run and branch it was given. */
+function subjectRefs(s: Subject, body: string): Refs {
 	const mine = refsIn(body);
 	// A queue item named in the context is a pointer to earlier work, not this question: only the title and --item count.
 	mine.items = refsIn(s.title).items;
@@ -324,35 +348,29 @@ export function findSettled(
 	if (s.item) mine.items.push(s.item);
 	if (s.run) mine.runs.push(s.run);
 	if (s.branch) mine.branches.push(s.branch.toLowerCase());
-	const matches: Settled[] = [];
-	let malformed = 0;
-	for (const r of records) {
-		try {
-			const theirs = refsIn(r.text);
-			theirs.items.push(r.id);
-			if (r.item) theirs.items.push(r.item);
-			if (r.run) theirs.runs.push(r.run);
-			const { strong, weak } = sharedRefs(mine, body, theirs, r.text);
-			if (names(body, r.thread) || names(r.text, s.thread)) weak.push("thread title");
-			let why: string | undefined;
-			if (strong.length) why = strong.slice(0, 3).join(", ");
-			else {
-				const topic = weak.length ? sameTopic(s.title, r.title, ignore) : undefined;
-				if (topic) why = `${weak.slice(0, 2).join(", ")} + topic: ${topic.slice(0, 4).join(", ")}`;
-				else if (titleOverlap) {
-					const words = titlesOverlap(s.title, r.title, ignore);
-					if (words) why = `title overlap: ${words.slice(0, 5).join(", ")}`;
-				}
-			}
-			if (why) matches.push({ source: r.source, date: r.date, id: r.id, answer: r.answer, why });
-		} catch {
-			// EMPTY_CATCH_OK: one malformed record (a title that is not text, say) is counted below and never hides the others.
-			malformed++;
-		}
-	}
-	if (malformed) skipped.push(`${malformed} malformed record${malformed === 1 ? "" : "s"}`);
-	matches.sort((a, b) => b.date.localeCompare(a.date));
-	return { matches, skipped };
+	return mine;
+}
+
+/** What one record's match with the subject rests on, or undefined when it does not match. May throw on a malformed record. */
+function whyMatches(
+	s: Subject,
+	body: string,
+	mine: Refs,
+	r: SettledRecord,
+	titleOverlap: boolean,
+	ignore: ReadonlySet<string>,
+): string | undefined {
+	const theirs = refsIn(r.text);
+	theirs.items.push(r.id);
+	if (r.item) theirs.items.push(r.item);
+	if (r.run) theirs.runs.push(r.run);
+	const { strong, weak } = sharedRefs(mine, body, theirs, r.text);
+	if (names(body, r.thread) || names(r.text, s.thread)) weak.push("thread title");
+	if (strong.length) return strong.slice(0, 3).join(", ");
+	const topic = weak.length ? sameTopic(s.title, r.title, ignore) : undefined;
+	if (topic) return `${weak.slice(0, 2).join(", ")} + topic: ${topic.slice(0, 4).join(", ")}`;
+	const words = titleOverlap ? titlesOverlap(s.title, r.title, ignore) : undefined;
+	return words ? `title overlap: ${words.slice(0, 5).join(", ")}` : undefined;
 }
 
 /** Pure: the refusal text, one line per match (at most ten) with what it rests on, then how to override. */
