@@ -13,18 +13,54 @@ import { openStore } from "./core/sqlite-store.ts";
 import { dbPath, type Store } from "./core/store.ts";
 
 type Dir = string;
-const scratch = (): Dir => { const d = mkdtempSync(`${tmpdir()}/chamberlain-hvq-`); mkdirSync(`${d}/state`, { recursive: true }); mkdirSync(`${d}/conf`, { recursive: true, mode: 0o700 }); return d; };
+const scratch = (): Dir => {
+	const d = mkdtempSync(`${tmpdir()}/chamberlain-hvq-`);
+	mkdirSync(`${d}/state`, { recursive: true });
+	mkdirSync(`${d}/conf`, { recursive: true, mode: 0o700 });
+	return d;
+};
 function run(dir: Dir, script: string, ...args: string[]) {
-	const { XDG_STATE_HOME: _s, XDG_CACHE_HOME: _c, XDG_CONFIG_HOME: _f, CHAMBERLAIN_STATE: _a, CHAMBERLAIN_CACHE: _b, CHAMBERLAIN_CONF: _g, CHAMBERLAIN_PRINCIPAL: _p, ...rest } = process.env;
-	return spawnSync(process.execPath, [new URL(script, import.meta.url).pathname, ...args], { env: { ...rest, HOME: dir, CHAMBERLAIN_STATE: `${dir}/state`, CHAMBERLAIN_CONF: `${dir}/conf` }, encoding: "utf8" });
+	const {
+		XDG_STATE_HOME: _s,
+		XDG_CACHE_HOME: _c,
+		XDG_CONFIG_HOME: _f,
+		CHAMBERLAIN_STATE: _a,
+		CHAMBERLAIN_CONF: _g,
+		CHAMBERLAIN_PRINCIPAL: _p,
+		...rest
+	} = process.env;
+	return spawnSync(process.execPath, [new URL(script, import.meta.url).pathname, ...args], {
+		env: { ...rest, HOME: dir, CHAMBERLAIN_STATE: `${dir}/state`, CHAMBERLAIN_CONF: `${dir}/conf` },
+		encoding: "utf8",
+	});
 }
-const BASE = { kind: "product", context: "- one line", options: [{ label: "Yes" }, { label: "No" }], thread: "Billing", server: "main" };
+const BASE = {
+	kind: "product",
+	context: "- one line",
+	options: [{ label: "Yes" }, { label: "No" }],
+	thread: "Billing",
+	server: "main",
+};
 const ask = (dir: Dir, o: Record<string, unknown>) => run(dir, "./ask.ts", JSON.stringify({ ...BASE, ...o }));
 const afk = (dir: Dir, ...args: string[]) => run(dir, "./core/afk.ts", ...args);
 const idOf = (r: { stdout: string }) => r.stdout.match(/\bQ-[a-z0-9]{4,16}\b/)![0];
-function withStore<T>(dir: Dir, fn: (s: Store) => T): T { const s = openStore(dbPath(`${dir}/state`)); try { return fn(s); } finally { s.close(); } }
+function withStore<T>(dir: Dir, fn: (s: Store) => T): T {
+	const s = openStore(dbPath(`${dir}/state`));
+	try {
+		return fn(s);
+	} finally {
+		s.close();
+	}
+}
 /** Answers a question as the page would. */
-const settle = (dir: Dir, id: string, label = "No") => withStore(dir, (s) => { const q = getQuestion(s, id)!; claimWake(s, pageClaim(q, { choice: 1, label, by: "page", t: new Date().toISOString(), deliveryId: `answer:item:${id}` })); });
+const settle = (dir: Dir, id: string, label = "No") =>
+	withStore(dir, (s) => {
+		const q = getQuestion(s, id)!;
+		claimWake(
+			s,
+			pageClaim(q, { choice: 1, label, by: "page", t: new Date().toISOString(), deliveryId: `answer:item:${id}` }),
+		);
+	});
 
 describe("(a) everything that waits on the operator goes through the queue first", () => {
 	test('"urgent": false records the question, posts nothing, and says so', () => {
@@ -37,7 +73,12 @@ describe("(a) everything that waits on the operator goes through the queue first
 	});
 	test('(1) "urgent": false on an approval or a secret is ignored with a note on stderr: it is filed urgent, and an approval goes on to its post', () => {
 		const d = scratch();
-		for (const [o, what] of [[{ tag: "Approval", title: "Approve the payroll export" }, "an approval"], [{ tag: "approval", title: "Approve the ledger rebuild" }, "an approval"], [{ secret: true, options: [], title: "Paste the payroll API key" }, "a secret"], [{ tag: "Secret", title: "Rotate the vendor key" }, "a secret"]] as const) {
+		for (const [o, what] of [
+			[{ tag: "Approval", title: "Approve the payroll export" }, "an approval"],
+			[{ tag: "approval", title: "Approve the ledger rebuild" }, "an approval"],
+			[{ secret: true, options: [], title: "Paste the payroll API key" }, "a secret"],
+			[{ tag: "Secret", title: "Rotate the vendor key" }, "a secret"],
+		] as const) {
 			const r = ask(d, { ...o, urgent: false, notSettled: "test" });
 			expect(r.stderr).toContain(`"urgent": false ignored: ${what} is always urgent`);
 			expect(r.stdout).not.toContain("not urgent");
@@ -50,14 +91,27 @@ describe("(a) everything that waits on the operator goes through the queue first
 			else expect(r.status).toBe(1);
 		}
 		// An ordinary question keeps its demotion.
-		expect(ask(d, { urgent: false, title: "Pick a colour for the docs badge" }).stdout).toContain("not urgent: no notification sent");
+		expect(ask(d, { urgent: false, title: "Pick a colour for the docs badge" }).stdout).toContain(
+			"not urgent: no notification sent",
+		);
 	});
 	test("a non-urgent question ranks below every urgent one, even one set aside with not now", () => {
 		const d = scratch();
 		const nu = idOf(ask(d, { urgent: false, kind: "only-you", title: "Waits a while" }));
 		withStore(d, (s) => {
 			// Urgent questions written straight to the store: ask.ts would also post them.
-			for (const [id, kind] of [["Q-urg01", "idea"], ["Q-urg02", "product"]] as const) s.items.observe({ source: "queue", kind: "question", dedupKey: id, mode: "silenced", payload: { ...BASE, id, kind, title: id, createdAt: new Date().toISOString() }, now: Date.now() });
+			for (const [id, kind] of [
+				["Q-urg01", "idea"],
+				["Q-urg02", "product"],
+			] as const)
+				s.items.observe({
+					source: "queue",
+					kind: "question",
+					dedupKey: id,
+					mode: "silenced",
+					payload: { ...BASE, id, kind, title: id, createdAt: new Date().toISOString() },
+					now: Date.now(),
+				});
 			s.items.acknowledge("queue", "Q-urg02", Date.now(), { notNowAt: new Date().toISOString() });
 			expect(ranked(questionStates(s).values()).map((q) => q.id)).toEqual(["Q-urg01", "Q-urg02", nu]);
 		});
@@ -101,13 +155,25 @@ describe("(b) what is already settled is refused, unless given a reason", () => 
 	test("notSettled overrides, and the reason is stored on the question", () => {
 		const d = scratch();
 		settle(d, idOf(ask(d, { urgent: false, title: "Rename the project to Atlas" })));
-		const r = ask(d, { urgent: false, title: "Rename to Atlas? (docs site)", notSettled: "the docs site, not the product" });
+		const r = ask(d, {
+			urgent: false,
+			title: "Rename to Atlas? (docs site)",
+			notSettled: "the docs site, not the product",
+		});
 		expect(r.status).toBe(0);
 		expect(withStore(d, (s) => getQuestion(s, idOf(r))!.notSettled)).toBe("the docs site, not the product");
 	});
 	test("the decision log and a ruling settle a question too", () => {
 		const d = scratch();
-		withStore(d, (s) => s.decisions.append({ t: "2026-11-05T12:00:00.000Z", thread: "x", decision: "Pinned the queue worker to two replicas", ruling: "R3", ref: null }));
+		withStore(d, (s) =>
+			s.decisions.append({
+				t: "2026-11-05T12:00:00.000Z",
+				thread: "x",
+				decision: "Pinned the queue worker to two replicas",
+				ruling: "R3",
+				ref: null,
+			}),
+		);
 		const r = ask(d, { urgent: false, title: "Queue worker replicas pinned to two?" });
 		expect(r.status).toBe(2);
 		expect(r.stderr).toContain("decision | 2026-11-05");
@@ -120,10 +186,17 @@ describe("(b) what is already settled is refused, unless given a reason", () => 
 		expect(refused.status).toBe(2);
 		expect(refused.stderr).toContain("matched on title overlap");
 		expect(refused.stderr).toContain("--not-settled");
-		expect(afk(d, "hold", "Brand", "Rename to Atlas?", "--item", open, "--not-settled", "the docs site").status).toBe(0);
-		const inherit = idOf(ask(d, { urgent: false, title: "Rename to Atlas? (docs site)", notSettled: "docs site, not the product" }));
+		expect(afk(d, "hold", "Brand", "Rename to Atlas?", "--item", open, "--not-settled", "the docs site").status).toBe(
+			0,
+		);
+		const inherit = idOf(
+			ask(d, { urgent: false, title: "Rename to Atlas? (docs site)", notSettled: "docs site, not the product" }),
+		);
 		expect(afk(d, "hold", "Docs", "Rename to Atlas? on the docs site", "--item", inherit).status).toBe(0);
-		expect(withStore(d, heldOpen).map((h) => h.notSettled)).toEqual(["the docs site", `inherited from ${inherit}: docs site, not the product`]);
+		expect(withStore(d, heldOpen).map((h) => h.notSettled)).toEqual([
+			"the docs site",
+			`inherited from ${inherit}: docs site, not the product`,
+		]);
 		expect(afk(d, "hold", "Brand", "x", "--item", open, "--not-settled", "  ").status).toBe(2);
 	});
 });

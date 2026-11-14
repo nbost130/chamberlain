@@ -56,7 +56,6 @@ flowchart TB
 | Directory | What lives there | May import |
 | --- | --- | --- |
 | `src/core/` | Everything that is true whatever the backend (the Alert Desk's inbox drain, `alert-desk.ts`, is here: it decides through the item system and queues wakes for the `desk` receiver, which the one relay sends as a second receiver, through the same serial queue): the rules that decide a wake (`decide.ts`), the hold and digest logic (`hold.ts`), the outbox's producer side (`deliver.ts`) and its one message relay (`relay.ts`, held to one per state directory by `singleton.ts`, and to one per lock handle by `createRelay` itself; every receiver, the Steward and the Alert Desk, is a lane of it), the **`Store` interface** (`store.ts`) and its one SQLite implementation (`sqlite-store.ts`, `migrations.ts`), the item system (`alert.ts`, `source.ts`, `sweep.ts`), the decision queue and its one-wake claims (`questions.ts`), rulings, away mode, butlers, the hand-off (`brief.ts`), operating rules, history, the config files' schema version and its migration, and the engine (`engine.ts`) that ties them to an adapter. Core logic depends on the `Store` interface only; `sqlite-store.ts` is the one module that opens the database. | itself only |
-| `src/cli/` | One-time tools: the importer (`import.ts`) that reads the old file layout into the database. | `src/core/` |
 | `src/adapters/<name>/` | Every fact about one backend: its protocol, its tokens, its database, its wording. One folder per backend. | `src/core/` and its own folder |
 | `src/adapters/index.ts` | The registry: a name to a factory, one line per backend. The only file that names more than one adapter. | everything under `src/adapters/` |
 | `src/web/` | The decision-queue page: the JSON API (`app.ts`), the cards-across-servers layer (`waiting.ts`), the title keeper, the static files. Only `server.ts`, the entry point, touches the registry. | `src/core/` |
@@ -197,7 +196,7 @@ sequenceDiagram
    unreadable notice, writes no record, and once it is delivered the row goes. The `rights-first` log line names both ids and the reason. A
    Steward wake queued **before** the stamps existed has none, so migration 10 stamps **every** undelivered Steward wake with no stamp (a
    pending or dead-lettered row, or a held wake, receiver NULL), whatever its text, as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`),
-   and `legacy-import.ts` stamps every wake it brings in the same way: it then depends on the record like a pointer. A digest keeps each
+   so each of those depends on the record like a pointer. A digest keeps each
    member's text byte for byte, repeated rights blocks included (they cost tokens, not correctness), and keeps a full stamp only from an item
    whose text it carries (a folded item's block is not sent).
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
@@ -374,7 +373,7 @@ Two directories, both private, laid out by the XDG Base Directory Specification.
 `CHAMBERLAIN_STATE` (default `~/.local/state/chamberlain`) holds everything the processes write while they run and must
 keep, **in one SQLite database, `chamberlain.db`**, plus the evidence files and the hand-off. It is state, not cache: the
 rulings and the decision log are in it, so nothing may delete it. (The cache directory, `~/.cache/chamberlain`, holds
-nothing today. A build that kept the database there moves it to the state directory on its first start; see the README.) The daemon and the page are separate processes that open the same database file; they never talk to each
+nothing today.) The daemon and the page are separate processes that open the same database file; they never talk to each
 other, and they never lose each other's writes. Only the daemon sends wakes (its relay holds a `flock` on the state directory).
 
 The database is opened in WAL mode with a busy timeout, foreign keys on and `synchronous = FULL`. A change is made in a
@@ -400,9 +399,7 @@ Config files carry a `schemaVersion` (currently 2) and `src/core/migrate.ts` upg
 by a `flock(2)` exclusive lock on the config directory itself, held for the whole rewrite and owned by the kernel: it is gone when the
 holder exits or dies, however it dies, and nothing is ever broken or cleaned up by age, so a slow migration is never entered twice and no
 process can release another's lock. A second migrator waits for the first (30 seconds by default), then skips with a message and changes
-nothing; readers still accept unversioned records. Tested with real processes and a slow migration injected. The old state
-files (`queue.jsonl`, `woken/`, `held-wakes.json`, and the rest) are read only by the one-time importer
-(`bun src/cli/import.ts`), which never changes them. An adapter that must remember something across a restart keeps it in
+nothing; readers still accept unversioned records. Tested with real processes and a slow migration injected. An adapter that must remember something across a restart keeps it in
 the store under its own source name (`AdapterEnv.store`); it keeps no file of its own.
 
 ## The item system
@@ -610,9 +607,8 @@ CASCADE`. A housekeeping retirement is stored as `retired_how = 'retired'` with 
 `superseded`, `duplicate`, `expired` or `repeat`; the store reads the pair back as one `retiredHow`. A build that does not
 know migration 11 refuses the database, like any newer one (`DatabaseTooNewError`). **Development databases:** migrations 10 and 11 were edited in
 place before release, so a database that ran an earlier draft of either records the version and is never upgraded again; it must be rebuilt
-(delete `chamberlain.db` and its `-wal` and `-shm` files, then start again or run `legacy-import.ts`). A draft build that knew an earlier 11 also
-opens a database this 11 made without refusing it. Only databases from unreleased builds are affected. `legacy-import.ts` brings the same fields in from an old
-`rulings.jsonl`, leaves out and notes any that are malformed, and never carries the earlier system's own bookkeeping.
+(delete `chamberlain.db` and its `-wal` and `-shm` files, then start again). A draft build that knew an earlier 11 also
+opens a database this 11 made without refusing it. Only databases from unreleased builds are affected.
 
 Migration 12 only adds: `store_sequence`, one row holding a durable counter, created at 0, with triggers that refuse a second row, a delete
 and any update that does not raise it. `Store.sequence.next()` raises it in a transaction and returns the new value, which is greater than

@@ -130,7 +130,7 @@
 			count.textContent = "answered";
 			const c = el("div", "dq-card");
 			c.append(el("div", `dq-kind ${was.kind}`, KIND[was.kind] || was.kind), el("div", "dq-title", was.title));
-			const how = was.status === "answered-on-card" ? "Answered on its card in T3." : `Answered: ${was.answer?.label ?? ""}${was.answer?.note ? ` (${was.answer.note})` : ""}.`;
+			const how = was.status === "answered-on-card" ? "Answered on its question card in T3." : `Answered: ${was.answer?.label ?? ""}${was.answer?.note ? ` (${was.answer.note})` : ""}.`;
 			c.append(el("div", "dq-msg dq-ok", how));
 			list.replaceChildren(c);
 		} catch (e) {
@@ -166,7 +166,7 @@
 			c.append(ev);
 		}
 		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); return c; }
-		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the card itself, in its thread. This question closes only when the card does.")); return c; }
+		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
@@ -174,7 +174,7 @@
 			// An approval's command, exactly as T3 holds it: what is read is what would be approved.
 			if ((m.type === "approval" || m.type === "goal") && m.command) c.append(el("pre", "dq-cmd", m.command));
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
-			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
+			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
 			const full = el("a", "dq-meta", "Open the queue page"); full.href = `${BASE}/`; full.target = "_blank"; full.rel = "noopener"; c.append(full);
 			if (m.link) { const a = el("a", "dq-meta", "Open the thread"); a.href = m.link; a.target = "_blank"; a.rel = "noopener"; c.append(a); }
 			return c;
@@ -287,7 +287,7 @@
 				panes.Recent.replaceChildren(...items.map((it) => {
 					const row = el("div", "dq-row");
 					const when = it.at ? new Date(it.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-					const how = it.status === "answered-on-card" ? "answered on its card" : `${it.answer?.label ?? ""}${it.answer?.note ? ` · ${it.answer.note}` : ""}`;
+					const how = it.status === "answered-on-card" ? "answered on its question card" : `${it.answer?.label ?? ""}${it.answer?.note ? ` · ${it.answer.note}` : ""}`;
 					row.append(el("div", "dq-meta", `${it.id} · ${when}`), el("div", "dq-l", it.title), el("div", "dq-ctx", how));
 					return row;
 				}));

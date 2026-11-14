@@ -12,7 +12,9 @@ import { openStore } from "../core/sqlite-store.ts";
 const [path, id, startAt, mode, count] = process.argv.slice(2);
 const n = Number(count);
 const store = openStore(path!);
-while (Date.now() < Number(startAt)) { /* spin until the shared start */ }
+while (Date.now() < Number(startAt)) {
+	/* spin until the shared start */
+}
 
 if (mode === "writes") {
 	for (let i = 0; i < n; i++) {
@@ -22,7 +24,13 @@ if (mode === "writes") {
 		store.tx(() => {
 			const key = `Q-${id}x${i}`;
 			store.items.observe({ source: "queue", kind: "question", dedupKey: key, mode: "silenced" });
-			store.claims.claim("queue", { owner: `w${id}`, item: key, deliveryId: `answer:item:${key}`, message: "m", t: "t" });
+			store.claims.claim("queue", {
+				owner: `w${id}`,
+				item: key,
+				deliveryId: `answer:item:${key}`,
+				message: "m",
+				t: "t",
+			});
 		});
 	}
 	console.log(JSON.stringify({ id }));
@@ -31,7 +39,13 @@ if (mode === "writes") {
 	for (let i = 0; i < n; i++) {
 		const key = `Q-shared${i}`;
 		store.items.observe({ source: "queue", kind: "question", dedupKey: key, mode: "silenced" });
-		const r = store.claims.claim("queue", { owner: `w${id}`, item: key, deliveryId: `answer:item:${key}`, message: `wake from ${id}`, t: "t" });
+		const r = store.claims.claim("queue", {
+			owner: `w${id}`,
+			item: key,
+			deliveryId: `answer:item:${key}`,
+			message: `wake from ${id}`,
+			t: "t",
+		});
 		if (r.won) won.push(key);
 	}
 	console.log(JSON.stringify({ id, won }));

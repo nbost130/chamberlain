@@ -14,11 +14,24 @@ describe("the T3 adapter", () => {
 		const a = makeAdapter(server);
 		expect(conformance(a)).toEqual([]);
 		expect(a.id).toBe("t3");
-		for (const cap of ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot"] as const) expect(has(a, cap)).toBe(true);
+		for (const cap of [
+			"answer",
+			"listWaiting",
+			"setTitle",
+			"transcriptPath",
+			"inspect",
+			"send",
+			"stewardProbe",
+			"compact",
+			"snapshot",
+		] as const)
+			expect(has(a, cap)).toBe(true);
 	});
 	test("a server it serves needs an origin and a token file", () => {
 		expect(t3Server(server).origin).toBe("http://127.0.0.1:3773");
-		expect(() => t3Server({ name: "x", adapter: "t3", origin: "http://x" })).toThrow("a t3 server needs origin and tokenFile");
+		expect(() => t3Server({ name: "x", adapter: "t3", origin: "http://x" })).toThrow(
+			"a t3 server needs origin and tokenFile",
+		);
 		expect(() => makeAdapter({ name: "x", adapter: "t3" })).toThrow("needs origin and tokenFile");
 	});
 	test("an unknown adapter name is refused with the registered ones listed", () => {
@@ -36,11 +49,21 @@ describe("the T3 adapter", () => {
 		writeFileSync(`${conf}/wake-url`, "http://hook.test/wake\n", { mode: 0o600 });
 		expect(a.wake.ready()).toBe(true);
 		const seen: { url: string; body: unknown }[] = [];
-		const stub = (async (url: string, init: RequestInit) => { seen.push({ url, body: JSON.parse(String(init.body)) }); return new Response(null, { status: 202 }); }) as unknown as typeof fetch;
+		const stub = (async (url: string, init: RequestInit) => {
+			seen.push({ url, body: JSON.parse(String(init.body)) });
+			return new Response(null, { status: 202 });
+		}) as unknown as typeof fetch;
 		const r = await webhookWake(() => "http://hook.test/wake", stub).send("d-1", "hello");
 		expect(r).toEqual({ ok: true, status: 202 });
 		expect(seen).toEqual([{ url: "http://hook.test/wake", body: { deliveryId: "d-1", message: "hello" } }]);
-		expect(await postWebhook("http://hook.test/wake", "d-2", "x", (async () => new Response(null, { status: 503 })) as unknown as typeof fetch)).toEqual({ ok: false, status: 503 });
+		expect(
+			await postWebhook(
+				"http://hook.test/wake",
+				"d-2",
+				"x",
+				(async () => new Response(null, { status: 503 })) as unknown as typeof fetch,
+			),
+		).toEqual({ ok: false, status: 503 });
 	});
 	test("isBusy is idle with no Steward thread, and unknown when its state database can't be read", () => {
 		const conf = mkdtempSync(`${tmpdir()}/chamberlain-busy-`);
@@ -51,6 +74,9 @@ describe("the T3 adapter", () => {
 			expect(a.isBusy()).toBe("idle");
 			writeFileSync(`${conf}/steward-thread`, "steward-1\n", { mode: 0o600 });
 			expect(a.isBusy()).toBe("unknown");
-		} finally { if (prior === undefined) delete process.env.CHAMBERLAIN_T3_STATE_DB; else process.env.CHAMBERLAIN_T3_STATE_DB = prior; }
+		} finally {
+			if (prior === undefined) delete process.env.CHAMBERLAIN_T3_STATE_DB;
+			else process.env.CHAMBERLAIN_T3_STATE_DB = prior;
+		}
 	});
 });

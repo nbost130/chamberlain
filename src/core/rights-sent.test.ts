@@ -5,7 +5,28 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { rightsUnchanged } from "./decide.ts";
-import { fullStamp, invalidateRights, loadRightsSent, needsRights, openRightsSent, parseRightsSent, recordOf, RIGHTS_SENT_KEY, rightsFor, rightsFirstId, rightsFirstKey, rightsFirstMessage, rightsGap, rightsHash, rightsEpoch, rightsHighWater, rightsStamp, rightsStateKey, saveRightsSent, LEGACY_STAMP } from "./rights-sent.ts";
+import {
+	fullStamp,
+	invalidateRights,
+	loadRightsSent,
+	needsRights,
+	openRightsSent,
+	parseRightsSent,
+	recordOf,
+	RIGHTS_SENT_KEY,
+	rightsFor,
+	rightsFirstId,
+	rightsFirstKey,
+	rightsFirstMessage,
+	rightsGap,
+	rightsHash,
+	rightsEpoch,
+	rightsHighWater,
+	rightsStamp,
+	rightsStateKey,
+	saveRightsSent,
+	LEGACY_STAMP,
+} from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 
 const STEWARD = "steward-thread-1";
@@ -15,7 +36,11 @@ const AT = "2026-11-13T18:00:00.000Z";
 const FULL = `Decision rights (standing rules):\n${RULES}`;
 
 /** One daemon process: the startup load, then one wake that lands. */
-function daemonWake(store: Store, used: number | undefined, o: { steward?: string; rules?: string; mandate?: string; now?: string } = {}) {
+function daemonWake(
+	store: Store,
+	used: number | undefined,
+	o: { steward?: string; rules?: string; mandate?: string; now?: string } = {},
+) {
 	const ledger = openRightsSent(store);
 	const r = rightsFor(ledger.get(), o.steward ?? STEWARD, o.rules ?? RULES, o.mandate ?? MANDATE, used, o.now ?? AT);
 	ledger.set(r.record);
@@ -50,9 +75,13 @@ describe("a restart keeps what was sent", () => {
 	test("changed rulings send them in full", () => {
 		const s = memStore();
 		daemonWake(s, 80_000);
-		expect(daemonWake(s, 90_000, { rules: `${RULES}\nR-2 a new ruling`, now: "2026-11-13T19:00:00.000Z" })).toBe(`Decision rights (standing rules):\n${RULES}\nR-2 a new ruling`);
+		expect(daemonWake(s, 90_000, { rules: `${RULES}\nR-2 a new ruling`, now: "2026-11-13T19:00:00.000Z" })).toBe(
+			`Decision rights (standing rules):\n${RULES}\nR-2 a new ruling`,
+		);
 		// The new full text restarts the "since" time.
-		expect(daemonWake(s, 95_000, { rules: `${RULES}\nR-2 a new ruling`, now: "2026-11-13T20:00:00.000Z" })).toBe(rightsUnchanged("2026-11-13T19:00:00.000Z"));
+		expect(daemonWake(s, 95_000, { rules: `${RULES}\nR-2 a new ruling`, now: "2026-11-13T20:00:00.000Z" })).toBe(
+			rightsUnchanged("2026-11-13T19:00:00.000Z"),
+		);
 	});
 	test("a different Steward thread sends them in full", () => {
 		const s = memStore();
@@ -75,7 +104,11 @@ describe("a restart keeps what was sent", () => {
 });
 
 describe("a record that can't be trusted sends them in full", () => {
-	const seeded = () => { const s = memStore(); daemonWake(s, 80_000); return s; };
+	const seeded = () => {
+		const s = memStore();
+		daemonWake(s, 80_000);
+		return s;
+	};
 	test("missing", () => {
 		const s = seeded();
 		s.state.delete(RIGHTS_SENT_KEY);
@@ -88,7 +121,15 @@ describe("a record that can't be trusted sends them in full", () => {
 		expect(daemonWake(s, 90_000)).toBe(FULL);
 	});
 	test("well-formed JSON of the wrong shape", () => {
-		for (const bad of [null, [], "x", { hash: 1 }, { hash: "short" }, { hash: rightsHash(STEWARD, RULES), used: "80000" }, { hash: rightsHash(STEWARD, RULES), used: -1 }])
+		for (const bad of [
+			null,
+			[],
+			"x",
+			{ hash: 1 },
+			{ hash: "short" },
+			{ hash: rightsHash(STEWARD, RULES), used: "80000" },
+			{ hash: rightsHash(STEWARD, RULES), used: -1 },
+		])
 			expect(parseRightsSent(bad)).toBeUndefined();
 	});
 });
@@ -113,7 +154,20 @@ describe("a reset survives a restart", () => {
 
 describe("a database that refuses the write", () => {
 	/** The real store with its state writes switched off, as a locked or full database would behave. */
-	const refusing = (s: Store, on: { value: boolean }): Store => ({ ...s, state: { ...s.state, set: (k, v) => { if (on.value) throw Error("database is locked"); s.state.set(k, v); }, delete: (k) => { if (on.value) throw Error("database is locked"); s.state.delete(k); } } });
+	const refusing = (s: Store, on: { value: boolean }): Store => ({
+		...s,
+		state: {
+			...s.state,
+			set: (k, v) => {
+				if (on.value) throw Error("database is locked");
+				s.state.set(k, v);
+			},
+			delete: (k) => {
+				if (on.value) throw Error("database is locked");
+				s.state.delete(k);
+			},
+		},
+	});
 
 	test("a reset that fails is reported, and the record read back is the database's, never a copy in memory", () => {
 		const s = memStore();
@@ -144,7 +198,11 @@ describe("the record", () => {
 		expect(parseRightsSent({ hash, used: 1, at: AT })).toEqual({ hash, used: 1, at: AT });
 		expect(parseRightsSent({ hash })).toEqual({ hash });
 		expect(parseRightsSent({ hash, at: 5 })).toBeUndefined();
-		expect(parseRightsSent({ hash, steward: STEWARD, session: "s1" })).toEqual({ hash, steward: STEWARD, session: "s1" });
+		expect(parseRightsSent({ hash, steward: STEWARD, session: "s1" })).toEqual({
+			hash,
+			steward: STEWARD,
+			session: "s1",
+		});
 		expect(parseRightsSent({ hash, session: 7 })).toBeUndefined();
 	});
 	test("is one state row holding the hash and the size", () => {
@@ -159,9 +217,21 @@ describe("the durable record decides whether a row that depends on the rights ma
 	const now = { steward: STEWARD, session: "session-1", hash: record.hash };
 	const held = { ...record, steward: STEWARD, session: "session-1" };
 	test("a pointer stamp names the thread, the session, the hash and the pointer's time; a full stamp adds the size and proves the record", () => {
-		expect(rightsStamp(record, STEWARD, "session-1")).toEqual({ steward: STEWARD, session: "session-1", hash: record.hash, at: AT });
+		expect(rightsStamp(record, STEWARD, "session-1")).toEqual({
+			steward: STEWARD,
+			session: "session-1",
+			hash: record.hash,
+			at: AT,
+		});
 		const full = fullStamp(record, STEWARD, "session-1");
-		expect(full).toEqual({ steward: STEWARD, session: "session-1", hash: record.hash, at: AT, used: 80_000, full: true });
+		expect(full).toEqual({
+			steward: STEWARD,
+			session: "session-1",
+			hash: record.hash,
+			at: AT,
+			used: 80_000,
+			full: true,
+		});
 		expect(recordOf(full)).toEqual(held);
 	});
 	test("only a pointer or a legacy stamp makes a row depend on the record", () => {

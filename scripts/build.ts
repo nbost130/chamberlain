@@ -41,10 +41,17 @@ export function compile(target: Target, dir: string): string {
 }
 
 export function main(argv: string[] = process.argv.slice(2)) {
-	const flag = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
+	const flag = (n: string) => {
+		const i = argv.indexOf(n);
+		return i >= 0 ? argv[i + 1] : undefined;
+	};
 	const out = resolve(ROOT, flag("--out") ?? "dist");
-	const wanted = (flag("--targets")?.split(",").map((t) => t.trim()).filter(Boolean) ?? Object.keys(TARGETS)) as Target[];
-	for (const t of wanted) if (!(t in TARGETS)) throw Error(`unknown target ${t}; one of ${Object.keys(TARGETS).join(", ")}`);
+	const wanted = (flag("--targets")
+		?.split(",")
+		.map((t) => t.trim())
+		.filter(Boolean) ?? Object.keys(TARGETS)) as Target[];
+	for (const t of wanted)
+		if (!(t in TARGETS)) throw Error(`unknown target ${t}; one of ${Object.keys(TARGETS).join(", ")}`);
 	mkdirSync(out, { recursive: true });
 	const sums: string[] = [];
 	for (const target of wanted) {
@@ -59,7 +66,9 @@ export function main(argv: string[] = process.argv.slice(2)) {
 			writeFileSync(join(out, `${name}.sha256`), `${sum}  ${name}\n`);
 			sums.push(`${sum}  ${name}`);
 			console.log(`${name}  ${sum}`);
-		} finally { rmSync(stage, { recursive: true, force: true }); }
+		} finally {
+			rmSync(stage, { recursive: true, force: true });
+		}
 	}
 	// Written whole, in target order, so the file is the same for the same inputs. A partial `--targets` run writes a partial SHA256SUMS.
 	writeFileSync(join(out, "SHA256SUMS"), `${sums.join("\n")}\n`);

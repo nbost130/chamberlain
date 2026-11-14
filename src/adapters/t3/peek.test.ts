@@ -10,10 +10,16 @@ describe("peekLines", () => {
 		{ type: "user_message", createdBy: "agent", text: "from another thread" },
 	];
 	test("keeps only what was said, flat, and names who said it", () => {
-		expect(peekLines(items, 3)).toEqual(["17:00 the operator: first", "17:01 thread: a reply", "--:-- agent: from another thread"]);
+		expect(peekLines(items, 3)).toEqual([
+			"17:00 the operator: first",
+			"17:01 thread: a reply",
+			"--:-- agent: from another thread",
+		]);
 	});
 	test("keeps the end of a long message, because that is where threads ask", () => {
-		expect(peekLines([{ type: "assistant_message", text: "x".repeat(50) + "ask" }], 1, 5)[0]).toContain("xxask [end of 53]");
+		expect(peekLines([{ type: "assistant_message", text: "x".repeat(50) + "ask" }], 1, 5)[0]).toContain(
+			"xxask [end of 53]",
+		);
 	});
 	test("shows an open card", () => {
 		expect(peekLines([...items, { type: "user_input_request", status: "waiting" }], 1).at(-1)).toContain("WAITING: 1");

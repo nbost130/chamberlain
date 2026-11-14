@@ -22,7 +22,13 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 export const newSession = (): string => randomBytes(24).toString("hex");
 /** The session in a Cookie header, if it is well formed. */
 export const sessionOf = (cookie: string | null): string | undefined => {
-	for (const part of (cookie ?? "").split(";")) { const [k, ...v] = part.trim().split("="); if (k === SESSION_COOKIE) { const val = v.join("="); if (SESSION_FORMAT.test(val)) return val; } }
+	for (const part of (cookie ?? "").split(";")) {
+		const [k, ...v] = part.trim().split("=");
+		if (k === SESSION_COOKIE) {
+			const val = v.join("=");
+			if (SESSION_FORMAT.test(val)) return val;
+		}
+	}
 	return undefined;
 };
 
@@ -32,11 +38,23 @@ export function issueChallenge(store: Store, o: ChallengeFor): { token: string; 
 	const now = o.now ?? Date.now();
 	const token = randomBytes(24).toString("hex");
 	const expiresAt = now + CHALLENGE_TTL_MS;
-	store.challenges.issue({ tokenHash: sha(token), cardId: o.cardId, sig: o.sig, choice: o.choice, sessionHash: sha(o.session), issuedAt: now, expiresAt });
+	store.challenges.issue({
+		tokenHash: sha(token),
+		cardId: o.cardId,
+		sig: o.sig,
+		choice: o.choice,
+		sessionHash: sha(o.session),
+		issuedAt: now,
+		expiresAt,
+	});
 	return { token, expiresAt };
 }
 /** Consumes a challenge for exactly this card, fingerprint, choice and session. Only "ok" lets the answer through. */
 export function consumeChallenge(store: Store, o: ChallengeFor & { token: unknown }): ChallengeVerdict {
 	if (typeof o.token !== "string" || !/^[a-f0-9]{48}$/.test(o.token)) return "unknown";
-	return store.challenges.consume(sha(o.token), { cardId: o.cardId, sig: o.sig, choice: o.choice, sessionHash: sha(o.session) }, o.now ?? Date.now());
+	return store.challenges.consume(
+		sha(o.token),
+		{ cardId: o.cardId, sig: o.sig, choice: o.choice, sessionHash: sha(o.session) },
+		o.now ?? Date.now(),
+	);
 }

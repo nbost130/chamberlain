@@ -27,20 +27,34 @@ export type AuthorityStat = Pick<Stats, "mode" | "uid" | "isFile" | "isDirectory
  * for `kind` "directory") and not a symlink (the stat must come from `lstat` or an `fstat` of a descriptor opened with O_NOFOLLOW), owned by
  * the effective uid (`euid`, default this process's), and writable by neither its group nor other users. Readable by others is fine.
  */
-export function authorityProblem(st: AuthorityStat, kind: "file" | "directory", euid: number | undefined = process.geteuid?.()): string | undefined {
+export function authorityProblem(
+	st: AuthorityStat,
+	kind: "file" | "directory",
+	euid: number | undefined = process.geteuid?.(),
+): string | undefined {
 	if (st.isSymbolicLink()) return "it is a symlink, which is never followed";
 	if (kind === "file" && !st.isFile()) return "it is not a regular file";
 	if (kind === "directory" && !st.isDirectory()) return "it is not a directory";
 	if (euid !== undefined && st.uid !== euid) return `owned by uid ${st.uid}, not ${euid}`;
-	const g = (st.mode & 0o020) !== 0, o = (st.mode & 0o002) !== 0;
-	if (g || o) return `${g && o ? "group- and world-writable" : g ? "group-writable" : "world-writable"} (mode ${modeText(st.mode)}): only its owner may write it`;
+	const g = (st.mode & 0o020) !== 0,
+		o = (st.mode & 0o002) !== 0;
+	if (g || o)
+		return `${g && o ? "group- and world-writable" : g ? "group-writable" : "world-writable"} (mode ${modeText(st.mode)}): only its owner may write it`;
 	return undefined;
 }
 
 /** A file or directory is not private enough to use. The message says what it is, what it must be, and how to fix it. */
 export class InsecureModeError extends Error {
-	constructor(readonly path: string, readonly found: number, readonly wanted: number, what: string, cause?: string) {
-		super(`${what} ${path} has mode ${modeText(found)}, not ${modeText(wanted)}${cause ? `, and changing it failed (${cause})` : ""}. Refusing to start: fix it with \`chmod ${(wanted & 0o777).toString(8)} ${path}\`.`);
+	constructor(
+		readonly path: string,
+		readonly found: number,
+		readonly wanted: number,
+		what: string,
+		cause?: string,
+	) {
+		super(
+			`${what} ${path} has mode ${modeText(found)}, not ${modeText(wanted)}${cause ? `, and changing it failed (${cause})` : ""}. Refusing to start: fix it with \`chmod ${(wanted & 0o777).toString(8)} ${path}\`.`,
+		);
 		this.name = "InsecureModeError";
 	}
 }
@@ -49,9 +63,20 @@ export class InsecureModeError extends Error {
  * Sets a path to exactly `wanted` and CHECKS it took. A chmod that fails (not our file, a filesystem without modes) is not swallowed: the
  * mode is read back, and a path that is still not `wanted` throws InsecureModeError. `chmod` is a seam for tests.
  */
-export function enforceMode(path: string, wanted: number, what: string, chmod: (p: string, m: number) => void = chmodSync): void {
+export function enforceMode(
+	path: string,
+	wanted: number,
+	what: string,
+	chmod: (p: string, m: number) => void = chmodSync,
+): void {
 	let cause: string | undefined;
-	if ((statSync(path).mode & 0o777) !== wanted) { try { chmod(path, wanted); } catch (e) { cause = String((e as Error).message ?? e).slice(0, 120); } }
+	if ((statSync(path).mode & 0o777) !== wanted) {
+		try {
+			chmod(path, wanted);
+		} catch (e) {
+			cause = String((e as Error).message ?? e).slice(0, 120);
+		}
+	}
 	const found = statSync(path).mode & 0o777;
 	if (found !== wanted) throw new InsecureModeError(path, found, wanted, what, cause);
 }
@@ -59,7 +84,12 @@ export function enforceMode(path: string, wanted: number, what: string, chmod: (
 /** An existing config or state directory must be a directory with mode exactly 0700. A missing one is not an error here. */
 export function assertPrivateDir(path: string, what: string): void {
 	let st: Stats;
-	try { st = statSync(path); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return; throw e; }
+	try {
+		st = statSync(path);
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw e;
+	}
 	if (!st.isDirectory()) throw Error(`${what} ${path} is not a directory`);
 	if ((st.mode & 0o777) !== DIR_MODE) throw new InsecureModeError(path, st.mode, DIR_MODE, what);
 }
@@ -72,7 +102,8 @@ export function privateFile(conf: string, name: string): string | undefined {
 	try {
 		const p = `${conf}/${name}`;
 		const st = statSync(p);
-		if (!isPrivateFile(st)) throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
+		if (!isPrivateFile(st))
+			throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
 		return readFileSync(p, "utf8").trim() || undefined;
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;

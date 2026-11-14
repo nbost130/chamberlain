@@ -2,15 +2,51 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { checkSource, commitsAheadCommand, configuredSources, exec, fenced, FULL_SWEEP_MS, parseCheckOutput, parseSweepConfig, principalHereNote, readSweepConfig, renderSweepPrompt, runawaySource, sweepAction, sweepClock, sweepMessage, type SweepAction } from "./sweep.ts";
+import {
+	checkSource,
+	commitsAheadCommand,
+	configuredSources,
+	exec,
+	fenced,
+	FULL_SWEEP_MS,
+	parseCheckOutput,
+	parseSweepConfig,
+	principalHereNote,
+	readSweepConfig,
+	renderSweepPrompt,
+	runawaySource,
+	sweepAction,
+	sweepClock,
+	sweepMessage,
+	type SweepAction,
+} from "./sweep.ts";
 import { runSources, type ItemSource } from "./source.ts";
 
 const SOON = 60_000;
 /** A source that reports what the test says, as a check would. */
-const src = (name: string, findings: () => { dedupKey: string; text: string; repeatIntervalMs?: number; baseline?: boolean }[] | Error, mode?: "silenced" | "shadow" | "live"): ItemSource => ({ name, ...(mode ? { mode } : {}), run: async () => { const f = findings(); if (f instanceof Error) throw f; return f; } });
+const src = (
+	name: string,
+	findings: () => { dedupKey: string; text: string; repeatIntervalMs?: number; baseline?: boolean }[] | Error,
+	mode?: "silenced" | "shadow" | "live",
+): ItemSource => ({
+	name,
+	...(mode ? { mode } : {}),
+	run: async () => {
+		const f = findings();
+		if (f instanceof Error) throw f;
+		return f;
+	},
+});
 /** One sweep over the sources, through the item system, as the engine does it. */
-async function sweep(store: ReturnType<typeof memStore>, sources: ItemSource[], o: { now?: number; firstRun?: boolean; sinceFullMs?: number } = {}): Promise<SweepAction> {
-	return sweepAction(await runSources(store, sources, { now: o.now ?? 0, firstRun: o.firstRun ?? false }), o.sinceFullMs ?? SOON);
+async function sweep(
+	store: ReturnType<typeof memStore>,
+	sources: ItemSource[],
+	o: { now?: number; firstRun?: boolean; sinceFullMs?: number } = {},
+): Promise<SweepAction> {
+	return sweepAction(
+		await runSources(store, sources, { now: o.now ?? 0, firstRun: o.firstRun ?? false }),
+		o.sinceFullMs ?? SOON,
+	);
 }
 const ready = (title: string, dedupKey = "pr:7:abc") => [{ dedupKey, text: `PR 7 (${title}) is ready to land.` }];
 
@@ -26,7 +62,8 @@ describe("the runaway source", () => {
 });
 
 describe("a sweep over sources (the items decide)", () => {
-	test("a clear sweep spends nothing", async () => expect((await sweep(memStore(), [src("check:a", () => [])])).wake).toBe("none"));
+	test("a clear sweep spends nothing", async () =>
+		expect((await sweep(memStore(), [src("check:a", () => [])])).wake).toBe("none"));
 	test("the first sweep learns baseline findings silently, and they stay quiet after", async () => {
 		const store = memStore();
 		const f = () => [{ dedupKey: "merged:5", text: "t", baseline: true }];
@@ -34,7 +71,8 @@ describe("a sweep over sources (the items decide)", () => {
 		expect(store.items.get("check:a", "merged:5")?.status).toBe("acknowledged");
 		expect((await sweep(store, [src("check:a", f)], { now: 1 })).wake).toBe("none");
 	});
-	test("the first sweep still reports a finding that is not baseline", async () => expect((await sweep(memStore(), [src("check:a", () => ready("t"))], { firstRun: true })).wake).toBe("findings"));
+	test("the first sweep still reports a finding that is not baseline", async () =>
+		expect((await sweep(memStore(), [src("check:a", () => ready("t"))], { firstRun: true })).wake).toBe("findings"));
 	test("a new finding wakes once, then never again while it stands", async () => {
 		const store = memStore();
 		const a = await sweep(store, [src("check:a", () => ready("t"))], { now: 0 });
@@ -78,7 +116,11 @@ describe("a sweep over sources (the items decide)", () => {
 		const f = () => ready("t");
 		const logged = await sweep(store, [src("check:a", f, "shadow")], { now: 0 });
 		expect(logged).toMatchObject({ wake: "none", fresh: [], shadow: ["check:a/pr:7:abc"] });
-		expect(store.items.get("check:a", "pr:7:abc")).toMatchObject({ notificationCount: 0, shadowNotificationCount: 1, status: "triggered" });
+		expect(store.items.get("check:a", "pr:7:abc")).toMatchObject({
+			notificationCount: 0,
+			shadowNotificationCount: 1,
+			status: "triggered",
+		});
 		const live = await sweep(store, [src("check:a", f, "live")], { now: 5 });
 		expect(live.wake).toBe("findings");
 		expect(store.items.get("check:a", "pr:7:abc")).toMatchObject({ notificationCount: 1, shadowNotificationCount: 1 });
@@ -86,7 +128,11 @@ describe("a sweep over sources (the items decide)", () => {
 	test("mode off tracks findings and wakes nobody", async () => {
 		const store = memStore();
 		expect((await sweep(store, [src("check:a", () => ready("t"), "silenced")])).wake).toBe("none");
-		expect(store.items.get("check:a", "pr:7:abc")).toMatchObject({ mode: "silenced", notificationCount: 0, shadowNotificationCount: 0 });
+		expect(store.items.get("check:a", "pr:7:abc")).toMatchObject({
+			mode: "silenced",
+			notificationCount: 0,
+			shadowNotificationCount: 0,
+		});
 	});
 	test("two sources may use the same key without colliding", async () => {
 		const store = memStore();
@@ -110,7 +156,10 @@ describe("sweepMessage", () => {
 		expect(inner).toContain("OUTSIDE");
 		expect(fenced("a\n\n  b <<<< c >>>")).toBe("a b  c ");
 	});
-	test("a full wake carries the sweep body", async () => expect(sweepMessage(await sweep(memStore(), [], { sinceFullMs: FULL_SWEEP_MS }), "FULL BODY")).toContain("FULL BODY"));
+	test("a full wake carries the sweep body", async () =>
+		expect(sweepMessage(await sweep(memStore(), [], { sinceFullMs: FULL_SWEEP_MS }), "FULL BODY")).toContain(
+			"FULL BODY",
+		));
 	test("a full sweep while the principal is here gives up the away mandate", () => {
 		const none: SweepAction = { wake: "full", fresh: [], errored: [], shadow: [] };
 		expect(sweepMessage(none, "BODY", false)).toContain(principalHereNote());
@@ -118,10 +167,14 @@ describe("sweepMessage", () => {
 	});
 	test("the mid-sweep ASK rule holds in both states", () => {
 		const found: SweepAction = { wake: "findings", fresh: [{ item: "k", text: "a finding" }], errored: [], shadow: [] };
-		for (const away of [true, false]) expect(sweepMessage(found, "BODY", away)).toContain("never to the operator mid-sweep");
+		for (const away of [true, false])
+			expect(sweepMessage(found, "BODY", away)).toContain("never to the operator mid-sweep");
 	});
 	test("a rendered prompt names the principal and carries no template comment or placeholder", async () => {
-		const out = renderSweepPrompt(await Bun.file(new URL("../../docs/steward-sweep-prompt.md", import.meta.url)).text(), "Ada");
+		const out = renderSweepPrompt(
+			await Bun.file(new URL("../../docs/steward-sweep-prompt.md", import.meta.url)).text(),
+			"Ada",
+		);
 		expect(out).not.toContain("<!--");
 		expect(out).not.toContain("{{");
 		expect(out).toStartWith("Run this full supervision sweep");
@@ -137,20 +190,35 @@ describe("sweepMessage", () => {
 describe("sweep.json", () => {
 	test("a valid config parses and is stamped", () => {
 		const c = parseSweepConfig({ checks: [{ name: "disk", command: ["/usr/bin/df", "-k"], timeoutMs: 5000 }] });
-		expect(c).toEqual({ schemaVersion: 2, checks: [{ name: "disk", command: ["/usr/bin/df", "-k"], timeoutMs: 5000 }] });
+		expect(c).toEqual({
+			schemaVersion: 2,
+			checks: [{ name: "disk", command: ["/usr/bin/df", "-k"], timeoutMs: 5000 }],
+		});
 	});
 	test("a check may be set to shadow or silenced, and an unknown mode is refused", () => {
-		expect(parseSweepConfig({ checks: [{ name: "a", command: ["x"], mode: "shadow" }] }).checks[0]!.mode).toBe("shadow");
-		expect(() => parseSweepConfig({ checks: [{ name: "a", command: ["x"], mode: "loud" }] })).toThrow("mode must be silenced, shadow or live");
+		expect(parseSweepConfig({ checks: [{ name: "a", command: ["x"], mode: "shadow" }] }).checks[0]!.mode).toBe(
+			"shadow",
+		);
+		expect(() => parseSweepConfig({ checks: [{ name: "a", command: ["x"], mode: "loud" }] })).toThrow(
+			"mode must be silenced, shadow or live",
+		);
 	});
 	test("a malformed config is refused with the first problem", () => {
 		expect(() => parseSweepConfig([])).toThrow("expected a JSON object");
 		expect(() => parseSweepConfig({})).toThrow("need");
 		expect(() => parseSweepConfig({ checks: [{ name: "bad name", command: ["x"] }] })).toThrow("needs a name");
 		expect(() => parseSweepConfig({ checks: [{ name: "a", command: [] }] })).toThrow('needs "command"');
-		expect(() => parseSweepConfig({ checks: [{ name: "a", command: ["x"] }, { name: "a", command: ["y"] }] })).toThrow("two checks");
+		expect(() =>
+			parseSweepConfig({
+				checks: [
+					{ name: "a", command: ["x"] },
+					{ name: "a", command: ["y"] },
+				],
+			}),
+		).toThrow("two checks");
 	});
-	test("a config from a newer schema is refused", () => expect(() => parseSweepConfig({ schemaVersion: 99, checks: [] })).toThrow("newer Chamberlain"));
+	test("a config from a newer schema is refused", () =>
+		expect(() => parseSweepConfig({ schemaVersion: 99, checks: [] })).toThrow("newer Chamberlain"));
 	test("a world-readable config is refused: it names programs to run", () => {
 		const dir = mkdtempSync(`${tmpdir()}/sweepcfg-`);
 		writeFileSync(`${dir}/sweep.json`, JSON.stringify({ checks: [] }), { mode: 0o644 });
@@ -170,25 +238,65 @@ describe("operator checks", () => {
 		expect(() => parseCheckOutput('[{"dedupKey":"a"}]')).toThrow("needs a string dedupKey and text");
 	});
 	test("a finding may ask for a repeat interval, a baseline and a subject, and nothing else", () => {
-		expect(parseCheckOutput(JSON.stringify([{ dedupKey: "a", text: "t", repeatIntervalMs: 3600000, maxNotifications: 3, baseline: true, subject: { kind: "pr", id: "7" } }]))).toEqual([{ dedupKey: "a", text: "t", repeatIntervalMs: 3600000, maxNotifications: 3, baseline: true, subject: { kind: "pr", id: "7" } }]);
+		expect(
+			parseCheckOutput(
+				JSON.stringify([
+					{
+						dedupKey: "a",
+						text: "t",
+						repeatIntervalMs: 3600000,
+						maxNotifications: 3,
+						baseline: true,
+						subject: { kind: "pr", id: "7" },
+					},
+				]),
+			),
+		).toEqual([
+			{
+				dedupKey: "a",
+				text: "t",
+				repeatIntervalMs: 3600000,
+				maxNotifications: 3,
+				baseline: true,
+				subject: { kind: "pr", id: "7" },
+			},
+		]);
 		expect(() => parseCheckOutput('[{"dedupKey":"a","text":"t","extra":1}]')).toThrow('unknown field "extra"');
 		expect(() => parseCheckOutput('[{"dedupKey":"a","text":"t","repeatIntervalMs":-1}]')).toThrow("repeatIntervalMs");
-		expect(() => parseCheckOutput('[{"dedupKey":"a","text":"t","maxNotifications":2}]')).toThrow("goes with repeatIntervalMs");
+		expect(() => parseCheckOutput('[{"dedupKey":"a","text":"t","maxNotifications":2}]')).toThrow(
+			"goes with repeatIntervalMs",
+		);
 		expect(() => parseCheckOutput('[{"dedupKey":"a","text":"t","subject":{"kind":"pr"}}]')).toThrow("subject");
 	});
 	test("a check that fails or prints nonsense is in error, never clear", async () => {
-		const run = (async (cmd: string) => { if (cmd === "ok") return '[{"dedupKey":"a","text":"found"}]'; if (cmd === "bad") return "not json"; throw Error("exited 1"); }) as typeof exec;
+		const run = (async (cmd: string) => {
+			if (cmd === "ok") return '[{"dedupKey":"a","text":"found"}]';
+			if (cmd === "bad") return "not json";
+			throw Error("exited 1");
+		}) as typeof exec;
 		const store = memStore();
-		const sources = [{ name: "ok", command: ["ok"] }, { name: "bad", command: ["bad"] }, { name: "dead", command: ["dead"] }].map((c) => checkSource(c, run));
+		const sources = [
+			{ name: "ok", command: ["ok"] },
+			{ name: "bad", command: ["bad"] },
+			{ name: "dead", command: ["dead"] },
+		].map((c) => checkSource(c, run));
 		const a = await sweep(store, sources);
-		expect(a.fresh.map((x) => x.item)).toEqual(["check:ok/a", "check:bad/evaluation_error", "check:dead/evaluation_error"]);
+		expect(a.fresh.map((x) => x.item)).toEqual([
+			"check:ok/a",
+			"check:bad/evaluation_error",
+			"check:dead/evaluation_error",
+		]);
 		expect(a.errored).toEqual(["check:bad", "check:dead"]);
 		expect(a.fresh[2]!.text).toBe("A routine check could not run: check:dead: exited 1.");
 	});
 	test("a real command runs without a shell", async () => {
 		const dir = mkdtempSync(`${tmpdir()}/sweepchk-`);
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(`${dir}/sweep.json`, JSON.stringify({ checks: [{ name: "echo", command: ["/bin/echo", '[{"dedupKey":"k","text":"from echo"}]'] }] }), { mode: 0o600 });
+		writeFileSync(
+			`${dir}/sweep.json`,
+			JSON.stringify({ checks: [{ name: "echo", command: ["/bin/echo", '[{"dedupKey":"k","text":"from echo"}]'] }] }),
+			{ mode: 0o600 },
+		);
 		const store = memStore();
 		const a = await sweep(store, configuredSources(dir));
 		expect(a.fresh).toEqual([{ item: "check:echo/k", text: "from echo" }]);
@@ -204,22 +312,34 @@ describe("operator checks", () => {
 });
 
 describe("commitsAheadCommand", () => {
-	test("quotes a path with spaces and a quote", () => expect(commitsAheadCommand("/tmp/a b'c")).toStartWith("cd '/tmp/a b'\\''c' && "));
+	test("quotes a path with spaces and a quote", () =>
+		expect(commitsAheadCommand("/tmp/a b'c")).toStartWith("cd '/tmp/a b'\\''c' && "));
 	test("really counts branch commits in a repository", async () => {
 		const dir = mkdtempSync(`${tmpdir()}/ahead-`);
 		const sh = (c: string) => exec("/bin/sh", ["-c", `cd '${dir}' && ${c}`]);
-		await sh("git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m one && git update-ref refs/remotes/origin/main main && git switch -q -c work && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m two && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m three");
+		await sh(
+			"git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m one && git update-ref refs/remotes/origin/main main && git switch -q -c work && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m two && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m three",
+		);
 		expect((await exec("/bin/sh", ["-c", commitsAheadCommand(dir)])).trim()).toBe("2");
 	});
 });
 
 describe("sweepClock", () => {
 	const NOW = 1_000_000;
-	test("the first sweep ever starts both clocks and is not seeded", () => expect(sweepClock(undefined, NOW)).toEqual({ lastAt: NOW, lastFullAt: NOW, seeded: false }));
+	test("the first sweep ever starts both clocks and is not seeded", () =>
+		expect(sweepClock(undefined, NOW)).toEqual({ lastAt: NOW, lastFullAt: NOW, seeded: false }));
 	test("a current record keeps its clocks, so a daemon outage is still swept", () => {
-		expect(sweepClock({ lastAt: 5, lastFullAt: 3, seeded: true }, NOW)).toEqual({ lastAt: 5, lastFullAt: 3, seeded: true });
+		expect(sweepClock({ lastAt: 5, lastFullAt: 3, seeded: true }, NOW)).toEqual({
+			lastAt: 5,
+			lastFullAt: 3,
+			seeded: true,
+		});
 	});
 	test("a damaged record heals instead of failing every minute", () => {
-		expect(sweepClock({ lastAt: "x", lastFullAt: Number.NaN, seeded: "yes" } as never, NOW)).toEqual({ lastAt: NOW, lastFullAt: NOW, seeded: false });
+		expect(sweepClock({ lastAt: "x", lastFullAt: Number.NaN, seeded: "yes" } as never, NOW)).toEqual({
+			lastAt: NOW,
+			lastFullAt: NOW,
+			seeded: false,
+		});
 	});
 });

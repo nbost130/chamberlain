@@ -11,9 +11,17 @@ import { compactBlocked, queueStalled, readStewardQueue, stallAlarm } from "./qu
 export function stewardTokens(dbPath: string, threadId: string): number | undefined {
 	if (!existsSync(dbPath)) return undefined;
 	let db: Database;
-	try { db = new Database(dbPath, { readonly: true }); } catch { return undefined; }
 	try {
-		const row = db.query("select json_extract(payload_json, '$.tokenUsage.usedTokens') as used from orchestration_v2_projection_provider_turns where thread_id = ? order by ordinal desc limit 1").get(threadId) as { used: number | null } | null;
+		db = new Database(dbPath, { readonly: true });
+	} catch {
+		return undefined;
+	}
+	try {
+		const row = db
+			.query(
+				"select json_extract(payload_json, '$.tokenUsage.usedTokens') as used from orchestration_v2_projection_provider_turns where thread_id = ? order by ordinal desc limit 1",
+			)
+			.get(threadId) as { used: number | null } | null;
 		return row?.used ?? undefined;
 	} catch {
 		// An unknown size only means the full rights go again; it must never cost a wake.

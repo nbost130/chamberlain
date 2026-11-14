@@ -8,13 +8,24 @@ import { extname } from "node:path";
 import { evidenceRoot, ITEM_ID } from "../core/questions.ts";
 
 export const EVIDENCE_TYPES: Record<string, string> = {
-	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-	".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif": "image/gif",
+	".webp": "image/webp",
+	".mp4": "video/mp4",
+	".webm": "video/webm",
+	".mov": "video/quicktime",
 };
 const NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/;
 
 /** The real path to serve, or undefined when the request must be refused. */
-export function resolveEvidence(state: string, itemId: string, name: string, listed: string[]): { path: string; type: string } | undefined {
+export function resolveEvidence(
+	state: string,
+	itemId: string,
+	name: string,
+	listed: string[],
+): { path: string; type: string } | undefined {
 	if (!ITEM_ID.test(itemId) || !NAME.test(name) || name.includes("..") || !listed.includes(name)) return undefined;
 	const type = EVIDENCE_TYPES[extname(name).toLowerCase()];
 	if (!type) return undefined;

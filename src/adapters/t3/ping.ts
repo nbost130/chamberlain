@@ -55,10 +55,16 @@ export const stableId = (seed: string) => {
 export const CALL_TIMEOUT_MS = 10_000;
 export function within<T>(p: Promise<T>, ms = CALL_TIMEOUT_MS, what = "T3 call"): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	return Promise.race([p, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(Error(`${what} timed out after ${ms} ms`)), ms); })]).finally(() => clearTimeout(timer));
+	return Promise.race([
+		p,
+		new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(Error(`${what} timed out after ${ms} ms`)), ms);
+		}),
+	]).finally(() => clearTimeout(timer));
 }
 
-export const redact = (msg: string, secrets: (string | undefined)[]) => secrets.reduce<string>((m, s) => (s ? m.split(s).join("[redacted]") : m), msg);
+export const redact = (msg: string, secrets: (string | undefined)[]) =>
+	secrets.reduce<string>((m, s) => (s ? m.split(s).join("[redacted]") : m), msg);
 
 /** A token file in the config directory, or undefined: absent, not exactly 0600, or empty. */
 export const readToken = (conf: string, file: string | null | undefined): string | undefined => {
@@ -97,7 +103,12 @@ export function messageCommand(o: MessageOptions): Record<string, unknown> {
 		createdBy: who.createdBy,
 		creationSource: who.creationSource,
 		// The daemon's own message never steers: queue mode is the only mode it can be built with, whatever else is passed.
-		dispatchMode: o.identity === "daemon" ? { type: "queue_after_active" } : o.activeRunId && !o.start ? { type: "steer_active", targetRunId: o.activeRunId } : { type: "start_immediately" },
+		dispatchMode:
+			o.identity === "daemon"
+				? { type: "queue_after_active" }
+				: o.activeRunId && !o.start
+					? { type: "steer_active", targetRunId: o.activeRunId }
+					: { type: "start_immediately" },
 	};
 }
 
@@ -110,10 +121,17 @@ export const activeRunOf = (runs: { id?: string; status?: string }[] | undefined
  * ever starts a run on a thread whose newest run failed and which has nothing going and nothing waiting: it never steers a run and
  * never writes into a thread that waits on a card, approval or question.
  */
-export function daemonPingRefusal(proj: { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] }): string | undefined {
+export function daemonPingRefusal(proj: {
+	runs?: { id?: string; ordinal?: number; status?: string }[];
+	turnItems?: { status?: string }[];
+}): string | undefined {
 	if (activeRunOf(proj.runs)) return "a run is active on the thread, and the daemon never steers one";
-	if ((proj.turnItems ?? []).some((i) => i.status === "waiting")) return "the thread is waiting on a card, approval or question";
-	const newest = [...(proj.runs ?? [])].reduce<{ status?: string; ordinal?: number } | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
+	if ((proj.turnItems ?? []).some((i) => i.status === "waiting"))
+		return "the thread is waiting on a card, approval or question";
+	const newest = [...(proj.runs ?? [])].reduce<{ status?: string; ordinal?: number } | undefined>(
+		(a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a),
+		undefined,
+	);
 	if (newest?.status !== "failed") return `the thread's newest run is ${newest?.status ?? "missing"}, not failed`;
 	return undefined;
 }
@@ -130,30 +148,55 @@ export type RpcPingDeps = {
 export function openWithin(conn: NonNullable<RpcPingDeps["connect"]>, origin: string, token: string, ms: number) {
 	let late = false;
 	const p = conn(origin, token);
-	p.then((rpc) => { if (late) rpc.ws.close(); }, () => {});
-	return within(p, ms, "connect").catch((e) => { late = true; throw e; });
+	p.then(
+		(rpc) => {
+			if (late) rpc.ws.close();
+		},
+		() => {},
+	);
+	return within(p, ms, "connect").catch((e) => {
+		late = true;
+		throw e;
+	});
 }
 
 /**
  * The server's ping: sends one message into a thread over its RPC with the server's operate token, steering a run that is
  * going or starting one. A server without an operate token is refused, and the caller falls back.
  */
-export function createRpcPing(d: RpcPingDeps): (threadId: string, text: string, seed: string, identity?: Identity) => Promise<PingResult> {
+export function createRpcPing(
+	d: RpcPingDeps,
+): (threadId: string, text: string, seed: string, identity?: Identity) => Promise<PingResult> {
 	const conn = d.connect ?? (connect as unknown as NonNullable<RpcPingDeps["connect"]>);
 	const ms = d.timeoutMs ?? CALL_TIMEOUT_MS;
 	const s = d.server;
 	return async (threadId, text, seed, identity = "steward") => {
 		const token = readToken(d.conf, s.operateTokenFile);
-		if (!token) return { ok: false, detail: `${NOT_SENT}${s.name} has no operate token here, so the page can't send to its threads` };
+		if (!token)
+			return {
+				ok: false,
+				detail: `${NOT_SENT}${s.name} has no operate token here, so the page can't send to its threads`,
+			};
 		let dispatched = false;
 		try {
 			const rpc = await openWithin(conn, s.origin, token, ms);
 			try {
-				const proj = await within(rpc.request("orchestration.getThreadProjection", { threadId }), ms, "projection read") as { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] };
+				const proj = (await within(
+					rpc.request("orchestration.getThreadProjection", { threadId }),
+					ms,
+					"projection read",
+				)) as { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] };
 				const refused = identity === "daemon" ? daemonPingRefusal(proj) : undefined;
 				if (refused) return { ok: false, detail: `${NOT_SENT}${refused}` };
 				dispatched = true;
-				await within(rpc.request("orchestration.dispatchCommand", messageCommand({ threadId, text, seed, identity, activeRunId: activeRunOf(proj.runs) })), ms, "send");
+				await within(
+					rpc.request(
+						"orchestration.dispatchCommand",
+						messageCommand({ threadId, text, seed, identity, activeRunId: activeRunOf(proj.runs) }),
+					),
+					ms,
+					"send",
+				);
 				return { ok: true, detail: `sent to ${s.name}:${threadId}` };
 			} finally {
 				rpc.ws.close();
@@ -170,13 +213,22 @@ export function t3Cli(): string {
 	const base = t3BaseDir();
 	if (existsSync(`${base}/bin/t3`)) return `${base}/bin/t3`;
 	const root = `${base}/runtime/versions`;
-	const vs = existsSync(root) ? readdirSync(root).filter((v) => existsSync(`${root}/${v}/t3`)).sort((a, b) => Bun.semver.order(a, b)) : [];
+	const vs = existsSync(root)
+		? readdirSync(root)
+				.filter((v) => existsSync(`${root}/${v}/t3`))
+				.sort((a, b) => Bun.semver.order(a, b))
+		: [];
 	if (!vs.length) throw Error("ask: no T3 CLI found (set T3CODE_CLI_PATH)");
 	return `${root}/${vs.at(-1)}/t3`;
 }
 
 /** Sends one message to a thread with the T3 CLI on this machine. The text goes on stdin, never into a command line. */
 export function pingViaCli(threadId: string, text: string, cli: () => string = t3Cli): PingResult {
-	const r = Bun.spawnSync([cli(), "thread", "send", threadId, "-"], { stdin: Buffer.from(text), stdout: "pipe", stderr: "pipe", timeout: 60_000 });
+	const r = Bun.spawnSync([cli(), "thread", "send", threadId, "-"], {
+		stdin: Buffer.from(text),
+		stdout: "pipe",
+		stderr: "pipe",
+		timeout: 60_000,
+	});
 	return { ok: r.exitCode === 0, detail: (r.stdout.toString() + r.stderr.toString()).trim().slice(0, 300) };
 }

@@ -6,7 +6,7 @@
  *                      the evidence files, the hand-off): durable data that survives restarts but is not user-edited config
  *
  * `settings.json` in the config directory (mode 0600) holds the rest, and each value can be overridden by an environment
- * variable. See README.md, "Configuration reference".
+ * variable. See docs/CONFIGURATION.md.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile, modeText } from "./private.ts";
@@ -23,7 +23,9 @@ export const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, ""
 const COMPILED = import.meta.url.includes("/$bunfs/");
 let forced: boolean | undefined;
 /** Whether commands are rendered for the compiled binary. For tests: `setCompiled(true)` renders as the binary would, `setCompiled()` goes back to the truth. */
-export const setCompiled = (v?: boolean): void => { forced = v; };
+export const setCompiled = (v?: boolean): void => {
+	forced = v;
+};
 export const isCompiled = (): boolean => forced ?? COMPILED;
 
 /**
@@ -39,7 +41,6 @@ export const COMMANDS = {
 	ruling: "src/core/ruling.ts",
 	butler: "src/core/butler.ts",
 	migrate: "src/core/migrate.ts",
-	import: "src/cli/import.ts",
 	brief: "src/brief.ts",
 	wakes: "src/wakes.ts",
 	"steward-health": "src/steward-health.ts",
@@ -54,12 +55,30 @@ export const COMMANDS = {
 export type CommandName = keyof typeof COMMANDS;
 
 /**
+ * The commands for diagnosing and for the Steward's own reads, not for everyday use. The binary runs them as `chamberlain debug <name>` and
+ * keeps `chamberlain <name>` working as a hidden alias, so a prompt written before the grouping still runs.
+ */
+export const DEBUG_COMMANDS = [
+	"t3x",
+	"peek",
+	"queue-waits",
+	"compat",
+	"desk-allowlist",
+	"synthetic-wake",
+] as const satisfies readonly CommandName[];
+export const isDebugCommand = (sub: string): boolean => (DEBUG_COMMANDS as readonly string[]).includes(sub);
+/** The words after `chamberlain` that run tool `sub`: the name, behind `debug` for a debug command. */
+export const binaryWords = (sub: CommandName): string[] => (isDebugCommand(sub) ? ["debug", sub] : [sub]);
+
+/**
  * The command that runs tool `sub`, as an agent or operator types it, without its arguments: `chamberlain <sub>` from the compiled
  * binary, `bun <checkout>/<file>` from source. The one place a command string is built; `compiled` and `repo` are for tests and for callers
  * that were handed another checkout's path.
  */
 export function selfCommand(sub: CommandName, o: { compiled?: boolean; repo?: string } = {}): string {
-	return (o.compiled ?? isCompiled()) ? `chamberlain ${sub}` : `bun ${o.repo ?? REPO}/${COMMANDS[sub]}`;
+	return (o.compiled ?? isCompiled())
+		? `chamberlain ${binaryWords(sub).join(" ")}`
+		: `bun ${o.repo ?? REPO}/${COMMANDS[sub]}`;
 }
 
 /** What the wakes call the human when no `principalName` is configured. */
@@ -89,7 +108,8 @@ export type SettledMatch = { titleOverlap?: boolean; ignoreWords?: string[] };
 
 /** Pure: the settings a parsed file holds, or the first thing wrong with it. */
 export function parseSettings(raw: unknown): Settings {
-	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw Error("settings.json: expected a JSON object");
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+		throw Error("settings.json: expected a JSON object");
 	const o = raw as Record<string, unknown>;
 	checkVersion("settings.json", o.schemaVersion);
 	const str = (k: string) => {
@@ -99,16 +119,30 @@ export function parseSettings(raw: unknown): Settings {
 		return v.trim();
 	};
 	const compactTokens = o.compactTokens;
-	if (compactTokens !== undefined && (typeof compactTokens !== "number" || !Number.isFinite(compactTokens) || compactTokens <= 0)) throw Error('settings.json: "compactTokens" must be a positive number');
+	if (
+		compactTokens !== undefined &&
+		(typeof compactTokens !== "number" || !Number.isFinite(compactTokens) || compactTokens <= 0)
+	)
+		throw Error('settings.json: "compactTokens" must be a positive number');
 	const sm = o.settledMatch;
 	let settledMatch: SettledMatch | undefined;
 	if (sm !== undefined) {
-		if (sm === null || typeof sm !== "object" || Array.isArray(sm)) throw Error('settings.json: "settledMatch" must be an object');
+		if (sm === null || typeof sm !== "object" || Array.isArray(sm))
+			throw Error('settings.json: "settledMatch" must be an object');
 		const { titleOverlap, ignoreWords, ...extra } = sm as Record<string, unknown>;
-		if (Object.keys(extra).length) throw Error(`settings.json: "settledMatch" has unknown keys: ${Object.keys(extra).join(", ")}`);
-		if (titleOverlap !== undefined && typeof titleOverlap !== "boolean") throw Error('settings.json: "settledMatch.titleOverlap" must be true or false');
-		if (ignoreWords !== undefined && (!Array.isArray(ignoreWords) || ignoreWords.some((w) => typeof w !== "string" || !w.trim()))) throw Error('settings.json: "settledMatch.ignoreWords" must be a list of words');
-		settledMatch = { ...(titleOverlap !== undefined ? { titleOverlap } : {}), ...(ignoreWords !== undefined ? { ignoreWords: (ignoreWords as string[]).map((w) => w.trim()) } : {}) };
+		if (Object.keys(extra).length)
+			throw Error(`settings.json: "settledMatch" has unknown keys: ${Object.keys(extra).join(", ")}`);
+		if (titleOverlap !== undefined && typeof titleOverlap !== "boolean")
+			throw Error('settings.json: "settledMatch.titleOverlap" must be true or false');
+		if (
+			ignoreWords !== undefined &&
+			(!Array.isArray(ignoreWords) || ignoreWords.some((w) => typeof w !== "string" || !w.trim()))
+		)
+			throw Error('settings.json: "settledMatch.ignoreWords" must be a list of words');
+		settledMatch = {
+			...(titleOverlap !== undefined ? { titleOverlap } : {}),
+			...(ignoreWords !== undefined ? { ignoreWords: (ignoreWords as string[]).map((w) => w.trim()) } : {}),
+		};
 	}
 	return {
 		schemaVersion: SCHEMA_VERSION,
@@ -129,30 +163,45 @@ export function readSettings(conf = CONF): Settings {
 	let settings: Settings = {};
 	if (existsSync(p)) {
 		const st = statSync(p);
-		if (!isPrivateFile(st)) throw Error(`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`);
+		if (!isPrivateFile(st))
+			throw Error(
+				`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`,
+			);
 		settings = parseSettings(JSON.parse(readFileSync(p, "utf8")));
 	}
 	cached = { conf, settings };
 	return settings;
 }
 /** For tests: forget the cached settings file. */
-export const resetSettings = () => { cached = undefined; };
+export const resetSettings = () => {
+	cached = undefined;
+};
 
 /** A leading ~ is the home directory. */
 export const tilde = (p: string) => p.replace(/^~(?=\/|$)/, HOME);
 
-export const alertCommand = (): string | undefined => { const v = process.env.CHAMBERLAIN_ALERT_CMD ?? readSettings().alertCommand; return v ? tilde(v) : undefined; };
-export const compactTokens = (fallback: number): number => Number(process.env.CHAMBERLAIN_COMPACT_TOKENS ?? readSettings().compactTokens ?? fallback);
+export const alertCommand = (): string | undefined => {
+	const v = process.env.CHAMBERLAIN_ALERT_CMD ?? readSettings().alertCommand;
+	return v ? tilde(v) : undefined;
+};
+export const compactTokens = (fallback: number): number =>
+	Number(process.env.CHAMBERLAIN_COMPACT_TOKENS ?? readSettings().compactTokens ?? fallback);
 
 /** What wakes call the human: CHAMBERLAIN_PRINCIPAL, then `principalName` in settings.json, then "the operator". */
-export const principal = (): string => (process.env.CHAMBERLAIN_PRINCIPAL ?? readSettings().principalName ?? DEFAULT_PRINCIPAL).trim() || DEFAULT_PRINCIPAL;
+export const principal = (): string =>
+	(process.env.CHAMBERLAIN_PRINCIPAL ?? readSettings().principalName ?? DEFAULT_PRINCIPAL).trim() || DEFAULT_PRINCIPAL;
 /** The same, for the start of a sentence. */
-export const Principal = (): string => { const p = principal(); return p[0]!.toUpperCase() + p.slice(1); };
+export const Principal = (): string => {
+	const p = principal();
+	return p[0]!.toUpperCase() + p.slice(1);
+};
 /** The possessive: "Ada's", "the operator's". */
 export const principalPoss = (): string => `${principal()}'s`;
 export const PrincipalPoss = (): string => `${Principal()}'s`;
 
 /** The argv that runs tool `sub` as a child process: the binary itself with the subcommand when compiled, else this runtime on the source file. */
 export function selfArgv(sub: CommandName, o: { compiled?: boolean; repo?: string } = {}): string[] {
-	return (o.compiled ?? isCompiled()) ? [process.execPath, sub] : [process.execPath, `${o.repo ?? REPO}/${COMMANDS[sub]}`];
+	return (o.compiled ?? isCompiled())
+		? [process.execPath, ...binaryWords(sub)]
+		: [process.execPath, `${o.repo ?? REPO}/${COMMANDS[sub]}`];
 }

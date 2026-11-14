@@ -34,7 +34,17 @@ import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
 import { expiresProblem, isExpired } from "./core/rulings.ts";
-import { alwaysUrgent, askQuestion, evidenceRoot, isUrgent, KINDS, newItemId, type Evidence, type Question, type Option } from "./core/questions.ts";
+import {
+	alwaysUrgent,
+	askQuestion,
+	evidenceRoot,
+	isUrgent,
+	KINDS,
+	newItemId,
+	type Evidence,
+	type Question,
+	type Option,
+} from "./core/questions.ts";
 import { findSettled, refusalLines } from "./core/settled.ts";
 export { newItemId };
 
@@ -45,12 +55,20 @@ const VIDEO = new Set([".mp4", ".webm", ".mov"]);
  * A checked item from the Steward's JSON, or the first thing wrong with it. `warn` hears what was changed rather than
  * refused: an `urgent: false` on an approval or a secret, which is ignored.
  */
-export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOString(), warn: (line: string) => void = (l) => console.error(l)): Question {
+export function parseAsk(
+	raw: unknown,
+	id: string,
+	createdAt = new Date().toISOString(),
+	warn: (line: string) => void = (l) => console.error(l),
+): Question {
 	const o = raw as Record<string, unknown>;
 	if (!o || typeof o !== "object") throw Error("ask: expected a JSON object");
 	const str = (k: string, required = true) => {
 		const v = o[k];
-		if (v === undefined || v === null || v === "") { if (required) throw Error(`ask: "${k}" is required`); return undefined; }
+		if (v === undefined || v === null || v === "") {
+			if (required) throw Error(`ask: "${k}" is required`);
+			return undefined;
+		}
 		if (typeof v !== "string") throw Error(`ask: "${k}" must be a string`);
 		return v.trim();
 	};
@@ -60,29 +78,52 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 	const options = (Array.isArray(o.options) ? o.options : []).map((x, i): Option => {
 		const label = typeof x === "string" ? x : (x as Option)?.label;
 		if (typeof label !== "string" || !label.trim()) throw Error(`ask: option ${i + 1} needs a label`);
-		const detail = typeof x === "object" && typeof (x as Option).detail === "string" ? (x as Option).detail!.trim() : undefined;
+		const detail =
+			typeof x === "object" && typeof (x as Option).detail === "string" ? (x as Option).detail!.trim() : undefined;
 		const route = typeof x === "object" ? (x as Option).route : undefined;
-		if (route !== undefined && route !== null && route !== "thread" && route !== "steward") throw Error(`ask: option ${i + 1} route must be "thread" or "steward"`);
+		if (route !== undefined && route !== null && route !== "thread" && route !== "steward")
+			throw Error(`ask: option ${i + 1} route must be "thread" or "steward"`);
 		const rawRelay = typeof x === "object" ? (x as Option).relay : undefined;
-		if (rawRelay !== undefined && rawRelay !== null && typeof rawRelay !== "string") throw Error(`ask: option ${i + 1} relay must be a string`);
+		if (rawRelay !== undefined && rawRelay !== null && typeof rawRelay !== "string")
+			throw Error(`ask: option ${i + 1} relay must be a string`);
 		const relay = typeof rawRelay === "string" ? rawRelay.trim() : "";
-		if (route === "thread" && !relay) throw Error(`ask: option ${i + 1} routes to the thread, so it needs relay text: the exact instruction the thread gets`);
+		if (route === "thread" && !relay)
+			throw Error(
+				`ask: option ${i + 1} routes to the thread, so it needs relay text: the exact instruction the thread gets`,
+			);
 		// relay text only ever applies to a thread-routed option, so a steward option keeps none.
-		return { label: label.trim().replace(/\s*\(Recommended\)\s*$/i, ""), ...(detail ? { detail } : {}), ...(route === "thread" ? { route, relay } : {}) };
+		return {
+			label: label.trim().replace(/\s*\(Recommended\)\s*$/i, ""),
+			...(detail ? { detail } : {}),
+			...(route === "thread" ? { route, relay } : {}),
+		};
 	});
 	if (!secret && options.length < 2) throw Error("ask: give at least two options");
 	if (options.length > 9) throw Error("ask: at most nine options (keys 1-9)");
 	let recommended: number | undefined;
 	if (o.recommended !== undefined && o.recommended !== null) {
-		if (!Number.isInteger(o.recommended) || (o.recommended as number) < 0 || (o.recommended as number) >= options.length) throw Error("ask: recommended must be an option index from 0");
+		if (
+			!Number.isInteger(o.recommended) ||
+			(o.recommended as number) < 0 ||
+			(o.recommended as number) >= options.length
+		)
+			throw Error("ask: recommended must be an option index from 0");
 		recommended = o.recommended as number;
 	}
 	const evidence = (Array.isArray(o.evidence) ? o.evidence : []).map((x, i): Evidence => {
 		const e = x as Evidence;
-		if (!["image", "video", "link"].includes(e?.type)) throw Error(`ask: evidence ${i + 1} needs type image, video or link`);
-		if (e.type === "link") { if (typeof e.url !== "string" || !/^https?:\/\//.test(e.url)) throw Error(`ask: evidence ${i + 1} needs an http(s) url`); }
-		else if (typeof e.path !== "string" || !e.path) throw Error(`ask: evidence ${i + 1} needs a path`);
-		return { type: e.type, ...(e.path ? { path: e.path } : {}), ...(e.url ? { url: e.url } : {}), ...(e.caption ? { caption: String(e.caption) } : {}) };
+		if (!["image", "video", "link"].includes(e?.type))
+			throw Error(`ask: evidence ${i + 1} needs type image, video or link`);
+		if (e.type === "link") {
+			if (typeof e.url !== "string" || !/^https?:\/\//.test(e.url))
+				throw Error(`ask: evidence ${i + 1} needs an http(s) url`);
+		} else if (typeof e.path !== "string" || !e.path) throw Error(`ask: evidence ${i + 1} needs a path`);
+		return {
+			type: e.type,
+			...(e.path ? { path: e.path } : {}),
+			...(e.url ? { url: e.url } : {}),
+			...(e.caption ? { caption: String(e.caption) } : {}),
+		};
 	});
 	const proposedRuling = str("proposedRuling", false);
 	const proposedExpires = str("proposedExpires", false);
@@ -92,21 +133,31 @@ export function parseAsk(raw: unknown, id: string, createdAt = new Date().toISOS
 		if (problem) throw Error(`ask: proposedExpires ${problem}`);
 		if (isExpired({ expires: proposedExpires })) throw Error("ask: proposedExpires is already past");
 	}
-	if (options.some((x) => x.route === "thread") && !str("threadId", false)) throw Error("ask: an option routed to the thread needs the item's threadId");
-	if (secret && options.some((x) => x.route === "thread")) throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
+	if (options.some((x) => x.route === "thread") && !str("threadId", false))
+		throw Error("ask: an option routed to the thread needs the item's threadId");
+	if (secret && options.some((x) => x.route === "thread"))
+		throw Error("ask: a secret is never answered on the page, so none of its options can route to the thread");
 	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
 	const notSettled = str("notSettled", false);
 	const tag = str("tag", false);
 	// An approval or a secret never waits: the demotion is ignored, said on stderr, and the question goes out urgent.
 	const demoted = o.urgent === false && alwaysUrgent({ secret, ...(tag ? { tag } : {}) });
-	if (demoted) warn(`ask: "urgent": false ignored: ${secret || /secret/i.test(tag ?? "") ? "a secret" : "an approval"} is always urgent, so it is filed and posted as urgent`);
+	if (demoted)
+		warn(
+			`ask: "urgent": false ignored: ${secret || /secret/i.test(tag ?? "") ? "a secret" : "an approval"} is always urgent, so it is filed and posted as urgent`,
+		);
 	const item: Question = {
-		id, kind, title: str("title")!, context: str("context", false) ?? "", options,
+		id,
+		kind,
+		title: str("title")!,
+		context: str("context", false) ?? "",
+		options,
 		...(recommended !== undefined ? { recommended } : {}),
 		...(proposedRuling ? { proposedRuling } : {}),
 		...(proposedExpires ? { proposedExpires } : {}),
 		...(evidence.length ? { evidence } : {}),
-		thread: str("thread")!, server: str("server")!,
+		thread: str("thread")!,
+		server: str("server")!,
 		...(str("threadId", false) ? { threadId: str("threadId", false) } : {}),
 		...(str("blocks", false) ? { blocks: str("blocks", false) } : {}),
 		...(tag ? { tag } : {}),
@@ -129,10 +180,17 @@ export function stageEvidence(item: Question, state = STATE): Question {
 	const evidence = item.evidence.map((e, i) => {
 		if (e.type === "link") return e;
 		const src = e.path!.replace(/^~(?=\/)/, process.env.HOME!);
-		if (!existsSync(src) || !lstatSync(src).isFile()) throw Error(`ask: evidence ${i + 1} is not a regular file: ${e.path}`);
+		if (!existsSync(src) || !lstatSync(src).isFile())
+			throw Error(`ask: evidence ${i + 1} is not a regular file: ${e.path}`);
 		const ext = extname(src).toLowerCase();
-		if (!(e.type === "image" ? IMAGE : VIDEO).has(ext)) throw Error(`ask: evidence ${i + 1} must be ${e.type === "image" ? "png, jpg, gif or webp" : "mp4, webm or mov"}`);
-		let name = basename(src).replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "") || `file${ext}`;
+		if (!(e.type === "image" ? IMAGE : VIDEO).has(ext))
+			throw Error(
+				`ask: evidence ${i + 1} must be ${e.type === "image" ? "png, jpg, gif or webp" : "mp4, webm or mov"}`,
+			);
+		let name =
+			basename(src)
+				.replace(/[^A-Za-z0-9._-]/g, "_")
+				.replace(/^\.+/, "") || `file${ext}`;
 		if (used.has(name)) name = `${i + 1}-${name}`;
 		used.add(name);
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -145,7 +203,11 @@ export function stageEvidence(item: Question, state = STATE): Question {
 /** The queue page's base URL from web.json, or undefined when the page is not configured (then no inline view). */
 export function queueBase(conf = CONF): string | undefined {
 	try {
-		const w = JSON.parse(readFileSync(`${conf}/web.json`, "utf8")) as { host?: string; port?: number; publicBase?: string };
+		const w = JSON.parse(readFileSync(`${conf}/web.json`, "utf8")) as {
+			host?: string;
+			port?: number;
+			publicBase?: string;
+		};
 		// An https base (tailscale serve) wins: T3 on the phone may load over its https relay, which blocks a plain-http script.
 		if (typeof w.publicBase === "string" && /^https:\/\/[^/\s]+$/.test(w.publicBase)) return w.publicBase;
 		if (!w.host || !w.port) return undefined;
@@ -169,28 +231,58 @@ export async function queueUp(base: string, timeoutMs = 3000): Promise<boolean> 
 export async function main(argv: string[] = process.argv.slice(2)) {
 	startup();
 	const arg = argv[0];
-	if (!arg) { console.error("usage: ask.ts '<json>' | ask.ts - < item.json"); process.exit(2); }
+	if (!arg) {
+		console.error("usage: ask.ts '<json>' | ask.ts - < item.json");
+		process.exit(2);
+	}
 	const raw = JSON.parse(arg === "-" ? await Bun.stdin.text() : arg);
 	const parsed = parseAsk(raw, newItemId());
 	const store = defaultStore();
 	if (!parsed.notSettled) {
-		const { matches, skipped } = findSettled(store, { title: parsed.title, context: parsed.context, thread: parsed.thread });
+		const { matches, skipped } = findSettled(store, {
+			title: parsed.title,
+			context: parsed.context,
+			thread: parsed.thread,
+		});
 		for (const k of skipped) console.error(`ask.ts: the settled check could not read ${k}`);
-		if (matches.length) { console.error(refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join("\n")); process.exit(2); }
+		if (matches.length) {
+			console.error(
+				refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join(
+					"\n",
+				),
+			);
+			process.exit(2);
+		}
 	}
 	const item = stageEvidence(parsed);
 	askQuestion(store, item, Date.parse(item.createdAt));
-	if (item.secret) { console.log(`${item.id} (secret: on the page as a link to its thread; no card)`); return; }
+	if (item.secret) {
+		console.log(`${item.id} (secret: on the page as a link to its thread; no card)`);
+		return;
+	}
 	// A non-urgent question is on the page and nowhere else: the post is the only notification a new question sends.
-	if (!isUrgent(item)) { console.log(`${item.id} (on the queue page, not urgent: no notification sent)`); return; }
+	if (!isUrgent(item)) {
+		console.log(`${item.id} (on the queue page, not urgent: no notification sent)`);
+		return;
+	}
 	const base = queueBase();
 	const inline = base !== undefined && (await queueUp(base));
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 	const card = await adapter.post(item, { queueUrl: inline ? base : undefined });
-	if (!card.ok) { console.error(`${item.id} is on the queue page, but the question did not post: ${card.detail}`); process.exit(1); }
-	console.log(`${item.id} (on the queue page; ${card.where === "view" ? "shown where the operator reads" : "the page did not answer, so the operator got a one-line notice"})`);
+	if (!card.ok) {
+		console.error(`${item.id} is on the queue page, but the question did not post: ${card.detail}`);
+		process.exit(1);
+	}
+	console.log(
+		`${item.id} (on the queue page; ${card.where === "view" ? "shown where the operator reads" : "the page did not answer, so the operator got a one-line notice"})`,
+	);
 	// The index counts from 0; echo the label so a 1-based slip is seen at once (2026-11-11: five questions preselected the wrong option).
-	if (item.recommended !== undefined) console.log(`recommended (preselected): ${item.options[item.recommended]?.label}`);
+	if (item.recommended !== undefined)
+		console.log(`recommended (preselected): ${item.options[item.recommended]?.label}`);
 }
 
-if (import.meta.main) main().catch((e) => { console.error(String(e instanceof Error ? e.message : e)); process.exit(1); });
+if (import.meta.main)
+	main().catch((e) => {
+		console.error(String(e instanceof Error ? e.message : e));
+		process.exit(1);
+	});

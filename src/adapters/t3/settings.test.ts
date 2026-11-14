@@ -5,13 +5,16 @@ import { t3StateDbPath, t3BaseDir } from "./settings.ts";
 const KEYS = ["CHAMBERLAIN_T3_DIR", "CHAMBERLAIN_T3_STATE_DB"];
 const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 afterEach(() => {
-	for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+	for (const k of KEYS) {
+		if (saved[k] === undefined) delete process.env[k];
+		else process.env[k] = saved[k];
+	}
 	resetSettings();
 });
 
-
 test("defaults to ~/.t3 and the statev2 database under it", () => {
-	delete process.env.CHAMBERLAIN_T3_DIR; delete process.env.CHAMBERLAIN_T3_STATE_DB;
+	delete process.env.CHAMBERLAIN_T3_DIR;
+	delete process.env.CHAMBERLAIN_T3_STATE_DB;
 	expect(t3BaseDir()).toBe(`${process.env.HOME}/.t3`);
 	expect(t3StateDbPath()).toBe(`${process.env.HOME}/.t3/userdata/statev2.sqlite`);
 });

@@ -15,22 +15,44 @@ import { createApp } from "./app.ts";
 import { createWaiting, threadSender, type ServerAdapter } from "./waiting.ts";
 
 const card = (over: Partial<WaitingCard> = {}): WaitingCard => ({
-	id: "C-aaaaaaaaaaaa", type: "question", server: "ws", threadId: "t1", threadTitle: "Thread one", requestId: "r1", question: "Merge now?",
-	options: [{ label: "Yes" }, { label: "No" }], answerable: true, sig: "sig-1", ...over,
+	id: "C-aaaaaaaaaaaa",
+	type: "question",
+	server: "ws",
+	threadId: "t1",
+	threadTitle: "Thread one",
+	requestId: "r1",
+	question: "Merge now?",
+	options: [{ label: "Yes" }, { label: "No" }],
+	answerable: true,
+	sig: "sig-1",
+	...over,
 });
 const logs: { event: string; [k: string]: unknown }[] = [];
 const pair = (fake: FakeAdapter, name = "ws"): ServerAdapter => ({ server: { name, adapter: "fake" }, adapter: fake });
-const mirror = (pairs: ServerAdapter[], extra: { links?: Record<string, string>; timeoutMs?: number } = {}) => createWaiting({ store: memStore(), servers: () => pairs, skipThreads: () => ["skipped"], log: (event, data) => logs.push({ event, ...data }), ...extra });
-afterEach(() => { logs.length = 0; });
+const mirror = (pairs: ServerAdapter[], extra: { links?: Record<string, string>; timeoutMs?: number } = {}) =>
+	createWaiting({
+		store: memStore(),
+		servers: () => pairs,
+		skipThreads: () => ["skipped"],
+		log: (event, data) => logs.push({ event, ...data }),
+		...extra,
+	});
+afterEach(() => {
+	logs.length = 0;
+});
 
 describe("listing", () => {
 	test("polls each server's adapter and lists every card, passing the skip list and the link base", async () => {
-		const a = createFakeAdapter(), b = createFakeAdapter();
+		const a = createFakeAdapter(),
+			b = createFakeAdapter();
 		a.cards = [card()];
 		b.cards = [card({ id: "C-bbbbbbbbbbbb", server: "lap", requestId: "r2" })];
 		let asked: unknown;
 		const orig = a.listWaiting!.bind(a);
-		(a as { listWaiting: typeof a.listWaiting }).listWaiting = async (o) => { asked = o; return orig(o); };
+		(a as { listWaiting: typeof a.listWaiting }).listWaiting = async (o) => {
+			asked = o;
+			return orig(o);
+		};
 		const m = mirror([pair(a), pair(b, "lap")], { links: { ws: "fake://ws/" } });
 		await m.poll();
 		expect(m.list().map((c) => c.requestId)).toEqual(["r1", "r2"]);
@@ -58,13 +80,20 @@ describe("listing", () => {
 
 	test("a poll still running when the next tick comes is not doubled, and a hung read can't stall it past its deadline", async () => {
 		const a = createFakeAdapter();
-		let calls = 0, release!: () => void;
-		(a as { listWaiting: typeof a.listWaiting }).listWaiting = () => { calls++; return new Promise((res) => { release = () => res([]); }); };
+		let calls = 0,
+			release!: () => void;
+		(a as { listWaiting: typeof a.listWaiting }).listWaiting = () => {
+			calls++;
+			return new Promise((res) => {
+				release = () => res([]);
+			});
+		};
 		const m = mirror([pair(a)]);
 		const first = m.poll();
 		await m.poll();
 		expect(calls).toBe(1);
-		release(); await first;
+		release();
+		await first;
 		const hung = createFakeAdapter();
 		(hung as { listWaiting: typeof hung.listWaiting }).listWaiting = () => new Promise(() => {});
 		const ok = createFakeAdapter();
@@ -86,13 +115,29 @@ describe("listing", () => {
 
 	test("an adapter that lists but cannot answer shows its cards read-only, and says where to answer", async () => {
 		const a = createFakeAdapter({ capabilities: ["listWaiting"] });
-		a.cards = [card(), card({ id: "C-dddddddddddd", type: "approval", requestId: "r9", options: [{ label: "Approve once" }, { label: "Decline" }], command: "rm -rf build" })];
+		a.cards = [
+			card(),
+			card({
+				id: "C-dddddddddddd",
+				type: "approval",
+				requestId: "r9",
+				options: [{ label: "Approve once" }, { label: "Decline" }],
+				command: "rm -rf build",
+			}),
+		];
 		const m = mirror([pair(a)]);
 		await m.poll();
 		const [q, ap] = m.list();
-		expect(q).toMatchObject({ answerable: false, why: "answer it in its thread on ws", options: [{ label: "Yes" }, { label: "No" }] });
+		expect(q).toMatchObject({
+			answerable: false,
+			why: "answer it in its thread on ws",
+			options: [{ label: "Yes" }, { label: "No" }],
+		});
 		expect(ap).toMatchObject({ answerable: false, options: [], command: "rm -rf build" });
-		expect(await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).toEqual({ status: 403, body: { error: "answer it in its thread on ws" } });
+		expect(await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).toEqual({
+			status: 403,
+			body: { error: "answer it in its thread on ws" },
+		});
 	});
 });
 
@@ -114,15 +159,23 @@ describe("answering", () => {
 		expect((await m.answer("C-aaaaaaaaaaaa", 0, "stale")).status).toBe(409);
 		expect((await m.answer("C-aaaaaaaaaaaa", 0, undefined)).status).toBe(409);
 		expect(a.answers).toEqual([]);
-		a.cards = [card({ id: "C-eeeeeeeeeeee", type: "secret", answerable: false, why: "enter it in its thread", options: [] })];
+		a.cards = [
+			card({ id: "C-eeeeeeeeeeee", type: "secret", answerable: false, why: "enter it in its thread", options: [] }),
+		];
 		await m.poll();
-		expect(await m.answer("C-eeeeeeeeeeee", 0, "sig-1")).toEqual({ status: 403, body: { error: "enter it in its thread" } });
+		expect(await m.answer("C-eeeeeeeeeeee", 0, "sig-1")).toEqual({
+			status: 403,
+			body: { error: "enter it in its thread" },
+		});
 		expect(a.answers).toEqual([]);
 	});
 
 	test("a good answer reaches the adapter once, drops the card, and is refused a second time", async () => {
 		const { a, m } = await ready();
-		expect(await m.answer("C-aaaaaaaaaaaa", 1, "sig-1")).toEqual({ status: 200, body: { ok: true, choice: "answered" } });
+		expect(await m.answer("C-aaaaaaaaaaaa", 1, "sig-1")).toEqual({
+			status: 200,
+			body: { ok: true, choice: "answered" },
+		});
 		expect(a.answers).toEqual([{ card: expect.objectContaining({ id: "C-aaaaaaaaaaaa" }), choice: 1, sig: "sig-1" }]);
 		expect(m.list()).toEqual([]);
 	});
@@ -130,7 +183,13 @@ describe("answering", () => {
 	test("two answers to one card arriving together send it once", async () => {
 		const { a, m } = await ready();
 		let release!: () => void;
-		(a as { answer: typeof a.answer }).answer = async (c, choice, sig) => { a.answers.push({ card: c, choice, sig }); await new Promise<void>((r) => { release = r; }); return { ok: true, choice: "Yes" }; };
+		(a as { answer: typeof a.answer }).answer = async (c, choice, sig) => {
+			a.answers.push({ card: c, choice, sig });
+			await new Promise<void>((r) => {
+				release = r;
+			});
+			return { ok: true, choice: "Yes" };
+		};
 		const first = m.answer("C-aaaaaaaaaaaa", 0, "sig-1");
 		const second = await m.answer("C-aaaaaaaaaaaa", 1, "sig-1");
 		expect(second.status).toBe(409);
@@ -142,9 +201,15 @@ describe("answering", () => {
 
 	test("each failure maps to its status, and only an answer that may have been sent stays reserved", async () => {
 		const { a, m } = await ready();
-		const outcome = (o: typeof a.answerOutcome) => { a.answerOutcome = o; return m.answer("C-aaaaaaaaaaaa", 0, "sig-1"); };
+		const outcome = (o: typeof a.answerOutcome) => {
+			a.answerOutcome = o;
+			return m.answer("C-aaaaaaaaaaaa", 0, "sig-1");
+		};
 		// Stale before anything was sent: 409, and the card may be answered again.
-		expect(await outcome({ ok: false, kind: "stale", error: "the card changed", maybeSent: false })).toEqual({ status: 409, body: { error: "the card changed" } });
+		expect(await outcome({ ok: false, kind: "stale", error: "the card changed", maybeSent: false })).toEqual({
+			status: 409,
+			body: { error: "the card changed" },
+		});
 		// Refused for rights: 403.
 		expect((await outcome({ ok: false, kind: "refused", error: "no rights", maybeSent: false })).status).toBe(403);
 		// The backend refused the command outright: 502, and it may be tried again.
@@ -159,14 +224,22 @@ describe("answering", () => {
 
 	test("a card that is no longer waiting is dropped from the list", async () => {
 		const { a, m } = await ready();
-		a.answerOutcome = { ok: false, kind: "stale", error: "that card was already answered or withdrawn in its thread", maybeSent: false, gone: true };
+		a.answerOutcome = {
+			ok: false,
+			kind: "stale",
+			error: "that card was already answered or withdrawn in its thread",
+			maybeSent: false,
+			gone: true,
+		};
 		expect((await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).status).toBe(409);
 		expect(m.list()).toEqual([]);
 	});
 
 	test("an adapter that throws instead of reporting is a 502, and the answer is not sent twice", async () => {
 		const { a, m } = await ready();
-		(a as { answer: typeof a.answer }).answer = async () => { throw Error("boom"); };
+		(a as { answer: typeof a.answer }).answer = async () => {
+			throw Error("boom");
+		};
 		expect((await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).status).toBe(502);
 		expect((await m.answer("C-aaaaaaaaaaaa", 0, "sig-1")).status).toBe(409);
 	});
@@ -191,7 +264,9 @@ describe("sending to a thread", () => {
 
 describe("the page over an adapter without send: a thread-routed answer falls back to the Steward", () => {
 	const dirs: string[] = [];
-	afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+	afterEach(() => {
+		for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+	});
 	const run = async (capabilities: readonly OptionalCapability[]) => {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-page-`);
 		dirs.push(root);
@@ -200,10 +275,33 @@ describe("the page over an adapter without send: a thread-routed answer falls ba
 		const fake = createFakeAdapter({ capabilities });
 		const { wake, accepted } = recordingWake();
 		const { drain } = testRelay(store, wake);
-		const app = createApp({ store, state, log: () => {}, hosts: ["127.0.0.1:3790"], staticDir: root, sendToThread: threadSender(() => [pair(fake)]) });
-		const item: Question = { id: "Q-abcd", kind: "product", title: "Pick a layout", context: "", options: [{ label: "Photo first", route: "thread", relay: "Lead with the photo." }, { label: "Text first" }], thread: "Mobile", server: "ws", threadId: "t1", createdAt: "2026-11-09T10:00:00.000Z" };
+		const app = createApp({
+			store,
+			state,
+			log: () => {},
+			hosts: ["127.0.0.1:3790"],
+			staticDir: root,
+			sendToThread: threadSender(() => [pair(fake)]),
+		});
+		const item: Question = {
+			id: "Q-abcd",
+			kind: "product",
+			title: "Pick a layout",
+			context: "",
+			options: [{ label: "Photo first", route: "thread", relay: "Lead with the photo." }, { label: "Text first" }],
+			thread: "Mobile",
+			server: "ws",
+			threadId: "t1",
+			createdAt: "2026-11-09T10:00:00.000Z",
+		};
 		askQuestion(store, item);
-		const r = await app.fetch(new Request("http://127.0.0.1:3790/api/items/Q-abcd/answer", { method: "POST", headers: { host: "127.0.0.1:3790", "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice: 0 }) }));
+		const r = await app.fetch(
+			new Request("http://127.0.0.1:3790/api/items/Q-abcd/answer", {
+				method: "POST",
+				headers: { host: "127.0.0.1:3790", "content-type": "application/json", "x-decision-queue": "1" },
+				body: JSON.stringify({ choice: 0 }),
+			}),
+		);
 		await app.idle();
 		await drain();
 		return { fake, accepted, status: r.status, state };

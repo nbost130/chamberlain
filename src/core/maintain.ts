@@ -31,7 +31,10 @@ export function maintain(store: Store, now = Date.now()): Maintained {
 		let resolved = 0;
 		for (const source of EPHEMERAL_SOURCES) {
 			for (const i of store.items.list({ source, status: ["triggered", "acknowledged"] })) {
-				if (now - i.lastSeen > ITEM_KEEP_MS) { store.items.resolve(source, i.dedupKey, now); resolved++; }
+				if (now - i.lastSeen > ITEM_KEEP_MS) {
+					store.items.resolve(source, i.dedupKey, now);
+					resolved++;
+				}
 			}
 		}
 		return {

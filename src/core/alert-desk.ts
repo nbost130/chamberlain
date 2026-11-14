@@ -25,9 +25,22 @@
  * morning sources (`morningCommands` in alert-desk.json; `renderDeskPrompt` fills them in, and src/desk-allowlist.ts allows exactly them).
  */
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	existsSync,
+	fstatSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+} from "node:fs";
 import { basename, dirname } from "node:path";
 import { selfCommand } from "./config.ts";
+import { type ShapeSet, describeShape, parseGatherer, parseShapes } from "./desk-shapes.ts";
 import type { Outbox, WakeDraft } from "./deliver.ts";
 import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import { authorityProblem } from "./private.ts";
@@ -62,15 +75,36 @@ export type DeskConfig = {
 	 */
 	startAt: "end" | "beginning";
 };
-export const DEFAULTS: DeskConfig = { enabled: true, windowMs: 15 * 60_000, repeatMs: DAY_MS, dailyCap: 30, morningHour: 7, timezone: "Etc/GMT+5", maxAgeMs: 6 * 3600_000, rotateBytes: 5 * 1024 * 1024, startAt: "end" };
+export const DEFAULTS: DeskConfig = {
+	enabled: true,
+	windowMs: 15 * 60_000,
+	repeatMs: DAY_MS,
+	dailyCap: 30,
+	morningHour: 7,
+	timezone: systemTimezone(),
+	maxAgeMs: 6 * 3600_000,
+	rotateBytes: 5 * 1024 * 1024,
+	startAt: "end",
+};
+
+/** The machine's own time zone, which is what "7 in the morning" means unless `timezone` in alert-desk.json says otherwise. */
+export function systemTimezone(): string {
+	try {
+		return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+	} catch {
+		return "UTC";
+	}
+}
 
 export const configPath = (conf: string) => `${conf}/alert-desk.json`;
-export const inboxPath = (env: Record<string, string | undefined>, home: string) => env.ALERT_DESK_INBOX || `${home}/.cache/alert-desk/inbox.jsonl`;
+export const inboxPath = (env: Record<string, string | undefined>, home: string) =>
+	env.ALERT_DESK_INBOX || `${home}/.cache/alert-desk/inbox.jsonl`;
 
 /** Pure: the config from a parsed file. A wrong type falls back to the default; nothing throws. */
 export function parseConfig(raw: unknown): DeskConfig {
 	const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-	const num = (k: string, d: number, min: number) => (typeof o[k] === "number" && Number.isFinite(o[k]) && (o[k] as number) >= min ? (o[k] as number) : d);
+	const num = (k: string, d: number, min: number) =>
+		typeof o[k] === "number" && Number.isFinite(o[k]) && (o[k] as number) >= min ? (o[k] as number) : d;
 	return {
 		enabled: o.enabled !== false,
 		windowMs: num("windowMinutes", DEFAULTS.windowMs / 60_000, 0) * 60_000,
@@ -84,7 +118,11 @@ export function parseConfig(raw: unknown): DeskConfig {
 	};
 }
 export function readConfig(conf: string): DeskConfig {
-	try { return parseConfig(JSON.parse(readFileSync(configPath(conf), "utf8"))); } catch { return { ...DEFAULTS }; }
+	try {
+		return parseConfig(JSON.parse(readFileSync(configPath(conf), "utf8")));
+	} catch {
+		return { ...DEFAULTS };
+	}
 }
 
 // ---- the morning sources and the standing prompt ------------------------------------------------------
@@ -109,8 +147,10 @@ const SLOT = /<N(?::(\d{1,2})(?:-(\d{1,2}))?)?>/g;
 export function slotProblem(command: string): string | undefined {
 	for (const m of command.matchAll(SLOT)) {
 		if (m[1] === undefined) continue;
-		const lo = Number(m[1]), hi = m[2] === undefined ? lo : Number(m[2]);
-		if (lo < 1 || hi < lo || hi > MAX_SLOT_DIGITS) return `${m[0]} is not a width from 1 to ${MAX_SLOT_DIGITS} digits (<N:a-b> with a <= b)`;
+		const lo = Number(m[1]),
+			hi = m[2] === undefined ? lo : Number(m[2]);
+		if (lo < 1 || hi < lo || hi > MAX_SLOT_DIGITS)
+			return `${m[0]} is not a width from 1 to ${MAX_SLOT_DIGITS} digits (<N:a-b> with a <= b)`;
 	}
 	if (command.replace(SLOT, "").includes("<N:")) return `a number slot is written <N>, <N:a> or <N:a-b>`;
 	return undefined;
@@ -119,29 +159,70 @@ export function slotProblem(command: string): string | undefined {
 /** Pure: the morning sources from a parsed alert-desk.json. Anything malformed is left out (`warn` says which, and why). */
 export function parseMorning(raw: unknown, warn: (msg: string) => void = () => {}): MorningSources {
 	const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-	const listed = Array.isArray(o.morningCommands) ? o.morningCommands.filter((c): c is string => typeof c === "string" && c.trim().length > 0 && c.length <= 2000 && !c.includes("\n")).map((c) => c.trim()) : [];
-	const commands = listed.filter((c) => { const bad = slotProblem(c); if (bad) warn(`alert desk: ignoring the morning command ${JSON.stringify(c.slice(0, 120))}: ${bad}`); return !bad; });
+	const listed = Array.isArray(o.morningCommands)
+		? o.morningCommands
+				.filter(
+					(c): c is string => typeof c === "string" && c.trim().length > 0 && c.length <= 2000 && !c.includes("\n"),
+				)
+				.map((c) => c.trim())
+		: [];
+	const commands = listed.filter((c) => {
+		const bad = slotProblem(c);
+		if (bad) warn(`alert desk: ignoring the morning command ${JSON.stringify(c.slice(0, 120))}: ${bad}`);
+		return !bad;
+	});
 	const notes = typeof o.morningNotes === "string" && o.morningNotes.trim() ? o.morningNotes.trim() : undefined;
 	return { commands, ...(notes ? { notes } : {}) };
 }
 
-/** The morning sources in `<conf>/alert-desk.json`, or none (with a warning saying why) when the file is not the operator's alone. */
-export function readMorning(conf: string, warn: (msg: string) => void = () => {}): MorningSources {
+/**
+ * What the operator adds to the desk in alert-desk.json: the morning sources, `commandShapes` (the command shapes of tools only their install
+ * has: src/core/desk-shapes.ts) and `gatherer` (the name of the agent the desk may start to read evidence). All widen what the desk may run,
+ * so all are read only from a file the operator owns that no group or other user can write.
+ */
+export type DeskOperator = { morning: MorningSources; shapes: ShapeSet; gatherer?: string };
+const NONE = (): DeskOperator => ({ morning: { commands: [] }, shapes: {} });
+
+/** Pure: the operator's additions from a parsed alert-desk.json. Anything malformed is left out (`warn` says which, and why). */
+export function parseOperator(raw: unknown, warn: (msg: string) => void = () => {}): DeskOperator {
+	const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+	const gatherer = parseGatherer(o.gatherer, warn);
+	return {
+		morning: parseMorning(raw, warn),
+		shapes: parseShapes(o.commandShapes, warn),
+		...(gatherer ? { gatherer } : {}),
+	};
+}
+
+/** The operator's additions in `<conf>/alert-desk.json`, or none (with a warning saying why) when the file is not the operator's alone. */
+export function readOperator(conf: string, warn: (msg: string) => void = () => {}): DeskOperator {
 	const path = configPath(conf);
 	let fd: number;
-	try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
-		if ((e as NodeJS.ErrnoException).code !== "ENOENT") warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
-		return { commands: [] };
+	try {
+		fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code !== "ENOENT")
+			warn(`alert desk: ignoring the operator's settings in ${path}: ${(e as Error).message}`);
+		return NONE();
 	}
 	try {
 		const bad = authorityProblem(fstatSync(fd), "file");
-		if (bad) { warn(`alert desk: ignoring the morning sources in ${path}: ${bad}`); return { commands: [] }; }
-		return parseMorning(JSON.parse(readFileSync(fd, "utf8")), warn);
+		if (bad) {
+			warn(`alert desk: ignoring the operator's settings in ${path}: ${bad}`);
+			return NONE();
+		}
+		return parseOperator(JSON.parse(readFileSync(fd, "utf8")), warn);
 	} catch (e) {
-		warn(`alert desk: ignoring the morning sources in ${path}: ${(e as Error).message}`);
-		return { commands: [] };
-	} finally { closeSync(fd); }
+		warn(`alert desk: ignoring the operator's settings in ${path}: ${(e as Error).message}`);
+		return NONE();
+	} finally {
+		closeSync(fd);
+	}
 }
+
+/** The morning sources in `<conf>/alert-desk.json` (see `readOperator`). */
+export const readMorning = (conf: string, warn: (msg: string) => void = () => {}): MorningSources =>
+	readOperator(conf, warn).morning;
 
 /**
  * Pure: the pattern a morning command is matched by: the command exactly, with each `<N>` one to twelve digits and each `<N:a-b>` (or
@@ -150,7 +231,8 @@ export function readMorning(conf: string, warn: (msg: string) => void = () => {}
 export function morningPattern(command: string): RegExp {
 	if (slotProblem(command)) return /(?!)/;
 	const esc = (p: string) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	let out = "", at = 0;
+	let out = "",
+		at = 0;
 	for (const m of command.matchAll(SLOT)) {
 		const lo = m[1] === undefined ? 1 : Number(m[1]);
 		const hi = m[1] === undefined ? MAX_SLOT_DIGITS : m[2] === undefined ? lo : Number(m[2]);
@@ -161,7 +243,16 @@ export function morningPattern(command: string): RegExp {
 }
 
 /** What the desk's standing prompt is filled with: who it works for, the server it runs on, the allowlist hook command, the ask command, the morning sources. */
-export type DeskPromptVars = { principalName: string; serverName: string; allowlistHook: string; askCommand: string; morning: MorningSources };
+export type DeskPromptVars = {
+	principalName: string;
+	serverName: string;
+	allowlistHook: string;
+	askCommand: string;
+	morning: MorningSources;
+	/** The operator's command shapes and gatherer agent (`readOperator`); none when omitted. */
+	shapes?: ShapeSet;
+	gatherer?: string;
+};
 
 /**
  * The one command the desk may run to file a decision: `bun $DESK_ASK_PATH` when that is set, else `chamberlain ask` from the compiled binary or
@@ -169,26 +260,63 @@ export type DeskPromptVars = { principalName: string; serverName: string; allowl
  * else for filing a decision, and the standing prompt is filled with the same command (`{{askCommand}}`), so the command the prompt teaches is the
  * command the hook allows.
  */
-export const deskAskCommand = (env: Record<string, string | undefined> = process.env, o: { compiled?: boolean; repo?: string } = {}) => (env.DESK_ASK_PATH ? `bun ${env.DESK_ASK_PATH}` : selfCommand("ask", o));
+export const deskAskCommand = (
+	env: Record<string, string | undefined> = process.env,
+	o: { compiled?: boolean; repo?: string } = {},
+) => (env.DESK_ASK_PATH ? `bun ${env.DESK_ASK_PATH}` : selfCommand("ask", o));
 
 /** Pure: the morning sources as the prompt lists them. */
 export function morningSourcesText(m: MorningSources): string {
-	if (!m.commands.length) return "   No morning sources are configured (`morningCommands` in alert-desk.json). Report what the morning wake carries, and say that no other source was read.";
+	if (!m.commands.length)
+		return "   No morning sources are configured (`morningCommands` in alert-desk.json). Report what the morning wake carries, and say that no other source was read.";
 	const code = (c: string) => (c.includes("`") ? `\`\` ${c} \`\`` : `\`${c}\``);
-	return [...m.commands.map((c) => `   - ${code(c)}`), ...(m.notes ? ["", ...m.notes.split("\n").map((l) => `   ${l}`.trimEnd())] : [])].join("\n");
+	return [
+		...m.commands.map((c) => `   - ${code(c)}`),
+		...(m.notes ? ["", ...m.notes.split("\n").map((l) => `   ${l}`.trimEnd())] : []),
+	].join("\n");
 }
 
 /**
  * Pure: the desk's standing prompt from its template (docs/alert-desk-prompt.md): `<!-- -->` comments dropped, and `{{principalName}}`,
- * `{{serverName}}`, `{{allowlistHook}}`, `{{askCommand}}` and `{{morningSources}}` filled in, the way the sweep prompt is (sweep.ts `renderSweepPrompt`).
+ * `{{serverName}}`, `{{allowlistHook}}`, `{{askCommand}}`, `{{morningSources}}`, `{{gatherStep}}`, `{{toolList}}` and `{{operatorCommands}}` filled in, the
+ * way the sweep prompt is (sweep.ts `renderSweepPrompt`).
  */
 export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
-	return template.replace(/<!--[\s\S]*?-->\s*/g, "").trim()
-		.replaceAll("{{principalName}}", v.principalName)
-		.replaceAll("{{serverName}}", v.serverName)
-		.replaceAll("{{allowlistHook}}", v.allowlistHook)
-		.replaceAll("{{askCommand}}", v.askCommand)
-		.replaceAll("{{morningSources}}", morningSourcesText(v.morning));
+	return (
+		template
+			.replace(/<!--[\s\S]*?-->\s*/g, "")
+			.trim()
+			.replaceAll("{{principalName}}", v.principalName)
+			.replaceAll("{{serverName}}", v.serverName)
+			.replaceAll("{{allowlistHook}}", v.allowlistHook)
+			.replaceAll("{{askCommand}}", v.askCommand)
+			.replaceAll("{{morningSources}}", morningSourcesText(v.morning))
+			.replaceAll("{{gatherStep}}", () => gatherStepText(v.gatherer))
+			.replaceAll("{{toolList}}", () => toolListText(v.gatherer))
+			// The operator's own command shapes are bullets in the list of what may run: with none, the line goes, so no blank line splits the list.
+			.replace(/\n\{\{operatorCommands\}\}(?=\n)/, () => operatorCommandsText(v.shapes ?? {}))
+	);
+}
+
+/** Pure: the evidence-gathering step, which names the operator's gatherer agent when there is one. */
+export function gatherStepText(gatherer?: string): string {
+	return gatherer
+		? `Fan out at most 4 \`${gatherer}\` subagents for the family (Agent tool, \`subagent_type: "${gatherer}"\`). Brief each one with one narrow question and one read-only command or file, and nothing else. Do not read the logs yourself; you decide, they read.`
+		: "No gatherer agent is configured, so read the evidence yourself: one narrow question at a time, each with one read-only command or file from the list below.";
+}
+
+/** Pure: the tools the desk has, which include the Agent tool only for the operator's gatherer. */
+export function toolListText(gatherer?: string): string {
+	return gatherer
+		? `Bash (in these shapes), Read, Grep, Glob and the Agent tool for \`${gatherer}\` gatherers`
+		: "Bash (in these shapes), Read, Grep and Glob";
+}
+
+/** Pure: the operator's own command shapes as bullets for the list of what may run (empty when there are none). */
+export function operatorCommandsText(shapes: ShapeSet): string {
+	return Object.entries(shapes)
+		.map(([name, shape]) => `\n- ${describeShape(name, shape).join(", ")}.`)
+		.join("");
 }
 
 // ---- events -----------------------------------------------------------------------------------------
@@ -203,28 +331,49 @@ export function severityOf(raw: unknown): Severity {
 /** Pure: one inbox line as an event, or undefined when it is not one (a torn line, no family or title, no usable time). */
 export function parseLine(line: string): DeskEvent | undefined {
 	let o: Record<string, unknown>;
-	try { o = JSON.parse(line); } catch { return undefined; }
+	try {
+		o = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
 	if (!o || typeof o !== "object") return undefined;
 	const family = typeof o.family === "string" ? o.family.trim() : "";
 	const title = typeof o.title === "string" ? o.title.trim() : "";
 	const ts = typeof o.ts === "string" ? o.ts : "";
 	if (!family || !title || !Number.isFinite(Date.parse(ts))) return undefined;
-	return { source: typeof o.source === "string" && o.source ? o.source : "unknown", family, title, body: typeof o.body === "string" ? o.body : "", ts, severity: severityOf(o.severity) };
+	return {
+		source: typeof o.source === "string" && o.source ? o.source : "unknown",
+		family,
+		title,
+		body: typeof o.body === "string" ? o.body : "",
+		ts,
+		severity: severityOf(o.severity),
+	};
 }
 
 /** What counts as "the same alert": timestamps, clock times and numbers are blanked, so a counter ticking is not a change. */
-const blank = (s: string) => s.replace(/\d{4}-\d\d-\d\d[T ][\d:.]+Z?/g, "T").replace(/\b\d{1,2}:\d\d(?::\d\d)?\b/g, "T").replace(/\d+/g, "#").replace(/\s+/g, " ").trim();
+const blank = (s: string) =>
+	s
+		.replace(/\d{4}-\d\d-\d\d[T ][\d:.]+Z?/g, "T")
+		.replace(/\b\d{1,2}:\d\d(?::\d\d)?\b/g, "T")
+		.replace(/\d+/g, "#")
+		.replace(/\s+/g, " ")
+		.trim();
 /** How much of the body takes part: the opening says what failed, the tail is usually a log excerpt that differs every time. */
 export const SIGNATURE_BODY_CHARS = 300;
 export function signature(e: Pick<DeskEvent, "severity" | "title" | "body">): string {
-	return createHash("sha1").update([e.severity, blank(e.title), blank(e.body.slice(0, SIGNATURE_BODY_CHARS))].join("\n")).digest("hex").slice(0, 12);
+	return createHash("sha1")
+		.update([e.severity, blank(e.title), blank(e.body.slice(0, SIGNATURE_BODY_CHARS))].join("\n"))
+		.digest("hex")
+		.slice(0, 12);
 }
 
 // ---- wake text --------------------------------------------------------------------------------------
 
 export type Reason = "new" | "changed" | "repeat";
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
-const wakeId = (family: string, sig: string, ts: string) => `desk:${createHash("sha1").update(`${family}\n${sig}\n${ts}`).digest("hex").slice(0, 16)}`;
+const wakeId = (family: string, sig: string, ts: string) =>
+	`desk:${createHash("sha1").update(`${family}\n${sig}\n${ts}`).digest("hex").slice(0, 16)}`;
 
 /** Pure: the text the desk is woken with. The alert text is data; the standing prompt says what to do with it. */
 export function alertMessage(e: DeskEvent, reason: Reason, absorbed: number, windowMin: number): string {
@@ -249,17 +398,36 @@ export function capMessage(cfg: DeskConfig, deferred: string[]): string {
 
 /** Pure: the date (YYYY-MM-DD) and hour in `tz` at `now`. */
 export function localDay(now: number, tz: string): { day: string; hour: number } {
-	const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date(now)).map((x) => [x.type, x.value]));
+	const p = Object.fromEntries(
+		new Intl.DateTimeFormat("en-CA", {
+			timeZone: tz,
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			hourCycle: "h23",
+		})
+			.formatToParts(new Date(now))
+			.map((x) => [x.type, x.value]),
+	);
 	return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
 }
 
 /** Pure: the morning wake's text. It carries what the desk already handled, so the sweep reads only the sources the inbox lacks. */
-export function morningMessage(day: string, handled: { family: string; wakes: number; severity: string; title: string }[], waiting: string[]): string {
+export function morningMessage(
+	day: string,
+	handled: { family: string; wakes: number; severity: string; title: string }[],
+	waiting: string[],
+): string {
 	const total = handled.reduce((n, h) => n + h.wakes, 0);
 	return [
 		`[alert-desk] morning wake for ${day}: the first of the day. Run the Morning sweep section of your standing prompt.`,
 		`Handled by this desk in the last 24 h (${total} wake${total === 1 ? "" : "s"}, ${handled.length} famil${handled.length === 1 ? "y" : "ies"}):`,
-		...(handled.length ? handled.slice(0, 25).map((h) => `- ${h.family}: ${h.wakes} wake${h.wakes === 1 ? "" : "s"}, last ${h.severity} "${h.title}"`) : ["- none"]),
+		...(handled.length
+			? handled
+					.slice(0, 25)
+					.map((h) => `- ${h.family}: ${h.wakes} wake${h.wakes === 1 ? "" : "s"}, last ${h.severity} "${h.title}"`)
+			: ["- none"]),
 		...(waiting.length ? [`Waiting on the window or the cap: ${waiting.join(", ")}.`] : []),
 	].join("\n");
 }
@@ -276,16 +444,28 @@ const OVERSIZED = "\u0000oversized";
  * and so is the rest of that line: a cursor that does not sit just after a newline is inside a line already counted as bad, so everything up
  * to and including its newline is consumed without being read as an event.
  */
-function readLines(path: string, from: number, final = false): { lines: string[]; end: number; size: number; inode: number } | undefined {
+function readLines(
+	path: string,
+	from: number,
+	final = false,
+): { lines: string[]; end: number; size: number; inode: number } | undefined {
 	let fd: number;
-	try { fd = openSync(path, "r"); } catch { return undefined; }
+	try {
+		fd = openSync(path, "r");
+	} catch {
+		return undefined;
+	}
 	try {
 		const st = fstatSync(fd);
 		const start = st.size < from ? 0 : from;
 		const len = Math.min(MAX_READ, st.size - start);
 		const buf = Buffer.alloc(len);
 		let got = 0;
-		while (got < len) { const n = readSync(fd, buf, got, len - got, start + got); if (n <= 0) break; got += n; }
+		while (got < len) {
+			const n = readSync(fd, buf, got, len - got, start + got);
+			if (n <= 0) break;
+			got += n;
+		}
 		const chunk = buf.subarray(0, got);
 		const atEof = start + got >= st.size;
 		let skip = 0;
@@ -305,11 +485,25 @@ function readLines(path: string, from: number, final = false): { lines: string[]
 		const base = start + skip;
 		const cut = body.lastIndexOf(10);
 		let end = base + (cut < 0 ? 0 : cut + 1);
-		const lines = cut < 0 ? [] : body.subarray(0, cut + 1).toString("utf8").split("\n").filter(Boolean);
-		if (cut < 0 && skip === 0 && got >= MAX_READ) { lines.push(OVERSIZED); end = start + got; }
-		else if (final && atEof && end < start + got) { lines.push(body.subarray(end - base).toString("utf8")); end = start + got; }
+		const lines =
+			cut < 0
+				? []
+				: body
+						.subarray(0, cut + 1)
+						.toString("utf8")
+						.split("\n")
+						.filter(Boolean);
+		if (cut < 0 && skip === 0 && got >= MAX_READ) {
+			lines.push(OVERSIZED);
+			end = start + got;
+		} else if (final && atEof && end < start + got) {
+			lines.push(body.subarray(end - base).toString("utf8"));
+			end = start + got;
+		}
 		return { lines, end, size: st.size, inode: st.ino };
-	} finally { closeSync(fd); }
+	} finally {
+		closeSync(fd);
+	}
 }
 
 export type Retired = { path: string; offset: number; after: number };
@@ -329,12 +523,28 @@ const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
  */
 export function firstCursor(inbox: string, startAt: DeskConfig["startAt"]): Cursor {
 	if (startAt === "beginning") return freshCursor();
-	try { const st = statSync(inbox); return { offset: st.size, inode: st.ino, retired: [] }; } catch { return freshCursor(); }
+	try {
+		const st = statSync(inbox);
+		return { offset: st.size, inode: st.ino, retired: [] };
+	} catch {
+		return freshCursor();
+	}
 }
 
-export type Read = { events: DeskEvent[]; bad: number; stale: number; /** Retired files read in full by this call. They leave the cursor, and are deleted, only after the cursor without them is saved. */ retiredRead: Retired[] };
+export type Read = {
+	events: DeskEvent[];
+	bad: number;
+	stale: number /** Retired files read in full by this call. They leave the cursor, and are deleted, only after the cursor without them is saved. */;
+	retiredRead: Retired[];
+};
 /** The points of a pass a test can stop at, to prove a crash there loses nothing. */
-export type CrashPoint = "rotation-intent" | "renamed" | "rotation-saved" | "delivered" | "retired-read" | "retired-saved";
+export type CrashPoint =
+	| "rotation-intent"
+	| "renamed"
+	| "rotation-saved"
+	| "delivered"
+	| "retired-read"
+	| "retired-saved";
 
 /**
  * Finishes a rotation a crash interrupted. The intent was saved before the rename, so: if the retired file exists the rename happened and the
@@ -344,7 +554,11 @@ export type CrashPoint = "rotation-intent" | "renamed" | "rotation-saved" | "del
 export function recoverRotation(cur: Cursor, now: number): boolean {
 	const r = cur.rotating;
 	if (!r) return false;
-	if (existsSync(r.path)) { cur.retired.push({ path: r.path, offset: r.from, after: now + 60_000 }); cur.offset = 0; cur.inode = 0; }
+	if (existsSync(r.path)) {
+		cur.retired.push({ path: r.path, offset: r.from, after: now + 60_000 });
+		cur.offset = 0;
+		cur.inode = 0;
+	}
 	cur.rotating = undefined;
 	return true;
 }
@@ -353,15 +567,32 @@ export function recoverRotation(cur: Cursor, now: number): boolean {
  * Renames a big inbox away, but only once everything in it is committed (the saved cursor is at its end). The intent is saved BEFORE the
  * rename, and the retired file is in a saved cursor BEFORE anything reads or deletes it, so no crash between the steps loses a line.
  */
-export function rotateIfDue(cur: Cursor, inbox: string, now: number, cfg: DeskConfig, save: () => void, crash: (p: CrashPoint) => void = () => {}): boolean {
+export function rotateIfDue(
+	cur: Cursor,
+	inbox: string,
+	now: number,
+	cfg: DeskConfig,
+	save: () => void,
+	crash: (p: CrashPoint) => void = () => {},
+): boolean {
 	let stat;
-	try { stat = statSync(inbox); } catch { return false; }
+	try {
+		stat = statSync(inbox);
+	} catch {
+		return false;
+	}
 	if (cur.inode === 0 || stat.ino !== cur.inode || cur.offset < stat.size || stat.size <= cfg.rotateBytes) return false;
 	const path = `${inbox}.${now}`;
 	cur.rotating = { path, from: cur.offset, inode: cur.inode };
 	save();
 	crash("rotation-intent");
-	try { renameSync(inbox, path); } catch { cur.rotating = undefined; save(); return false; }
+	try {
+		renameSync(inbox, path);
+	} catch {
+		cur.rotating = undefined;
+		save();
+		return false;
+	}
 	crash("renamed");
 	recoverRotation(cur, now);
 	save();
@@ -371,14 +602,28 @@ export function rotateIfDue(cur: Cursor, inbox: string, now: number, cfg: DeskCo
 
 /** Deletes a retired file a crash left behind after its cursor was saved (named `<inbox>.<ms>`, in no list, and old enough that no pass can still own it). */
 export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
-	const dir = dirname(inbox), base = `${basename(inbox)}.`;
+	const dir = dirname(inbox),
+		base = `${basename(inbox)}.`;
 	let names: string[];
-	try { names = readdirSync(dir); } catch { return; }
+	try {
+		names = readdirSync(dir);
+	} catch {
+		return;
+	}
 	for (const n of names) {
 		if (!n.startsWith(base) || !/^\d+$/.test(n.slice(base.length))) continue;
 		const path = `${dir}/${n}`;
-		if (now - Number(n.slice(base.length)) < 10 * 60_000 || cur.retired.some((x) => x.path === path) || cur.rotating?.path === path) continue;
-		try { unlinkSync(path); } catch { /* gone */ }
+		if (
+			now - Number(n.slice(base.length)) < 10 * 60_000 ||
+			cur.retired.some((x) => x.path === path) ||
+			cur.rotating?.path === path
+		)
+			continue;
+		try {
+			unlinkSync(path);
+		} catch {
+			/* gone */
+		}
 	}
 }
 
@@ -392,7 +637,10 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 	for (const r of cur.retired) {
 		if (now < r.after) continue;
 		const got = readLines(r.path, r.offset, true);
-		if (!got) { retiredRead.push(r); continue; }
+		if (!got) {
+			retiredRead.push(r);
+			continue;
+		}
 		lines.push(...got.lines);
 		// Progress is recorded only up to the bytes actually read. The file is finished, and may be deleted once the cursor is saved, only when
 		// that is its end: a bigger file than one chunk is read over the next passes.
@@ -402,16 +650,24 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 	const main = readLines(inbox, cur.inode === 0 ? 0 : cur.offset);
 	if (main) {
 		// A different file at the same path (rotated by hand, or recreated): its start is new to us.
-		const fresh = cur.inode !== 0 && cur.inode !== main.inode ? readLines(inbox, 0) ?? main : main;
+		const fresh = cur.inode !== 0 && cur.inode !== main.inode ? (readLines(inbox, 0) ?? main) : main;
 		lines.push(...fresh.lines);
-		cur.offset = fresh.end; cur.inode = fresh.inode;
+		cur.offset = fresh.end;
+		cur.inode = fresh.inode;
 	}
-	let bad = 0, stale = 0;
+	let bad = 0,
+		stale = 0;
 	const events: DeskEvent[] = [];
 	for (const l of lines) {
 		const e = parseLine(l);
-		if (!e) { bad++; continue; }
-		if (now - Date.parse(e.ts) > cfg.maxAgeMs) { stale++; continue; }
+		if (!e) {
+			bad++;
+			continue;
+		}
+		if (now - Date.parse(e.ts) > cfg.maxAgeMs) {
+			stale++;
+			continue;
+		}
 		events.push(e);
 	}
 	events.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -422,7 +678,11 @@ export function readInbox(cur: Cursor, inbox: string, now: number, cfg: DeskConf
 
 const windowKey = (family: string) => `${family}#window`;
 const pendingKey = (family: string) => `${family}#pending`;
-type PendingPayload = { event: DeskEvent; sig: string; /** `repeat`: the 24 h repeat already notified, so it goes without resolving the item. */ reason?: Reason };
+type PendingPayload = {
+	event: DeskEvent;
+	sig: string /** `repeat`: the 24 h repeat already notified, so it goes without resolving the item. */;
+	reason?: Reason;
+};
 /** Items of a family no one has reported for this long are resolved, so a later event is a new occurrence and retention can prune them. */
 const FORGET_MS = 3 * DAY_MS;
 
@@ -452,7 +712,12 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 	if (!stored) {
 		// The first start is decided once: the cursor is kept before anything is read, so a crash later in this pass never decides it again.
 		save();
-		d.log("alert-desk-start", { startAt: cfg.startAt, inbox: d.inbox, offset: cur.offset, ...(cfg.startAt === "end" && cur.offset ? { skippedBytes: cur.offset } : {}) });
+		d.log("alert-desk-start", {
+			startAt: cfg.startAt,
+			inbox: d.inbox,
+			offset: cur.offset,
+			...(cfg.startAt === "end" && cur.offset ? { skippedBytes: cur.offset } : {}),
+		});
 	}
 	if (recoverRotation(cur, now)) save();
 	rotateIfDue(cur, d.inbox, now, cfg, save, crash);
@@ -464,10 +729,21 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 	/** Alert wakes of the rolling 24 h: the desk's own outbox rows and held wakes. Morning and cap notes are not alerts and do not count. */
 	function capFull(): boolean {
 		if (cfg.dailyCap <= 0) return false;
-		const members = [...store.wakes.rows("all", DESK_RECEIVER).flatMap((row) => row.members), ...store.wakes.held(DESK_RECEIVER)];
+		const members = [
+			...store.wakes.rows("all", DESK_RECEIVER).flatMap((row) => row.members),
+			...store.wakes.held(DESK_RECEIVER),
+		];
 		return members.filter((m) => m.deliveryId.startsWith("desk:") && now - m.queuedAt < DAY_MS).length >= cfg.dailyCap;
 	}
-	const parkPending = (e: DeskEvent, sig: string, at: number, reason: Reason) => store.items.observe({ source: ALERT_DESK, kind: "pending", dedupKey: pendingKey(e.family), mode: "silenced", payload: { event: e, sig, reason } satisfies PendingPayload, now: at });
+	const parkPending = (e: DeskEvent, sig: string, at: number, reason: Reason) =>
+		store.items.observe({
+			source: ALERT_DESK,
+			kind: "pending",
+			dedupKey: pendingKey(e.family),
+			mode: "silenced",
+			payload: { event: e, sig, reason } satisfies PendingPayload,
+			now: at,
+		});
 	const dropPending = (family: string, at: number, opts: { keepRepeat?: boolean } = {}) => {
 		const p = store.items.get(ALERT_DESK, pendingKey(family));
 		if (p?.status !== "triggered") return;
@@ -475,7 +751,10 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 		if (opts.keepRepeat && (p.payload as PendingPayload).reason === "repeat") return;
 		store.items.resolve(ALERT_DESK, pendingKey(family), at);
 	};
-	const absorb = (family: string, at: number) => { const a = store.items.get(ALERT_DESK, family); if (a) store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at }); };
+	const absorb = (family: string, at: number) => {
+		const a = store.items.get(ALERT_DESK, family);
+		if (a) store.items.patch(ALERT_DESK, family, { absorbed: Number(a.payload.absorbed ?? 0) + 1, lastEventAt: at });
+	};
 
 	/** Queues the wake for an event the gates let through, with every item change, in one transaction. `consumed`: the 24 h repeat already notified. */
 	function emit(e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): void {
@@ -483,26 +762,61 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 			const before = store.items.get(ALERT_DESK, e.family);
 			const absorbed = Number(before?.payload.absorbed ?? 0);
 			const wakes = Number(before?.payload.wakes ?? 0) + 1;
-			const payload = { sig, title: clip(e.title, 140), severity: e.severity, source: e.source, absorbed: 0, wakes, lastEventAt: at };
+			const payload = {
+				sig,
+				title: clip(e.title, 140),
+				severity: e.severity,
+				source: e.source,
+				absorbed: 0,
+				wakes,
+				lastEventAt: at,
+			};
 			if (consumed) store.items.patch(ALERT_DESK, e.family, payload);
 			else {
 				// A change is a new occurrence: resolve the open item so the next observation reopens it and notifies.
 				if (before && before.status !== "resolved") store.items.resolve(ALERT_DESK, e.family, at);
-				const o = store.items.observe({ source: ALERT_DESK, kind: "alert", dedupKey: e.family, repeat: repeatEvery(cfg.repeatMs), payload, now: at });
+				const o = store.items.observe({
+					source: ALERT_DESK,
+					kind: "alert",
+					dedupKey: e.family,
+					repeat: repeatEvery(cfg.repeatMs),
+					payload,
+					now: at,
+				});
 				if (!o.notify) return undefined;
 			}
 			dropPending(e.family, at);
 			const id = wakeId(e.family, sig, e.ts);
-			return { deliveryId: id, message: alertMessage(e, reason, absorbed, Math.round(cfg.windowMs / 60_000)), meta: { kind: DESK_KIND, receiver: DESK_RECEIVER } };
+			return {
+				deliveryId: id,
+				message: alertMessage(e, reason, absorbed, Math.round(cfg.windowMs / 60_000)),
+				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+			};
 		});
 		if (out === "queued") woke.push(`${e.family}:${reason}`);
 	}
 
 	/** The gates a wake-worthy event passes: the daily cap, then the family's window. Returns whether it was emitted. */
 	function release(e: DeskEvent, sig: string, reason: Reason, at: number, consumed: boolean): boolean {
-		if (capFull()) { deferred.add(e.family); store.tx(() => parkPending(e, sig, at, reason)); return false; }
-		const gate = store.items.observe({ source: ALERT_DESK, kind: "window", dedupKey: windowKey(e.family), repeat: repeatEvery(cfg.windowMs), now: at });
-		if (!gate.notify) { store.tx(() => { parkPending(e, sig, at, reason); absorb(e.family, at); }); return false; }
+		if (capFull()) {
+			deferred.add(e.family);
+			store.tx(() => parkPending(e, sig, at, reason));
+			return false;
+		}
+		const gate = store.items.observe({
+			source: ALERT_DESK,
+			kind: "window",
+			dedupKey: windowKey(e.family),
+			repeat: repeatEvery(cfg.windowMs),
+			now: at,
+		});
+		if (!gate.notify) {
+			store.tx(() => {
+				parkPending(e, sig, at, reason);
+				absorb(e.family, at);
+			});
+			return false;
+		}
 		emit(e, sig, reason, at, consumed);
 		return true;
 	}
@@ -511,14 +825,32 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 		const at = Math.min(now, Date.parse(e.ts));
 		const sig = signature(e);
 		const a = store.items.get(ALERT_DESK, e.family);
-		if (!a || a.status === "resolved") { release(e, sig, "new", at, false); continue; }
-		if (a.payload.sig !== sig) { release(e, sig, "changed", at, false); continue; }
+		if (!a || a.status === "resolved") {
+			release(e, sig, "new", at, false);
+			continue;
+		}
+		if (a.payload.sig !== sig) {
+			release(e, sig, "changed", at, false);
+			continue;
+		}
 		// The same alert again. The item's own 24 h repeat says whether it is a recurrence; otherwise it is folded, and a change that was
 		// waiting for its window is cancelled (the alert is back to what the desk was last told).
 		store.tx(() => {
-			const o = store.items.observe({ source: ALERT_DESK, kind: "alert", dedupKey: e.family, repeat: repeatEvery(cfg.repeatMs), now: at });
-			if (o.notify) { if (!release(e, sig, "repeat", at, true)) { /* parked */ } }
-			else { absorb(e.family, at); dropPending(e.family, at, { keepRepeat: true }); }
+			const o = store.items.observe({
+				source: ALERT_DESK,
+				kind: "alert",
+				dedupKey: e.family,
+				repeat: repeatEvery(cfg.repeatMs),
+				now: at,
+			});
+			if (o.notify) {
+				if (!release(e, sig, "repeat", at, true)) {
+					/* parked */
+				}
+			} else {
+				absorb(e.family, at);
+				dropPending(e.family, at, { keepRepeat: true });
+			}
 		});
 	}
 
@@ -528,42 +860,83 @@ export function drainAlertDesk(d: DrainDeps): { read: number; woke: number; skip
 		const a = store.items.get(ALERT_DESK, event.family);
 		const open = a !== undefined && a.status !== "resolved";
 		// A change that was undone before its window closed is cancelled; a parked 24 h repeat is not a change and still goes.
-		if (reason !== "repeat" && open && a.payload.sig === sig) { store.items.resolve(ALERT_DESK, p.dedupKey, now); continue; }
+		if (reason !== "repeat" && open && a.payload.sig === sig) {
+			store.items.resolve(ALERT_DESK, p.dedupKey, now);
+			continue;
+		}
 		release(event, sig, reason === "repeat" ? "repeat" : open ? "changed" : "new", now, reason === "repeat");
 	}
 
 	// Once a day, the cap says so; and the first pass of the day from the morning hour sends the morning wake.
 	if (deferred.size) {
 		outbox.commit(() => {
-			if (!store.items.observe({ source: ALERT_DESK, kind: "cap-note", dedupKey: "cap", repeat: repeatEvery(DAY_MS), now }).notify) return undefined;
+			if (
+				!store.items.observe({
+					source: ALERT_DESK,
+					kind: "cap-note",
+					dedupKey: "cap",
+					repeat: repeatEvery(DAY_MS),
+					now,
+				}).notify
+			)
+				return undefined;
 			woke.push("cap");
-			return { deliveryId: `desk-cap:${Math.floor(now / DAY_MS)}`, message: capMessage(cfg, [...deferred]), meta: { kind: DESK_KIND, receiver: DESK_RECEIVER } };
+			return {
+				deliveryId: `desk-cap:${Math.floor(now / DAY_MS)}`,
+				message: capMessage(cfg, [...deferred]),
+				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+			};
 		});
 	}
 	const { day, hour } = localDay(now, cfg.timezone);
 	if (hour >= cfg.morningHour) {
 		outbox.commit(() => {
-			if (!store.items.observe({ source: ALERT_DESK, kind: "morning", dedupKey: day, repeat: NOTIFY_ONCE, now }).notify) return undefined;
-			const live = (i: Item) => now - Number(i.payload.lastEventAt ?? i.lastSeen) < DAY_MS && Number(i.payload.wakes ?? 0) > 0;
-			const handled = store.items.list({ source: ALERT_DESK, kind: "alert" }).filter(live).map((i) => ({ family: i.dedupKey, wakes: Number(i.payload.wakes), severity: String(i.payload.severity), title: String(i.payload.title) }));
-			const waiting = store.items.list({ source: ALERT_DESK, kind: "pending", status: "triggered" }).map((i) => (i.payload as PendingPayload).event.family);
+			if (!store.items.observe({ source: ALERT_DESK, kind: "morning", dedupKey: day, repeat: NOTIFY_ONCE, now }).notify)
+				return undefined;
+			const live = (i: Item) =>
+				now - Number(i.payload.lastEventAt ?? i.lastSeen) < DAY_MS && Number(i.payload.wakes ?? 0) > 0;
+			const handled = store.items
+				.list({ source: ALERT_DESK, kind: "alert" })
+				.filter(live)
+				.map((i) => ({
+					family: i.dedupKey,
+					wakes: Number(i.payload.wakes),
+					severity: String(i.payload.severity),
+					title: String(i.payload.title),
+				}));
+			const waiting = store.items
+				.list({ source: ALERT_DESK, kind: "pending", status: "triggered" })
+				.map((i) => (i.payload as PendingPayload).event.family);
 			woke.push("morning");
-			return { deliveryId: `desk-morning:${day}`, message: morningMessage(day, handled, waiting), meta: { kind: DESK_KIND, receiver: DESK_RECEIVER } };
+			return {
+				deliveryId: `desk-morning:${day}`,
+				message: morningMessage(day, handled, waiting),
+				meta: { kind: DESK_KIND, receiver: DESK_RECEIVER },
+			};
 		});
 	}
 
 	// Families nobody has reported for three days are resolved: a later event is a new occurrence.
 	store.tx(() => {
-		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" })) if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
-		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" })) if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
+		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" }))
+			if (now - Number(i.payload.lastEventAt ?? i.lastSeen) > FORGET_MS)
+				store.items.resolve(ALERT_DESK, i.dedupKey, now);
+		for (const i of store.items.list({ source: ALERT_DESK, kind: "window", status: "triggered" }))
+			if (now - i.lastSeen > FORGET_MS) store.items.resolve(ALERT_DESK, i.dedupKey, now);
 	});
 	crash("delivered");
 	if (r.retiredRead.length) crash("retired-read");
 	cur.retired = cur.retired.filter((x) => !r.retiredRead.includes(x));
 	save();
 	if (r.retiredRead.length) crash("retired-saved");
-	for (const x of r.retiredRead) { try { unlinkSync(x.path); } catch { /* already gone */ } }
-	if (r.events.length || r.bad || r.stale || woke.length) d.log("alert-desk", { events: r.events.length, bad: r.bad, stale: r.stale, woke, deferred: deferred.size });
+	for (const x of r.retiredRead) {
+		try {
+			unlinkSync(x.path);
+		} catch {
+			/* already gone */
+		}
+	}
+	if (r.events.length || r.bad || r.stale || woke.length)
+		d.log("alert-desk", { events: r.events.length, bad: r.bad, stale: r.stale, woke, deferred: deferred.size });
 	return { read: r.events.length, woke: woke.length };
 }
-

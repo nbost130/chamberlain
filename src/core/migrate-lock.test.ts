@@ -1,11 +1,21 @@
 /**
- * The config migration's exclusion is the kernel's, never a clock's. A reviewer found the old one, a lock file that any other process
+ * The config migration's exclusion is the kernel's, never a clock's. The old one was a lock file that any other process
  * broke after 120 seconds: a migration slower than that could be entered twice, and its owner could unlink its successor's lock. These
  * tests run real processes (src/testing/migrate-worker.ts) with a slow migration injected, and read a journal of who was inside and when.
  * To make the old age-based lock break at once, every lock artefact it could have left is back-dated by ten minutes.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { SCHEMA_VERSION } from "./schema.ts";
 import { holdFlock } from "./singleton.ts";
@@ -15,17 +25,32 @@ const WORKER = new URL("../testing/migrate-worker.ts", import.meta.url).pathname
 const dirs: string[] = [];
 const pids: number[] = [];
 afterEach(() => {
-	for (const pid of pids.splice(0)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+	for (const pid of pids.splice(0)) {
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			/* gone */
+		}
+	}
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
 function world() {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-migrate-lock-`);
 	dirs.push(root);
-	const conf = `${root}/conf`, state = `${root}/state`, journal = `${root}/journal`;
-	mkdirSync(conf, { mode: 0o700 }); mkdirSync(state, { mode: 0o700 });
-	const put = (name: string, body: string) => { writeFileSync(`${conf}/${name}`, body, { mode: 0o600 }); chmodSync(`${conf}/${name}`, 0o600); };
-	put("servers.json", JSON.stringify([{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }]));
+	const conf = `${root}/conf`,
+		state = `${root}/state`,
+		journal = `${root}/journal`;
+	mkdirSync(conf, { mode: 0o700 });
+	mkdirSync(state, { mode: 0o700 });
+	const put = (name: string, body: string) => {
+		writeFileSync(`${conf}/${name}`, body, { mode: 0o600 });
+		chmodSync(`${conf}/${name}`, 0o600);
+	};
+	put(
+		"servers.json",
+		JSON.stringify({ servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }] }),
+	);
 	put("web.json", JSON.stringify({ host: "127.0.0.1", port: 3790 }));
 	put("settings.json", JSON.stringify({ principalName: "Ada" }));
 	put("sweep.json", JSON.stringify({ checks: [] }));
@@ -36,21 +61,51 @@ type W = ReturnType<typeof world>;
 
 /** A migrating process that holds the lock `holdMs` and waits `waitMs` for it. `done` resolves with its report. */
 function worker(w: W, holdMs: number, waitMs: number) {
-	const p = Bun.spawn([process.execPath, WORKER, w.conf, w.state, w.journal, String(holdMs), String(waitMs)], { stdout: "pipe", stderr: "pipe" });
+	const p = Bun.spawn([process.execPath, WORKER, w.conf, w.state, w.journal, String(holdMs), String(waitMs)], {
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	pids.push(p.pid);
-	return { p, pid: p.pid, done: (async () => { const out = await new Response(p.stdout).text(); const err = await new Response(p.stderr).text(); await p.exited; return { report: JSON.parse(out.trim().split("\n").pop() || "null") as MigrationReport | null, err, code: p.exitCode }; })() };
+	return {
+		p,
+		pid: p.pid,
+		done: (async () => {
+			const out = await new Response(p.stdout).text();
+			const err = await new Response(p.stderr).text();
+			await p.exited;
+			return {
+				report: JSON.parse(out.trim().split("\n").pop() || "null") as MigrationReport | null,
+				err,
+				code: p.exitCode,
+			};
+		})(),
+	};
 }
-const events = (w: W) => readFileSync(w.journal, "utf8").split("\n").filter(Boolean).map((l) => { const [pid, what, t] = l.split(" "); return { pid: Number(pid), what: what!, t: Number(t) }; });
+const events = (w: W) =>
+	readFileSync(w.journal, "utf8")
+		.split("\n")
+		.filter(Boolean)
+		.map((l) => {
+			const [pid, what, t] = l.split(" ");
+			return { pid: Number(pid), what: what!, t: Number(t) };
+		});
 async function until(what: string, ok: () => boolean, ms = 8000) {
 	const end = Date.now() + ms;
-	while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}`); await Bun.sleep(10); }
+	while (!ok()) {
+		if (Date.now() > end) throw Error(`timed out waiting for ${what}`);
+		await Bun.sleep(10);
+	}
 }
 /** Back-dates anything an age-based lock could be keyed on. */
 function age(w: W) {
 	const old = new Date(Date.now() - 600_000);
-	for (const p of [`${w.state}/.migrate.lock`, `${w.conf}/.migrate.lock`, w.conf, w.state]) if (existsSync(p)) utimesSync(p, old, old);
+	for (const p of [`${w.state}/.migrate.lock`, `${w.conf}/.migrate.lock`, w.conf, w.state])
+		if (existsSync(p)) utimesSync(p, old, old);
 }
-const versions = (w: W) => ["servers.json", "web.json", "settings.json", "sweep.json"].map((f) => JSON.parse(readFileSync(`${w.conf}/${f}`, "utf8")).schemaVersion);
+const versions = (w: W) =>
+	["servers.json", "web.json", "settings.json", "sweep.json"].map(
+		(f) => JSON.parse(readFileSync(`${w.conf}/${f}`, "utf8")).schemaVersion,
+	);
 
 describe("the config migration lock belongs to the kernel", () => {
 	test("a slow migration is never entered twice: back-dated lock artefacts do not let a second or a third migrator in, and the first finishes the work", async () => {
@@ -74,7 +129,10 @@ describe("the config migration lock belongs to the kernel", () => {
 		expect(done.report!.migrated.sort()).toEqual(["servers.json", "settings.json", "sweep.json", "web.json"]);
 		expect(versions(w)).toEqual([SCHEMA_VERSION, SCHEMA_VERSION, SCHEMA_VERSION, SCHEMA_VERSION]);
 		// Exactly one process was ever inside, and nobody left a lock behind to be broken.
-		expect(events(w).map((e) => `${e.pid === first.pid ? "first" : "other"} ${e.what}`)).toEqual(["first enter", "first exit"]);
+		expect(events(w).map((e) => `${e.pid === first.pid ? "first" : "other"} ${e.what}`)).toEqual([
+			"first enter",
+			"first exit",
+		]);
 		expect(readdirSync(w.conf).filter((f) => f.includes("lock"))).toEqual([]);
 		expect(readdirSync(w.state).filter((f) => f.includes("lock"))).toEqual([]);
 	});
@@ -88,7 +146,12 @@ describe("the config migration lock belongs to the kernel", () => {
 		expect(a.report!.migrated).toHaveLength(4);
 		expect(b.report).toEqual({ migrated: [], skipped: [] });
 		const ev = events(w);
-		expect(ev.map((e) => `${e.pid === first.pid ? "first" : "second"} ${e.what}`)).toEqual(["first enter", "first exit", "second enter", "second exit"]);
+		expect(ev.map((e) => `${e.pid === first.pid ? "first" : "second"} ${e.what}`)).toEqual([
+			"first enter",
+			"first exit",
+			"second enter",
+			"second exit",
+		]);
 		expect(ev[2]!.t).toBeGreaterThanOrEqual(ev[1]!.t);
 		expect(versions(w)).toEqual([SCHEMA_VERSION, SCHEMA_VERSION, SCHEMA_VERSION, SCHEMA_VERSION]);
 	});

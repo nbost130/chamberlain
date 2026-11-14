@@ -7,9 +7,17 @@
 import { appendFileSync } from "node:fs";
 import { migrateStorage } from "../core/migrate.ts";
 
-const [conf, state, journal, holdMs, waitMs] = [process.argv[2]!, process.argv[3]!, process.argv[4]!, Number(process.argv[5]), Number(process.argv[6])];
+const [conf, state, journal, holdMs, waitMs] = [
+	process.argv[2]!,
+	process.argv[3]!,
+	process.argv[4]!,
+	Number(process.argv[5]),
+	Number(process.argv[6]),
+];
 const report = migrateStorage({
-	conf, state, lockWaitMs: waitMs,
+	conf,
+	state,
+	lockWaitMs: waitMs,
 	whileLocked: () => {
 		appendFileSync(journal, `${process.pid} enter ${Date.now()}\n`);
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, holdMs);

@@ -64,6 +64,8 @@ export function postCard(i: Question, conf = CONF, base?: string): PostResult {
 	return { ok: r.ok, detail: r.detail, where: base ? "view" : "notice" };
 }
 
-
 /** The adapter's `post`: the Decisions thread message, sent with the T3 CLI. */
-export const t3Post = (conf: string): Adapter["post"] => async (item: Question, opts: PostOptions) => postCard(item, conf, opts.queueUrl);
+export const t3Post =
+	(conf: string): Adapter["post"] =>
+	async (item: Question, opts: PostOptions) =>
+		postCard(item, conf, opts.queueUrl);

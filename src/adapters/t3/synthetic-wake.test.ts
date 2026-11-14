@@ -1,5 +1,5 @@
 /**
- * The synthetic-wake tool is a producer: it inserts an outbox row and never talks to the webhook. A reviewer found it POSTing directly, so
+ * The synthetic-wake tool is a producer: it inserts an outbox row and never talks to the webhook. It once POSTed directly, so
  * that with the relay holding the lock and a POST outstanding, two tool runs made three concurrent requests. These tests run the real tool
  * as real processes against a real relay (a real `flock`, the real T3 transport) and a webhook that records how many requests are in flight.
  */
@@ -14,7 +14,15 @@ import { webhookWake } from "./wake.ts";
 
 const TOOL = new URL("./synthetic-wake.ts", import.meta.url).pathname;
 const cleanups: (() => void)[] = [];
-afterEach(() => { for (const c of cleanups.splice(0).reverse()) { try { c(); } catch { /* best effort */ } } });
+afterEach(() => {
+	for (const c of cleanups.splice(0).reverse()) {
+		try {
+			c();
+		} catch {
+			/* best effort */
+		}
+	}
+});
 
 /** A webhook that counts requests in flight and holds each one until `release()`. */
 function webhook(o: { hold: boolean }) {
@@ -23,7 +31,8 @@ function webhook(o: { hold: boolean }) {
 	let gate!: () => void;
 	let waiting = new Promise<void>((r) => (gate = r));
 	const server = Bun.serve({
-		hostname: "127.0.0.1", port: 0,
+		hostname: "127.0.0.1",
+		port: 0,
 		async fetch(req) {
 			const body = (await req.json()) as { deliveryId: string };
 			seen.ids.push(body.deliveryId);
@@ -34,20 +43,41 @@ function webhook(o: { hold: boolean }) {
 		},
 	});
 	cleanups.push(() => server.stop(true));
-	return { url: `http://127.0.0.1:${server.port}`, seen, release: () => { open = true; gate(); waiting = Promise.resolve(); } };
+	return {
+		url: `http://127.0.0.1:${server.port}`,
+		seen,
+		release: () => {
+			open = true;
+			gate();
+			waiting = Promise.resolve();
+		},
+	};
 }
 
 /** A config and a state directory the tool can run against, with `url` as every webhook file. */
 function world(url: string) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-synthetic-`);
 	cleanups.push(() => rmSync(root, { recursive: true, force: true }));
-	const conf = `${root}/conf`, state = `${root}/state`;
-	mkdirSync(conf, { mode: 0o700 }); mkdirSync(state, { mode: 0o700 });
+	const conf = `${root}/conf`,
+		state = `${root}/state`;
+	mkdirSync(conf, { mode: 0o700 });
+	mkdirSync(state, { mode: 0o700 });
 	const put = (name: string, body: string) => writeFileSync(`${conf}/${name}`, body, { mode: 0o600 });
-	put("servers.json", JSON.stringify({ schemaVersion: 2, servers: [{ name: "fake", adapter: "t3", origin: "http://127.0.0.1:12345", tokenFile: "read-token" }] }));
+	put(
+		"servers.json",
+		JSON.stringify({
+			schemaVersion: 2,
+			servers: [{ name: "fake", adapter: "t3", origin: "http://127.0.0.1:12345", tokenFile: "read-token" }],
+		}),
+	);
 	put("decision-rights.md", "The Steward may merge green PRs. Everything else, ask.");
 	for (const f of ["wake-url", "wake-url.steward"]) put(f, url);
-	const run = (thread: string) => Bun.spawn([process.execPath, TOOL, "fake", thread, "Fixture thread", "Waiting on a decision"], { env: { ...process.env, CHAMBERLAIN_CONF: conf, CHAMBERLAIN_STATE: state }, stdout: "pipe", stderr: "pipe" });
+	const run = (thread: string) =>
+		Bun.spawn([process.execPath, TOOL, "fake", thread, "Fixture thread", "Waiting on a decision"], {
+			env: { ...process.env, CHAMBERLAIN_CONF: conf, CHAMBERLAIN_STATE: state },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
 	return { conf, state, run };
 }
 const text = (s: ReadableStream) => new Response(s).text();
@@ -74,20 +104,34 @@ describe("synthetic-wake only inserts an outbox row", () => {
 		expect(rows[0]!.message).toContain("Everything else, ask.");
 	});
 
-	test("reviewer scenario: with the relay holding the lock and a POST outstanding, two tool runs add no request; the webhook never sees two at once", async () => {
+	test("with the relay holding the lock and a POST outstanding, two tool runs add no request; the webhook never sees two at once", async () => {
 		const hook = webhook({ hold: true });
 		const w = world(hook.url);
 		const store = openStore(dbPath(w.state));
 		const lock = holdRelayLock(store.path);
-		cleanups.push(() => { lock.release(); store.close(); });
+		cleanups.push(() => {
+			lock.release();
+			store.close();
+		});
 		store.wakes.enqueue({ deliveryId: "ordinary", message: "an ordinary wake", queuedAt: Date.now() });
-		const relay = createRelay({ store, lock, wake: webhookWake(() => hook.url), gate: () => "idle", log: () => {}, alarm: () => {}, retryAfterMs: () => 0 });
+		const relay = createRelay({
+			store,
+			lock,
+			wake: webhookWake(() => hook.url),
+			gate: () => "idle",
+			log: () => {},
+			alarm: () => {},
+			retryAfterMs: () => 0,
+		});
 		const first = relay.pass();
 		for (let i = 0; i < 200 && hook.seen.ids.length < 1; i++) await Bun.sleep(10);
 		expect(hook.seen.ids).toEqual(["ordinary"]); // the relay's POST is outstanding
 
 		const children = [w.run("thread-1"), w.run("thread-2")];
-		const exited = await Promise.race([Promise.all(children.map((c) => c.exited)), Bun.sleep(8000).then(() => "the tool runs did not finish: they are waiting on the webhook")]);
+		const exited = await Promise.race([
+			Promise.all(children.map((c) => c.exited)),
+			Bun.sleep(8000).then(() => "the tool runs did not finish: they are waiting on the webhook"),
+		]);
 		expect(exited).toEqual([0, 0]);
 		expect(hook.seen.ids).toEqual(["ordinary"]); // neither run POSTed
 		expect(hook.seen.peak).toBe(1);
@@ -101,6 +145,11 @@ describe("synthetic-wake only inserts an outbox row", () => {
 		expect(new Set(sent).size).toBe(3); // each id exactly once
 		expect(sent.slice(1).every((id) => id.startsWith("synthetic:thread-"))).toBe(true);
 		expect(hook.seen.peak).toBe(1); // the relay sent one at a time, so never two requests together
-		expect(store.wakes.rows("delivered").map((r) => r.deliveryId).sort()).toEqual([...sent].sort());
+		expect(
+			store.wakes
+				.rows("delivered")
+				.map((r) => r.deliveryId)
+				.sort(),
+		).toEqual([...sent].sort());
 	});
 });

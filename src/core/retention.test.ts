@@ -1,5 +1,5 @@
 /**
- * Undelivered work is never dropped for its age (audit finding B2). A wake that has not been delivered is the only record that
+ * Undelivered work is never dropped for its age. A wake that has not been delivered is the only record that
  * something needs the Steward, so it stays until it is delivered or explicitly cancelled; retention (maintain.ts) prunes only
  * terminal rows. Every test moves a fake clock: 25 hours (past the old one-day expiry), 8 days (past the old claim cutoff of 7
  * days) and 40 days (past the 30 days a delivery stays on record).
@@ -11,10 +11,26 @@ import { deliveredRow } from "../testing/relay.ts";
 import { recordingWake } from "../testing/wake.ts";
 import { createRelay } from "./relay.ts";
 import { ITEM_KEEP_MS, maintain } from "./maintain.ts";
-import { askQuestion, claimWake, pageClaim, PAGE, QUEUE, readClaims, recordAnswerDelivered, recoverClaims, type Answer, type Question } from "./questions.ts";
+import {
+	askQuestion,
+	claimWake,
+	pageClaim,
+	PAGE,
+	QUEUE,
+	readClaims,
+	recordAnswerDelivered,
+	recoverClaims,
+	type Answer,
+	type Question,
+} from "./questions.ts";
 
-const HOUR = 3600_000, DAY = 24 * HOUR;
-const AGES = [["25 hours", 25 * HOUR], ["8 days", 8 * DAY], ["40 days", 40 * DAY]] as const;
+const HOUR = 3600_000,
+	DAY = 24 * HOUR;
+const AGES = [
+	["25 hours", 25 * HOUR],
+	["8 days", 8 * DAY],
+	["40 days", 40 * DAY],
+] as const;
 
 const rig = (status = () => 202) => {
 	const store = memStore();
@@ -24,8 +40,15 @@ const rig = (status = () => 202) => {
 	const alarms: string[] = [];
 	const logs: string[] = [];
 	const relay = createRelay({
-		store, lock: testRelayLock(store), wake: { ready: () => ready.now, send: wake.wake.send }, gate: () => "idle", log: (e) => logs.push(e), alarm: (k) => alarms.push(k), now: () => clock.t,
-		retryAfterMs: () => 0, onDelivered: (id) => recordAnswerDelivered(store, id),
+		store,
+		lock: testRelayLock(store),
+		wake: { ready: () => ready.now, send: wake.wake.send },
+		gate: () => "idle",
+		log: (e) => logs.push(e),
+		alarm: (k) => alarms.push(k),
+		now: () => clock.t,
+		retryAfterMs: () => 0,
+		onDelivered: (id) => recordAnswerDelivered(store, id),
 	});
 	return { store, wake, ready, clock, alarms, logs, relay };
 };
@@ -34,7 +57,11 @@ describe("an undelivered wake in the outbox", () => {
 	for (const [name, age] of AGES) {
 		test(`${name} old: the relay sends it on its next pass, not dropped`, async () => {
 			const r = rig();
-			r.store.wakes.enqueue({ deliveryId: "sweep:1", message: "[chamberlain] sweep: the disk is full", queuedAt: r.clock.t - age });
+			r.store.wakes.enqueue({
+				deliveryId: "sweep:1",
+				message: "[chamberlain] sweep: the disk is full",
+				queuedAt: r.clock.t - age,
+			});
 			expect(await r.relay.pass()).toEqual(["sweep:1"]);
 			expect(r.wake.accepted.map((w) => w.deliveryId)).toEqual(["sweep:1"]);
 			expect(r.store.wakes.isDelivered("sweep:1")).toBe(true);
@@ -44,7 +71,11 @@ describe("an undelivered wake in the outbox", () => {
 	test("with nowhere to send it is kept through 25 hours, 8 days and 40 days with no attempt used, raises wake-stale, and goes once when it can", async () => {
 		const r = rig();
 		r.ready.now = false;
-		r.store.wakes.enqueue({ deliveryId: "t1:needs_input:r1:1", message: "[chamberlain] needs_input: thread X", queuedAt: r.clock.t });
+		r.store.wakes.enqueue({
+			deliveryId: "t1:needs_input:r1:1",
+			message: "[chamberlain] needs_input: thread X",
+			queuedAt: r.clock.t,
+		});
 		for (const [, age] of AGES) {
 			r.clock.t += age;
 			expect(await r.relay.pass()).toEqual([]);
@@ -75,7 +106,13 @@ describe("a held wake", () => {
 	for (const [name, age] of AGES) {
 		test(`${name} old: it goes out in the next digest, not dropped`, async () => {
 			const r = rig();
-			r.store.wakes.hold({ deliveryId: "turn:A:1", message: "[chamberlain] turn_ended: A finished", queuedAt: r.clock.t - age, kind: "turn_ended", thread: "A" });
+			r.store.wakes.hold({
+				deliveryId: "turn:A:1",
+				message: "[chamberlain] turn_ended: A finished",
+				queuedAt: r.clock.t - age,
+				kind: "turn_ended",
+				thread: "A",
+			});
 			expect(await r.relay.pass()).toEqual(["turn:A:1"]);
 			expect(r.wake.accepted).toHaveLength(1);
 			expect(r.wake.accepted[0]!.message).toContain("A finished");
@@ -84,10 +121,25 @@ describe("a held wake", () => {
 	}
 });
 
-const item = (id: string): Question => ({ id, kind: "product", title: "Photo first?", context: "ctx", options: [{ label: "Yes" }, { label: "No" }], thread: "Mobile", server: "main", createdAt: "2026-09-01T00:00:00.000Z" });
+const item = (id: string): Question => ({
+	id,
+	kind: "product",
+	title: "Photo first?",
+	context: "ctx",
+	options: [{ label: "Yes" }, { label: "No" }],
+	thread: "Mobile",
+	server: "main",
+	createdAt: "2026-09-01T00:00:00.000Z",
+});
 const answered = (r: ReturnType<typeof rig>, id: string, age: number) => {
 	askQuestion(r.store, item(id), r.clock.t - age);
-	const a: Answer = { choice: 0, label: "Yes", by: "page", t: new Date(r.clock.t - age).toISOString(), deliveryId: `answer:item:${id}` };
+	const a: Answer = {
+		choice: 0,
+		label: "Yes",
+		by: "page",
+		t: new Date(r.clock.t - age).toISOString(),
+		deliveryId: `answer:item:${id}`,
+	};
 	claimWake(r.store, pageClaim(item(id), a));
 };
 
@@ -96,7 +148,9 @@ describe("a page claim whose wake was never delivered", () => {
 		test(`${name} old: recovery sends it, however old`, async () => {
 			const r = rig();
 			answered(r, "Q-old01", age);
-			expect((await recoverClaims({ store: r.store, owns: (o) => o === PAGE, log: () => {} })).sent).toEqual(["Q-old01"]);
+			expect((await recoverClaims({ store: r.store, owns: (o) => o === PAGE, log: () => {} })).sent).toEqual([
+				"Q-old01",
+			]);
 			await r.relay.pass();
 			expect(r.wake.accepted.map((w) => w.deliveryId)).toEqual(["answer:item:Q-old01"]);
 			expect(r.store.items.get(QUEUE, "Q-old01")?.status).toBe("resolved");
@@ -144,7 +198,15 @@ describe("retention prunes only terminal rows", () => {
 		maintain(r.store, r.clock.t);
 		expect(r.store.wakes.isDelivered("answer:item:Q-late1")).toBe(true);
 		const sent: string[] = [];
-		await recoverClaims({ store: r.store, owns: (o) => o === PAGE, log: () => {}, delivered: (c) => recordAnswerDelivered(r.store, c.deliveryId), send: async (c) => { sent.push(c.item); } });
+		await recoverClaims({
+			store: r.store,
+			owns: (o) => o === PAGE,
+			log: () => {},
+			delivered: (c) => recordAnswerDelivered(r.store, c.deliveryId),
+			send: async (c) => {
+				sent.push(c.item);
+			},
+		});
 		expect(sent).toEqual([]);
 		expect(r.wake.accepted).toEqual([]);
 		expect(r.store.items.get(QUEUE, "Q-late1")?.status).toBe("resolved");

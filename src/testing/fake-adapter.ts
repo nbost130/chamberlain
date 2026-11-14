@@ -11,13 +11,43 @@
  * `capabilities` chooses which optional capabilities it declares (default: all of them). A capability it does not
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
-import { normalizeThread, type Adapter, type AnswerOutcome, type Inspector, type OptionalCapability, type PostOptions, type PostResult, type RunFailure, type RunLook, type StewardProbe, type ThreadEvent, type ThreadInput, type Transcript, type WaitingCard, type WaitingItem, type WaitingRead, type WatchSink } from "../core/adapter.ts";
+import {
+	normalizeThread,
+	type Adapter,
+	type AnswerOutcome,
+	type Inspector,
+	type OptionalCapability,
+	type PostOptions,
+	type PostResult,
+	type RunFailure,
+	type RunLook,
+	type StewardProbe,
+	type ThreadEvent,
+	type ThreadInput,
+	type Transcript,
+	type WaitingCard,
+	type WaitingItem,
+	type WaitingRead,
+	type WatchSink,
+} from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
 import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
 import type { Question } from "../core/questions.ts";
 
-export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk", "handoffInstruction"];
+export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
+	"answer",
+	"listWaiting",
+	"setTitle",
+	"transcriptPath",
+	"inspect",
+	"send",
+	"stewardProbe",
+	"compact",
+	"snapshot",
+	"alertDesk",
+	"handoffInstruction",
+];
 
 /**
  * What `inspect` reports for one thread; anything unset reads as empty. `waiting` is the cards seen waiting and `resolved` the
@@ -26,7 +56,17 @@ export const ALL_CAPABILITIES: readonly OptionalCapability[] = ["answer", "listW
  * `waitingError` makes the read throw. Otherwise, while the fake is not connected, every waiting read is `ok: false`, as the
  * contract says. `waitingRead` is returned whatever the connection, so a test can prove the core does not believe it.
  */
-export type FakeThread = { lastMessage?: string; waiting?: WaitingItem[]; /** Request IDs the backend shows in a terminal status: the only thing that closes a card hold. */ resolved?: string[]; waitingRead?: WaitingRead | (() => WaitingRead); waitingError?: string; subagents?: number; instruction?: InstructionRead; failure?: RunFailure; look?: RunLook };
+export type FakeThread = {
+	lastMessage?: string;
+	waiting?: WaitingItem[] /** Request IDs the backend shows in a terminal status: the only thing that closes a card hold. */;
+	resolved?: string[];
+	waitingRead?: WaitingRead | (() => WaitingRead);
+	waitingError?: string;
+	subagents?: number;
+	instruction?: InstructionRead;
+	failure?: RunFailure;
+	look?: RunLook;
+};
 
 export type FakeOptions = {
 	id?: string;
@@ -134,7 +174,15 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		instruction: async (id) => fake.threads.get(id)?.instruction ?? { items: [], state: "complete", byMachine: false },
 		failure: async (id) => fake.threads.get(id)?.failure,
 		/** The failure's run, still failed with nothing going, unless the test says otherwise. */
-		look: async (id) => { const th = fake.threads.get(id); return th?.look ?? (th?.failure ? { latestRunId: th.failure.runId, latestStatus: "failed", active: false, waiting: false } : undefined); },
+		look: async (id) => {
+			const th = fake.threads.get(id);
+			return (
+				th?.look ??
+				(th?.failure
+					? { latestRunId: th.failure.runId, latestStatus: "failed", active: false, waiting: false }
+					: undefined)
+			);
+		},
 	};
 
 	const adapter: Adapter = {
@@ -146,8 +194,13 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 			s.connected(true, { version: "fake-1" });
 			for (const e of early.splice(0)) s.event(e);
 			return new Promise<void>((resolve) => {
-				const done = () => { fake.connected = false; s.connected(false); resolve(); };
-				if (signal.aborted) done(); else signal.addEventListener("abort", done, { once: true });
+				const done = () => {
+					fake.connected = false;
+					s.connected(false);
+					resolve();
+				};
+				if (signal.aborted) done();
+				else signal.addEventListener("abort", done, { once: true });
 			});
 		},
 		wake,
@@ -160,30 +213,120 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 	};
 	// Optional capabilities exist only when declared: the core must see exactly what a thin backend offers.
 	const optional: Partial<Adapter> = {
-		...(caps.has("answer") ? { answer: async (card: WaitingCard, choice: number, sig: string) => { handles.answers.push({ card, choice, sig }); return fake.answerOutcome; } } : {}),
-		...(caps.has("listWaiting") ? { listWaiting: async () => { if (fake.listError) throw Error(fake.listError); return fake.cards; } } : {}),
-		...(caps.has("setTitle") ? { setTitle: async (title: string) => { handles.titles.push(title); return "set" as const; } } : {}),
+		...(caps.has("answer")
+			? {
+					answer: async (card: WaitingCard, choice: number, sig: string) => {
+						handles.answers.push({ card, choice, sig });
+						return fake.answerOutcome;
+					},
+				}
+			: {}),
+		...(caps.has("listWaiting")
+			? {
+					listWaiting: async () => {
+						if (fake.listError) throw Error(fake.listError);
+						return fake.cards;
+					},
+				}
+			: {}),
+		...(caps.has("setTitle")
+			? {
+					setTitle: async (title: string) => {
+						handles.titles.push(title);
+						return "set" as const;
+					},
+				}
+			: {}),
 		...(caps.has("transcriptPath") ? { transcriptPath: async () => fake.transcript } : {}),
 		...(caps.has("inspect") ? { inspect } : {}),
-		...(caps.has("send") ? { send: async (threadId: string, text: string, seed: string, identity?: string) => { handles.sends.push({ threadId, text, seed, ...(identity ? { identity } : {}) }); return { ok: true, detail: `sent to fake:${threadId}` }; } } : {}),
+		...(caps.has("send")
+			? {
+					send: async (threadId: string, text: string, seed: string, identity?: string) => {
+						handles.sends.push({ threadId, text, seed, ...(identity ? { identity } : {}) });
+						return { ok: true, detail: `sent to fake:${threadId}` };
+					},
+				}
+			: {}),
 		...(caps.has("stewardProbe") ? { stewardProbe: () => fake.probe } : {}),
-		...(caps.has("snapshot") ? { snapshot: async () => { if (fake.snapshotError) throw Error(fake.snapshotError); return { complete: fake.snapshotComplete, threads: [...fake.listed.values()].map((t) => { const n = normalizeThread(t); return { id: n.id, archived: n.archived, settled: n.settled, pendingRequestId: n.pendingRequestId, status: n.status }; }) }; } } : {}),
-		...(caps.has("alertDesk") ? { alertDesk: { wake: { ready: () => deskReady, send: async (deliveryId: string, message: string) => { handles.deskAttempts++; handles.deskWakes.push({ deliveryId, message }); return { ok: true, status: 202 }; } }, isBusy: () => deskBusy } } : {}),
+		...(caps.has("snapshot")
+			? {
+					snapshot: async () => {
+						if (fake.snapshotError) throw Error(fake.snapshotError);
+						return {
+							complete: fake.snapshotComplete,
+							threads: [...fake.listed.values()].map((t) => {
+								const n = normalizeThread(t);
+								return {
+									id: n.id,
+									archived: n.archived,
+									settled: n.settled,
+									pendingRequestId: n.pendingRequestId,
+									status: n.status,
+								};
+							}),
+						};
+					},
+				}
+			: {}),
+		...(caps.has("alertDesk")
+			? {
+					alertDesk: {
+						wake: {
+							ready: () => deskReady,
+							send: async (deliveryId: string, message: string) => {
+								handles.deskAttempts++;
+								handles.deskWakes.push({ deliveryId, message });
+								return { ok: true, status: 202 };
+							},
+						},
+						isBusy: () => deskBusy,
+					},
+				}
+			: {}),
 		...(caps.has("handoffInstruction") ? { handoffInstruction: () => "Run the hand-off now." } : {}),
-		...(caps.has("compact") ? { compact: { ready: () => wakeReady, send: async (deliveryId: string) => { handles.compactions.push(deliveryId); return { ok: true, status: 202 }; } } satisfies WakeTransport } : {}),
+		...(caps.has("compact")
+			? {
+					compact: {
+						ready: () => wakeReady,
+						send: async (deliveryId: string) => {
+							handles.compactions.push(deliveryId);
+							return { ok: true, status: 202 };
+						},
+					} satisfies WakeTransport,
+				}
+			: {}),
 	};
 	Object.assign(adapter, optional);
 
 	const fake: FakeAdapter = Object.assign(adapter, handles, {
 		/** Reports a thread event as the backend would. Events emitted before `watch` starts are kept and delivered when it does. */
-		emit(e: ThreadEvent) { fake.listed.set(e.thread.id, e.thread); if (sink) sink.event(e); else early.push(e); },
-		unlist(id: string) { fake.listed.delete(id); },
-		setConnected(up: boolean) { fake.connected = up; sink?.connected(up); },
-		setBusy(g: Gate) { busy = g; },
-		setDeskBusy(g: Gate) { deskBusy = g; },
-		setDeskReady(ready: boolean) { deskReady = ready; },
-		setWakeReady(ready: boolean) { wakeReady = ready; },
-		setWakeStatus(f: (deliveryId: string) => number) { status = f; },
+		emit(e: ThreadEvent) {
+			fake.listed.set(e.thread.id, e.thread);
+			if (sink) sink.event(e);
+			else early.push(e);
+		},
+		unlist(id: string) {
+			fake.listed.delete(id);
+		},
+		setConnected(up: boolean) {
+			fake.connected = up;
+			sink?.connected(up);
+		},
+		setBusy(g: Gate) {
+			busy = g;
+		},
+		setDeskBusy(g: Gate) {
+			deskBusy = g;
+		},
+		setDeskReady(ready: boolean) {
+			deskReady = ready;
+		},
+		setWakeReady(ready: boolean) {
+			wakeReady = ready;
+		},
+		setWakeStatus(f: (deliveryId: string) => number) {
+			status = f;
+		},
 	});
 	return fake;
 }

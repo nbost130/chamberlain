@@ -6,12 +6,15 @@ import { memStore } from "../../testing/store.ts";
 import { analyze, format, fromDeliveryId, pct, readRuns, stat, wakesFrom, type Delivered } from "./queue-waits.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 const T0 = Date.parse("2026-11-11T10:00:00.000Z");
 const at = (sec: number) => T0 + Math.round(sec * 1000);
 const iso = (ms: number) => new Date(ms).toISOString();
 const ev = (o: Record<string, unknown>) => o as unknown as Delivered;
-const delivered = (sec: number, deliveryId: string, extra: Record<string, unknown> = {}, http = 202) => ev({ t: iso(at(sec)), event: "delivered", deliveryId, http, attempt: 1, ...extra });
+const delivered = (sec: number, deliveryId: string, extra: Record<string, unknown> = {}, http = 202) =>
+	ev({ t: iso(at(sec)), event: "delivered", deliveryId, http, attempt: 1, ...extra });
 
 describe("percentiles", () => {
 	test("nearest rank", () => {
@@ -24,9 +27,21 @@ describe("percentiles", () => {
 
 describe("the delivery ID records what the log may not", () => {
 	test("thread wakes and sweeps end in the millisecond they were made; an answer carries none", () => {
-		expect(fromDeliveryId("thr-1:ended:1789120000123:1789120000456")).toEqual({ kind: "turn_ended", thread: "thr-1", createdAt: 1789120000456 });
-		expect(fromDeliveryId("mcp:launch:abc:input:req-9:1789120000456")).toEqual({ kind: "needs_input", thread: "mcp:launch:abc", createdAt: 1789120000456 });
-		expect(fromDeliveryId("thr-2:failed:running:1789120000456")).toMatchObject({ kind: "failed", thread: "thr-2", createdAt: 1789120000456 });
+		expect(fromDeliveryId("thr-1:ended:1789120000123:1789120000456")).toEqual({
+			kind: "turn_ended",
+			thread: "thr-1",
+			createdAt: 1789120000456,
+		});
+		expect(fromDeliveryId("mcp:launch:abc:input:req-9:1789120000456")).toEqual({
+			kind: "needs_input",
+			thread: "mcp:launch:abc",
+			createdAt: 1789120000456,
+		});
+		expect(fromDeliveryId("thr-2:failed:running:1789120000456")).toMatchObject({
+			kind: "failed",
+			thread: "thr-2",
+			createdAt: 1789120000456,
+		});
 		expect(fromDeliveryId("sweep:1789120000456")).toEqual({ kind: "sweep", createdAt: 1789120000456 });
 		expect(fromDeliveryId("answer:item:Q-abcd")).toEqual({ kind: "answer" });
 	});
@@ -47,17 +62,31 @@ describe("wakesFrom", () => {
 
 	test("reads the event log with SQL: only delivered events in the window come out of the database", () => {
 		const store = memStore();
-		for (const e of [delivered(10, "a", { queuedAt: at(5), kind: "turn_ended", thread: "A" }), delivered(12, "b", {}, 503), ev({ t: iso(at(20)), event: "fire", kind: "turn_ended" }), delivered(-99999, "old")]) store.events.append(e as never);
+		for (const e of [
+			delivered(10, "a", { queuedAt: at(5), kind: "turn_ended", thread: "A" }),
+			delivered(12, "b", {}, 503),
+			ev({ t: iso(at(20)), event: "fire", kind: "turn_ended" }),
+			delivered(-99999, "old"),
+		])
+			store.events.append(e as never);
 		const rows = store.events.query({ events: ["delivered"], since: iso(at(-3600)) }) as Delivered[];
 		expect(rows.map((r) => r.deliveryId)).toEqual(["a", "b"]);
 		expect(wakesFrom(rows, at(-3600)).map((w) => w.deliveryId)).toEqual(["a"]);
 	});
 
 	test("a digest's members are each a wake, with their own queue times", () => {
-		const lines = [delivered(100, "digest:abc", { members: [{ deliveryId: "m1", queuedAt: at(10), kind: "turn_ended", thread: "A" }, { deliveryId: "m2", queuedAt: at(50), kind: "sweep" }] })];
+		const lines = [
+			delivered(100, "digest:abc", {
+				members: [
+					{ deliveryId: "m1", queuedAt: at(10), kind: "turn_ended", thread: "A" },
+					{ deliveryId: "m2", queuedAt: at(50), kind: "sweep" },
+				],
+			}),
+		];
 		const w = wakesFrom(lines, 0);
 		expect(w.map((x) => [x.deliveryId, x.kind, x.thread, x.createdAt, x.createdFrom, x.postedAt])).toEqual([
-			["m1", "turn_ended", "A", at(10), "recorded", at(100)], ["m2", "sweep", undefined, at(50), "recorded", at(100)],
+			["m1", "turn_ended", "A", at(10), "recorded", at(100)],
+			["m2", "sweep", undefined, at(50), "recorded", at(100)],
 		]);
 	});
 });
@@ -68,9 +97,20 @@ function fixtureDb() {
 	dirs.push(root);
 	const path = `${root}/state.sqlite`;
 	const db = new Database(path);
-	db.run("create table orchestration_v2_projection_runs (run_id text, thread_id text, ordinal int, status text, requested_at text, completed_at text, payload_json text)");
+	db.run(
+		"create table orchestration_v2_projection_runs (run_id text, thread_id text, ordinal int, status text, requested_at text, completed_at text, payload_json text)",
+	);
 	let n = 0;
-	const run = (thread: string, req: number, start: number | null, done: number | null) => db.run("insert into orchestration_v2_projection_runs values (?,?,?,?,?,?,?)", [`r${++n}`, thread, n, done ? "completed" : start ? "running" : "queued", iso(at(req)), done ? iso(at(done)) : null, JSON.stringify({ startedAt: start === null ? null : iso(at(start)) })]);
+	const run = (thread: string, req: number, start: number | null, done: number | null) =>
+		db.run("insert into orchestration_v2_projection_runs values (?,?,?,?,?,?,?)", [
+			`r${++n}`,
+			thread,
+			n,
+			done ? "completed" : start ? "running" : "queued",
+			iso(at(req)),
+			done ? iso(at(done)) : null,
+			JSON.stringify({ startedAt: start === null ? null : iso(at(start)) }),
+		]);
 	return { path, db, run };
 }
 
@@ -89,12 +129,12 @@ describe("analyze over a small fixture", () => {
 	];
 	test("waits, turn lengths, the worst waits, and what could not be measured", () => {
 		const { path, run, db } = fixtureDb();
-		run("steward", 99.5, 160, 175);  // wake A's run: 60.5s in T3's queue, then a 15s turn
+		run("steward", 99.5, 160, 175); // wake A's run: 60.5s in T3's queue, then a 15s turn
 		run("steward", 199.4, 204.4, 220); // wake B's
-		run("steward", 299, 330, 340);   // wake C's
+		run("steward", 299, 330, 340); // wake C's
 		run("steward", 399, 399.5, 410); // the answer's
-		run("steward", 700, 701, 731);   // a run nothing in the log woke: only its 30s turn counts
-		run("other", 200, 201, 202);     // another thread's run: ignored
+		run("steward", 700, 701, 731); // a run nothing in the log woke: only its 30s turn counts
+		run("other", 200, 201, 202); // another thread's run: ignored
 		db.close();
 		const runs = readRuns(path, "steward", at(-600));
 		expect(runs).toHaveLength(5);
@@ -108,7 +148,11 @@ describe("analyze over a small fixture", () => {
 		expect(r.t3Wait).toEqual({ n: 4, p50: 5_000, p90: 60_500, max: 60_500 });
 		// Turns: 15, 15.6, 10, 10.5 and 30 seconds across the Steward's five runs.
 		expect(r.turns).toEqual({ n: 5, p50: 15_000, p90: 30_000, max: 30_000 });
-		expect(r.worst.map((w) => [w.deliveryId, w.kind, w.thread, w.waitMs])).toEqual([["A:ended:1:2", "turn_ended", "A", 100_000], [`C:ended:x:${at(250)}`, "turn_ended", "C", 80_000], ["B:input:req:3", "needs_input", "B", 5_400]]);
+		expect(r.worst.map((w) => [w.deliveryId, w.kind, w.thread, w.waitMs])).toEqual([
+			["A:ended:1:2", "turn_ended", "A", 100_000],
+			[`C:ended:x:${at(250)}`, "turn_ended", "C", 80_000],
+			["B:input:req:3", "needs_input", "B", 5_400],
+		]);
 		const text = format(r);
 		expect(text).toContain("5 worst waits");
 		expect(text).toContain("no creation time in the log");
@@ -118,7 +162,13 @@ describe("analyze over a small fixture", () => {
 	});
 
 	test("only the five worst are listed, worst first, and an empty window says so instead of inventing numbers", () => {
-		const many = Array.from({ length: 8 }, (_, i) => delivered(100 + i * 100, `T${i}:ended:x:1`, { queuedAt: at(100 + i * 100 - 1 - i), kind: "turn_ended", thread: `T${i}` }));
+		const many = Array.from({ length: 8 }, (_, i) =>
+			delivered(100 + i * 100, `T${i}:ended:x:1`, {
+				queuedAt: at(100 + i * 100 - 1 - i),
+				kind: "turn_ended",
+				thread: `T${i}`,
+			}),
+		);
 		const { path, run, db } = fixtureDb();
 		for (let i = 0; i < 8; i++) run("steward", 100 + i * 100 - 1, 100 + i * 100 + 5, 100 + i * 100 + 50);
 		db.close();
@@ -136,7 +186,12 @@ describe("analyze over a small fixture", () => {
 		const { path, run, db } = fixtureDb();
 		run("steward", 99, null, null);
 		db.close();
-		const r = analyze(wakesFrom([delivered(100, "A:ended:1:2", { queuedAt: at(60), kind: "turn_ended", thread: "A" })], 0), readRuns(path, "steward", at(0)), 24, at(600));
+		const r = analyze(
+			wakesFrom([delivered(100, "A:ended:1:2", { queuedAt: at(60), kind: "turn_ended", thread: "A" })], 0),
+			readRuns(path, "steward", at(0)),
+			24,
+			at(600),
+		);
 		expect(r.totalWait).toBeUndefined();
 		expect(r.wakes.notStarted).toBe(1);
 		expect(format(r)).toContain("had not started yet");

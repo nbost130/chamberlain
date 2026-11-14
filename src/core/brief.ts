@@ -13,7 +13,8 @@
  * the effective uid and writable by no group or other user, and neither may be a symlink.
  */
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from "node:fs";
-import { mandateLine, readAfk, type Afk } from "./afk.ts";
+import { readAfk, type Afk } from "./afk.ts";
+import { awayModeLine } from "./messages.ts";
 import type { BriefNotes } from "./adapter.ts";
 import { CONF, STATE, Principal, principal, principalPoss, selfCommand, type CommandName } from "./config.ts";
 import { startup } from "./migrate.ts";
@@ -61,26 +62,63 @@ const fragmentText = (t: string) => t.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/
  *     naming it and the error; an entry that cannot be examined (a 0600 directory: listable, not searchable) is skipped the same way.
  * No `brief.d/` is no fragments. `o.euid` is a seam for tests.
  */
-export function loadBriefFragments(conf: string, warn: (msg: string) => void = (m) => console.error(m), o: { euid?: number } = {}): string[] {
+export function loadBriefFragments(
+	conf: string,
+	warn: (msg: string) => void = (m) => console.error(m),
+	o: { euid?: number } = {},
+): string[] {
 	const dir = `${conf}/brief.d`;
 	const euid = "euid" in o ? o.euid : process.geteuid?.();
 	let dst;
-	try { dst = lstatSync(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; warn(`brief.ts: ignoring ${dir}: ${(e as Error).message}`); return []; }
+	try {
+		dst = lstatSync(dir);
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+		warn(`brief.ts: ignoring ${dir}: ${(e as Error).message}`);
+		return [];
+	}
 	const bad = authorityProblem(dst, "directory", euid);
-	if (bad) { warn(`brief.ts: ignoring every brief fragment: ${dir} is refused: ${bad}`); return []; }
+	if (bad) {
+		warn(`brief.ts: ignoring every brief fragment: ${dir} is refused: ${bad}`);
+		return [];
+	}
 	let listed: string[];
-	try { listed = readdirSync(dir); } catch (e) { warn(`brief.ts: ignoring every brief fragment: ${dir} cannot be read: ${(e as Error).message}`); return []; }
+	try {
+		listed = readdirSync(dir);
+	} catch (e) {
+		warn(`brief.ts: ignoring every brief fragment: ${dir} cannot be read: ${(e as Error).message}`);
+		return [];
+	}
 	const names = listed.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 	const out: string[] = [];
 	for (const name of names) {
 		const path = `${dir}/${name}`;
 		let st;
-		try { st = lstatSync(path); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
-		if (st.isSymbolicLink()) { warn(`brief.ts: ignoring brief fragment ${path}: a symlink is never followed`); continue; }
-		if (!st.isFile()) { warn(`brief.ts: ignoring ${path}: not a regular file`); continue; }
-		if (!name.endsWith(".md")) { warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`); continue; }
+		try {
+			st = lstatSync(path);
+		} catch (e) {
+			warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`);
+			continue;
+		}
+		if (st.isSymbolicLink()) {
+			warn(`brief.ts: ignoring brief fragment ${path}: a symlink is never followed`);
+			continue;
+		}
+		if (!st.isFile()) {
+			warn(`brief.ts: ignoring ${path}: not a regular file`);
+			continue;
+		}
+		if (!name.endsWith(".md")) {
+			warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`);
+			continue;
+		}
 		let text: string;
-		try { text = readAuthority(path, euid); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
+		try {
+			text = readAuthority(path, euid);
+		} catch (e) {
+			warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`);
+			continue;
+		}
 		const body = fragmentText(text);
 		if (body.trim()) out.push(body);
 	}
@@ -97,7 +135,9 @@ function readAuthority(path: string, euid: number | undefined): string {
 		const bad = authorityProblem(fstatSync(fd), "file", euid);
 		if (bad) throw Error(bad);
 		return readFileSync(fd, "utf8");
-	} finally { closeSync(fd); }
+	} finally {
+		closeSync(fd);
+	}
 }
 
 /** Pure: `brief` with the fragments appended, one blank line apart, before its `## Open work at hand-over` section when it has one. */
@@ -116,7 +156,7 @@ You are not live yet. The daemon still wakes the previous Steward, and that thre
 
 - A wake is real work for you only if its thread title starts with \`SANDBOX\`. Handle those exactly as you would a live wake, end to end.
 - Any other wake: touch nothing, reply one line saying you ignored it, and stop.
-- Do not call \`AskUserQuestion\` in test mode, because the previous Steward can see and answer your cards. Say what you would ask in your reply instead.
+- Do not call \`AskUserQuestion\` in test mode, because the previous Steward can see and answer your question cards. Say what you would ask in your reply instead.
 - You go live only when ${who} or the setup thread tells you so, by message in this thread.`;
 
 const CONF_NAME = "~/.config/chamberlain";
@@ -138,7 +178,10 @@ function genericBrief(i: BriefInput): string {
 	const state = i.state ?? STATE;
 	const here = i.environments.find((e) => !e.environmentId);
 	const reach = i.environments
-		.map((e) => `- ${e.name}: ${e.environmentId ? `pass \`environmentId: ${e.environmentId}\`` : "this server, no environmentId"}${e.mayBeOffline ? " (a laptop: offline when the lid is shut, which is normal)" : ""}`)
+		.map(
+			(e) =>
+				`- ${e.name}: ${e.environmentId ? `pass \`environmentId: ${e.environmentId}\`` : "this server, no environmentId"}${e.mayBeOffline ? " (a laptop: offline when the lid is shut, which is normal)" : ""}`,
+		)
 		.join("\n");
 	return [
 		`# You are the Steward
@@ -154,7 +197,7 @@ The Chamberlain daemon spends no tokens. It watches every ${notes.server ?? "ser
 - Whatever waits on ${who} goes onto their queue first, with ask (below), whether they are away or not and whether you are mid-sweep or not; add \`"urgent": false\` when it can wait (it is listed below the urgent ones and sends no notification). Only then is it held, with \`--item <that Q-id>\`: \`afk hold\` with no \`--item\`, or with an item that is not on the queue or is already answered, is refused. ask and \`afk hold\` also look up what ${who} already settled (answered questions, rulings, the decision log) and refuse a match with exit 2, printing the answer and what it matched on: act on that. Only if it is truly a different question, add \`"notSettled": "<why>"\` to the ask or \`--not-settled "<why>"\` to the hold.
 - A hold is a real wait on ${who}: a decision, secret, deploy or approval only they can give, that you did not answer. An FYI is never a hold, and \`afk hold\` refuses one: say it in the thread or the return brief, or log it with decided, and never put it in the ledger. Hold it with \`${cmd("afk")} hold "<thread>" "<what waits>" "<safe default taken>" "<threadId, when it is an open card>" --item <Q-id>\` plus any other flags the daemon can check: \`--pr <owner/repo#n>\`, \`--issue <owner/repo#n>\`, \`--branch <owner/repo:branch>\`, \`--run <run id>\`, \`--thread <threadId> --server <name>\` (name the server the thread lives on, or a thread that has vanished is never treated as gone). Give every flag that applies. The daemon closes a hold on its own: one with \`--item\` when that item is answered on any path, one with \`--pr\`, \`--issue\`, \`--branch\` or a card thread when its PR merges or closes, its issue closes, its branch is deleted, or its thread settles or is archived. It never reads the prose: an item ID written in the text closes nothing. A new fact about a wait is a note on the same hold, never a second hold: \`${cmd("afk")} note <id> "<text>"\`.
 - A standing rule ${who} states in their own words, as a rule, in chat here is written the moment they give it, in force: \`${cmd("ruling")} --stated-in-chat "<their exact words>" "<what it decides>"\`.
-- Anything else you would make a ruling, such as a card answer or your reading of what they want, is only a proposal: \`${cmd("ruling")} "<their words>" "<what it decides>"\` (add \`--expires <ISO date>\` when the ruling is about one run, launch or week, so it drops out by itself; \`--supersedes R32,R16\` when it replaces older rulings; recording the same words twice adds nothing). A proposal is not in force and you do not act on it as a ruling. It waits for ${who} on the rulings page, and only their Confirm there puts it in force. Better still, put the proposed ruling on the question itself (\`proposedRuling\` in ask), so they can save it as they answer.
+- Anything else you would make a ruling, such as a question-card answer or your reading of what they want, is only a proposal: \`${cmd("ruling")} "<their words>" "<what it decides>"\` (add \`--expires <ISO date>\` when the ruling is about one run, launch or week, so it drops out by itself; \`--supersedes R32,R16\` when it replaces older rulings; recording the same words twice adds nothing). A proposal is not in force and you do not act on it as a ruling. It waits for ${who} on the rulings page, and only their Confirm there puts it in force. Better still, put the proposed ruling on the question itself (\`proposedRuling\` in ask), so they can save it as they answer.
 - Your reply is short. When a wake needs nothing, one line.
 
 ## Limits that stay rigid
@@ -166,7 +209,7 @@ The Chamberlain daemon spends no tokens. It watches every ${notes.server ?? "ser
 - Your context is the budget. The wake carries the question and the last message, so act on those when they are enough. Otherwise ${notes.readThread ?? "read the end of the thread with your own tools"}. Never read the rights or rulings files on a wake: this hand-off has them.${notes.contextExtras ? ` ${notes.contextExtras}` : ""}
 - Don't read long logs yourself (CI run logs, check results, the queue and daemon logs). Hand them to a cheap subagent with the run, PR or path and your question, and read its one-line-per-failure report instead.
 - Reach ${who} through the decision queue, one question per call: \`${cmd("ask")} '<json>'\` with \`{kind, title, context, options: [{label, detail, route?, relay?}], recommended, proposedRuling?, proposedExpires?, evidence?: [{type: "image"|"video"|"link", path|url, caption}], thread, server, threadId, blocks?, tag?, secret?, urgent?, notSettled?}\`. Kind is \`only-you\` (the ASK list: deploys, secrets, deletes, spend, gates only they can clear), \`product\` (a product or design call, with screenshots or a recording as evidence), \`ruling\` (a question whose answer should stand for later ones) or \`idea\` (a lead's suggestion). \`recommended\` counts from 0, so 0 is the first option; ask prints the label it preselected, so check it. It puts the item on ${poss} queue page and also shows it in the pinned Decisions thread (id in \`${CONF_NAME}/decisions-thread\`), which never holds a card. Never send a question to any thread yourself. Away or not, you carry on working. Hold it as well, for the return brief, with \`afk hold ... --item <item ID>\` (a hold is never filed without its item), and the daemon closes that hold when they answer, on any path: the page, a batch, a direct relay or the card in the backend. Their answer reaches you once, as a \`[chamberlain] answer:\` wake: from the page it names the item ID, their choice, their note and any ruling they saved. A second answer wake for the same item ID is a repeat, so ignore it. Choose the route per option as you write the question: an option with \`route: "thread"\` and \`relay\` (the exact instruction the thread gets) goes straight to \`threadId\` when they pick it with no note, with no wake for you, only a \`relayed-to-thread\` event in the event log. Use it for a simple step the thread can carry out alone, such as a product or design pick; keep the default \`"steward"\` for anything complex or needing your oversight. Any note from them, a steward option, or a failed direct send comes to you as an answer wake that says why. Ask only what needs them. Write \`context\` as a few short \`- \` lines, one fact each, not a paragraph.
-- Never call \`AskUserQuestion\` in this thread: a card here stops you, and every wake queues behind it until ${who} answers. Never answer a card meant for them, in any thread: that answer speaks for them${notes.cardGuard ?? "."}
+- Never call \`AskUserQuestion\` in this thread: a question card here stops you, and every wake queues behind it until ${who} answers. Never answer a question card meant for them, in any thread: that answer speaks for them${notes.cardGuard ?? "."}
 
 ## Reach
 
@@ -179,8 +222,12 @@ ${reach}${notes.reachOutro ? `\n\n${notes.reachOutro}` : ""}`,
 You are one long-lived thread, and ${who} talks to you here. When your context grows too large it is compacted into a summary, in this same thread. A summary loses detail, so anything that must survive goes in the ledgers the moment it happens: decisions, holds and rulings. Every wake repeats your rights and rulings, and this hand-off stays at \`${state}/steward-brief.md\` if you need it again.`,
 		`## Decision rights (${poss} standing rules, verbatim)\n\n${i.rights.trim() || "None written. Hold anything you are unsure of and ask."}`,
 		`## Standing rulings in force (their words; cite each by its ID)\n\n${i.rulings.trim() || "None recorded."}`,
-		i.operatingRules.trim() ? `## Operating rules (copied in by the hand-off builder; the source file stays canonical)\n\n${i.operatingRules.trim()}` : "",
-		i.afk ? `## Away record\n\n${mandateLine(i.afk)}` : `## Away record\n\n${i.principal ?? Principal()} is not marked away.`,
+		i.operatingRules.trim()
+			? `## Operating rules (copied in by the hand-off builder; the source file stays canonical)\n\n${i.operatingRules.trim()}`
+			: "",
+		i.afk
+			? `## Away record\n\n${awayModeLine(i.afk)}`
+			: `## Away record\n\n${i.principal ?? Principal()} is not marked away.`,
 		`## The ledgers
 
 The ledgers stay in the database, so this hand-off stays small. Read them when a wake or ${who} needs them, never all at once.
@@ -193,7 +240,11 @@ The ledgers stay in the database, so this hand-off stays small. Read them when a
 
 - Start every message you send to a thread with the word \`Steward\`. That signature is how the daemon knows the thread answers to you, and it wakes you when that thread finishes a turn. Up to three such wakes follow each message.
 - Whether or not ${who} is away, the daemon runs the routine sweep checks itself, every two hours, and wakes you only with what they find. A full sweep comes every six hours or whenever a check could not run. You create no sweep task.`,
-		i.predecessor ? `## Predecessor\n\nThe previous operator is thread \`${i.predecessor}\`. Do not read its history unless a specific question needs it, and then read narrowly.` : "",
+		i.predecessor
+			? `## Predecessor\n\nThe previous operator is thread \`${i.predecessor}\`. Do not read its history unless a specific question needs it, and then read narrowly.`
+			: "",
 		here ? "" : "⚠️ No environment in servers.json is marked as this server (one with no environmentId).",
-	].filter(Boolean).join("\n\n");
+	]
+		.filter(Boolean)
+		.join("\n\n");
 }

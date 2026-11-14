@@ -4,13 +4,15 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
+# No job inherits a permission it does not name.
+permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -22,18 +24,20 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   # Runs only on the push that creates a release (the merge of release-please's PR): builds the four standalone binaries from the
-  # release's tag, proves the linux-x64 one from an empty directory, attaches them and SHA256SUMS to the release, then updates the tap.
+  # release's tag, proves the linux-x64 one from an empty directory, and attaches them and SHA256SUMS to the release.
   binaries:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # to attach the binaries to the release
     env:
       TAG: ${{ needs.release-please.outputs.tag_name }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
@@ -48,29 +52,43 @@ jobs:
       - name: Render the Homebrew formula
         run: bun scripts/render-formula.ts --sums dist/SHA256SUMS --out dist/chamberlain.rb
       - name: Attach the binaries to the release
-        run: gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
-      - name: Is the tap token set?
-        id: tap
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Homebrew tap not updated::The HOMEBREW_TAP_TOKEN secret is not set, so $TAG is released without updating nbost130/homebrew-tap. Create the repo and the secret, then re-run this job."
-          fi
-      - uses: actions/checkout@v4
-        if: ${{ steps.tap.outputs.enabled == 'true' }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formula
+          path: dist/chamberlain.rb
+          retention-days: 1
+
+  # Updates the Homebrew tap. Its own job, so the tap token reaches nothing but the checkout of the tap, and a missing or revoked token
+  # leaves the release as it is, with a notice.
+  tap:
+    needs: [release-please, binaries]
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: formula
+          path: formula
+      - id: checkout
+        continue-on-error: true
+        uses: actions/checkout@v4
         with:
           repository: nbost130/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
+      - name: Say that the tap was not updated
+        if: ${{ steps.checkout.outcome != 'success' }}
+        run: echo "::notice title=Homebrew tap not updated::The tap could not be checked out, so $TAG is released without updating nbost130/homebrew-tap. Create the repo and set the HOMEBREW_TAP_TOKEN secret, then re-run this job."
       - name: Push the formula to the tap
-        if: ${{ steps.tap.outputs.enabled == 'true' }}
+        if: ${{ steps.checkout.outcome == 'success' }}
         run: |
           mkdir -p tap/Formula
-          cp dist/chamberlain.rb tap/Formula/chamberlain.rb
+          cp formula/chamberlain.rb tap/Formula/chamberlain.rb
           cd tap
           git add Formula/chamberlain.rb
           if git diff --cached --quiet; then

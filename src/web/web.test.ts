@@ -1,11 +1,29 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { heldOpen } from "../core/afk.ts";
 import { holdCard, reconcileCardHolds } from "../core/card-hold.ts";
 import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import { askQuestion, claimWake, getQuestion, pageClaim, questionStates, recordAnswerDelivered, type Question } from "../core/questions.ts";
+import {
+	askQuestion,
+	claimWake,
+	getQuestion,
+	pageClaim,
+	questionStates,
+	recordAnswerDelivered,
+	type Question,
+} from "../core/questions.ts";
 import { addInForce, propose, readRulings } from "../core/rulings.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
@@ -18,11 +36,23 @@ import { resolveEvidence } from "./evidence.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 const item = (id: string, over: Partial<Question> = {}): Question => ({
-	id, kind: "product", title: `Question ${id}`, context: "ctx", options: [{ label: "A · One" }, { label: "B · Two" }], recommended: 0,
-	proposedRuling: "Lead with a photo", thread: "Mobile app", server: "main", threadId: "thread-1", createdAt: "2026-11-09T10:00:00.000Z", ...over,
+	id,
+	kind: "product",
+	title: `Question ${id}`,
+	context: "ctx",
+	options: [{ label: "A · One" }, { label: "B · Two" }],
+	recommended: 0,
+	proposedRuling: "Lead with a photo",
+	thread: "Mobile app",
+	server: "main",
+	threadId: "thread-1",
+	createdAt: "2026-11-09T10:00:00.000Z",
+	...over,
 });
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
@@ -38,17 +68,53 @@ function setup(opts: { status?: (n: number) => number; root?: string; relay?: bo
 	const store = openStore(dbPath(state));
 	if (!opts.root) {
 		dirs.push(root);
-		addInForce(store, "you can handle all merge conflicts", "Merge conflicts are the Steward's.", "chat", "stated in chat");
+		addInForce(
+			store,
+			"you can handle all merge conflicts",
+			"Merge conflicts are the Steward's.",
+			"chat",
+			"stated in chat",
+		);
 	}
 	const posts: { deliveryId: string; message: string }[] = [];
 	let n = 0;
-	const { drain } = testRelay(store, fetchWake(() => "http://webhook.test/wake", (async (_u: string, init: RequestInit) => { posts.push(JSON.parse(String(init.body))); return new Response(null, { status: opts.status ? opts.status(++n) : 202 }); }) as unknown as typeof fetch));
-	const page = createApp({ store, state, log: () => {}, hosts: [HOST], staticDir: `${root}/static`, ...(opts.now ? { now: opts.now } : {}) });
-	const app = { ...page, idle: async () => { await page.idle(); if (opts.relay !== false) await drain(); } };
+	const { drain } = testRelay(
+		store,
+		fetchWake(() => "http://webhook.test/wake", (async (_u: string, init: RequestInit) => {
+			posts.push(JSON.parse(String(init.body)));
+			return new Response(null, { status: opts.status ? opts.status(++n) : 202 });
+		}) as unknown as typeof fetch),
+	);
+	const page = createApp({
+		store,
+		state,
+		log: () => {},
+		hosts: [HOST],
+		staticDir: `${root}/static`,
+		...(opts.now ? { now: opts.now } : {}),
+	});
+	const app = {
+		...page,
+		idle: async () => {
+			await page.idle();
+			if (opts.relay !== false) await drain();
+		},
+	};
 	/** server.ts's heartbeat (the app's recovery), then the daemon's relay. */
-	const tick = async () => { await page.recover(); await drain(); };
-	const post = (path: string, body: unknown, headers: Record<string, string> = {}) => app.fetch(new Request(`http://${HOST}${path}`, { method: "POST", headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1", ...headers }, body: JSON.stringify(body) }));
-	const get = (path: string, headers: Record<string, string> = {}) => app.fetch(new Request(`http://${HOST}${path}`, { headers: { host: HOST, ...headers } }));
+	const tick = async () => {
+		await page.recover();
+		await drain();
+	};
+	const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+		app.fetch(
+			new Request(`http://${HOST}${path}`, {
+				method: "POST",
+				headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1", ...headers },
+				body: JSON.stringify(body),
+			}),
+		);
+	const get = (path: string, headers: Record<string, string> = {}) =>
+		app.fetch(new Request(`http://${HOST}${path}`, { headers: { host: HOST, ...headers } }));
 	const add = (i: Question) => askQuestion(store, i);
 	// Only wakes the webhook accepted count; the T3 relay sees a 503 as not received.
 	const delivered = () => posts.filter((_, k) => (opts.status ? opts.status(k + 1) : 202) < 300);
@@ -61,7 +127,8 @@ describe("answering an item", () => {
 		expect((await (await s.get("/api/queue")).json()).health).toBeNull();
 		s.store.state.set(HEALTH_KEY, { verdict: "WATCH", at: "2026-11-10T14:00:00Z", report: "context near limit" });
 		const data = await (await s.get("/api/queue", { origin: "null" })).json();
-		expect(data.health.verdict).toBe("WATCH"); expect(data.items).toEqual([]);
+		expect(data.health.verdict).toBe("WATCH");
+		expect(data.items).toEqual([]);
 	});
 	test("produces exactly one answer wake, and a second answer is refused", async () => {
 		const s = setup();
@@ -83,7 +150,10 @@ describe("answering an item", () => {
 	test("two answers sent at once still give one wake", async () => {
 		const s = setup();
 		s.add(item("Q-abcd"));
-		const rs = await Promise.all([s.post("/api/items/Q-abcd/answer", { choice: 0 }), s.post("/api/items/Q-abcd/answer", { choice: 1 })]);
+		const rs = await Promise.all([
+			s.post("/api/items/Q-abcd/answer", { choice: 0 }),
+			s.post("/api/items/Q-abcd/answer", { choice: 1 }),
+		]);
 		await s.app.idle();
 		expect(rs.map((r) => r.status).sort()).toEqual([200, 409]);
 		expect(s.posts).toHaveLength(1);
@@ -152,7 +222,13 @@ describe("answering an item", () => {
 		const first = setup();
 		first.add(item("Q-abcd"));
 		// A claim alone, as an older page left it: the claim carries the answer and its wake, and no outbox row exists.
-		const a = { choice: 0, label: "A · One", by: "page" as const, t: new Date().toISOString(), deliveryId: "answer:item:Q-abcd" };
+		const a = {
+			choice: 0,
+			label: "A · One",
+			by: "page" as const,
+			t: new Date().toISOString(),
+			deliveryId: "answer:item:Q-abcd",
+		};
 		claimWake(first.store, pageClaim(item("Q-abcd"), a));
 		expect(getQuestion(first.store, "Q-abcd")).toMatchObject({ status: "answered", delivered: false });
 		const second = setup({ root: first.root });
@@ -164,9 +240,16 @@ describe("answering an item", () => {
 		// The page's record is derived from the claim: the item reads answered and delivered.
 		expect(getQuestion(first.store, "Q-abcd")).toMatchObject({ status: "answered", delivered: true });
 	});
-	test("(4) a card pointer's \"leave it\" answer is refused: the hold stays open while the card waits, and closes only when the card does", async () => {
+	test('(4) a card pointer\'s "leave it" answer is refused: the hold stays open while the card waits, and closes only when the card does', async () => {
 		const s = setup();
-		const { item: id } = holdCard(s.store, { thread: "Release", server: "main", threadId: "th-1", requestId: "a1", type: "approval_request", label: "bun run deploy" });
+		const { item: id } = holdCard(s.store, {
+			thread: "Release",
+			server: "main",
+			threadId: "th-1",
+			requestId: "a1",
+			type: "approval_request",
+			label: "bun run deploy",
+		});
 		const q = getQuestion(s.store, id)!;
 		// No option says the card was handled.
 		expect(q.options.map((o) => o.label).join(" | ")).not.toMatch(/answered|done|handled|approved/i);
@@ -178,25 +261,71 @@ describe("answering an item", () => {
 		expect(s.posts).toHaveLength(0);
 		expect(s.store.claims.list("queue")).toEqual([]);
 		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
-		expect(await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set(["a1"]), resolved: new Set<string>() }))).toEqual({ closed: [], verified: [expect.objectContaining({ requestId: "a1" })], unverified: [], failed: [] });
+		expect(
+			await reconcileCardHolds(s.store, async () => ({
+				ok: true as const,
+				waiting: new Set(["a1"]),
+				resolved: new Set<string>(),
+			})),
+		).toEqual({ closed: [], verified: [expect.objectContaining({ requestId: "a1" })], unverified: [], failed: [] });
 		expect(heldOpen(s.store)).toHaveLength(1);
 		expect(getQuestion(s.store, id)!.status).toBe("open");
 		// The card resolves: now, and only now, the question and the hold close.
-		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set<string>(), resolved: new Set(["a1"]) }))).closed).toHaveLength(1);
+		expect(
+			(
+				await reconcileCardHolds(s.store, async () => ({
+					ok: true as const,
+					waiting: new Set<string>(),
+					resolved: new Set(["a1"]),
+				}))
+			).closed,
+		).toHaveLength(1);
 		expect(heldOpen(s.store)).toEqual([]);
 		expect(getQuestion(s.store, id)!.status).toBe("answered-on-card");
 	});
 	test("(4) a pointer answered before this fix (a claim already on it) does not close its hold while the card waits", async () => {
 		const s = setup();
-		const { item: id } = holdCard(s.store, { thread: "Release", server: "main", threadId: "th-1", requestId: "a1", type: "approval_request", label: "deploy" });
+		const { item: id } = holdCard(s.store, {
+			thread: "Release",
+			server: "main",
+			threadId: "th-1",
+			requestId: "a1",
+			type: "approval_request",
+			label: "deploy",
+		});
 		const q = getQuestion(s.store, id)!;
-		claimWake(s.store, pageClaim(q, { choice: 1, label: "Leave it for now", by: "page", t: new Date().toISOString(), deliveryId: `answer:item:${id}` }));
+		claimWake(
+			s.store,
+			pageClaim(q, {
+				choice: 1,
+				label: "Leave it for now",
+				by: "page",
+				t: new Date().toISOString(),
+				deliveryId: `answer:item:${id}`,
+			}),
+		);
 		expect(getQuestion(s.store, id)!.status).toBe("answered");
 		expect(reconcileItemHolds(s.store)).toEqual({ closed: 0 });
 		expect(heldOpen(s.store)).toHaveLength(1);
-		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set(["a1"]), resolved: new Set<string>() }))).closed).toEqual([]);
+		expect(
+			(
+				await reconcileCardHolds(s.store, async () => ({
+					ok: true as const,
+					waiting: new Set(["a1"]),
+					resolved: new Set<string>(),
+				}))
+			).closed,
+		).toEqual([]);
 		expect(heldOpen(s.store)).toHaveLength(1);
-		expect((await reconcileCardHolds(s.store, async () => ({ ok: true as const, waiting: new Set<string>(), resolved: new Set(["a1"]) }))).closed).toHaveLength(1);
+		expect(
+			(
+				await reconcileCardHolds(s.store, async () => ({
+					ok: true as const,
+					waiting: new Set<string>(),
+					resolved: new Set(["a1"]),
+				}))
+			).closed,
+		).toHaveLength(1);
 		expect(heldOpen(s.store)).toEqual([]);
 	});
 	test("a secret item is never answered on the page", async () => {
@@ -215,12 +344,23 @@ describe("schema versions at server start", () => {
 	const start = (setupFiles: (conf: string, state: string) => void) => {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-srv-`);
 		dirs.push(root);
-		const conf = `${root}/conf`, state = `${root}/state`;
-		mkdirSync(conf, { mode: 0o700 }); mkdirSync(state);
+		const conf = `${root}/conf`,
+			state = `${root}/state`;
+		mkdirSync(conf, { mode: 0o700 });
+		mkdirSync(state);
 		const port = 40000 + Math.floor(Math.random() * 20000);
 		writeFileSync(`${conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port }), { mode: 0o600 });
 		setupFiles(conf, state);
-		const p = Bun.spawn([process.execPath, new URL("./server.ts", import.meta.url).pathname, "--test"], { env: { ...process.env, CHAMBERLAIN_CONF: conf, CHAMBERLAIN_STATE: state, CHAMBERLAIN_T3_STATE_DB: "/nonexistent/statev2.sqlite" }, stdout: "pipe", stderr: "pipe" });
+		const p = Bun.spawn([process.execPath, new URL("./server.ts", import.meta.url).pathname, "--test"], {
+			env: {
+				...process.env,
+				CHAMBERLAIN_CONF: conf,
+				CHAMBERLAIN_STATE: state,
+				CHAMBERLAIN_T3_STATE_DB: "/nonexistent/statev2.sqlite",
+			},
+			stdout: "pipe",
+			stderr: "pipe",
+		});
 		return { p, conf, state };
 	};
 	test("a new install creates its database and starts", async () => {
@@ -229,13 +369,22 @@ describe("schema versions at server start", () => {
 			const reader = p.stdout.getReader();
 			let out = "";
 			const deadline = Date.now() + 10_000;
-			while (!out.includes("decision queue on") && Date.now() < deadline) { const { value, done } = await reader.read(); if (done) break; out += new TextDecoder().decode(value); }
+			while (!out.includes("decision queue on") && Date.now() < deadline) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				out += new TextDecoder().decode(value);
+			}
 			expect(out).toContain("decision queue on");
 			expect(existsSync(dbPath(state))).toBe(true);
-		} finally { p.kill(); await p.exited; }
+		} finally {
+			p.kill();
+			await p.exited;
+		}
 	});
 	test("a config file from a newer Chamberlain stops the server with exit code 3 and a clear reason", async () => {
-		const { p } = start((conf) => writeFileSync(`${conf}/settings.json`, JSON.stringify({ schemaVersion: 9 }), { mode: 0o600 }));
+		const { p } = start((conf) =>
+			writeFileSync(`${conf}/settings.json`, JSON.stringify({ schemaVersion: 9 }), { mode: 0o600 }),
+		);
 		const err = await new Response(p.stderr).text();
 		expect(await p.exited).toBe(3);
 		expect(err).toContain("settings.json has schemaVersion 9");
@@ -269,7 +418,11 @@ describe("rulings from the page", () => {
 	test("a checked box creates the ruling in force with confirmed:true, and the wake says so", async () => {
 		const s = setup();
 		s.add(item("Q-abcd"));
-		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true, rulingWording: "Onboarding screens lead with a photo" });
+		const r = await s.post("/api/items/Q-abcd/answer", {
+			choice: 0,
+			saveRuling: true,
+			rulingWording: "Onboarding screens lead with a photo",
+		});
 		const { ruling } = (await r.json()) as { ruling: string };
 		await s.app.idle();
 		const saved = readRulings(s.store).find((x) => x.id === ruling)!;
@@ -294,9 +447,16 @@ describe("rulings from the page", () => {
 		expect((await s.post(`/api/rulings/${p.id}/edit`, { decides: "gates like this" })).status).toBe(200);
 		expect(readRulings(s.store).find((x) => x.id === p.id)!.status).toBe("proposed");
 		expect((await s.post(`/api/rulings/${p.id}/confirm`, {})).status).toBe(200);
-		expect(readRulings(s.store).find((x) => x.id === p.id)).toMatchObject({ status: "in-force", confirmed: true, decides: "gates like this" });
+		expect(readRulings(s.store).find((x) => x.id === p.id)).toMatchObject({
+			status: "in-force",
+			confirmed: true,
+			decides: "gates like this",
+		});
 		expect((await s.post("/api/rulings/R1/once", {})).status).toBe(200);
-		expect(readRulings(s.store).find((x) => x.id === "R1")).toMatchObject({ status: "retired", retiredHow: "only this once" });
+		expect(readRulings(s.store).find((x) => x.id === "R1")).toMatchObject({
+			status: "retired",
+			retiredHow: "only this once",
+		});
 		const view = (await (await s.get("/api/rulings")).json()) as { rulings: { id: string }[] };
 		expect(view.rulings.map((x) => x.id)).toContain("R1");
 	});
@@ -304,11 +464,17 @@ describe("rulings from the page", () => {
 		let t = Date.parse("2026-11-13T12:00:00Z");
 		const s = setup({ now: () => t });
 		s.add(item("Q-abcd", { proposedExpires: "2026-11-20" }));
-		const { ruling } = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		const { ruling } = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as {
+			ruling: string;
+		};
 		await s.app.idle();
-		expect(readRulings(s.store).find((x) => x.id === ruling)).toMatchObject({ status: "in-force", expires: "2026-11-20" });
+		expect(readRulings(s.store).find((x) => x.id === ruling)).toMatchObject({
+			status: "in-force",
+			expires: "2026-11-20",
+		});
 		const inForceCount = async () => ((await (await s.get("/api/queue")).json()) as { inForce: number }).inForce;
-		const view = async () => ((await (await s.get("/api/rulings")).json()) as { rulings: { id: string; expired: boolean }[] }).rulings;
+		const view = async () =>
+			((await (await s.get("/api/rulings")).json()) as { rulings: { id: string; expired: boolean }[] }).rulings;
 		expect(await inForceCount()).toBe(2);
 		expect((await view()).find((r) => r.id === ruling)!.expired).toBe(false);
 		t = Date.parse("2026-11-21T00:00:00Z");
@@ -340,7 +506,9 @@ describe("rulings from the page", () => {
 		const before = readRulings(s.store).length;
 		const r = await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true });
 		expect(r.status).toBe(400);
-		expect(((await r.json()) as { error: string }).error).toContain('"2027-02-30T09:00:00Z" is not a real date and time');
+		expect(((await r.json()) as { error: string }).error).toContain(
+			'"2027-02-30T09:00:00Z" is not a real date and time',
+		);
 		expect(readRulings(s.store)).toHaveLength(before);
 		expect(getQuestion(s.store, "Q-abcd")!.status).toBe("open");
 	});
@@ -348,8 +516,12 @@ describe("rulings from the page", () => {
 		const s = setup();
 		s.add(item("Q-abcd"));
 		s.add(item("Q-efgh"));
-		const a = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
-		const b = (await (await s.post("/api/items/Q-efgh/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		const a = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as {
+			ruling: string;
+		};
+		const b = (await (await s.post("/api/items/Q-efgh/answer", { choice: 0, saveRuling: true })).json()) as {
+			ruling: string;
+		};
 		await s.app.idle();
 		expect(b.ruling).toBe(a.ruling);
 		expect(readRulings(s.store).filter((x) => x.decides === "Lead with a photo")).toHaveLength(1);
@@ -359,7 +531,9 @@ describe("rulings from the page", () => {
 		const s = setup();
 		const p = propose(s.store, "A · One", "Lead with a photo");
 		s.add(item("Q-abcd"));
-		const r = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as { ruling: string };
+		const r = (await (await s.post("/api/items/Q-abcd/answer", { choice: 0, saveRuling: true })).json()) as {
+			ruling: string;
+		};
 		await s.app.idle();
 		expect(r.ruling).toBe(p.id);
 		expect(readRulings(s.store).find((x) => x.id === p.id)).toMatchObject({ status: "in-force", confirmed: true });
@@ -380,8 +554,11 @@ describe("rulings from the page", () => {
 			{ t: "2026-11-09T01:00:00Z", thread: "a", decision: "took it", ruling: "R1", rulingIds: ["R1"], ref: null },
 			{ t: "2026-11-09T02:00:00Z", thread: "b", decision: "again", ruling: "R1: same", rulingIds: ["R1"], ref: null },
 			{ t: "2026-11-09T03:00:00Z", thread: "c", decision: "free", ruling: "merge conflicts", ref: null },
-		]) s.store.decisions.append(d);
-		const view = (await (await s.get("/api/rulings")).json()) as { rulings: { id: string; cited: number; recent: { decision: string }[] }[] };
+		])
+			s.store.decisions.append(d);
+		const view = (await (await s.get("/api/rulings")).json()) as {
+			rulings: { id: string; cited: number; recent: { decision: string }[] }[];
+		};
 		expect(view.rulings.find((r) => r.id === "R1")).toMatchObject({ cited: 2 });
 		expect(view.rulings.find((r) => r.id === "R1")!.recent[0]!.decision).toBe("again");
 	});
@@ -394,7 +571,10 @@ describe("Accept all recommendations", () => {
 		s.add(item("Q-secr", { secret: true }));
 		s.add(item("Q-norc", { recommended: undefined }));
 		s.add(item("Q-good"));
-		const r = (await (await s.post("/api/accept-all", { ids: ["Q-only", "Q-secr", "Q-norc", "Q-good"] })).json()) as { answered: string[]; skipped: { id: string }[] };
+		const r = (await (await s.post("/api/accept-all", { ids: ["Q-only", "Q-secr", "Q-norc", "Q-good"] })).json()) as {
+			answered: string[];
+			skipped: { id: string }[];
+		};
 		await s.app.idle();
 		expect(r.answered).toEqual(["Q-good"]);
 		expect(r.skipped.map((x) => x.id)).toEqual(["Q-only", "Q-secr", "Q-norc"]);
@@ -408,13 +588,61 @@ describe("Accept all recommendations", () => {
 describe("bind address", () => {
 	// Every spelling of the unspecified address, IPv4 and IPv6, including IPv4-mapped forms.
 	const UNSPECIFIED = [
-		"0.0.0.0", "::", "[::]", "::0", "0::", "0::0", "0:0:0:0:0:0:0:0", "0000:0000:0000:0000:0000:0000:0000:0000", "0:0:0::0:0", "::0:0:0",
-		"::0.0.0.0", "::ffff:0.0.0.0", "::ffff:0:0", "::ffff:0000:0000", "0:0:0:0:0:ffff:0:0", "0000:0000:0000:0000:0000:ffff:0000:0000",
-		"0:0:0:0:0:FFFF:0.0.0.0", "::FFFF:0:0", "[::ffff:0:0]", "[0:0:0:0:0:ffff:0:0]",
+		"0.0.0.0",
+		"::",
+		"[::]",
+		"::0",
+		"0::",
+		"0::0",
+		"0:0:0:0:0:0:0:0",
+		"0000:0000:0000:0000:0000:0000:0000:0000",
+		"0:0:0::0:0",
+		"::0:0:0",
+		"::0.0.0.0",
+		"::ffff:0.0.0.0",
+		"::ffff:0:0",
+		"::ffff:0000:0000",
+		"0:0:0:0:0:ffff:0:0",
+		"0000:0000:0000:0000:0000:ffff:0000:0000",
+		"0:0:0:0:0:FFFF:0.0.0.0",
+		"::FFFF:0:0",
+		"[::ffff:0:0]",
+		"[0:0:0:0:0:ffff:0:0]",
 	];
 	// Forms some resolvers read as an address, which an IP literal check must not let through as something else.
-	const AMBIGUOUS = ["00.0.0.0", "0", "0x0", "0x7f000001", "127.1", "127.000.000.001", "0177.0.0.1", "2130706433", "127.0.0.1:3790", "fe80::1%eth0", "::1%lo", "1::2::3", "12345::1", "::ffff:1.2.3", "::ffff:256.0.0.1"];
-	const OUTSIDE = ["8.8.8.8", "192.168.1.5", "10.0.0.1", "127.0.0.2", "100.63.255.255", "100.128.0.1", "fe80::1", "fd7a:115c:a1e1::1", "fd7a:115c:a1df::1", "2001:db8::1", "::ffff:8.8.8.8", "::ffff:192.168.1.5", "0:0:0:0:0:ffff:c0a8:105", "::2"];
+	const AMBIGUOUS = [
+		"00.0.0.0",
+		"0",
+		"0x0",
+		"0x7f000001",
+		"127.1",
+		"127.000.000.001",
+		"0177.0.0.1",
+		"2130706433",
+		"127.0.0.1:3790",
+		"fe80::1%eth0",
+		"::1%lo",
+		"1::2::3",
+		"12345::1",
+		"::ffff:1.2.3",
+		"::ffff:256.0.0.1",
+	];
+	const OUTSIDE = [
+		"198.51.100.7",
+		"192.168.1.5",
+		"10.0.0.1",
+		"127.0.0.2",
+		"100.63.255.255",
+		"100.128.0.1",
+		"fe80::1",
+		"fd7a:115c:a1e1::1",
+		"fd7a:115c:a1df::1",
+		"2001:db8::1",
+		"::ffff:198.51.100.7",
+		"::ffff:192.168.1.5",
+		"0:0:0:0:0:ffff:c0a8:105",
+		"::2",
+	];
 	test("refuses every spelling of the unspecified address, and a missing one", () => {
 		for (const bad of [undefined, "", "  ", ...UNSPECIFIED]) expect(() => checkBind(bad)).toThrow();
 		expect(() => parseConfig({})).toThrow(/no bind address/);
@@ -428,7 +656,8 @@ describe("bind address", () => {
 		for (const bad of OUTSIDE) expect(() => checkBind(bad)).toThrow(/not loopback or a Tailscale address/);
 	});
 	test("refuses a host name, which could resolve to anything", () => {
-		for (const bad of ["localhost", "host.tail1234.ts.net", "0", "ip6-localhost"]) expect(() => checkBind(bad)).toThrow(/not an IP/);
+		for (const bad of ["localhost", "host.tail1234.ts.net", "0", "ip6-localhost"])
+			expect(() => checkBind(bad)).toThrow(/not an IP/);
 	});
 	test("accepts loopback and Tailscale in any spelling, and binds to the canonical form", () => {
 		expect(checkBind("100.64.0.7")).toBe("100.64.0.7");
@@ -468,11 +697,26 @@ describe("bind address", () => {
 		expect(loadConfig(root).host).toBe("127.0.0.1");
 	});
 	test("the server process exits before listening when the address is a wildcard, missing, or web.json is 0644", () => {
-		for (const [cfg, mode] of [[{ host: "0.0.0.0", port: 3791 }, 0o600], [{ host: "::ffff:0000:0000", port: 3791 }, 0o600], [{ host: "0:0:0:0:0:ffff:0:0", port: 3791 }, 0o600], [{ host: "127.0.0.1", port: 3791 }, 0o644], [{ port: 3791 }, 0o600], [null, 0]] as const) {
+		for (const [cfg, mode] of [
+			[{ host: "0.0.0.0", port: 3791 }, 0o600],
+			[{ host: "::ffff:0000:0000", port: 3791 }, 0o600],
+			[{ host: "0:0:0:0:0:ffff:0:0", port: 3791 }, 0o600],
+			[{ host: "127.0.0.1", port: 3791 }, 0o644],
+			[{ port: 3791 }, 0o600],
+			[null, 0],
+		] as const) {
 			const root = mkdtempSync(`${tmpdir()}/chamberlain-bind-`);
 			dirs.push(root);
-			if (cfg) { writeFileSync(`${root}/web.json`, JSON.stringify(cfg)); chmodSync(`${root}/web.json`, mode); }
-			const r = Bun.spawnSync([process.execPath, new URL("./server.ts", import.meta.url).pathname], { env: { ...process.env, CHAMBERLAIN_CONF: root, CHAMBERLAIN_STATE: root }, stdout: "pipe", stderr: "pipe", timeout: 10_000 });
+			if (cfg) {
+				writeFileSync(`${root}/web.json`, JSON.stringify(cfg));
+				chmodSync(`${root}/web.json`, mode);
+			}
+			const r = Bun.spawnSync([process.execPath, new URL("./server.ts", import.meta.url).pathname], {
+				env: { ...process.env, CHAMBERLAIN_CONF: root, CHAMBERLAIN_STATE: root },
+				stdout: "pipe",
+				stderr: "pipe",
+				timeout: 10_000,
+			});
 			expect(r.exitCode).toBe(2);
 			expect(r.stdout.toString()).not.toContain("decision queue on");
 		}
@@ -539,7 +783,14 @@ describe("evidence", () => {
 		writeFileSync(`${s.state}/top.png`, "nope");
 		s.add(item("Q-abcd", { evidence: [{ type: "image", path: "shot.png" }] }));
 		expect((await s.get("/evidence/Q-abcd/shot.png")).status).toBe(200);
-		for (const p of ["/evidence/Q-abcd/..%2F..%2Ftop.png", "/evidence/Q-abcd/%2e%2e/top.png", "/evidence/..%2Ftop.png/x", "/evidence/Q-abcd/%2Fetc%2Fpasswd", "/evidence/Q-abcd/shot.png/..", "/evidence/Q-abcd"]) {
+		for (const p of [
+			"/evidence/Q-abcd/..%2F..%2Ftop.png",
+			"/evidence/Q-abcd/%2e%2e/top.png",
+			"/evidence/..%2Ftop.png/x",
+			"/evidence/Q-abcd/%2Fetc%2Fpasswd",
+			"/evidence/Q-abcd/shot.png/..",
+			"/evidence/Q-abcd",
+		]) {
 			expect((await s.get(p)).status).toBe(404);
 		}
 	});
@@ -548,14 +799,24 @@ describe("evidence", () => {
 describe("request guards", () => {
 	test("refuses an unknown Host, which is how DNS rebinding arrives", async () => {
 		const s = setup();
-		expect((await s.app.fetch(new Request("http://evil.example/api/queue", { headers: { host: "evil.example" } }))).status).toBe(421);
+		expect(
+			(await s.app.fetch(new Request("http://evil.example/api/queue", { headers: { host: "evil.example" } }))).status,
+		).toBe(421);
 	});
 	test("refuses a POST without the page's header or from another origin", async () => {
 		const s = setup();
 		s.add(item("Q-abcd"));
-		const form = await s.app.fetch(new Request(`http://${HOST}/api/items/Q-abcd/answer`, { method: "POST", headers: { host: HOST, "content-type": "application/x-www-form-urlencoded" }, body: "choice=0" }));
+		const form = await s.app.fetch(
+			new Request(`http://${HOST}/api/items/Q-abcd/answer`, {
+				method: "POST",
+				headers: { host: HOST, "content-type": "application/x-www-form-urlencoded" },
+				body: "choice=0",
+			}),
+		);
 		expect(form.status).toBe(403);
-		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 }, { origin: "https://evil.example" })).status).toBe(403);
+		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 }, { origin: "https://evil.example" })).status).toBe(
+			403,
+		);
 		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 }, { "x-decision-queue": "" })).status).toBe(403);
 		await s.app.idle();
 		expect(s.posts).toHaveLength(0);

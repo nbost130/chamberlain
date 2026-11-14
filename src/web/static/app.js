@@ -106,7 +106,7 @@ function header() {
 		<div class="actions">
 			<button type="button" class="btn-primary" data-act="accept-all" ${batch ? "" : "disabled"}>Accept ${batch} recommendation${batch === 1 ? "" : "s"} <span class="k">Shift Enter</span></button>
 		</div>
-	</header>${S.testMode ? '<div class="testbar">TEST MODE: fixture data. No wake is sent and no card is touched.</div>' : ""}`;
+	</header>${S.testMode ? '<div class="testbar">TEST MODE: fixture data. No wake is sent and no question card is touched.</div>' : ""}`;
 }
 
 function listHtml() {
@@ -188,7 +188,7 @@ function detailHtml() {
 	if (i.cardRequest && !i.secret) {
 		// A card pointer is never answered here: the card is acted on in its own thread, and this question closes only when the card does.
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
-			<div class="secret"><b>Act on the card itself.</b><span>This question points to a card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
+			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
 			${i.link ? `<a href="${esc(i.link)}" target="_blank" rel="noopener">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
 		</section>`;
@@ -303,7 +303,7 @@ async function cardAct(act, id) {
 
 // ---- rulings ----
 const RFILTERS = [
-	["all", "All"], ["unconfirmed", "Unconfirmed"], ["proposed", "Proposed"], ["chat", "From chat"], ["card", "From a card"], ["retired", "Retired"],
+	["all", "All"], ["unconfirmed", "Unconfirmed"], ["proposed", "Proposed"], ["chat", "From chat"], ["card", "From a question card"], ["retired", "Retired"],
 ];
 const rvisible = () => {
 	const f = S.rfilter;
@@ -330,7 +330,7 @@ function renderRulings() {
 	const rows = v.map((r, k) => `<tr class="r" data-rsel="${k}" aria-current="${k === S.rsel}">
 		<td><span class="rid">${esc(r.id)}</span>“${esc(r.words)}”<div class="date">${esc(r.date)}${rbound(r) ? ` · ${esc(rbound(r))}` : ""}</div></td>
 		<td class="dec">${esc(r.decides)}</td>
-		<td><span class="${r.source === "chat" ? "src-chat" : "src-card"}">${r.source === "chat" ? "Chat" : "Card answer"}</span>${rstate(r)}</td>
+		<td><span class="${r.source === "chat" ? "src-chat" : "src-card"}">${r.source === "chat" ? "Chat" : "Question-card answer"}</span>${rstate(r)}</td>
 		<td class="n mono ${r.cited ? "" : "zero"}">${r.cited || "–"}</td></tr>`).join("");
 	app.innerHTML = `<header class="top">
 		<a class="back" href="/" data-nav="/">${ICON.back.replace('width="22" height="22"', 'width="16" height="16"')}Decisions</a>

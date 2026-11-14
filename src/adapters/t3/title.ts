@@ -23,11 +23,15 @@ export function t3TitleSetter(conf: string, origin: string, tokenFile: string, t
 		}
 		const rpc = await connect(origin, token);
 		try {
-			await rpc.request("orchestration.dispatchCommand", { type: "thread.metadata.update", commandId: crypto.randomUUID(), threadId, title });
+			await rpc.request("orchestration.dispatchCommand", {
+				type: "thread.metadata.update",
+				commandId: crypto.randomUUID(),
+				threadId,
+				title,
+			});
 			return "set";
 		} finally {
 			rpc.ws.close();
 		}
 	};
 }
-

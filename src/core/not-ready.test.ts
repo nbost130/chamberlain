@@ -7,6 +7,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
+import { noAlert } from "../testing/alert.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";
@@ -16,7 +17,10 @@ import { createRelay } from "./relay.ts";
 
 const dirs: string[] = [];
 const stops: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const s of stops.splice(0)) await s(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(async () => {
+	for (const s of stops.splice(0)) await s();
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 function rig(o: { ready: boolean; dry?: boolean }) {
 	const store = memStore();
@@ -24,14 +28,26 @@ function rig(o: { ready: boolean; dry?: boolean }) {
 	const state = { ready: o.ready };
 	const alarms: string[] = [];
 	const outbox = createOutbox({ store, log: () => {}, dry: o.dry });
-	const relay = createRelay({ store, lock: testRelayLock(store), wake: { ready: () => state.ready, send: rec.wake.send }, gate: () => "idle", log: () => {}, alarm: (k) => alarms.push(k) });
+	const relay = createRelay({
+		store,
+		lock: testRelayLock(store),
+		wake: { ready: () => state.ready, send: rec.wake.send },
+		gate: () => "idle",
+		log: () => {},
+		alarm: (k) => alarms.push(k),
+	});
 	return { store, rec, state, alarms, outbox, relay };
 }
 
 describe("no wake URL yet", () => {
 	test("a wake is queued and kept with no attempt used, an alarm says why, and it goes once there is somewhere to send", async () => {
 		const r = rig({ ready: false });
-		expect(r.outbox.deliver("[chamberlain] needs_input: thread X", "t1:needs_input:r1:1", { kind: "needs_input", thread: "t1" })).toBe("queued");
+		expect(
+			r.outbox.deliver("[chamberlain] needs_input: thread X", "t1:needs_input:r1:1", {
+				kind: "needs_input",
+				thread: "t1",
+			}),
+		).toBe("queued");
 		for (let i = 0; i < 3; i++) expect(await r.relay.pass()).toEqual([]);
 		expect(r.rec.accepted).toEqual([]);
 		expect(r.store.wakes.rows()).toMatchObject([{ deliveryId: "t1:needs_input:r1:1", attempts: 0 }]);
@@ -70,12 +86,34 @@ describe("the engine with no wake URL", () => {
 		mkdirSync(conf, { mode: 0o700 });
 		writeFileSync(`${conf}/decision-rights.md`, "rights", { mode: 0o600 });
 		const fake = createFakeAdapter({ wakeReady: false });
-		fake.threads.set("t1", { lastMessage: "stuck", waiting: [{ type: "user_input_request", requestId: "req-1", label: "Pick", questions: [{ question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }] }] }] });
+		fake.threads.set("t1", {
+			lastMessage: "stuck",
+			waiting: [
+				{
+					type: "user_input_request",
+					requestId: "req-1",
+					label: "Pick",
+					questions: [{ question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }] }],
+				},
+			],
+		});
 		const store = memStore();
-		const engine = createEngine({ conf, lock: testRelayLock(store), store, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }], housekeeping: false, log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 } });
+		const engine = createEngine({
+			conf,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
+			housekeeping: false,
+			log: () => {},
+			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
+		});
 		void engine.start();
 		stops.push(() => engine.stop());
-		fake.emit({ kind: "needs_input", thread: { id: "t1", title: "Build", status: "waiting", pendingRequestId: "req-1" } });
+		fake.emit({
+			kind: "needs_input",
+			thread: { id: "t1", title: "Build", status: "waiting", pendingRequestId: "req-1" },
+		});
 		await Bun.sleep(100);
 		// The alert is on record as notified AND its wake is waiting: neither exists without the other.
 		expect(engine.notified().has("req:fake:req-1")).toBe(true);

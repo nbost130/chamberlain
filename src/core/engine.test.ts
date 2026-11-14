@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
+import { noAlert } from "../testing/alert.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { MIGRATIONS } from "./migrations.ts";
@@ -32,7 +33,20 @@ afterEach(async () => {
 
 type Logged = { event: string; [k: string]: unknown };
 /** A scratch config and state directory, a fake backend, and an engine on them, fast enough to test (milliseconds, not minutes). */
-function rig(o: { store?: Store; wrap?: (s: Store) => Store; adapter?: FakeAdapter; steward?: string; dry?: boolean; capabilities?: readonly OptionalCapability[]; compactAt?: number; housekeeping?: boolean; gh?: EngineDeps["gh"]; ask?: EngineDeps["ask"] } = {}) {
+function rig(
+	o: {
+		store?: Store;
+		wrap?: (s: Store) => Store;
+		adapter?: FakeAdapter;
+		steward?: string;
+		dry?: boolean;
+		capabilities?: readonly OptionalCapability[];
+		compactAt?: number;
+		housekeeping?: boolean;
+		gh?: EngineDeps["gh"];
+		ask?: EngineDeps["ask"];
+	} = {},
+) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
 	dirs.push(root);
 	const conf = `${root}/conf`;
@@ -46,7 +60,15 @@ function rig(o: { store?: Store; wrap?: (s: Store) => Store; adapter?: FakeAdapt
 	const clock = { t: Date.now() };
 	const events: Logged[] = [];
 	const deps: EngineDeps = {
-		conf, lock: testRelayLock(store), store: o.wrap ? o.wrap(store) : store, dry: o.dry, compactAt: o.compactAt, housekeeping: o.housekeeping ?? false, gh: o.gh, ask: o.ask,
+		conf,
+		lock: testRelayLock(store),
+		alert: noAlert,
+		store: o.wrap ? o.wrap(store) : store,
+		dry: o.dry,
+		compactAt: o.compactAt,
+		housekeeping: o.housekeeping ?? false,
+		gh: o.gh,
+		ask: o.ask,
 		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 		log: (event, data) => events.push({ event, ...data }),
 		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -57,22 +79,44 @@ function rig(o: { store?: Store; wrap?: (s: Store) => Store; adapter?: FakeAdapt
 	const running = engine.start();
 	const until = async (what: string, ok: () => boolean, ms = 3000) => {
 		const end = Date.now() + ms;
-		while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); }
+		while (!ok()) {
+			if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`);
+			await Bun.sleep(5);
+		}
 	};
 	const quiet = (ms = 80) => Bun.sleep(ms);
 	const held = (): HeldItem[] => store.wakes.held();
 	return { fake, engine, events, conf, store, priv, until, quiet, held, running, clock };
 }
 
-const thread = (id: string, status: string, over: Partial<ThreadInput> = {}): ThreadInput => ({ id, title: `Thread ${id}`, status, ...over });
-const stewardSigned: TurnItem = { type: "user_message", id: "s1", text: "Steward: build it", createdBy: "agent", creationSource: "mcp" };
-const question: WaitingItem = { type: "user_input_request", requestId: "req-1", label: "Pick", questions: [{ question: "Merge now?", options: [{ label: "Yes", description: "ship it" }, { label: "No" }] }] };
+const thread = (id: string, status: string, over: Partial<ThreadInput> = {}): ThreadInput => ({
+	id,
+	title: `Thread ${id}`,
+	status,
+	...over,
+});
+const stewardSigned: TurnItem = {
+	type: "user_message",
+	id: "s1",
+	text: "Steward: build it",
+	createdBy: "agent",
+	creationSource: "mcp",
+};
+const question: WaitingItem = {
+	type: "user_input_request",
+	requestId: "req-1",
+	label: "Pick",
+	questions: [{ question: "Merge now?", options: [{ label: "Yes", description: "ship it" }, { label: "No" }] }],
+};
 
 describe("a fake needs_input event wakes the Steward through the fake", () => {
 	test("the wake names the thread, carries the question and the last message, and the rights, and is delivered once", async () => {
 		const r = rig();
 		r.fake.threads.set("t1", { lastMessage: "I cannot choose between the two.", waiting: [question] });
-		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1", title: "Build the thing" }) });
+		r.fake.emit({
+			kind: "needs_input",
+			thread: thread("t1", "waiting", { pendingRequestId: "req-1", title: "Build the thing" }),
+		});
 		await r.until("the wake", () => r.fake.wakes.length === 1);
 		const w = r.fake.wakes[0]!;
 		expect(w.deliveryId).toMatch(/^t1:needs_input:req-1:\d+$/);
@@ -85,7 +129,8 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 			"I cannot choose between the two.",
 			"Decision rights (standing rules):",
 			"The Steward may merge green PRs.",
-		]) expect(w.message).toContain(x);
+		])
+			expect(w.message).toContain(x);
 		// The same event again, and a restart-shaped repeat of it, wake nobody twice.
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1" }) });
 		await r.quiet();
@@ -108,7 +153,9 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 
 	test("an approval says what is waiting and that only the operator can clear it; a failed run wakes at once", async () => {
 		const r = rig();
-		r.fake.threads.set("t1", { waiting: [{ type: "approval_request", requestId: "a1", label: "rm -rf build", questions: [] }] });
+		r.fake.threads.set("t1", {
+			waiting: [{ type: "approval_request", requestId: "a1", label: "rm -rf build", questions: [] }],
+		});
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("the approval wake", () => r.fake.wakes.length === 1);
 		expect(r.fake.wakes[0]!.message).toContain("WAITING ON: a command or permission APPROVAL.");
@@ -122,18 +169,26 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 	test("while the operator is away, a command approval is held for their return and wakes nobody", async () => {
 		const r = rig();
 		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
-		r.fake.threads.set("t1", { waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }] });
+		r.fake.threads.set("t1", {
+			waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }],
+		});
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
 		await r.quiet();
 		expect(r.fake.wakes).toEqual([]);
-		expect(heldOpen(r.store).map((h) => h.what).join("\n")).toContain("command or permission approval: deploy");
+		expect(
+			heldOpen(r.store)
+				.map((h) => h.what)
+				.join("\n"),
+		).toContain("command or permission approval: deploy");
 	});
 
 	test("(d) while away, a card is held behind a pointer question that is posted once and closes when the card leaves", async () => {
 		const r = rig();
 		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
-		r.fake.threads.set("t1", { waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }] });
+		r.fake.threads.set("t1", {
+			waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }],
+		});
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1", title: "Release" }) });
 		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
 		const qs = [...questionStates(r.store).values()];
@@ -163,7 +218,17 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 		const r = rig({ store });
 		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
 		const SENTINEL = "plain-SENTINEL-not-a-key";
-		r.fake.threads.set("t1", { lastMessage: "need the key", waiting: [{ type: "secret_request", requestId: "s1", label: "STRIPE_KEY", questions: [{ question: `value: ${SENTINEL}`, options: [{ label: SENTINEL, description: SENTINEL }] }] }] });
+		r.fake.threads.set("t1", {
+			lastMessage: "need the key",
+			waiting: [
+				{
+					type: "secret_request",
+					requestId: "s1",
+					label: "STRIPE_KEY",
+					questions: [{ question: `value: ${SENTINEL}`, options: [{ label: SENTINEL, description: SENTINEL }] }],
+				},
+			],
+		});
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "s1" }) });
 		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
 		await r.quiet();
@@ -175,7 +240,8 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 		await r.engine.stop();
 		engines.splice(engines.indexOf(r.engine), 1);
 		store.close();
-		for (const f of readdirSync(root)) expect(readFileSync(`${root}/${f}`).includes(Buffer.from("SENTINEL"))).toBe(false);
+		for (const f of readdirSync(root))
+			expect(readFileSync(`${root}/${f}`).includes(Buffer.from("SENTINEL"))).toBe(false);
 	});
 
 	test("the Steward's own thread, an archived thread and an excluded thread never wake anyone", async () => {
@@ -199,7 +265,10 @@ describe("a fake needs_input event wakes the Steward through the fake", () => {
 
 describe("a turn end waits for the Steward to be free", () => {
 	const ended = (r: ReturnType<typeof rig>, id: string) => {
-		r.fake.threads.set(id, { instruction: { items: [{ ...stewardSigned, id: `s-${id}` }], state: "complete", byMachine: false }, lastMessage: `${id} finished the work.` });
+		r.fake.threads.set(id, {
+			instruction: { items: [{ ...stewardSigned, id: `s-${id}` }], state: "complete", byMachine: false },
+			lastMessage: `${id} finished the work.`,
+		});
 		r.fake.emit({ kind: "state", thread: thread(id, "running") });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed") });
 	};
@@ -208,7 +277,9 @@ describe("a turn end waits for the Steward to be free", () => {
 		const r = rig({ steward: "steward-1" });
 		ended(r, "t2");
 		await r.until("the report", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain('thread "Thread t2" finished a turn on the work you sent it and has gone quiet.');
+		expect(r.fake.wakes[0]!.message).toContain(
+			'thread "Thread t2" finished a turn on the work you sent it and has gone quiet.',
+		);
 		expect(r.fake.wakes[0]!.deliveryId).toContain("t2:ended:");
 		expect(r.held()).toEqual([]);
 	});
@@ -259,7 +330,13 @@ describe("a turn end waits for the Steward to be free", () => {
 
 	test("a thread the Steward did not instruct is not reported (the fake's history says so)", async () => {
 		const r = rig({ steward: "steward-1" });
-		r.fake.threads.set("t5", { instruction: { items: [{ type: "user_message", id: "u1", text: "fix it", createdBy: "user", creationSource: "web" }], state: "complete", byMachine: false } });
+		r.fake.threads.set("t5", {
+			instruction: {
+				items: [{ type: "user_message", id: "u1", text: "fix it", createdBy: "user", creationSource: "web" }],
+				state: "complete",
+				byMachine: false,
+			},
+		});
 		r.fake.emit({ kind: "state", thread: thread("t5", "running") });
 		r.fake.emit({ kind: "state", thread: thread("t5", "completed") });
 		await r.until("the skip", () => r.events.some((e) => e.event === "skip-turn-ended"));
@@ -317,7 +394,9 @@ describe("an adapter with only the four required capabilities", () => {
 		const r = rig({ capabilities: [], steward: "steward-1", housekeeping: true });
 		await r.until("connected", () => r.fake.connected);
 		await r.engine.tick();
-		const beat = r.store.state.get<{ servers: { name: string; connected: boolean; version: string | null }[] }>("heartbeat")!;
+		const beat = r.store.state.get<{ servers: { name: string; connected: boolean; version: string | null }[] }>(
+			"heartbeat",
+		)!;
 		expect(beat.servers).toEqual([expect.objectContaining({ name: "fake", connected: true, version: "fake-1" })]);
 		expect(r.events.filter((e) => e.event.endsWith("-error"))).toEqual([]);
 	});
@@ -325,10 +404,20 @@ describe("an adapter with only the four required capabilities", () => {
 
 describe("the held ledger is reconciled on the heartbeat", () => {
 	test("a tick closes the holds of an answered question, a merged PR and a settled thread, and leaves the rest", async () => {
-		const gh = async (path: string) => (path.endsWith("/pulls/962") ? { state: "closed", merged_at: "2026-11-13T12:50:41Z" } : { state: "open" });
+		const gh = async (path: string) =>
+			path.endsWith("/pulls/962") ? { state: "closed", merged_at: "2026-11-13T12:50:41Z" } : { state: "open" };
 		const r = rig({ housekeeping: true, gh });
 		await r.until("connected", () => r.fake.connected);
-		const q = { id: "Q-tick1", kind: "only-you" as const, title: "t", context: "", options: [{ label: "Yes" }], thread: "T", server: "fake", createdAt: "2026-11-13T00:00:00.000Z" };
+		const q = {
+			id: "Q-tick1",
+			kind: "only-you" as const,
+			title: "t",
+			context: "",
+			options: [{ label: "Yes" }],
+			thread: "T",
+			server: "fake",
+			createdAt: "2026-11-13T00:00:00.000Z",
+		};
 		askQuestion(r.store, q);
 		const at = new Date("2026-11-13T01:00:00.000Z");
 		appendHeld(r.store, { thread: "answered", what: "waits", item: "Q-tick1" }, at);
@@ -336,11 +425,24 @@ describe("the held ledger is reconciled on the heartbeat", () => {
 		appendHeld(r.store, { thread: "open-pr", what: "waits", ref: { pr: "o/r#963" } }, at);
 		appendHeld(r.store, { thread: "settled", what: "waits", ref: { threadId: "th-settled" } }, at);
 		appendHeld(r.store, { thread: "prose", what: "merge o/r#962 for me" }, at);
-		claimWake(r.store, pageClaim(q, { choice: 0, label: "Yes", by: "page", t: "2026-11-13T02:00:00.000Z", deliveryId: "answer:item:Q-tick1" }));
+		claimWake(
+			r.store,
+			pageClaim(q, {
+				choice: 0,
+				label: "Yes",
+				by: "page",
+				t: "2026-11-13T02:00:00.000Z",
+				deliveryId: "answer:item:Q-tick1",
+			}),
+		);
 		r.fake.emit({ kind: "state", thread: thread("th-settled", "completed", { settled: true }) });
 		await r.until("the thread is known", () => r.engine.watchers[0]!.states.has("th-settled"));
 		await r.engine.tick();
-		expect(heldOpen(r.store).map((h) => h.thread).sort()).toEqual(["open-pr", "prose"]);
+		expect(
+			heldOpen(r.store)
+				.map((h) => h.thread)
+				.sort(),
+		).toEqual(["open-pr", "prose"]);
 		expect(r.events.filter((e) => e.event.endsWith("-error"))).toEqual([]);
 		expect(r.events.some((e) => e.event === "held-reconciled")).toBe(true);
 	});
@@ -349,7 +451,11 @@ describe("the held ledger is reconciled on the heartbeat", () => {
 	test("fix 1: with the server unreachable, a thread the watcher's cache calls settled closes nothing", async () => {
 		const r = rig({ housekeeping: true });
 		await r.until("connected", () => r.fake.connected);
-		appendHeld(r.store, { thread: "cached-settled", what: "waits", ref: { threadId: "th-settled" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(
+			r.store,
+			{ thread: "cached-settled", what: "waits", ref: { threadId: "th-settled" } },
+			new Date("2026-11-13T01:00:00.000Z"),
+		);
 		r.fake.emit({ kind: "state", thread: thread("th-settled", "completed", { settled: true }) });
 		await r.until("the cache has it", () => r.engine.watchers[0]!.states.get("th-settled")?.settled === true);
 		r.fake.snapshotError = "connect ECONNREFUSED";
@@ -364,18 +470,38 @@ describe("the held ledger is reconciled on the heartbeat", () => {
 	test("fix 1: a thread its named server no longer lists is gone, and the hold closes from a fresh snapshot; one naming no server stays", async () => {
 		const r = rig({ housekeeping: true, capabilities: ["snapshot"] });
 		await r.until("connected", () => r.fake.connected);
-		appendHeld(r.store, { thread: "deleted", what: "waits", server: "fake", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
-		appendHeld(r.store, { thread: "listed", what: "waits", server: "fake", ref: { threadId: "th-listed" } }, new Date("2026-11-13T01:00:00.000Z"));
-		appendHeld(r.store, { thread: "unnamed", what: "waits", ref: { threadId: "th-deleted" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(
+			r.store,
+			{ thread: "deleted", what: "waits", server: "fake", ref: { threadId: "th-deleted" } },
+			new Date("2026-11-13T01:00:00.000Z"),
+		);
+		appendHeld(
+			r.store,
+			{ thread: "listed", what: "waits", server: "fake", ref: { threadId: "th-listed" } },
+			new Date("2026-11-13T01:00:00.000Z"),
+		);
+		appendHeld(
+			r.store,
+			{ thread: "unnamed", what: "waits", ref: { threadId: "th-deleted" } },
+			new Date("2026-11-13T01:00:00.000Z"),
+		);
 		r.fake.emit({ kind: "state", thread: thread("th-listed", "running") });
 		await r.engine.tick();
-		expect(heldOpen(r.store).map((h) => h.thread).sort()).toEqual(["listed", "unnamed"]);
+		expect(
+			heldOpen(r.store)
+				.map((h) => h.thread)
+				.sort(),
+		).toEqual(["listed", "unnamed"]);
 	});
 
 	test("fix 1: an adapter that cannot take a snapshot leaves its threads unknown", async () => {
 		const r = rig({ housekeeping: true, capabilities: [] });
 		await r.until("connected", () => r.fake.connected);
-		appendHeld(r.store, { thread: "h", what: "waits", ref: { threadId: "th-gone" } }, new Date("2026-11-13T01:00:00.000Z"));
+		appendHeld(
+			r.store,
+			{ thread: "h", what: "waits", ref: { threadId: "th-gone" } },
+			new Date("2026-11-13T01:00:00.000Z"),
+		);
 		await r.engine.tick();
 		expect(heldOpen(r.store)).toHaveLength(1);
 	});
@@ -387,12 +513,20 @@ describe("the engine's own dedupe is the item system's", () => {
 		r.fake.threads.set("t1", { lastMessage: "Which one?", waiting: [question] });
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1" }) });
 		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.store.items.get("notification-log", "req:fake:req-1")).toMatchObject({ kind: "sent", status: "triggered", notificationCount: 1 });
+		expect(r.store.items.get("notification-log", "req:fake:req-1")).toMatchObject({
+			kind: "sent",
+			status: "triggered",
+			notificationCount: 1,
+		});
 		expect(r.engine.notified().has("req:fake:req-1")).toBe(true);
 		r.engine.alarm("steward-stalled", "stalled", "it is");
 		r.engine.alarm("steward-stalled", "stalled", "it is");
 		expect(r.events.filter((e) => e.event === "alarm")).toHaveLength(1);
-		expect(r.store.items.get("alarm", "steward-stalled")).toMatchObject({ kind: "alarm", status: "triggered", notificationCount: 1 });
+		expect(r.store.items.get("alarm", "steward-stalled")).toMatchObject({
+			kind: "alarm",
+			status: "triggered",
+			notificationCount: 1,
+		});
 		expect(r.store.items.get("alarm", "steward-stalled")!.nextNotificationAt).toBeGreaterThan(Date.now());
 	});
 });
@@ -411,10 +545,17 @@ describe("the Steward's own upkeep goes through the probe and the compaction tra
 
 	test("a compaction the probe says must not go is not sent, and a stalled Steward raises its alarm", async () => {
 		const r = rig({ steward: "steward-1", compactAt: 1000 });
-		r.fake.probe = { readable: true, contextTokens: 5000, compactBlocked: "one is already queued or running", stalled: { title: "The Steward has stopped taking wakes", summary: "2 wakes queued" } };
+		r.fake.probe = {
+			readable: true,
+			contextTokens: 5000,
+			compactBlocked: "one is already queued or running",
+			stalled: { title: "The Steward has stopped taking wakes", summary: "2 wakes queued" },
+		};
 		await r.engine.tick();
 		expect(r.fake.compactions).toEqual([]);
-		expect(r.events.find((e) => e.event === "skip-compact")).toMatchObject({ reason: "one is already queued or running" });
+		expect(r.events.find((e) => e.event === "skip-compact")).toMatchObject({
+			reason: "one is already queued or running",
+		});
 		expect(r.events.find((e) => e.event === "alarm" && e.key === "steward-stalled")).toBeDefined();
 	});
 
@@ -433,7 +574,7 @@ describe("the Steward's own upkeep goes through the probe and the compaction tra
 	});
 });
 
-// ---- B1: a notification decision and its wake are one transaction -----------------------------------
+// ---- a notification decision and its wake are one transaction -----------------------------------
 
 /**
  * A store whose writes can be made to fail where a crash would land: after the decision has been written and before the wake's
@@ -445,10 +586,22 @@ function flaky() {
 		...s,
 		wakes: {
 			...s.wakes,
-			enqueue: (...a: Parameters<Store["wakes"]["enqueue"]>) => { if (fail.at === "enqueue") throw Error("the disk went away"); return s.wakes.enqueue(...a); },
-			hold: (...a: Parameters<Store["wakes"]["hold"]>) => { if (fail.at === "held-push") throw Error("the disk went away"); return s.wakes.hold(...a); },
+			enqueue: (...a: Parameters<Store["wakes"]["enqueue"]>) => {
+				if (fail.at === "enqueue") throw Error("the disk went away");
+				return s.wakes.enqueue(...a);
+			},
+			hold: (...a: Parameters<Store["wakes"]["hold"]>) => {
+				if (fail.at === "held-push") throw Error("the disk went away");
+				return s.wakes.hold(...a);
+			},
 		},
-		items: { ...s.items, observe: (o) => { if (fail.at === "hold-item" && o.source === "held") throw Error("the disk went away"); return s.items.observe(o); } },
+		items: {
+			...s.items,
+			observe: (o) => {
+				if (fail.at === "hold-item" && o.source === "held") throw Error("the disk went away");
+				return s.items.observe(o);
+			},
+		},
 	});
 	return { fail, wrap };
 }
@@ -477,7 +630,10 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		const { fail, wrap } = flaky();
 		const r = rig({ wrap, steward: "steward-1" });
 		const ended = () => {
-			r.fake.threads.set("t9", { instruction: { items: [{ ...stewardSigned, id: "s-t9" }], state: "complete", byMachine: false }, lastMessage: "t9 finished the work." });
+			r.fake.threads.set("t9", {
+				instruction: { items: [{ ...stewardSigned, id: "s-t9" }], state: "complete", byMachine: false },
+				lastMessage: "t9 finished the work.",
+			});
 			r.fake.emit({ kind: "state", thread: thread("t9", "running") });
 			r.fake.emit({ kind: "state", thread: thread("t9", "completed") });
 		};
@@ -490,13 +646,25 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		fail.at = undefined;
 		ended();
 		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain('thread "Thread t9" finished a turn on the work you sent it and has gone quiet.');
+		expect(r.fake.wakes[0]!.message).toContain(
+			'thread "Thread t9" finished a turn on the work you sent it and has gone quiet.',
+		);
 	});
 
 	test("a sweep finding: when the wake cannot be queued, the finding is not recorded as notified and the clock does not move, so the next sweep wakes with it", async () => {
 		const { fail, wrap } = flaky();
 		const r = rig({ wrap, housekeeping: true });
-		r.priv("sweep.json", JSON.stringify({ checks: [{ name: "disk", command: ["/bin/echo", JSON.stringify([{ dedupKey: "root", text: "the root disk is 97% full" }])] }] }));
+		r.priv(
+			"sweep.json",
+			JSON.stringify({
+				checks: [
+					{
+						name: "disk",
+						command: ["/bin/echo", JSON.stringify([{ dedupKey: "root", text: "the root disk is 97% full" }])],
+					},
+				],
+			}),
+		);
 		fail.at = "held-push";
 		await r.engine.tick();
 		expect(r.events.some((e) => e.event === "sweep-error")).toBe(true);
@@ -519,7 +687,9 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		const { fail, wrap } = flaky();
 		const r = rig({ wrap });
 		r.store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
-		r.fake.threads.set("t1", { waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }] });
+		r.fake.threads.set("t1", {
+			waiting: [{ type: "approval_request", requestId: "a1", label: "deploy", questions: [] }],
+		});
 		fail.at = "hold-item";
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("the failed commit", () => r.events.some((e) => e.event === "fire-error"));
@@ -527,17 +697,39 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		fail.at = undefined;
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("the hold", () => r.events.some((e) => e.event === "held-by-daemon"));
-		expect(heldOpen(r.store).map((h) => h.what).join("\n")).toContain("command or permission approval: deploy");
+		expect(
+			heldOpen(r.store)
+				.map((h) => h.what)
+				.join("\n"),
+		).toContain("command or permission approval: deploy");
 		expect(r.engine.notified().has("req:fake:a1")).toBe(true);
 	});
 });
 
 describe("stalled-thread recovery, end to end through the fake", () => {
-	const STREAM: RunFailure = { runId: "run-1", class: "unknown", message: "The provider event stream closed unexpectedly. Retry the turn." };
-	const FAST = { graceMs: 40, rateLimitWaitMs: 80, secondFailureWindowMs: 5_000, breakerWindowMs: 5_000, breakerQuietMs: 5_000 };
-	const m1: TurnItem = { type: "user_message", id: "m1", text: "do the thing", createdBy: "user", creationSource: "user" };
+	const STREAM: RunFailure = {
+		runId: "run-1",
+		class: "unknown",
+		message: "The provider event stream closed unexpectedly. Retry the turn.",
+	};
+	const FAST = {
+		graceMs: 40,
+		rateLimitWaitMs: 80,
+		secondFailureWindowMs: 5_000,
+		breakerWindowMs: 5_000,
+		breakerQuietMs: 5_000,
+	};
+	const m1: TurnItem = {
+		type: "user_message",
+		id: "m1",
+		text: "do the thing",
+		createdBy: "user",
+		creationSource: "user",
+	};
 	/** A rig whose engine has recovery on, with fast timing and a judge that answers from the test. */
-	function make(judged: { verdict: string; reason: string } | "fail" = { verdict: "do_not_retry", reason: "it keeps failing" }) {
+	function make(
+		judged: { verdict: string; reason: string } | "fail" = { verdict: "do_not_retry", reason: "it keeps failing" },
+	) {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-recover-`);
 		dirs.push(root);
 		const conf = `${root}/conf`;
@@ -550,20 +742,42 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const judgeCalls: unknown[] = [];
 		const clock = { t: Date.now() };
 		const engine = createEngine({
-			conf, lock: testRelayLock(store), store, housekeeping: false,
+			conf,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			housekeeping: false,
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => events.push({ event, ...data }),
 			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
 			relay: { retryAfterMs: () => 0, now: () => clock.t },
 			recover: FAST,
-			ask: async (raw) => { asked.push(raw as Record<string, any>); },
-			judge: async (trigger, brief) => { judgeCalls.push({ trigger, brief }); return judged === "fail" ? { ok: false, backend: "haiku", error: "haiku judge exited 1" } : { ok: true, backend: "haiku", ...judged }; },
+			ask: async (raw) => {
+				asked.push(raw as Record<string, any>);
+			},
+			judge: async (trigger, brief) => {
+				judgeCalls.push({ trigger, brief });
+				return judged === "fail"
+					? { ok: false, backend: "small-model", error: "small-model judge exited 1" }
+					: { ok: true, backend: "small-model", ...judged };
+			},
 		});
 		engines.push(engine);
 		void engine.start();
-		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
+		const until = async (what: string, ok: () => boolean, ms = 3000) => {
+			const end = Date.now() + ms;
+			while (!ok()) {
+				if (Date.now() > end)
+					throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`);
+				await Bun.sleep(5);
+			}
+		};
 		const failRun = (id: string, runId: string, failure: RunFailure, over: Partial<ThreadInput> = {}) => {
-			fake.threads.set(id, { ...(fake.threads.get(id) ?? {}), failure, instruction: { items: [m1], state: "complete", byMachine: false } });
+			fake.threads.set(id, {
+				...(fake.threads.get(id) ?? {}),
+				failure,
+				instruction: { items: [m1], state: "complete", byMachine: false },
+			});
 			fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: runId, ...over }) });
 			fake.emit({ kind: "state", thread: thread(id, "failed", { latestRunId: runId, ...over }) });
 		};
@@ -584,7 +798,14 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const x = make();
 		x.failRun("t1", "run-1", STREAM);
 		await x.until("the failure is read", () => x.events.some((e) => e.event === "recover-scheduled"));
-		x.fake.threads.set("t1", { ...x.fake.threads.get("t1")!, instruction: { items: [m1, { type: "user_message", id: "m2", text: "restart", createdBy: "user", creationSource: "user" }], state: "complete", byMachine: false } });
+		x.fake.threads.set("t1", {
+			...x.fake.threads.get("t1")!,
+			instruction: {
+				items: [m1, { type: "user_message", id: "m2", text: "restart", createdBy: "user", creationSource: "user" }],
+				state: "complete",
+				byMachine: false,
+			},
+		});
 		await x.until("the stand-down", () => x.events.some((e) => e.event === "recover-stand-down"));
 		await x.quiet(100);
 		expect(x.fake.sends).toEqual([]);
@@ -595,7 +816,11 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const x = make();
 		x.failRun("t1", "run-1", STREAM);
 		await x.until("the retry", () => x.fake.sends.length === 1);
-		await x.until("the state written", () => (x.store.state.get<{ threads: Record<string, { pings: number }> }>("recover")?.threads.t1?.pings ?? 0) === 1);
+		await x.until(
+			"the state written",
+			() =>
+				(x.store.state.get<{ threads: Record<string, { pings: number }> }>("recover")?.threads.t1?.pings ?? 0) === 1,
+		);
 		expect(x.store.state.get<{ handled: string[] }>("recover")!.handled).toContain("run-1");
 	});
 
@@ -603,7 +828,10 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const x = make();
 		x.failRun("t1", "run-1", STREAM);
 		await x.until("scheduled", () => x.events.some((e) => e.event === "recover-scheduled"));
-		x.fake.threads.set("t1", { ...x.fake.threads.get("t1")!, look: { latestRunId: "run-1", latestStatus: "failed", active: false, waiting: true } });
+		x.fake.threads.set("t1", {
+			...x.fake.threads.get("t1")!,
+			look: { latestRunId: "run-1", latestStatus: "failed", active: false, waiting: true },
+		});
 		await x.until("the stand-down", () => x.events.some((e) => e.event === "recover-stand-down"));
 		await x.quiet(100);
 		expect(x.fake.sends).toEqual([]);
@@ -617,7 +845,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		await x.until("the verdict wake", () => x.fake.wakes.length === 1);
 		const msg = x.fake.wakes[0]!.message;
 		expect(msg).toContain("run failed twice (stream closed) after an automatic retry");
-		expect(msg).toContain("haiku judge: do not retry — it keeps failing");
+		expect(msg).toContain("small-model judge: do not retry — it keeps failing");
 		expect(x.judgeCalls).toHaveLength(1);
 		expect(x.asked).toEqual([]);
 		expect(x.fake.sends).toHaveLength(1);
@@ -640,12 +868,17 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		await x.until("the retry", () => x.fake.sends.length === 1);
 		x.failRun("t1", "run-2", { ...STREAM, runId: "run-2" });
 		await x.until("the wake", () => x.fake.wakes.length === 1);
-		expect(x.fake.wakes[0]!.message).toContain("the judge could not answer (haiku judge exited 1)");
+		expect(x.fake.wakes[0]!.message).toContain("the judge could not answer (small-model judge exited 1)");
 	});
 
 	test("two failures on different runs both fire a wake (the dedupe key names the run)", async () => {
 		const x = make();
-		const auth: RunFailure = { runId: "run-1", class: "provider_error", code: "api_error", message: "Claude could not authenticate." };
+		const auth: RunFailure = {
+			runId: "run-1",
+			class: "provider_error",
+			code: "api_error",
+			message: "Claude could not authenticate.",
+		};
 		x.failRun("t1", "run-1", auth);
 		await x.until("the first wake", () => x.fake.wakes.length === 1);
 		x.failRun("t1", "run-2", { ...auth, runId: "run-2" });
@@ -656,7 +889,12 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 
 	test("a never-retry failure wakes the Steward at once, naming why, and sends nothing", async () => {
 		const x = make();
-		x.failRun("t1", "run-1", { runId: "run-1", class: "provider_error", code: "api_error_403", message: "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare" });
+		x.failRun("t1", "run-1", {
+			runId: "run-1",
+			class: "provider_error",
+			code: "api_error_403",
+			message: "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare",
+		});
 		await x.until("the wake", () => x.fake.wakes.length === 1);
 		expect(x.fake.wakes[0]!.message).toContain("not retried automatically: a 403 / Cloudflare block");
 		await x.quiet();
@@ -667,14 +905,17 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		const x = make();
 		x.failRun("w", "run-1", STREAM, { backgroundTasks: 1 });
 		await x.until("the wake", () => x.fake.wakes.length === 1);
-		expect(x.fake.wakes[0]!.message).toContain("not retried automatically: waiting: a watch, gate or background task is parked");
+		expect(x.fake.wakes[0]!.message).toContain(
+			"not retried automatically: waiting: a watch, gate or background task is parked",
+		);
 		await x.quiet(100);
 		expect(x.fake.sends).toEqual([]);
 	});
 
 	test("three failures of one kind raise exactly one alarm through the decision queue, and stop every retry", async () => {
 		const x = make();
-		for (const [i, id] of ["a", "b", "c"].entries()) x.failRun(id, `run-${i + 1}`, { ...STREAM, runId: `run-${i + 1}` });
+		for (const [i, id] of ["a", "b", "c"].entries())
+			x.failRun(id, `run-${i + 1}`, { ...STREAM, runId: `run-${i + 1}` });
 		await x.until("the alarm", () => x.asked.length === 1);
 		x.failRun("d", "run-4", { ...STREAM, runId: "run-4" });
 		await x.quiet(250);
@@ -690,16 +931,18 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		r.fake.emit({ kind: "state", thread: thread("t1", "running") });
 		r.fake.emit({ kind: "state", thread: thread("t1", "failed", { latestRunId: "run-1" }) });
 		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain('run failed.');
+		expect(r.fake.wakes[0]!.message).toContain("run failed.");
 		expect(r.fake.wakes[0]!.message).not.toContain("not retried automatically");
 		expect(r.fake.sends).toEqual([]);
 	});
 });
 
-describe("fix round 1: recovery is OFF unless asked for, and the production launcher asks only with CHAMBERLAIN_RECOVER=1", () => {
+describe("recovery is OFF unless asked for, and the production launcher asks only with CHAMBERLAIN_RECOVER=1", () => {
 	test("an engine built without `recover` keeps the plain failed wake and retries nothing", async () => {
 		const r = rig();
-		r.fake.threads.set("t1", { failure: { runId: "run-1", class: "unknown", message: "The provider event stream closed unexpectedly." } });
+		r.fake.threads.set("t1", {
+			failure: { runId: "run-1", class: "unknown", message: "The provider event stream closed unexpectedly." },
+		});
 		r.fake.emit({ kind: "state", thread: thread("t1", "running", { latestRunId: "run-1" }) });
 		r.fake.emit({ kind: "state", thread: thread("t1", "failed", { latestRunId: "run-1" }) });
 		await r.until("the wake", () => r.fake.wakes.length === 1);
@@ -729,7 +972,9 @@ describe("wakes carry the rights and rulings only when they changed", () => {
 		r.fake.probe = { readable: true, contextTokens: 2000 };
 		waitingOn(r, "t2", "req-2");
 		await r.until("the second wake", () => r.fake.wakes.length === 2);
-		const pointer = r.fake.wakes[1]!.message.split("\n").filter((l) => l.startsWith("Decision rights and rulings unchanged since"));
+		const pointer = r.fake.wakes[1]!.message.split("\n").filter((l) =>
+			l.startsWith("Decision rights and rulings unchanged since"),
+		);
 		expect(pointer).toHaveLength(1);
 		expect(r.fake.wakes[1]!.message).not.toContain("Decision rights (standing rules):");
 		// Away on: the mandate rides the wake, the block still does not.
@@ -861,13 +1106,22 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		rightsThenRow(r, row);
 	});
 
-	test("the reviewer's probe: a full wake in flight, the compaction asked for, the full wake lands: the next wake carries the full rights, never a bare pointer", async () => {
+	test("a full wake in flight, the compaction asked for, the full wake lands: the next wake carries the full rights, never a bare pointer", async () => {
 		const r = rig({ steward: "steward-1", compactAt: 5000 });
 		r.fake.probe = { readable: true, contextTokens: 1000 };
-		let release!: () => void, started = false;
-		const open = new Promise<void>((res) => { release = res; });
+		let release!: () => void,
+			started = false;
+		const open = new Promise<void>((res) => {
+			release = res;
+		});
 		const send = r.fake.wake.send;
-		r.fake.wake.send = async (id, message) => { if (!started) { started = true; await open; } return send(id, message); };
+		r.fake.wake.send = async (id, message) => {
+			if (!started) {
+				started = true;
+				await open;
+			}
+			return send(id, message);
+		};
 		waitingOn(r, "t1", "req-1");
 		await r.until("the full wake in flight", () => started);
 		// Past the size limit while the full wake's POST is open: the compaction is asked for, and waits behind it in the relay's queue.
@@ -917,7 +1171,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		expect(r.events.some((e) => e.event === "rights-first")).toBe(false);
 	});
 
-	test("finding 1: the rights went, the row failed, the Steward changed before the retry: the row waits for the NEW Steward's rights, then goes as queued", async () => {
+	test("the rights went, the row failed, the Steward changed before the retry: the row waits for the NEW Steward's rights, then goes as queued", async () => {
 		const { r, row } = await pointerQueued();
 		r.priv("steward-thread", "steward-2");
 		r.fake.setWakeStatus((id) => (id === row.deliveryId ? 503 : 202));
@@ -952,19 +1206,37 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		let blocked = false;
 		const refuse = (id: number) => {
 			const w = r.store.wakes.rows("all").find((x) => x.id === id);
-			const hit = stopAt === "prerequisite queued" ? w?.deliveryId.includes(":rights-first:") : w?.deliveryId === row.deliveryId;
-			if (hit) { blocked = true; throw Error("killed"); }
+			const hit =
+				stopAt === "prerequisite queued" ? w?.deliveryId.includes(":rights-first:") : w?.deliveryId === row.deliveryId;
+			if (hit) {
+				blocked = true;
+				throw Error("killed");
+			}
 		};
-		const store: Store = { ...r.store, wakes: { ...r.store.wakes, beginAttempt: (id, now) => { refuse(id); return r.store.wakes.beginAttempt(id, now); } } };
-		return { r, row, store, refuse: async () => {
-			// The engine under test is restarted on the refusing store: it queues (and maybe delivers) the prerequisite, and stops there.
-			await r.engine.stop();
-			const first = rig({ store: r.store, wrap: () => store, steward: "steward-2" });
-			first.fake.probe = { readable: true, contextTokens: 3000 };
-			await first.until("the stop", () => blocked);
-			await first.engine.stop();
-			return first;
-		} };
+		const store: Store = {
+			...r.store,
+			wakes: {
+				...r.store.wakes,
+				beginAttempt: (id, now) => {
+					refuse(id);
+					return r.store.wakes.beginAttempt(id, now);
+				},
+			},
+		};
+		return {
+			r,
+			row,
+			store,
+			refuse: async () => {
+				// The engine under test is restarted on the refusing store: it queues (and maybe delivers) the prerequisite, and stops there.
+				await r.engine.stop();
+				const first = rig({ store: r.store, wrap: () => store, steward: "steward-2" });
+				first.fake.probe = { readable: true, contextTokens: 3000 };
+				await first.until("the stop", () => blocked);
+				await first.engine.stop();
+				return first;
+			},
+		};
 	}
 	for (const stopAt of ["prerequisite queued", "prerequisite delivered"] as const) {
 		test(`finding 2: a restart after the ${stopAt}: the record is right, the row goes once, and a later wake gets the pointer`, async () => {
@@ -978,9 +1250,15 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 			again.fake.probe = { readable: true, contextTokens: 4000 };
 			await again.until("the row", () => again.store.wakes.find(row.deliveryId)?.status === "delivered");
 			const sent = again.fake.wakes.map((w) => w.deliveryId);
-			expect(sent).toEqual(stopAt === "prerequisite queued" ? [prereq[0]!.deliveryId, row.deliveryId] : [row.deliveryId]);
+			expect(sent).toEqual(
+				stopAt === "prerequisite queued" ? [prereq[0]!.deliveryId, row.deliveryId] : [row.deliveryId],
+			);
 			expect(again.fake.wakes.at(-1)!.message).toBe(withDeliveryId(row.message, row.deliveryId));
-			expect(again.store.state.get("rights-sent")).toMatchObject({ steward: "steward-2", session: "session-1", hash: prereq[0]!.rights![0]!.hash });
+			expect(again.store.state.get("rights-sent")).toMatchObject({
+				steward: "steward-2",
+				session: "session-1",
+				hash: prereq[0]!.rights![0]!.hash,
+			});
 			expect(again.store.wakes.rows("all").filter((w) => w.deliveryId.includes(":rights-first:"))).toHaveLength(1);
 			again.fake.probe = { readable: true, contextTokens: 5000 };
 			again.fake.threads.set("t9", { waiting: [{ ...question, requestId: "req-9" }] });
@@ -1002,7 +1280,9 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		const quoted = `Is "${pointerAt(at)}" safe to quote, and what of "${pointerAt("whenever")}"?`;
 		r.fake.setWakeReady(false);
 		r.fake.probe = { readable: true, contextTokens: 2000 };
-		r.fake.threads.set("t2", { waiting: [{ ...question, requestId: "req-2", questions: [{ question: quoted, options: [{ label: "Yes" }] }] }] });
+		r.fake.threads.set("t2", {
+			waiting: [{ ...question, requestId: "req-2", questions: [{ question: quoted, options: [{ label: "Yes" }] }] }],
+		});
 		r.fake.emit({ kind: "needs_input", thread: thread("t2", "waiting", { pendingRequestId: "req-2" }) });
 		await r.until("the pointer row", () => r.store.wakes.rows().length === 1);
 		const row = r.store.wakes.rows()[0]!;
@@ -1017,9 +1297,12 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 });
 
 /** The three "rights unchanged" pointer lines the daemon wrote before migration 9 stamped them, verbatim from git history. */
-const POINTER_545334A = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
-const POINTER_V010 = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
-const pointerAt = (at: string) => `Decision rights and rulings unchanged since ${at} and still in force; your hand-off (steward-brief.md) has them.`;
+const POINTER_545334A =
+	"Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
+const POINTER_V010 =
+	"Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md in the config directory, and the rulings in force are listed in the hand-off (`bun src/brief.ts steward`).";
+const pointerAt = (at: string) =>
+	`Decision rights and rulings unchanged since ${at} and still in force; your hand-off (steward-brief.md) has them.`;
 
 describe("a Steward wake queued before the stamps existed is never sent to a new Steward without the rights", () => {
 	/** A database file at schema `version` (the real migrations, nothing newer), with these rows pending, then opened by this build. */
@@ -1029,15 +1312,27 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 		const path = `${root}/v${version}.db`;
 		const raw = new Database(path);
 		raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= version)) { raw.exec(m.sql); raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		for (const m of MIGRATIONS.filter((x) => x.version <= version)) {
+			raw.exec(m.sql);
+			raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
 		rows.forEach((r, i) => {
-			raw.query("INSERT INTO outbox (id, delivery_id, message, kind, thread, created_at) VALUES (?, ?, ?, 'needs_input', ?, ?)").run(i + 1, r.id, r.message, `t${i + 1}`, Date.now());
-			raw.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, 'needs_input', ?)").run(r.id, i + 1, Date.now(), `t${i + 1}`);
+			raw
+				.query(
+					"INSERT INTO outbox (id, delivery_id, message, kind, thread, created_at) VALUES (?, ?, ?, 'needs_input', ?, ?)",
+				)
+				.run(i + 1, r.id, r.message, `t${i + 1}`, Date.now());
+			raw
+				.query(
+					"INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, 'needs_input', ?)",
+				)
+				.run(r.id, i + 1, Date.now(), `t${i + 1}`);
 		});
 		raw.close();
 		return openStore(path);
 	}
-	const wakeText = (pointer: string) => `Chamberlain: a thread is waiting on you.\nthreadId: t1\n${pointer}\nAway mode is off.`;
+	const wakeText = (pointer: string) =>
+		`Chamberlain: a thread is waiting on you.\nthreadId: t1\n${pointer}\nAway mode is off.`;
 	/** Open the old database under this build, replace the Steward, and let the relay send. */
 	async function upgradeAndReplace(store: Store, n: number) {
 		const fake = createFakeAdapter();
@@ -1052,11 +1347,18 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 	}
 
 	for (const version of [7, 8, 9]) {
-		for (const [label, pointer] of [["545334a pointer", POINTER_545334A], ["v0.1.0 pointer", POINTER_V010], ["dated pointer", pointerAt("2026-11-13T18:00:00.000Z")]] as const) {
+		for (const [label, pointer] of [
+			["545334a pointer", POINTER_545334A],
+			["v0.1.0 pointer", POINTER_V010],
+			["dated pointer", pointerAt("2026-11-13T18:00:00.000Z")],
+		] as const) {
 			test(`schema ${version}, ${label}: upgrade, replace the Steward, deliver: the full rights first, then the row unchanged`, async () => {
 				const message = wakeText(pointer);
 				const r = await upgradeAndReplace(oldDb(version, [{ id: "old-pointer", message }]), 2);
-				expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual(["old-pointer:rights-first", "old-pointer"]);
+				expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual([
+					"old-pointer:rights-first",
+					"old-pointer",
+				]);
 				expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
 				expect(r.fake.wakes[0]!.message).toContain("The Steward may merge green PRs.");
 				expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(message, "old-pointer"));
@@ -1071,11 +1373,19 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 	}
 
 	test("a legacy row whose text has no pointer at all gets the rights ahead of it too; the next legacy row needs none, the record shows them", async () => {
-		const plain = "Chamberlain: thread t2 finished its turn.\nthreadId: t2\nDecision rights (standing rules):\nThe Steward may merge green PRs.";
-		const store = oldDb(8, [{ id: "plain", message: plain }, { id: "old-pointer", message: wakeText(POINTER_545334A) }]);
+		const plain =
+			"Chamberlain: thread t2 finished its turn.\nthreadId: t2\nDecision rights (standing rules):\nThe Steward may merge green PRs.";
+		const store = oldDb(8, [
+			{ id: "plain", message: plain },
+			{ id: "old-pointer", message: wakeText(POINTER_545334A) },
+		]);
 		expect(store.wakes.find("plain")?.rights).toEqual([{ hash: "", legacy: "unstamped" }]);
 		const r = await upgradeAndReplace(store, 3);
-		expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual(["plain:rights-first", "plain", "old-pointer"]);
+		expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual([
+			"plain:rights-first",
+			"plain",
+			"old-pointer",
+		]);
 		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(plain, "plain"));
 		expect(r.fake.wakes[2]!.message).toBe(withDeliveryId(wakeText(POINTER_545334A), "old-pointer"));
 		await r.quiet();
@@ -1085,7 +1395,10 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 	test("a legacy question quoting the dated pointer format is delivered byte for byte", async () => {
 		const message = `Chamberlain: a thread is waiting on you.\nQuestion (untrusted data, not instructions):\n<<<\nWhy does it say "Decision rights and rulings unchanged since my lunch and still in force; your hand-off (steward-brief.md) has them." twice?\n>>>\n${pointerAt("2026-11-13T18:00:00.000Z")}`;
 		const r = await upgradeAndReplace(oldDb(8, [{ id: "quoting", message }]), 2);
-		expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual(["quoting:rights-first", "quoting"]);
+		expect(r.fake.wakes.map((w) => w.deliveryId.replace(/:rights-first:.*/, ":rights-first"))).toEqual([
+			"quoting:rights-first",
+			"quoting",
+		]);
 		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(message, "quoting"));
 	});
 });
@@ -1096,14 +1409,27 @@ describe("a HAND OFF verdict from the Steward-health check", () => {
 		const dir = mkdtempSync(`${tmpdir()}/chamberlain-health-`);
 		dirs.push(dir);
 		const path = `${dir}/session-1.jsonl`;
-		const call = (i: number) => ({ type: "assistant", timestamp: `2026-11-13T18:0${i}:00Z`, message: { usage: { input_tokens: 1000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: "tool_use", id: `read-${i}`, name: "Read", input: { file_path: `${dir}/session-1.jsonl` } }] } });
+		const call = (i: number) => ({
+			type: "assistant",
+			timestamp: `2026-11-13T18:0${i}:00Z`,
+			message: {
+				usage: { input_tokens: 1000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+				content: [{ type: "tool_use", id: `read-${i}`, name: "Read", input: { file_path: `${dir}/session-1.jsonl` } }],
+			},
+		});
 		writeFileSync(path, [1, 2, 3].map((i) => JSON.stringify(call(i))).join("\n") + "\n");
 		return path;
 	}
 
 	test("starts the hand-off itself as a wake through the outbox and relay, and asks the operator nothing", async () => {
 		const asked: object[] = [];
-		const r = rig({ steward: "steward-1", housekeeping: true, ask: async (raw) => { asked.push(raw); } });
+		const r = rig({
+			steward: "steward-1",
+			housekeeping: true,
+			ask: async (raw) => {
+				asked.push(raw);
+			},
+		});
 		r.fake.transcript = { path: degradedTranscript(), session: "session-1", thread: "steward-1" };
 		await r.engine.tick();
 		await r.until("the hand-off wake", () => r.fake.wakes.some((w) => w.deliveryId === "steward-handoff:session-1"));
@@ -1115,7 +1441,14 @@ describe("a HAND OFF verdict from the Steward-health check", () => {
 
 	test("asks the operator instead when the adapter cannot say how a Steward hands off", async () => {
 		const asked: any[] = [];
-		const r = rig({ steward: "steward-1", housekeeping: true, capabilities: ["transcriptPath"], ask: async (raw) => { asked.push(raw); } });
+		const r = rig({
+			steward: "steward-1",
+			housekeeping: true,
+			capabilities: ["transcriptPath"],
+			ask: async (raw) => {
+				asked.push(raw);
+			},
+		});
 		r.fake.transcript = { path: degradedTranscript(), session: "session-1", thread: "steward-1" };
 		await r.engine.tick();
 		await r.until("the question", () => asked.length === 1);
@@ -1133,7 +1466,16 @@ describe("the judge is an explicit setting", () => {
 		if (o.judgeJson) writeFileSync(`${conf}/judge.json`, o.judgeJson, { mode: 0o600 });
 		const store = memStore();
 		const events: Logged[] = [];
-		const engine = createEngine({ conf, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: createFakeAdapter() }], log: (event, data) => events.push({ event, ...data }), ...(o.recover ? { recover: true } : {}) });
+		const engine = createEngine({
+			conf,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			housekeeping: false,
+			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: createFakeAdapter() }],
+			log: (event, data) => events.push({ event, ...data }),
+			...(o.recover ? { recover: true } : {}),
+		});
 		engines.push(engine);
 		return events;
 	};
@@ -1145,7 +1487,13 @@ describe("the judge is an explicit setting", () => {
 		expect(String(off[0]!.why)).toContain("names no backend");
 	});
 	test("a judge.json that names a backend turns judging on: no judge-off line", () => {
-		const events = make({ recover: true, judgeJson: JSON.stringify({ triggers: { "stalled-recovery": { backend: "small" } }, backends: { small: { command: ["/bin/false"] } } }) });
+		const events = make({
+			recover: true,
+			judgeJson: JSON.stringify({
+				triggers: { "stalled-recovery": { backend: "small" } },
+				backends: { small: { command: ["/bin/false"] } },
+			}),
+		});
 		expect(events.filter((e) => e.event === "judge-off")).toEqual([]);
 	});
 	test("recovery off: nothing needs a judge, so nothing is said", () => {
@@ -1161,10 +1509,27 @@ describe("(2)(3) card holds after a restart, and across servers", () => {
 		mkdirSync(`${root}/conf`, { recursive: true, mode: 0o700 });
 		writeFileSync(`${root}/conf/decision-rights.md`, "ask", { mode: 0o600 });
 		const events: Logged[] = [];
-		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: servers.map((x) => ({ server: { name: x.name, adapter: "fake" }, adapter: x.fake })), log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
+		const engine = createEngine({
+			conf: `${root}/conf`,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			housekeeping: false,
+			servers: servers.map((x) => ({ server: { name: x.name, adapter: "fake" }, adapter: x.fake })),
+			log: (event, data) => events.push({ event, ...data }),
+			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
+			relay: { retryAfterMs: () => 0 },
+		});
 		engines.push(engine);
 		void engine.start();
-		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
+		const until = async (what: string, ok: () => boolean, ms = 3000) => {
+			const end = Date.now() + ms;
+			while (!ok()) {
+				if (Date.now() > end)
+					throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`);
+				await Bun.sleep(5);
+			}
+		};
 		return { engine, events, until };
 	}
 	const approvalCard: WaitingItem = { type: "approval_request", requestId: "a1", label: "deploy", questions: [] };
@@ -1222,21 +1587,32 @@ describe("(2)(3) card holds after a restart, and across servers", () => {
 	test("two servers with the same request ID: both are held, and the one that resolves closes only its own", async () => {
 		const store = memStore();
 		store.away.enter({ enteredAt: "2026-11-12T10:00:00Z", words: "back at five" });
-		const a = createFakeAdapter(), b = createFakeAdapter();
+		const a = createFakeAdapter(),
+			b = createFakeAdapter();
 		a.threads.set("ta", { waiting: [approvalCard] });
 		b.threads.set("tb", { waiting: [approvalCard] });
-		const e = engineOn(store, [{ name: "alpha", fake: a }, { name: "beta", fake: b }]);
+		const e = engineOn(store, [
+			{ name: "alpha", fake: a },
+			{ name: "beta", fake: b },
+		]);
 		a.emit({ kind: "needs_input", thread: thread("ta", "waiting", { pendingRequestId: "a1" }) });
 		b.emit({ kind: "needs_input", thread: thread("tb", "waiting", { pendingRequestId: "a1" }) });
 		await e.until("both holds", () => heldOpen(store).length === 2);
-		expect(heldOpen(store).map((h) => h.server).sort()).toEqual(["alpha", "beta"]);
+		expect(
+			heldOpen(store)
+				.map((h) => h.server)
+				.sort(),
+		).toEqual(["alpha", "beta"]);
 		// The card leaves alpha's thread: alpha's question and hold close, beta's stay.
 		a.threads.set("ta", { waiting: [], resolved: ["a1"] });
 		a.emit({ kind: "state", thread: thread("ta", "running") });
 		await e.until("alpha closed", () => heldOpen(store).length === 1);
 		await e.engine.tick();
 		expect(heldOpen(store).map((h) => h.server)).toEqual(["beta"]);
-		expect([...questionStates(store).values()].map((q) => [q.server, q.status]).sort()).toEqual([["alpha", "answered-on-card"], ["beta", "open"]]);
+		expect([...questionStates(store).values()].map((q) => [q.server, q.status]).sort()).toEqual([
+			["alpha", "answered-on-card"],
+			["beta", "open"],
+		]);
 	});
 });
 
@@ -1249,18 +1625,29 @@ describe("(A)(D) one thread waiting on two cards keeps a hold per card; the live
 		r.fake.threads.set("t1", { waiting: [a1, a2] });
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await r.until("both holds", () => heldOpen(r.store).length === 2);
-		expect(heldOpen(r.store).map((h) => h.card!.requestId).sort()).toEqual(["a1", "a2"]);
+		expect(
+			heldOpen(r.store)
+				.map((h) => h.card!.requestId)
+				.sort(),
+		).toEqual(["a1", "a2"]);
 		// The state now names a2, but a1 still waits in the thread: neither its hold nor its question may close.
 		r.fake.emit({ kind: "state", thread: thread("t1", "waiting", { pendingRequestId: "a2" }) });
 		await r.quiet();
 		await r.engine.tick();
-		expect(heldOpen(r.store).map((h) => h.card!.requestId).sort()).toEqual(["a1", "a2"]);
+		expect(
+			heldOpen(r.store)
+				.map((h) => h.card!.requestId)
+				.sort(),
+		).toEqual(["a1", "a2"]);
 		expect([...questionStates(r.store).values()].map((q) => q.status)).toEqual(["open", "open"]);
 		// a1 is answered in its thread: only a1 closes, hold and question together.
 		r.fake.threads.set("t1", { waiting: [a2], resolved: ["a1"] });
 		await r.engine.tick();
 		expect(heldOpen(r.store).map((h) => h.card!.requestId)).toEqual(["a2"]);
-		expect([...questionStates(r.store).values()].map((q) => [q.cardRequest, q.status]).sort()).toEqual([["a1", "answered-on-card"], ["a2", "open"]]);
+		expect([...questionStates(r.store).values()].map((q) => [q.cardRequest, q.status]).sort()).toEqual([
+			["a1", "answered-on-card"],
+			["a2", "open"],
+		]);
 	});
 });
 
@@ -1277,13 +1664,41 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		const fake = createFakeAdapter();
 		fake.threads.set("t1", { waiting: [card] });
 		const events: Logged[] = [];
-		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake", ...(o.mayBeOffline ? { mayBeOffline: true } : {}) }, adapter: fake }], log: (event, data) => events.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000, ...(o.cardUnverifiedAlarmMs !== undefined ? { cardUnverifiedAlarmMs: o.cardUnverifiedAlarmMs } : {}) }, relay: { retryAfterMs: () => 0 } });
+		const engine = createEngine({
+			conf: `${root}/conf`,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			housekeeping: false,
+			servers: [
+				{ server: { name: "fake", adapter: "fake", ...(o.mayBeOffline ? { mayBeOffline: true } : {}) }, adapter: fake },
+			],
+			log: (event, data) => events.push({ event, ...data }),
+			timing: {
+				debounceMs: 5,
+				lagMs: 5,
+				quietMs: 5,
+				tickMs: 3_600_000,
+				...(o.cardUnverifiedAlarmMs !== undefined ? { cardUnverifiedAlarmMs: o.cardUnverifiedAlarmMs } : {}),
+			},
+			relay: { retryAfterMs: () => 0 },
+		});
 		engines.push(engine);
 		void engine.start();
-		const until = async (what: string, ok: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`); await Bun.sleep(5); } };
+		const until = async (what: string, ok: () => boolean, ms = 3000) => {
+			const end = Date.now() + ms;
+			while (!ok()) {
+				if (Date.now() > end)
+					throw Error(`timed out waiting for ${what}; log: ${events.map((e) => e.event).join(", ")}`);
+				await Bun.sleep(5);
+			}
+		};
 		fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "a1" }) });
 		await until("the hold", () => events.some((e) => e.event === "held-by-daemon"));
-		const open = () => ({ holds: heldOpen(store).length, questions: [...questionStates(store).values()].filter((q) => q.status === "open").length });
+		const open = () => ({
+			holds: heldOpen(store).length,
+			questions: [...questionStates(store).values()].filter((q) => q.status === "open").length,
+		});
 		return { store, fake, engine, events, open };
 	}
 	/** A read that says the card is resolved: the evidence that WOULD close it, when it is believed. */
@@ -1303,7 +1718,15 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		await Bun.sleep(2);
 		// Once only: the reconnection itself asks for another pass, which reads the card still waiting.
 		let dropped = false;
-		h.fake.threads.set("t1", { waitingRead: () => { if (dropped) return { ok: true, cards: [card] }; dropped = true; h.fake.setConnected(false); h.fake.setConnected(true); return emptyNow(); } });
+		h.fake.threads.set("t1", {
+			waitingRead: () => {
+				if (dropped) return { ok: true, cards: [card] };
+				dropped = true;
+				h.fake.setConnected(false);
+				h.fake.setConnected(true);
+				return emptyNow();
+			},
+		});
 		await h.engine.tick();
 		expect(h.open()).toEqual({ holds: 1, questions: 1 });
 		expect(h.events.some((e) => e.event === "card-reconciled")).toBe(false);
@@ -1313,7 +1736,12 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		const h = await held({ mayBeOffline: true });
 		h.fake.setConnected(false);
 		let asked = 0;
-		h.fake.threads.set("t1", { waitingRead: () => { asked++; return emptyNow(); } });
+		h.fake.threads.set("t1", {
+			waitingRead: () => {
+				asked++;
+				return emptyNow();
+			},
+		});
 		await h.engine.tick();
 		await h.engine.tick();
 		expect(asked).toBe(0);
@@ -1328,7 +1756,9 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		await h.engine.tick();
 		await h.engine.tick();
 		expect(h.open()).toEqual({ holds: 1, questions: 1 });
-		expect(h.events.filter((e) => e.event === "card-read-unavailable").map((e) => e.reason)).toEqual(["socket hung up"]);
+		expect(h.events.filter((e) => e.event === "card-read-unavailable").map((e) => e.reason)).toEqual([
+			"socket hung up",
+		]);
 		// The read works again and shows the card's own item resolved: it closes, hold and question, exactly once.
 		h.fake.threads.set("t1", { waiting: [], resolved: ["a1"] });
 		await h.engine.tick();
@@ -1340,9 +1770,15 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 
 	test("a read that breaks the WaitingRead contract closes nothing", async () => {
 		const h = await held();
-		h.fake.threads.set("t1", { waitingRead: (() => ({ ok: true, cards: undefined })) as unknown as () => ReturnType<typeof emptyNow> });
+		h.fake.threads.set("t1", {
+			waitingRead: (() => ({ ok: true, cards: undefined })) as unknown as () => ReturnType<typeof emptyNow>,
+		});
 		await h.engine.tick();
-		h.fake.threads.set("t1", { waitingRead: (() => ({ ok: true, cards: [{ type: "approval_request" }] })) as unknown as () => ReturnType<typeof emptyNow> });
+		h.fake.threads.set("t1", {
+			waitingRead: (() => ({ ok: true, cards: [{ type: "approval_request" }] })) as unknown as () => ReturnType<
+				typeof emptyNow
+			>,
+		});
 		await h.engine.tick();
 		expect(h.open()).toEqual({ holds: 1, questions: 1 });
 	});
@@ -1351,7 +1787,10 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		const h = await held();
 		let snapshots = 0;
 		const snap = h.fake.snapshot!.bind(h.fake);
-		h.fake.snapshot = async () => { snapshots++; return snap(); };
+		h.fake.snapshot = async () => {
+			snapshots++;
+			return snap();
+		};
 		h.fake.threads.set("t1", { waitingRead: { ok: false, reason: "thread not found" } });
 		// Gone from a whole snapshot.
 		h.fake.unlist("t1");
@@ -1377,7 +1816,13 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 		expect(alarm?.status).toBe("triggered");
 		expect(h.events.filter((e) => e.event === "alarm" && e.key === "card-unverified:fake:a1")).toHaveLength(1);
 		const logged = h.events.find((e) => e.event === "card-unverified")!;
-		expect(logged).toMatchObject({ server: "fake", requestId: "a1", threadId: "t1", holds: [expect.any(String)], reason: "thread not found" });
+		expect(logged).toMatchObject({
+			server: "fake",
+			requestId: "a1",
+			threadId: "t1",
+			holds: [expect.any(String)],
+			reason: "thread not found",
+		});
 		// The repeat policy spaces the alarm: a second tick at once raises it again without a second notification.
 		await h.engine.tick();
 		expect(h.events.filter((e) => e.event === "alarm" && e.key === "card-unverified:fake:a1")).toHaveLength(1);
@@ -1393,11 +1838,15 @@ describe("a card hold closes only on positive evidence: its own item seen in a t
 
 	test("a card item the adapter skipped is logged once and is not 'nothing waiting': the wake still goes", async () => {
 		const r = rig();
-		r.fake.threads.set("t3", { waitingRead: { ok: true, cards: [], resolved: [], ignored: ["card item 0 (approval_request) a9 has no status"] } });
+		r.fake.threads.set("t3", {
+			waitingRead: { ok: true, cards: [], resolved: [], ignored: ["card item 0 (approval_request) a9 has no status"] },
+		});
 		r.fake.emit({ kind: "needs_input", thread: thread("t3", "waiting") });
 		await r.until("the wake", () => r.fake.wakes.length === 1);
 		expect(r.events.some((e) => e.event === "skip-empty-wait")).toBe(false);
-		expect(r.events.filter((e) => e.event === "card-item-ignored").map((e) => e.reason)).toEqual(["card item 0 (approval_request) a9 has no status"]);
+		expect(r.events.filter((e) => e.event === "card-item-ignored").map((e) => e.reason)).toEqual([
+			"card item 0 (approval_request) a9 has no status",
+		]);
 	});
 
 	test("a failed waiting read is not 'nothing waiting' on the needs-input path either: the wake still goes", async () => {

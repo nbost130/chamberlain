@@ -1,5 +1,5 @@
 /**
- * What an inline frame may NOT do (audit finding B4), enforced by the server on the route and on the request's fields. An inline frame
+ * What an inline frame may NOT do, enforced by the server on the route and on the request's fields. An inline frame
  * is a sandboxed page whose origin is "null"; any page on the principal's devices can send such a request, so the page's own script is
  * not the control. The server allows exactly: GET /api/queue, /api/recent, /api/rulings, and POST a plain question answer (a choice
  * and an optional note). Every refusal below is tested against the same request from the full page, which is still allowed.
@@ -15,27 +15,90 @@ import { createApp, inlineVerdict } from "./app.ts";
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
-const item = (id: string): Question => ({ id, kind: "product", title: `Question ${id}`, context: "x", options: [{ label: "A" }, { label: "B" }], recommended: 0, proposedRuling: "Lead with a photo", thread: "t", server: "main", createdAt: "2026-11-09T10:00:00.000Z" });
+const item = (id: string): Question => ({
+	id,
+	kind: "product",
+	title: `Question ${id}`,
+	context: "x",
+	options: [{ label: "A" }, { label: "B" }],
+	recommended: 0,
+	proposedRuling: "Lead with a photo",
+	thread: "t",
+	server: "main",
+	createdAt: "2026-11-09T10:00:00.000Z",
+});
 
 function setup() {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-inline-a-`);
 	dirs.push(root);
 	const store = memStore();
 	for (const id of ["Q-abcd", "Q-efgh", "Q-ijkl"]) askQuestion(store, item(id));
-	const cards: { id: string; type: "question" | "approval"; server: string; threadId: string; threadTitle: string; requestId: string; question: string; options: { label: string }[]; answerable: boolean; sig: string; command?: string }[] = [
-		{ id: "C-0123456789ab", type: "question", server: "main", threadId: "t", threadTitle: "T", requestId: "r1", question: "Q?", options: [{ label: "A" }], answerable: true, sig: "s1" },
-		{ id: "C-ba9876543210", type: "approval", server: "main", threadId: "t", threadTitle: "T", requestId: "r2", question: "Run it?", options: [{ label: "Approve once" }, { label: "Decline" }], answerable: true, sig: "s2", command: "rm -rf build" },
+	const cards: {
+		id: string;
+		type: "question" | "approval";
+		server: string;
+		threadId: string;
+		threadTitle: string;
+		requestId: string;
+		question: string;
+		options: { label: string }[];
+		answerable: boolean;
+		sig: string;
+		command?: string;
+	}[] = [
+		{
+			id: "C-0123456789ab",
+			type: "question",
+			server: "main",
+			threadId: "t",
+			threadTitle: "T",
+			requestId: "r1",
+			question: "Q?",
+			options: [{ label: "A" }],
+			answerable: true,
+			sig: "s1",
+		},
+		{
+			id: "C-ba9876543210",
+			type: "approval",
+			server: "main",
+			threadId: "t",
+			threadTitle: "T",
+			requestId: "r2",
+			question: "Run it?",
+			options: [{ label: "Approve once" }, { label: "Decline" }],
+			answerable: true,
+			sig: "s2",
+			command: "rm -rf build",
+		},
 	];
 	const cardAnswers: unknown[] = [];
-	const mirror = { list: () => cards, answer: async (id: string, choice: unknown, sig: unknown) => { cardAnswers.push([id, choice, sig]); return { status: 200, body: { ok: true, choice: "A" } }; } };
+	const mirror = {
+		list: () => cards,
+		answer: async (id: string, choice: unknown, sig: unknown) => {
+			cardAnswers.push([id, choice, sig]);
+			return { status: 200, body: { ok: true, choice: "A" } };
+		},
+	};
 	const app = createApp({ store, state: `${root}/state`, log: () => {}, hosts: [HOST], staticDir: root, mirror });
 	const send = (method: string, path: string, o: { origin?: string; body?: unknown } = {}) => {
 		const headers: Record<string, string> = { host: HOST };
 		if (o.origin) headers.origin = o.origin;
-		if (method === "POST") { headers["content-type"] = "application/json"; headers["x-decision-queue"] = "1"; }
-		return app.fetch(new Request(`http://${HOST}${path}`, { method, headers, ...(method === "POST" ? { body: JSON.stringify(o.body ?? {}) } : {}) }));
+		if (method === "POST") {
+			headers["content-type"] = "application/json";
+			headers["x-decision-queue"] = "1";
+		}
+		return app.fetch(
+			new Request(`http://${HOST}${path}`, {
+				method,
+				headers,
+				...(method === "POST" ? { body: JSON.stringify(o.body ?? {}) } : {}),
+			}),
+		);
 	};
 	const frame = (method: string, path: string, body?: unknown) => send(method, path, { origin: "null", body });
 	const page = (method: string, path: string, body?: unknown) => send(method, path, { body });
@@ -65,9 +128,15 @@ describe("an inline frame cannot save a ruling", () => {
 
 	test("the same request from the full page saves a confirmed, in-force ruling (so the refusal is about the frame, not the item)", async () => {
 		const s = setup();
-		const r = await s.page("POST", "/api/items/Q-abcd/answer", { choice: 0, saveRuling: true, rulingWording: "Merge conflicts are the Steward's" });
+		const r = await s.page("POST", "/api/items/Q-abcd/answer", {
+			choice: 0,
+			saveRuling: true,
+			rulingWording: "Merge conflicts are the Steward's",
+		});
 		expect(r.status).toBe(200);
-		expect(readRulings(s.store).map((x) => [x.status, x.confirmed, x.decides])).toEqual([["in-force", true, "Merge conflicts are the Steward's"]]);
+		expect(readRulings(s.store).map((x) => [x.status, x.confirmed, x.decides])).toEqual([
+			["in-force", true, "Merge conflicts are the Steward's"],
+		]);
 	});
 
 	test("a plain answer, a choice and a note, still goes through", async () => {
@@ -93,7 +162,15 @@ describe("an inline frame cannot read an item on its own, or anything but the th
 		expect((await s.page("GET", "/api/items/Q-abcd")).status).toBe(200);
 	});
 
-	for (const path of ["/api/items/Q-abcd", "/api/items", "/api/health", "/api/accept-all", "/api/rulings/R1", "/api/cards/C-0123456789ab", "/evidence/Q-abcd/a.png"]) {
+	for (const path of [
+		"/api/items/Q-abcd",
+		"/api/items",
+		"/api/health",
+		"/api/accept-all",
+		"/api/rulings/R1",
+		"/api/cards/C-0123456789ab",
+		"/evidence/Q-abcd/a.png",
+	]) {
 		test(`GET ${path} and its preflight: no CORS`, async () => {
 			const s = setup();
 			const r = await s.frame("GET", path);
@@ -141,6 +218,19 @@ describe("inlineVerdict, the rule itself", () => {
 		expect(inlineVerdict("GET", "/api/recent")).toBe("read");
 		expect(inlineVerdict("GET", "/api/rulings")).toBe("read");
 		expect(inlineVerdict("POST", "/api/items/Q-abcd/answer")).toBe("answer");
-		for (const [m, p] of [["GET", "/api/items/Q-abcd"], ["POST", "/api/items/Q-abcd/not-now"], ["POST", "/api/items/Q-abcd/answer/x"], ["POST", "/api/cards/C-0123456789ab/answer"], ["POST", "/api/accept-all"], ["POST", "/api/rulings/R1/confirm"], ["POST", "/api/rulings"], ["GET", "/api/queue/"], ["PUT", "/api/items/Q-abcd/answer"], ["DELETE", "/api/rulings"], ["POST", "/api/queue"]] as const) expect([m, p, inlineVerdict(m, p)]).toEqual([m, p, "refuse"]);
+		for (const [m, p] of [
+			["GET", "/api/items/Q-abcd"],
+			["POST", "/api/items/Q-abcd/not-now"],
+			["POST", "/api/items/Q-abcd/answer/x"],
+			["POST", "/api/cards/C-0123456789ab/answer"],
+			["POST", "/api/accept-all"],
+			["POST", "/api/rulings/R1/confirm"],
+			["POST", "/api/rulings"],
+			["GET", "/api/queue/"],
+			["PUT", "/api/items/Q-abcd/answer"],
+			["DELETE", "/api/rulings"],
+			["POST", "/api/queue"],
+		] as const)
+			expect([m, p, inlineVerdict(m, p)]).toEqual([m, p, "refuse"]);
 	});
 });

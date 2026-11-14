@@ -103,8 +103,22 @@ export interface ItemStore {
 // ---- the one-wake claims, direct relays, evidence -----------------------------------------------
 
 /** A claim on an item's one wake, with everything needed to send it. `item` is the item's dedup key. */
-export type ClaimRecord = { owner: string; item: string; deliveryId: string; message: string; t: string; answer?: unknown; ruling?: unknown; relay?: unknown };
-export type RelayRecord = { started: boolean; outcome?: "delivered" | "failed"; detail?: string; /** When it finished. */ t?: string };
+export type ClaimRecord = {
+	owner: string;
+	item: string;
+	deliveryId: string;
+	message: string;
+	t: string;
+	answer?: unknown;
+	ruling?: unknown;
+	relay?: unknown;
+};
+export type RelayRecord = {
+	started: boolean;
+	outcome?: "delivered" | "failed";
+	detail?: string /** When it finished. */;
+	t?: string;
+};
 export type EvidenceRow = { type: "image" | "video" | "link"; name?: string; url?: string; caption?: string };
 
 export interface ClaimStore {
@@ -139,7 +153,14 @@ export interface RulingStore {
 	/** Inserts or replaces one ruling by id. */
 	save(r: Ruling): void;
 }
-export type DecisionRow = { t: string; thread: string; decision: string; ruling: string; rulingIds?: string[]; ref: string | null };
+export type DecisionRow = {
+	t: string;
+	thread: string;
+	decision: string;
+	ruling: string;
+	rulingIds?: string[];
+	ref: string | null;
+};
 export interface DecisionStore {
 	append(d: DecisionRow): void;
 	list(): DecisionRow[];
@@ -172,20 +193,26 @@ export interface AwayStore {
  * in the same transaction.
  */
 export type RightsStamp = {
-	steward?: string; session?: string; hash: string; at?: string;
+	steward?: string;
+	session?: string;
+	hash: string;
+	at?: string;
 	/** The wake carries the full block, composed for this state; `used` is the Steward's context size then (the record's high-water mark). */
-	full?: true; used?: number;
+	full?: true;
+	used?: number;
 	/** The rights epoch the wake was composed under (rights-sent.ts): a delivered full stamp writes the record only while it is still current. Absent is 0. */
 	epoch?: number;
 	/**
 	 * "unstamped": a Steward wake queued before the stamps existed (migration 10 marks every undelivered Steward row and held wake that has no
-	 * stamp, whatever its text; legacy-import.ts marks every wake it brings in). Which Steward it was composed for is unknown, so it depends
+	 * stamp, whatever its text). Which Steward it was composed for is unknown, so it depends
 	 * on the record like a pointer does.
 	 */
 	legacy?: "unstamped";
 };
 export type WakeMeta = {
-	kind: string; thread?: string; /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */ receiver?: string;
+	kind: string;
+	thread?: string /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */;
+	receiver?: string;
 	/** One stamp per rights text the wake carries, a pointer or the full block (a digest can carry several); absent when it carries none. */
 	rights?: RightsStamp[];
 };
@@ -205,12 +232,21 @@ export type HoldClock = { busySince?: number; seenAt?: number; lastPostAt?: numb
 export type OutboxStatus = "pending" | "delivered" | "dead_letter" | "cancelled";
 /** One outbox row. Everything but status, attempts and the two times is frozen when the row is created (a database trigger refuses a change). */
 export type OutboxRow = {
-	id: number; deliveryId: string; message: string; kind?: string; thread?: string; receiver?: string; createdAt: number;
+	id: number;
+	deliveryId: string;
+	message: string;
+	kind?: string;
+	thread?: string;
+	receiver?: string;
+	createdAt: number;
 	/** The rights stamps it was composed with (`WakeMeta.rights`): checked just before each attempt, and a full one is recorded at delivery. */
 	rights?: RightsStamp[];
 	/** For a digest: how many held wakes were folded into a later one about the same thread and kind. */
 	folded: number;
-	status: OutboxStatus; attempts: number; lastAttemptAt?: number; finishedAt?: number;
+	status: OutboxStatus;
+	attempts: number;
+	lastAttemptAt?: number;
+	finishedAt?: number;
 	/** Every delivery id this row carries: its own, or a digest's members (folded ones included). Each belongs to this row only, ever. */
 	members: HeldItem[];
 };
@@ -257,7 +293,15 @@ export interface WakeStore {
 // ---- confirmation challenges --------------------------------------------------------------------
 
 /** A single-use, expiring confirmation for one approval, bound to its card fingerprint, the chosen decision and the session. Only the token's hash is kept. */
-export type Challenge = { tokenHash: string; cardId: string; sig: string; choice: number; sessionHash: string; issuedAt: number; expiresAt: number };
+export type Challenge = {
+	tokenHash: string;
+	cardId: string;
+	sig: string;
+	choice: number;
+	sessionHash: string;
+	issuedAt: number;
+	expiresAt: number;
+};
 export type ChallengeVerdict = "ok" | "unknown" | "expired" | "used" | "mismatch";
 export interface ChallengeStore {
 	/** Records a new challenge, and deletes this session's earlier unconsumed ones for the same card (one live challenge per card and session). */
@@ -266,7 +310,11 @@ export interface ChallengeStore {
 	 * Consumes a challenge in one transaction: "ok" only when it exists, is unused, has not expired, and was issued for exactly this card
 	 * fingerprint, choice and session; the row is then marked consumed, so a second presentation is "used". A refusal changes nothing.
 	 */
-	consume(tokenHash: string, expect: { cardId: string; sig: string; choice: number; sessionHash: string }, now: number): ChallengeVerdict;
+	consume(
+		tokenHash: string,
+		expect: { cardId: string; sig: string; choice: number; sessionHash: string },
+		now: number,
+	): ChallengeVerdict;
 	/** Deletes challenges that expired, or were consumed, before `before` (terminal rows only). */
 	prune(before: number): number;
 }

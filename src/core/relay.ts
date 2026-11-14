@@ -26,18 +26,41 @@
  * accepted POST whose delivered commit fails is never POSTed again by this process: the commit is retried on every pass. Only a process
  * that exits before that commit leaves the row pending, and the restart sends it again under the same id, counted like any other attempt.
  */
-import { selfCommand } from "./config.ts";
+import { alarms, type AlarmText } from "./messages.ts";
 import { crashPoint } from "./crash.ts";
-import { maxAttemptsFromEnv, STALE_AFTER_MS, withDeliveryId, type WakeDraft, type WakeResult, type WakeTransport } from "./deliver.ts";
+import {
+	maxAttemptsFromEnv,
+	STALE_AFTER_MS,
+	withDeliveryId,
+	type WakeDraft,
+	type WakeResult,
+	type WakeTransport,
+} from "./deliver.ts";
 import { composeWake, HOLD_CEILING_MS, observe, type Gate } from "./hold.ts";
-import { epochOf, invalidateRights, loadRightsSent, needsRights, recordOf, RIGHTS_SENT_KEY, rightsEpoch, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey, type RightsState } from "./rights-sent.ts";
+import {
+	epochOf,
+	invalidateRights,
+	loadRightsSent,
+	needsRights,
+	recordOf,
+	RIGHTS_SENT_KEY,
+	rightsEpoch,
+	rightsFirstId,
+	rightsFirstKey,
+	rightsGap,
+	rightsStateKey,
+	type RightsState,
+} from "./rights-sent.ts";
 import { isRelayLock, lockCovers, type RelayLock } from "./singleton.ts";
 import type { HoldClock, OutboxRow, RightsStamp, Store } from "./store.ts";
 
 /** The pause before a failed row is tried again: one minute, then four, so a webhook back within about five minutes loses nothing. */
 export const retryAfterMs = (attempts: number) => Math.min(60_000 * 4 ** (attempts - 1), 15 * 60_000);
 /** CHAMBERLAIN_RELAY_POLL_MS if it is a positive number, else one second. */
-export const relayPollMs = (env: Record<string, string | undefined> = process.env) => { const n = Number(env.CHAMBERLAIN_RELAY_POLL_MS); return n > 0 ? n : 1000; };
+export const relayPollMs = (env: Record<string, string | undefined> = process.env) => {
+	const n = Number(env.CHAMBERLAIN_RELAY_POLL_MS);
+	return n > 0 ? n : 1000;
+};
 
 export type RelayDeps = {
 	store: Store;
@@ -84,23 +107,55 @@ export type RelayDeps = {
 const relayed = new WeakSet<RelayLock>();
 
 /** One receiver the relay sends for: its rows and held wakes (`name`, `null` for the Steward's), its transport and gate, and its own counters. */
-type Lane = { name: string | null; wake: WakeTransport; gate: () => Gate; look: HoldClock; failures: number; notReadyAt: number; desk: boolean; akey: (k: string) => string };
+type Lane = {
+	name: string | null;
+	wake: WakeTransport;
+	gate: () => Gate;
+	look: HoldClock;
+	failures: number;
+	notReadyAt: number;
+	desk: boolean;
+	akey: (k: string) => string;
+};
 
 export function createRelay(d: RelayDeps) {
 	const { store } = d;
-	if (!isRelayLock(d.lock) || !d.lock.held()) throw new Error("createRelay needs the one-relay lock, held: take it first (singleton.ts) and pass the handle it returns");
+	/** Raises an alarm whose words are in messages.ts. */
+	const raise = (key: string, a: AlarmText) => d.alarm(key, a.title, a.summary);
+	if (!isRelayLock(d.lock) || !d.lock.held())
+		throw new Error(
+			"createRelay needs the one-relay lock, held: take it first (singleton.ts) and pass the handle it returns",
+		);
 	// The handle must be the lock on THIS store's database file: a lock held on some other database authorizes nothing here.
-	if (!lockCovers(d.lock, store.path)) throw new Error(`createRelay was given a lock that is not on this store's database: the lock handle is for ${d.lock.path}, the store is ${store.path}. Take the lock on the very database file the store opened.`);
+	if (!lockCovers(d.lock, store.path))
+		throw new Error(
+			`createRelay was given a lock that is not on this store's database: the lock handle is for ${d.lock.path}, the store is ${store.path}. Take the lock on the very database file the store opened.`,
+		);
 	// One relay per lock: a second relay would be a second POST queue beside the first. Every receiver is a lane of this one (`receivers`).
-	if (relayed.has(d.lock)) throw new Error("createRelay: a relay already exists on this lock, and there is one relay per store. Send another receiver's wakes through that relay (`receivers`), never a second one.");
+	if (relayed.has(d.lock))
+		throw new Error(
+			"createRelay: a relay already exists on this lock, and there is one relay per store. Send another receiver's wakes through that relay (`receivers`), never a second one.",
+		);
 	relayed.add(d.lock);
 	const clock = () => d.now?.() ?? Date.now();
 	/** Alarm keys and titles of a named receiver say whose wakes they are, so the desk's alarm never silences the Steward's. */
-	const lane = (name: string | null, wake: WakeTransport, gate: () => Gate): Lane => ({ name, wake, gate, look: {}, failures: 0, notReadyAt: -Infinity, desk: name !== null, akey: (k) => (name ? `${name}:${k}` : k) });
+	const lane = (name: string | null, wake: WakeTransport, gate: () => Gate): Lane => ({
+		name,
+		wake,
+		gate,
+		look: {},
+		failures: 0,
+		notReadyAt: -Infinity,
+		desk: name !== null,
+		akey: (k) => (name ? `${name}:${k}` : k),
+	});
 	const steward = lane(null, d.wake, d.gate);
 	const lanes: Lane[] = [steward, ...Object.entries(d.receivers ?? {}).map(([name, r]) => lane(name, r.wake, r.gate))];
 	const laneOf = (receiver: string | undefined) => lanes.find((l) => l.name === (receiver ?? null));
-	const max = d.maxAttempts !== undefined && Number.isInteger(d.maxAttempts) && d.maxAttempts >= 1 ? d.maxAttempts : maxAttemptsFromEnv();
+	const max =
+		d.maxAttempts !== undefined && Number.isInteger(d.maxAttempts) && d.maxAttempts >= 1
+			? d.maxAttempts
+			: maxAttemptsFromEnv();
 	const pause = d.retryAfterMs ?? retryAfterMs;
 	const ceiling = d.ceilingMs ?? HOLD_CEILING_MS;
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
@@ -126,23 +181,35 @@ export function createRelay(d: RelayDeps) {
 		try {
 			const done = store.tx(() => {
 				const done = store.wakes.finish(row.id, "delivered", clock());
-				if (full) { const current = rightsEpoch(store); if (epochOf(full) === current) store.state.set(RIGHTS_SENT_KEY, { ...recordOf(full), epoch: current }); else stale = current; }
+				if (full) {
+					const current = rightsEpoch(store);
+					if (epochOf(full) === current) store.state.set(RIGHTS_SENT_KEY, { ...recordOf(full), epoch: current });
+					else stale = current;
+				}
 				return done;
 			});
 			if (!done) d.log("delivered-after-cancel", { deliveryId: row.deliveryId });
-			if (stale !== undefined) d.log("rights-full-stale", { deliveryId: row.deliveryId, epoch: epochOf(full), current: stale });
+			if (stale !== undefined)
+				d.log("rights-full-stale", { deliveryId: row.deliveryId, epoch: epochOf(full), current: stale });
 		} catch (e) {
 			d.log("delivered-record-failed", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
 			return false;
 		}
 		owed.delete(row.id);
 		crashPoint("delivered");
-		for (const m of row.members) { try { d.onDelivered?.(m.deliveryId); } catch (e) { d.log("on-delivered-error", { deliveryId: m.deliveryId, error: String(e).slice(0, 200) }); } }
+		for (const m of row.members) {
+			try {
+				d.onDelivered?.(m.deliveryId);
+			} catch (e) {
+				d.log("on-delivered-error", { deliveryId: m.deliveryId, error: String(e).slice(0, 200) });
+			}
+		}
 		return true;
 	}
 
 	function deadLetter(l: Lane, row: OutboxRow, attempts: number) {
-		if (store.wakes.finish(row.id, "dead_letter", clock())) d.log("deliver-dead-letter", { deliveryId: row.deliveryId, attempts, ...(l.name ? { receiver: l.name } : {}) });
+		if (store.wakes.finish(row.id, "dead_letter", clock()))
+			d.log("deliver-dead-letter", { deliveryId: row.deliveryId, attempts, ...(l.name ? { receiver: l.name } : {}) });
 		notBefore.delete(row.id);
 		flagDead(l);
 	}
@@ -152,19 +219,38 @@ export function createRelay(d: RelayDeps) {
 		if (!store.wakes.held(l.name).length) return;
 		const look = observe(l.look, l.gate(), now, ceiling);
 		if (!look.post) return;
-		const row = store.wakes.compose(now, (held) => {
-			const { kept, ...c } = composeWake(held, now);
-			const only = held.length === 1 ? held[0]! : undefined;
-			// The digest carries its members' stamps: a pointer or legacy stamp makes the whole digest depend on the record (it is checked as one
-			// row), and a full stamp is kept only from an item whose text is in the digest (a folded item's text is not sent, so its block is not).
-			const stamps = new Map<string, RightsStamp>();
-			for (const h of held) if (c.members.includes(h.deliveryId)) for (const st of h.rights ?? []) if (!st.full || kept.includes(h.deliveryId)) stamps.set(JSON.stringify(st), st);
-			return { ...c, ...(only ? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) } : { kind: "digest" }), ...(l.name ? { receiver: l.name } : {}), ...(stamps.size ? { rights: [...stamps.values()] } : {}) };
-		}, l.name);
+		const row = store.wakes.compose(
+			now,
+			(held) => {
+				const { kept, ...c } = composeWake(held, now);
+				const only = held.length === 1 ? held[0]! : undefined;
+				// The digest carries its members' stamps: a pointer or legacy stamp makes the whole digest depend on the record (it is checked as one
+				// row), and a full stamp is kept only from an item whose text is in the digest (a folded item's text is not sent, so its block is not).
+				const stamps = new Map<string, RightsStamp>();
+				for (const h of held)
+					if (c.members.includes(h.deliveryId))
+						for (const st of h.rights ?? [])
+							if (!st.full || kept.includes(h.deliveryId)) stamps.set(JSON.stringify(st), st);
+				return {
+					...c,
+					...(only
+						? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) }
+						: { kind: "digest" }),
+					...(l.name ? { receiver: l.name } : {}),
+					...(stamps.size ? { rights: [...stamps.values()] } : {}),
+				};
+			},
+			l.name,
+		);
 		if (!row) return;
 		crashPoint("composed");
 		if (look.forced) l.look.lastForcedAt = now;
-		d.log("composed", { deliveryId: row.deliveryId, members: row.members.map((m) => m.deliveryId), folded: row.folded, ...(look.forced ? { forced: "ceiling" } : {}) });
+		d.log("composed", {
+			deliveryId: row.deliveryId,
+			members: row.members.map((m) => m.deliveryId),
+			folded: row.folded,
+			...(look.forced ? { forced: "ceiling" } : {}),
+		});
 	}
 
 	/**
@@ -175,7 +261,10 @@ export function createRelay(d: RelayDeps) {
 	let queueTail: Promise<unknown> = Promise.resolve();
 	function serially<T>(job: () => Promise<T>): Promise<T> {
 		const run = queueTail.then(job);
-		queueTail = run.then(() => undefined, () => undefined);
+		queueTail = run.then(
+			() => undefined,
+			() => undefined,
+		);
 		return run;
 	}
 
@@ -196,20 +285,45 @@ export function createRelay(d: RelayDeps) {
 		const before: OutboxRow[] = [];
 		for (let round = 0; round < ROUNDS; round++) {
 			let now: Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
-			try { now = await d.rightsNow!(); } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
+			try {
+				now = await d.rightsNow!();
+			} catch (e) {
+				d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
+				return null;
+			}
 			// The epoch is the database's, read now: from here to the prerequisite's enqueue nothing awaits, so its stamp has this epoch too.
-			try { now = { ...now, epoch: rightsEpoch(store) }; } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return null; }
+			try {
+				now = { ...now, epoch: rightsEpoch(store) };
+			} catch (e) {
+				d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
+				return null;
+			}
 			const reason = rightsGap(loadRightsSent(store), now);
-			if (!reason) { waitingOn.delete(row.deliveryId); return before; }
+			if (!reason) {
+				waitingOn.delete(row.deliveryId);
+				return before;
+			}
 			const key = rightsStateKey(now);
 			// The prerequisite for this state: the first of `:1`, `:2`, ... that has not ended. One that ended delivered without the record showing
 			// it now (a compaction cleared it), or that the operator cancelled, gives way to the next.
-			let id = "", delivered = false;
+			let id = "",
+				delivered = false;
 			for (let n = 1; ; n++) {
-				if (n > 50) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: "50 prerequisites for one state have ended without the record showing it" }); return null; }
+				if (n > 50) {
+					d.log("rights-first-error", {
+						deliveryId: row.deliveryId,
+						error: "50 prerequisites for one state have ended without the record showing it",
+					});
+					return null;
+				}
 				id = rightsFirstId(row.deliveryId, key, n);
-				const status = store.wakes.find(id)?.status ?? (store.wakes.known(id) ? (store.wakes.isDelivered(id) ? "delivered" : "cancelled") : undefined);
-				if (status === "delivered") { delivered = true; continue; }
+				const status =
+					store.wakes.find(id)?.status ??
+					(store.wakes.known(id) ? (store.wakes.isDelivered(id) ? "delivered" : "cancelled") : undefined);
+				if (status === "delivered") {
+					delivered = true;
+					continue;
+				}
 				if (status !== "cancelled") break;
 			}
 			if (now.hash === undefined && delivered) return before;
@@ -222,18 +336,36 @@ export function createRelay(d: RelayDeps) {
 						// The row is left exactly as it is; only the prerequisite is written, and only while the row still waits.
 						if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
 						const w = now.wake(row.deliveryId);
-						if (!store.wakes.enqueue({ deliveryId: id, message: w.message, queuedAt: t, kind: "rights", ...(w.stamp ? { rights: [w.stamp] } : {}) })) throw Error(`the rights-first wake's delivery id ${id} is already known`);
+						if (
+							!store.wakes.enqueue({
+								deliveryId: id,
+								message: w.message,
+								queuedAt: t,
+								kind: "rights",
+								...(w.stamp ? { rights: [w.stamp] } : {}),
+							})
+						)
+							throw Error(`the rights-first wake's delivery id ${id} is already known`);
 						return true;
 					});
-				} catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, first: id, error: String(e).slice(0, 200) }); return null; }
-				if (!done) { d.log("rights-first-skipped", { deliveryId: row.deliveryId, first: id, reason }); return null; }
+				} catch (e) {
+					d.log("rights-first-error", { deliveryId: row.deliveryId, first: id, error: String(e).slice(0, 200) });
+					return null;
+				}
+				if (!done) {
+					d.log("rights-first-skipped", { deliveryId: row.deliveryId, first: id, reason });
+					return null;
+				}
 				crashPoint("rights-first-queued");
 				d.log("rights-first", { deliveryId: row.deliveryId, first: id, reason });
 				first = store.wakes.find(id);
 				if (!first) return null;
 			}
 			if (first.status !== "pending" || owed.has(first.id) || (notBefore.get(first.id) ?? -Infinity) > clock()) {
-				if (!waitingOn.has(row.deliveryId)) { waitingOn.add(row.deliveryId); d.log("rights-first-waiting", { deliveryId: row.deliveryId, first: id, status: first.status }); }
+				if (!waitingOn.has(row.deliveryId)) {
+					waitingOn.add(row.deliveryId);
+					d.log("rights-first-waiting", { deliveryId: row.deliveryId, first: id, status: first.status });
+				}
 				return null;
 			}
 			const sent = await send(l, first, true);
@@ -251,9 +383,15 @@ export function createRelay(d: RelayDeps) {
 	async function current(row: OutboxRow): Promise<boolean> {
 		if (store.wakes.find(row.deliveryId)?.status !== "pending") return false;
 		let now: Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
-		try { now = { ...(await d.rightsNow!()), epoch: rightsEpoch(store) }; } catch (e) { d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) }); return false; }
+		try {
+			now = { ...(await d.rightsNow!()), epoch: rightsEpoch(store) };
+		} catch (e) {
+			d.log("rights-first-error", { deliveryId: row.deliveryId, error: String(e).slice(0, 200) });
+			return false;
+		}
 		if (rightsFirstKey(row.deliveryId) === rightsStateKey(now)) return true;
-		if (store.wakes.cancel(row.deliveryId, clock()) === "pending") d.log("rights-first-obsolete", { deliveryId: row.deliveryId });
+		if (store.wakes.cancel(row.deliveryId, clock()) === "pending")
+			d.log("rights-first-obsolete", { deliveryId: row.deliveryId });
 		return false;
 	}
 
@@ -263,20 +401,39 @@ export function createRelay(d: RelayDeps) {
 	 */
 	async function send(l: Lane, row: OutboxRow, prerequisite = false): Promise<OutboxRow[]> {
 		if (!d.lock.held()) return [];
-		if (row.attempts >= max) { deadLetter(l, row, row.attempts); return []; }
+		if (row.attempts >= max) {
+			deadLetter(l, row, row.attempts);
+			return [];
+		}
 		let before: OutboxRow[] = [];
-		if (!prerequisite && !l.desk && d.rightsNow && rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(row))) return [];
+		if (
+			!prerequisite &&
+			!l.desk &&
+			d.rightsNow &&
+			rightsFirstKey(row.deliveryId) &&
+			row.kind === "rights" &&
+			!(await current(row))
+		)
+			return [];
 		if (!prerequisite && !l.desk && d.rightsNow && needsRights(row.rights)) {
 			const went = await ahead(l, row);
 			if (went === null) return [];
 			before = went;
 			if (!d.lock.held()) return before;
 		}
-		const n = store.tx(() => { const n = store.wakes.beginAttempt(row.id, clock()); crashPoint("attempt-begun"); return n; });
+		const n = store.tx(() => {
+			const n = store.wakes.beginAttempt(row.id, clock());
+			crashPoint("attempt-begun");
+			return n;
+		});
 		if (n === undefined) return before;
 		crashPoint("attempt-counted");
 		let r: WakeResult;
-		try { r = await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId)); } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+		try {
+			r = await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId));
+		} catch (e) {
+			r = { ok: false, error: e instanceof Error ? e.message : String(e) };
+		}
 		const digest = row.members.length !== 1 || row.members[0]!.deliveryId !== row.deliveryId;
 		if (r.ok) {
 			crashPoint("accepted");
@@ -284,11 +441,35 @@ export function createRelay(d: RelayDeps) {
 			l.look.lastPostAt = clock();
 			l.failures = 0;
 			notBefore.delete(row.id);
-			d.log("delivered", { deliveryId: row.deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: n, queuedAt: row.createdAt, ...(row.kind ? { kind: row.kind } : {}), ...(row.thread ? { thread: row.thread } : {}), ...(l.name ? { receiver: l.name } : {}), ...(digest ? { members: row.members.map((m) => ({ deliveryId: m.deliveryId, queuedAt: m.queuedAt, ...(m.kind ? { kind: m.kind } : {}), ...(m.thread ? { thread: m.thread } : {}) })) } : {}) });
+			d.log("delivered", {
+				deliveryId: row.deliveryId,
+				...(r.status !== undefined ? { http: r.status } : {}),
+				attempt: n,
+				queuedAt: row.createdAt,
+				...(row.kind ? { kind: row.kind } : {}),
+				...(row.thread ? { thread: row.thread } : {}),
+				...(l.name ? { receiver: l.name } : {}),
+				...(digest
+					? {
+							members: row.members.map((m) => ({
+								deliveryId: m.deliveryId,
+								queuedAt: m.queuedAt,
+								...(m.kind ? { kind: m.kind } : {}),
+								...(m.thread ? { thread: m.thread } : {}),
+							})),
+						}
+					: {}),
+			});
 			return land(row) ? [...before, row] : before;
 		}
-		d.log("deliver-error", { deliveryId: row.deliveryId, attempt: n, ...(l.name ? { receiver: l.name } : {}), ...(r.status !== undefined ? { http: r.status } : {}), ...(r.error ? { error: r.error.slice(0, 200) } : {}) });
-		if (++l.failures >= 2) d.alarm(l.akey("wake-delivery"), l.desk ? "chamberlain cannot reach the Alert Desk thread" : "chamberlain cannot reach its wake thread", `${l.failures} wake attempts in a row failed. The ${l.desk ? "Alert Desk" : "Steward"} thread may be deleted, the webhook revoked, or the server down or asleep. Each wake is tried ${max} times, then kept as a dead letter.`);
+		d.log("deliver-error", {
+			deliveryId: row.deliveryId,
+			attempt: n,
+			...(l.name ? { receiver: l.name } : {}),
+			...(r.status !== undefined ? { http: r.status } : {}),
+			...(r.error ? { error: r.error.slice(0, 200) } : {}),
+		});
+		if (++l.failures >= 2) raise(l.akey("wake-delivery"), alarms.wakeUnreachable(l.desk, l.failures, max));
 		if (n >= max) deadLetter(l, row, n);
 		else notBefore.set(row.id, clock() + pause(n));
 		return before;
@@ -296,16 +477,29 @@ export function createRelay(d: RelayDeps) {
 
 	/** One pass. Returns the delivery ids delivered in it (a digest's members). */
 	async function passOnce(): Promise<string[]> {
-		if (!d.lock.held()) { if (!lockLost) { lockLost = true; d.log("relay-lock-released"); } return []; }
+		if (!d.lock.held()) {
+			if (!lockLost) {
+				lockLost = true;
+				d.log("relay-lock-released");
+			}
+			return [];
+		}
 		for (const row of [...owed.values()]) land(row);
 		const now = clock();
 		const ready = new Set<Lane>();
 		for (const l of lanes) {
-			if (l.wake.ready()) { ready.add(l); compose(l, now); continue; }
-			if (now - l.notReadyAt >= 60_000 && (store.wakes.held(l.name).length || store.wakes.rows("pending", l.name).length)) {
+			if (l.wake.ready()) {
+				ready.add(l);
+				compose(l, now);
+				continue;
+			}
+			if (
+				now - l.notReadyAt >= 60_000 &&
+				(store.wakes.held(l.name).length || store.wakes.rows("pending", l.name).length)
+			) {
 				l.notReadyAt = now;
 				d.log("deliver-not-ready", l.name ? { receiver: l.name } : undefined);
-				d.alarm(l.akey("wake-not-ready"), "chamberlain has nowhere to send wakes", `Wakes are waiting but no ${l.desk ? "desk wake URL" : "wake URL"} is configured (or readable), so nothing can reach ${l.desk ? "the Alert Desk" : "the Steward"}. They are kept, no attempt is used, and they go as soon as there is one.`);
+				raise(l.akey("wake-not-ready"), alarms.wakeNowhere(l.desk));
 			}
 		}
 		const out: string[] = [];
@@ -313,7 +507,10 @@ export function createRelay(d: RelayDeps) {
 		for (const row of store.wakes.rows("pending")) {
 			const l = laneOf(row.receiver);
 			if (!l) {
-				if (!unrouted.has(row.id)) { unrouted.add(row.id); d.log("deliver-no-receiver", { deliveryId: row.deliveryId, receiver: row.receiver }); }
+				if (!unrouted.has(row.id)) {
+					unrouted.add(row.id);
+					d.log("deliver-no-receiver", { deliveryId: row.deliveryId, receiver: row.receiver });
+				}
 				continue;
 			}
 			if (!ready.has(l) || owed.has(row.id) || (notBefore.get(row.id) ?? -Infinity) > clock()) continue;
@@ -328,7 +525,15 @@ export function createRelay(d: RelayDeps) {
 	/** One pass at a time; a call while one waits to start joins it. */
 	function pass(): Promise<string[]> {
 		if (next) return next;
-		const p = chain.then(() => { next = undefined; return passOnce(); }).catch((e) => { d.log("relay-error", { error: String(e).slice(0, 200) }); return [] as string[]; });
+		const p = chain
+			.then(() => {
+				next = undefined;
+				return passOnce();
+			})
+			.catch((e) => {
+				d.log("relay-error", { error: String(e).slice(0, 200) });
+				return [] as string[];
+			});
 		next = p;
 		chain = p;
 		return p;
@@ -339,8 +544,19 @@ export function createRelay(d: RelayDeps) {
 	function flagDead(l: Lane) {
 		const dead = store.wakes.rows("dead_letter", l.name);
 		if (!dead.length) return;
-		for (const w of dead) if (!reported.has(w.deliveryId)) { reported.add(w.deliveryId); d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts }); }
-		d.alarm(l.akey("wake-dead-letter"), l.desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered", `${dead.length} wake${dead.length === 1 ? " was" : "s were"} attempted ${max} times without being delivered and ${dead.length === 1 ? "is" : "are"} not sent again: ${dead.slice(0, 5).map((w) => w.deliveryId).join(", ")}${dead.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "${selfCommand("wakes")} list" shows them, "${selfCommand("wakes")} retry <id>" sends one again (${max} more attempts at most) and "${selfCommand("wakes")} cancel <id>" gives it up.`);
+		for (const w of dead)
+			if (!reported.has(w.deliveryId)) {
+				reported.add(w.deliveryId);
+				d.log("deliver-dead-letter-reported", { deliveryId: w.deliveryId, attempts: w.attempts });
+			}
+		raise(
+			l.akey("wake-dead-letter"),
+			alarms.wakeDeadLetters(
+				l.desk,
+				dead.map((w) => w.deliveryId),
+				max,
+			),
+		);
 	}
 
 	/** Once a minute: keeps each receiver's busy stretch measured, and raises its stale and dead-letter alarms, and the orphan alarm. */
@@ -359,22 +575,47 @@ export function createRelay(d: RelayDeps) {
 		const known = new Set(lanes.map((l) => l.name));
 		const orphans = new Map<string, { rows: OutboxRow[]; held: number }>();
 		const of = (name: string) => orphans.get(name) ?? (orphans.set(name, { rows: [], held: 0 }), orphans.get(name)!);
-		for (const r of [...store.wakes.rows("pending"), ...store.wakes.rows("dead_letter")]) if (r.receiver && !known.has(r.receiver)) of(r.receiver).rows.push(r);
+		for (const r of [...store.wakes.rows("pending"), ...store.wakes.rows("dead_letter")])
+			if (r.receiver && !known.has(r.receiver)) of(r.receiver).rows.push(r);
 		for (const h of store.wakes.held()) if (h.receiver && !known.has(h.receiver)) of(h.receiver).held++;
 		for (const [name, o] of orphans) {
 			const n = o.rows.length;
-			if (!reported.has(`orphan:${name}:${n}:${o.held}`)) { reported.add(`orphan:${name}:${n}:${o.held}`); d.log("deliver-receiver-unconfigured", { receiver: name, rows: n, held: o.held }); }
-			const what = [n ? `${n} outbox row${n === 1 ? "" : "s"}` : "", o.held ? `${o.held} held wake${o.held === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-			d.alarm(`${name}:wake-unconfigured`, `chamberlain has wakes for a receiver that is no longer configured: ${name}`, `${what} for the receiver "${name}" ${n + o.held === 1 ? "is" : "are"} waiting, but no "${name}" receiver is configured any more, so nothing will send ${n + o.held === 1 ? "it" : "them"}. Nothing is dropped and nothing goes to another receiver. Configure "${name}" again to send them${n ? `, or give the rows up: in the chamberlain checkout, "${selfCommand("wakes")} list" shows each row with its receiver and "${selfCommand("wakes")} cancel <id>" cancels one (${o.rows.slice(0, 5).map((r) => r.deliveryId).join(", ")}${n > 5 ? ", ..." : ""})` : ""}.${o.held ? " A held wake becomes a row only when its receiver is configured." : ""}`);
+			if (!reported.has(`orphan:${name}:${n}:${o.held}`)) {
+				reported.add(`orphan:${name}:${n}:${o.held}`);
+				d.log("deliver-receiver-unconfigured", { receiver: name, rows: n, held: o.held });
+			}
+			raise(
+				`${name}:wake-unconfigured`,
+				alarms.wakeOrphaned(
+					name,
+					o.rows.map((r) => r.deliveryId),
+					o.held,
+				),
+			);
 		}
 	}
 	function auditLane(l: Lane) {
 		const now = clock();
-		try { observe(l.look, l.gate(), now, ceiling); } catch (e) { d.log("gate-error", { error: String(e).slice(0, 200), ...(l.name ? { receiver: l.name } : {}) }); }
-		const waiting = [...store.wakes.rows("pending", l.name).map((r) => ({ deliveryId: r.deliveryId, queuedAt: r.createdAt })), ...store.wakes.held(l.name)];
+		try {
+			observe(l.look, l.gate(), now, ceiling);
+		} catch (e) {
+			d.log("gate-error", { error: String(e).slice(0, 200), ...(l.name ? { receiver: l.name } : {}) });
+		}
+		const waiting = [
+			...store.wakes.rows("pending", l.name).map((r) => ({ deliveryId: r.deliveryId, queuedAt: r.createdAt })),
+			...store.wakes.held(l.name),
+		];
 		const old = waiting.filter((w) => now - w.queuedAt > (d.staleAfterMs ?? STALE_AFTER_MS));
-		for (const w of old) if (!reported.has(`stale:${w.deliveryId}`)) { reported.add(`stale:${w.deliveryId}`); d.log("deliver-stale", { deliveryId: w.deliveryId, ageMs: now - w.queuedAt }); }
-		if (old.length) d.alarm(l.akey("wake-stale"), "chamberlain has wakes it could not deliver", `${old.length} wake${old.length === 1 ? " has" : "s have"} waited more than ${Math.round((d.staleAfterMs ?? STALE_AFTER_MS) / 3600_000)} hours without reaching ${l.desk ? "the Alert Desk" : "the Steward"}. They are kept; none is dropped. Is the daemon running, and is the wake URL right?`);
+		for (const w of old)
+			if (!reported.has(`stale:${w.deliveryId}`)) {
+				reported.add(`stale:${w.deliveryId}`);
+				d.log("deliver-stale", { deliveryId: w.deliveryId, ageMs: now - w.queuedAt });
+			}
+		if (old.length)
+			raise(
+				l.akey("wake-stale"),
+				alarms.wakesStale(l.desk, old.length, Math.round((d.staleAfterMs ?? STALE_AFTER_MS) / 3600_000)),
+			);
 		flagDead(l);
 	}
 
@@ -404,12 +645,25 @@ export function createRelay(d: RelayDeps) {
 
 	let timer: ReturnType<typeof setInterval> | undefined;
 	return {
-		pass, audit, compact, compactReady,
+		pass,
+		audit,
+		compact,
+		compactReady,
 		/** Failed attempts in a row: the Steward's, or a named receiver's. */
 		failures: (receiver?: string) => laneOf(receiver)?.failures ?? 0,
 		/** Starts the poll. Resolves when the first pass (startup recovery) is done. */
-		start(pollMs = relayPollMs()) { timer ??= setInterval(() => { void pass(); }, pollMs); return pass(); },
-		async stop() { clearInterval(timer); timer = undefined; await chain; await queueTail; },
+		start(pollMs = relayPollMs()) {
+			timer ??= setInterval(() => {
+				void pass();
+			}, pollMs);
+			return pass();
+		},
+		async stop() {
+			clearInterval(timer);
+			timer = undefined;
+			await chain;
+			await queueTail;
+		},
 	};
 }
 export type Relay = ReturnType<typeof createRelay>;

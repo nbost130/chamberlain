@@ -1,10 +1,42 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
-	ALERT_DESK, CURSOR_KEY, DAY_MS, DEFAULTS, DESK_RECEIVER, drainAlertDesk, inboxPath, localDay, morningPattern, parseConfig, parseLine, parseMorning, readConfig, readInbox, readMorning, renderDeskPrompt, severityOf, signature,
-	type Cursor, type CrashPoint, type DeskConfig, type DeskEvent,
+	ALERT_DESK,
+	CURSOR_KEY,
+	DAY_MS,
+	DEFAULTS,
+	DESK_RECEIVER,
+	drainAlertDesk,
+	inboxPath,
+	localDay,
+	morningPattern,
+	parseConfig,
+	parseLine,
+	parseMorning,
+	parseOperator,
+	readConfig,
+	readInbox,
+	readMorning,
+	readOperator,
+	renderDeskPrompt,
+	severityOf,
+	signature,
+	systemTimezone,
+	type Cursor,
+	type CrashPoint,
+	type DeskConfig,
+	type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
 const MIB = 1024 * 1024;
@@ -13,7 +45,15 @@ const T0 = Date.parse("2026-11-13T15:00:00Z"); // 10:00 ET
 const min = (n: number) => T0 + n * 60_000;
 const ev = (over: Partial<DeskEvent> & { at?: number } = {}): DeskEvent => {
 	const { at, ...rest } = over;
-	return { source: "monitor-webhook", family: "HostUnitFailed|unit=a.service", title: "a.service failed", body: "At 10:00, a.service crashed.\nError: boom", ts: new Date(at ?? T0).toISOString(), severity: "warning", ...rest };
+	return {
+		source: "monitor-webhook",
+		family: "HostUnitFailed|unit=a.service",
+		title: "a.service failed",
+		body: "At 10:00, a.service crashed.\nError: boom",
+		ts: new Date(at ?? T0).toISOString(),
+		severity: "warning",
+		...rest,
+	};
 };
 const line = (o: Partial<DeskEvent> & { at?: number } = {}) => `${JSON.stringify({ v: 1, ...ev(o) })}\n`;
 
@@ -25,15 +65,28 @@ function rig(config: Partial<Record<string, unknown>> = { morningHour: 23 }) {
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
 	const inbox = `${dir}/inbox.jsonl`;
 	// These tests write the inbox before the first pass and expect it read, so they start at the beginning; the first-start tests say "end".
-	const writeConfig = (c: Record<string, unknown>) => writeFileSync(`${dir}/alert-desk.json`, JSON.stringify({ startAt: "beginning", ...c }));
+	const writeConfig = (c: Record<string, unknown>) =>
+		writeFileSync(`${dir}/alert-desk.json`, JSON.stringify({ startAt: "beginning", timezone: "Etc/GMT+5", ...c }));
 	writeConfig(config);
 	const logged: { event: string; [k: string]: unknown }[] = [];
 	const pass = (now: number, over: { canDeliver?: boolean; crash?: (p: CrashPoint) => void } = {}) => {
 		clock.t = now;
-		return drainAlertDesk({ store, outbox, inbox, conf: dir, now, canDeliver: over.canDeliver ?? true, crash: over.crash, log: (event, data) => logged.push({ event, ...data }) });
+		return drainAlertDesk({
+			store,
+			outbox,
+			inbox,
+			conf: dir,
+			now,
+			canDeliver: over.canDeliver ?? true,
+			crash: over.crash,
+			log: (event, data) => logged.push({ event, ...data }),
+		});
 	};
 	/** Every desk wake queued so far, oldest first, as its first line. */
-	const wakes = () => [...store.wakes.rows("all", DESK_RECEIVER).flatMap((r) => r.members), ...store.wakes.held(DESK_RECEIVER)].map((m) => m.deliveryId);
+	const wakes = () =>
+		[...store.wakes.rows("all", DESK_RECEIVER).flatMap((r) => r.members), ...store.wakes.held(DESK_RECEIVER)].map(
+			(m) => m.deliveryId,
+		);
 	const messages = () => store.wakes.held(DESK_RECEIVER).map((h) => h.message);
 	const reasons = () => messages().map((m) => /\((new|changed|repeat)\)/.exec(m)?.[1] ?? m.split("\n")[0]);
 	return { dir, store, inbox, pass, wakes, messages, reasons, writeConfig, logged, outbox };
@@ -59,7 +112,9 @@ describe("the inbox line and the signature", () => {
 		expect(["info", "", undefined].map(severityOf)).toEqual(["info", "info", "info"]);
 	});
 	test("timestamps and counters are not a change; severity, title and the body's opening are", () => {
-		expect(signature(ev({ title: "3 units failed", body: "At 10:01:22, x" }))).toBe(signature(ev({ title: "5 units failed", body: "At 11:45, x" })));
+		expect(signature(ev({ title: "3 units failed", body: "At 10:01:22, x" }))).toBe(
+			signature(ev({ title: "5 units failed", body: "At 11:45, x" })),
+		);
 		expect(signature({ ...ev(), severity: "critical" })).not.toBe(signature(ev()));
 		expect(signature({ ...ev(), title: "a.service is flapping" })).not.toBe(signature(ev()));
 		expect(signature({ ...ev(), body: "At 10:00, a.service ran out of memory." })).not.toBe(signature(ev()));
@@ -144,7 +199,10 @@ describe("the dedupe windows, decided by the item system", () => {
 	test("no second record exists: every decision is an item of the alert-desk source", () => {
 		const r = rig();
 		feed(r, [{}]);
-		const kinds = r.store.items.list({ source: ALERT_DESK }).map((i) => i.kind).sort();
+		const kinds = r.store.items
+			.list({ source: ALERT_DESK })
+			.map((i) => i.kind)
+			.sort();
 		expect(kinds).toEqual(["alert", "window"]);
 	});
 });
@@ -171,19 +229,27 @@ describe("the daily cap", () => {
 	});
 	test("a cap of 0 is no cap", () => {
 		const r = rig({ morningHour: 23, dailyCap: 0 });
-		feed(r, Array.from({ length: 40 }, (_, i) => fam(i)));
+		feed(
+			r,
+			Array.from({ length: 40 }, (_, i) => fam(i)),
+		);
 		expect(r.wakes().filter((id) => id.startsWith("desk:"))).toHaveLength(40);
 	});
 });
 
 describe("a 24 hour repeat the cap held back is never dropped", () => {
 	/** The alert wakes only: the once-a-day cap note is a wake too. */
-	const alertReasons = (r: ReturnType<typeof rig>) => r.reasons().filter((x) => x === "new" || x === "changed" || x === "repeat");
+	const alertReasons = (r: ReturnType<typeof rig>) =>
+		r.reasons().filter((x) => x === "new" || x === "changed" || x === "repeat");
 	const capped = { morningHour: 23, dailyCap: 1 };
 	/** A wakes; a day later B takes the one slot; A's repeat comes a minute after and the cap holds it back. */
 	function setup() {
 		const r = rig(capped);
-		feed(r, [{ family: "A", title: "A" }, { at: min(24 * 60), family: "B", title: "B" }, { at: min(24 * 60 + 1), family: "A", title: "A" }]);
+		feed(r, [
+			{ family: "A", title: "A" },
+			{ at: min(24 * 60), family: "B", title: "B" },
+			{ at: min(24 * 60 + 1), family: "A", title: "A" },
+		]);
 		expect(alertReasons(r)).toEqual(["new", "new"]);
 		const pending = r.store.items.get(ALERT_DESK, "A#pending");
 		expect(pending?.status).toBe("triggered");
@@ -281,42 +347,51 @@ describe("a drain pass", () => {
 		expect(r.pass(T0).read).toBe(1);
 	});
 	describe("the first start: where the desk begins when no cursor is stored (startAt)", () => {
-		test("startAt defaults to \"end\"; only \"beginning\" changes it", () => {
+		test('startAt defaults to "end"; only "beginning" changes it', () => {
 			expect(DEFAULTS.startAt).toBe("end");
 			expect(parseConfig({}).startAt).toBe("end");
 			expect(parseConfig({ startAt: "beginning" }).startAt).toBe("beginning");
 			expect(parseConfig({ startAt: "middle" }).startAt).toBe("end");
 		});
-		test("\"end\" (the default) skips an existing inbox: no wake for earlier events, the choice logged once, later events wake", () => {
+		test('"end" (the default) skips an existing inbox: no wake for earlier events, the choice logged once, later events wake', () => {
 			const r = rig();
 			r.writeConfig({ morningHour: 23, startAt: undefined });
 			expect(readConfig(r.dir).startAt).toBe("end");
-			writeFileSync(r.inbox, line({ at: T0 - 60_000 }) + line({ at: T0 - 30_000, family: "other", title: "other failed" }));
+			writeFileSync(
+				r.inbox,
+				line({ at: T0 - 60_000 }) + line({ at: T0 - 30_000, family: "other", title: "other failed" }),
+			);
 			const size = statSync(r.inbox).size;
 			expect(r.pass(T0)).toMatchObject({ read: 0, woke: 0 });
 			expect(r.wakes()).toEqual([]);
 			expect(r.store.state.get<Cursor>(CURSOR_KEY)).toMatchObject({ offset: size, inode: statSync(r.inbox).ino });
-			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "end", inbox: r.inbox, offset: size, skippedBytes: size }]);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([
+				{ event: "alert-desk-start", startAt: "end", inbox: r.inbox, offset: size, skippedBytes: size },
+			]);
 			appendFileSync(r.inbox, line({ at: min(1), family: "third", title: "third failed" }));
 			expect(r.pass(min(1)).read).toBe(1);
 			expect(r.wakes()).toHaveLength(1);
 			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toHaveLength(1);
 		});
-		test("\"end\" with no inbox yet starts at its start, so the first lines written to it are read", () => {
+		test('"end" with no inbox yet starts at its start, so the first lines written to it are read', () => {
 			const r = rig();
 			r.writeConfig({ morningHour: 23, startAt: "end" });
 			expect(r.pass(T0).read).toBe(0);
-			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "end", inbox: r.inbox, offset: 0 }]);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([
+				{ event: "alert-desk-start", startAt: "end", inbox: r.inbox, offset: 0 },
+			]);
 			writeFileSync(r.inbox, line({ at: min(1) }));
 			expect(r.pass(min(1)).read).toBe(1);
 		});
-		test("\"beginning\" reads the whole existing inbox, and logs that choice", () => {
+		test('"beginning" reads the whole existing inbox, and logs that choice', () => {
 			const r = rig();
 			r.writeConfig({ morningHour: 23, startAt: "beginning" });
 			writeFileSync(r.inbox, line({ at: T0 - 60_000 }));
 			expect(r.pass(T0).read).toBe(1);
 			expect(r.wakes()).toHaveLength(1);
-			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "beginning", inbox: r.inbox, offset: 0 }]);
+			expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([
+				{ event: "alert-desk-start", startAt: "beginning", inbox: r.inbox, offset: 0 },
+			]);
 		});
 		test("a stored cursor is never moved by startAt", () => {
 			const r = rig();
@@ -357,7 +432,11 @@ describe("a drain pass", () => {
 			test(point, () => {
 				const r = rig({ morningHour: 23, rotateBytes: 1024 });
 				const big = "x".repeat(2000);
-				appendFileSync(r.inbox, line({ at: T0 - 2000, family: "fa", title: "a", body: big }) + line({ at: T0 - 1000, family: "fb", title: "b", body: big }));
+				appendFileSync(
+					r.inbox,
+					line({ at: T0 - 2000, family: "fa", title: "a", body: big }) +
+						line({ at: T0 - 1000, family: "fb", title: "b", body: big }),
+				);
 				r.pass(T0);
 				expect(r.messages().map(familyOf).sort()).toEqual(["fa", "fb"]);
 				const rotatedAt = T0 + 60_000;
@@ -366,12 +445,20 @@ describe("a drain pass", () => {
 					if (crashed || p !== point) return;
 					crashed = true;
 					if (p === "rotation-intent") appendFileSync(r.inbox, line({ at: rotatedAt, family: "fl", title: "l" }));
-					if (p === "renamed" || p === "rotation-saved") appendFileSync(`${r.dir}/inbox.jsonl.${rotatedAt}`, line({ at: rotatedAt, family: "fl", title: "l" }));
+					if (p === "renamed" || p === "rotation-saved")
+						appendFileSync(`${r.dir}/inbox.jsonl.${rotatedAt}`, line({ at: rotatedAt, family: "fl", title: "l" }));
 					throw Error(`crash at ${p}`);
 				};
-				const pass = (now: number) => { try { r.pass(now, { crash }); } catch (e) { if (!String(e).includes("crash at")) throw e; } };
+				const pass = (now: number) => {
+					try {
+						r.pass(now, { crash });
+					} catch (e) {
+						if (!String(e).includes("crash at")) throw e;
+					}
+				};
 				pass(rotatedAt);
-				if (!["rotation-intent", "renamed", "rotation-saved"].includes(point)) appendFileSync(`${r.dir}/inbox.jsonl.${rotatedAt}`, line({ at: rotatedAt, family: "fl", title: "l" }));
+				if (!["rotation-intent", "renamed", "rotation-saved"].includes(point))
+					appendFileSync(`${r.dir}/inbox.jsonl.${rotatedAt}`, line({ at: rotatedAt, family: "fl", title: "l" }));
 				appendFileSync(r.inbox, line({ at: rotatedAt + 1000, family: "fn", title: "n" }));
 				for (const now of [T0 + 130_000, T0 + 200_000, T0 + 300_000, T0 + 400_000]) pass(now);
 				expect(crashed).toBe(true);
@@ -398,9 +485,16 @@ describe("a drain pass", () => {
 	});
 
 	describe("a retired file or inbox bigger than one chunk (4 MiB) is read to its end", () => {
-		const bigLine = (i: number) => line({ at: T0 - 100_000 + i, family: `f${i}`, title: `t${i}`, body: "y".repeat(1200) });
+		const bigLine = (i: number) =>
+			line({ at: T0 - 100_000 + i, family: `f${i}`, title: `t${i}`, body: "y".repeat(1200) });
 		const noCap = { morningHour: 23, dailyCap: 0, maxAgeHours: 48 };
-		const familiesOf = (r: ReturnType<typeof rig>) => new Set(r.messages().map((m) => /alert family (\S+)/.exec(m)?.[1]).filter(Boolean));
+		const familiesOf = (r: ReturnType<typeof rig>) =>
+			new Set(
+				r
+					.messages()
+					.map((m) => /alert family (\S+)/.exec(m)?.[1])
+					.filter(Boolean),
+			);
 		const retire = (r: ReturnType<typeof rig>, body: string) => {
 			const path = `${r.dir}/inbox.jsonl.${T0 - 600_000}`;
 			writeFileSync(path, body);
@@ -434,7 +528,13 @@ describe("a drain pass", () => {
 			const r = rig(noCap);
 			const N = 3600;
 			const retired = retire(r, Array.from({ length: N }, (_, i) => bigLine(i)).join(""));
-			expect(() => r.pass(T0, { crash: (p) => { if (p === "delivered") throw Error("crash"); } })).toThrow("crash");
+			expect(() =>
+				r.pass(T0, {
+					crash: (p) => {
+						if (p === "delivered") throw Error("crash");
+					},
+				}),
+			).toThrow("crash");
 			r.pass(T0 + 1000);
 			r.pass(T0 + 61_000);
 			expect(new Set(r.wakes()).size).toBe(N);
@@ -450,14 +550,20 @@ describe("a drain pass", () => {
 		});
 		test("a final line without its newline that is a whole event is read, not dropped", () => {
 			const r = rig(noCap);
-			const retired = retire(r, line({ at: T0 - 1000, family: "fa", title: "a" }) + line({ at: T0 - 500, family: "fb", title: "b" }).trimEnd());
+			const retired = retire(
+				r,
+				line({ at: T0 - 1000, family: "fa", title: "a" }) + line({ at: T0 - 500, family: "fb", title: "b" }).trimEnd(),
+			);
 			r.pass(T0);
 			expect(familiesOf(r)).toEqual(new Set(["fa", "fb"]));
 			expect(existsSync(retired)).toBe(false);
 		});
 		test("an event glued to the end of a line exactly one chunk long is part of that bad line, not an event", () => {
 			const r = rig(noCap);
-			writeFileSync(r.inbox, `${"x".repeat(4 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" })}${line({ at: T0 - 900, family: "fb", title: "b" })}`);
+			writeFileSync(
+				r.inbox,
+				`${"x".repeat(4 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" })}${line({ at: T0 - 900, family: "fb", title: "b" })}`,
+			);
 			r.pass(T0);
 			r.pass(T0 + 1000);
 			r.pass(T0 + 2000);
@@ -465,7 +571,10 @@ describe("a drain pass", () => {
 		});
 		test("a bad line longer than two chunks is skipped whole, and the event after it is read once", () => {
 			const r = rig(noCap);
-			writeFileSync(r.inbox, `${"x".repeat(9 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" })}${line({ at: T0 - 900, family: "fb", title: "b" })}`);
+			writeFileSync(
+				r.inbox,
+				`${"x".repeat(9 * MIB)}${line({ at: T0 - 1000, family: "fa", title: "a" })}${line({ at: T0 - 900, family: "fb", title: "b" })}`,
+			);
 			for (let i = 0; i < 5; i++) r.pass(T0 + i * 1000);
 			expect(familiesOf(r)).toEqual(new Set(["fb"]));
 		});
@@ -489,20 +598,43 @@ describe("a drain pass", () => {
 
 describe("the standing prompt is a template, filled from config", () => {
 	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
-	const vars = { principalName: "Ada", serverName: "box-1", allowlistHook: "bun /opt/chamberlain/src/desk-allowlist.ts hook", askCommand: "bun /opt/chamberlain/src/ask.ts", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
+	const vars = {
+		principalName: "Ada",
+		serverName: "box-1",
+		allowlistHook: "bun /opt/chamberlain/src/desk-allowlist.ts hook",
+		askCommand: "bun /opt/chamberlain/src/ask.ts",
+		morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." },
+	};
 	test("the bundled prompt names nobody and no host: who it works for and where are placeholders", () => {
-		for (const v of ["{{principalName}}", "{{serverName}}", "{{allowlistHook}}", "{{askCommand}}", "{{morningSources}}"]) expect(template).toContain(v);
+		for (const v of [
+			"{{principalName}}",
+			"{{serverName}}",
+			"{{allowlistHook}}",
+			"{{askCommand}}",
+			"{{morningSources}}",
+			"{{gatherStep}}",
+			"{{toolList}}",
+			"{{operatorCommands}}",
+		])
+			expect(template).toContain(v);
 		expect(template).not.toMatch(/\.claude\//);
+	});
+	test("the bundled prompt names no model and no private wrapper: those are the operator's, from alert-desk.json", () => {
+		expect(template).not.toMatch(/\b(sonnet|haiku|opus)\b/i);
 	});
 	test("the desk is told not to re-ask what is settled, when a question can wait, and when notSettled is allowed", () => {
 		const out = renderDeskPrompt(template, vars);
 		expect(out).toContain('Add `"urgent": false` when it can wait');
-		expect(out).toContain("If ask refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask.");
+		expect(out).toContain(
+			"If ask refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask.",
+		);
 		expect(out).toContain('Use `"notSettled": "<what is new>"` only when something materially new happened');
 	});
 	test("rendered, every placeholder is filled from the config, and the morning sources are listed", () => {
 		const out = renderDeskPrompt(template, vars);
-		expect(out).not.toMatch(/\{\{(principalName|serverName|allowlistHook|askCommand|morningSources)\}\}/);
+		expect(out).not.toMatch(
+			/\{\{(principalName|serverName|allowlistHook|askCommand|morningSources|gatherStep|toolList|operatorCommands)\}\}/,
+		);
 		expect(out).not.toContain("<!--");
 		expect(out).toContain("every alert Ada's systems raise");
 		expect(out).toContain('"server":"box-1"');
@@ -514,10 +646,15 @@ describe("the standing prompt is a template, filled from config", () => {
 		expect(out).toContain("{{.State.Status}}");
 	});
 	test("with no morning sources the prompt says none are configured", () => {
-		expect(renderDeskPrompt(template, { ...vars, morning: { commands: [] } })).toContain("No morning sources are configured");
+		expect(renderDeskPrompt(template, { ...vars, morning: { commands: [] } })).toContain(
+			"No morning sources are configured",
+		);
 	});
 	test("morning sources parse from alert-desk.json, and anything malformed is left out", () => {
-		expect(parseMorning({ morningCommands: ["a <N>", "", 3, "two\nlines"], morningNotes: " n " })).toEqual({ commands: ["a <N>"], notes: "n" });
+		expect(parseMorning({ morningCommands: ["a <N>", "", 3, "two\nlines"], morningNotes: " n " })).toEqual({
+			commands: ["a <N>"],
+			notes: "n",
+		});
 		expect(parseMorning({})).toEqual({ commands: [] });
 		expect(morningPattern("x --limit <N> 'a.b'").test("x --limit 12 'a.b'")).toBe(true);
 		expect(morningPattern("x --limit <N> 'a.b'").test("x --limit 12 'aXb'")).toBe(false);
@@ -538,7 +675,9 @@ describe("the standing prompt is a template, filled from config", () => {
 	test("a malformed width leaves the command out with a warning, and its pattern matches nothing", () => {
 		for (const bad of ["x <N:0-3>", "x <N:5-2>", "x <N:1-13>", "x <N:a-b>", "x <N:>", "x <N:1-5"]) {
 			const warned: string[] = [];
-			expect(parseMorning({ morningCommands: [bad, "ok <N:1-5>"] }, (m) => warned.push(m)).commands).toEqual(["ok <N:1-5>"]);
+			expect(parseMorning({ morningCommands: [bad, "ok <N:1-5>"] }, (m) => warned.push(m)).commands).toEqual([
+				"ok <N:1-5>",
+			]);
 			expect(warned).toHaveLength(1);
 			expect(warned[0]).toContain(bad);
 			expect(morningPattern(bad).test(bad)).toBe(false);
@@ -556,5 +695,100 @@ describe("the standing prompt is a template, filled from config", () => {
 		expect(warned[0]).toContain("group-writable");
 		expect(readMorning(mkdtempSync(`${tmpdir()}/desk-none-`), (m) => warned.push(m))).toEqual({ commands: [] });
 		expect(warned).toHaveLength(1);
+	});
+});
+
+describe("the operator's own command shapes and gatherer", () => {
+	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
+	const base = {
+		principalName: "Ada",
+		serverName: "box-1",
+		allowlistHook: "chamberlain debug desk-allowlist hook",
+		askCommand: "chamberlain ask",
+		morning: { commands: [] },
+	};
+	const shapes = parseOperator({
+		commandShapes: {
+			opsctl: {
+				bare: true,
+				subcommands: {
+					health: { positional: "word", max: 1 },
+					journal: { flags: { "--limit": "digits" }, positional: "word", min: 1, max: 1 },
+				},
+			},
+		},
+	}).shapes;
+
+	test("with no gatherer the prompt tells the desk to read the evidence itself and lists no Agent tool", () => {
+		const out = renderDeskPrompt(template, base);
+		expect(out).toContain("No gatherer agent is configured, so read the evidence yourself");
+		expect(out).toContain("the only tools you have are Bash (in these shapes), Read, Grep and Glob;");
+		expect(out).not.toContain("subagent_type");
+	});
+	test("with a gatherer the prompt names it in the evidence step and in the tool list", () => {
+		const out = renderDeskPrompt(template, { ...base, gatherer: "evidence-reader" });
+		expect(out).toContain(
+			'Fan out at most 4 `evidence-reader` subagents for the family (Agent tool, `subagent_type: "evidence-reader"`)',
+		);
+		expect(out).toContain("the Agent tool for `evidence-reader` gatherers;");
+	});
+	test("the operator's shapes are bullets in the list of what may run, and with none the list has no gap", () => {
+		const out = renderDeskPrompt(template, { ...base, shapes });
+		expect(out).toContain(
+			"- `opsctl`, `opsctl health [<word>]`, `opsctl journal [--limit <digits>] <word>`.\n- Reads with the Read, Grep and Glob tools",
+		);
+		const none = renderDeskPrompt(template, base);
+		expect(none).not.toContain("opsctl");
+		expect(none).toContain("`docker inspect --format");
+		expect(none).not.toMatch(/\n\n- Reads with/);
+		expect(none).toContain("or `Config.Env`.\n- Reads with the Read, Grep and Glob tools");
+	});
+	test("a value with a `$` in it is not a replacement pattern", () => {
+		expect(renderDeskPrompt(template, { ...base, gatherer: "a$&b" })).toContain("`a$&b`");
+	});
+	test("they parse from alert-desk.json, and a malformed shape or gatherer is left out whole, with a warning", () => {
+		const warned: string[] = [];
+		const o = parseOperator(
+			{
+				gatherer: "bad name!",
+				commandShapes: {
+					good: { subcommands: { status: { max: 0 } } },
+					bad: { subcommands: { "Run View": {} } },
+					docker: { max: 5 },
+					"a/b": {},
+					worse: { flags: { x: "bool" } },
+					kind: { positional: "anything" },
+				},
+			},
+			(m) => warned.push(m),
+		);
+		expect(Object.keys(o.shapes)).toEqual(["good"]);
+		expect(o.gatherer).toBeUndefined();
+		expect(warned).toHaveLength(6);
+		expect(parseOperator({ gatherer: "evidence-reader" }).gatherer).toBe("evidence-reader");
+	});
+	test("they are read only from an alert-desk.json the operator owns that no one else can write", () => {
+		const conf = mkdtempSync(`${tmpdir()}/desk-operator-`);
+		writeFileSync(
+			`${conf}/alert-desk.json`,
+			JSON.stringify({ gatherer: "evidence-reader", commandShapes: { opsctl: { bare: true } } }),
+		);
+		chmodSync(`${conf}/alert-desk.json`, 0o600);
+		expect(readOperator(conf).gatherer).toBe("evidence-reader");
+		expect(Object.keys(readOperator(conf).shapes)).toEqual(["opsctl"]);
+		chmodSync(`${conf}/alert-desk.json`, 0o666);
+		const warned: string[] = [];
+		const o = readOperator(conf, (m) => warned.push(m));
+		expect(o).toEqual({ morning: { commands: [] }, shapes: {} });
+		expect(warned[0]).toContain("writable");
+	});
+});
+
+describe("the morning time zone", () => {
+	test("defaults to the machine's own zone, not a place", () => {
+		expect(DEFAULTS.timezone).toBe(systemTimezone());
+		expect(parseConfig({}).timezone).toBe(systemTimezone());
+		expect(parseConfig({ timezone: "Asia/Tokyo" }).timezone).toBe("Asia/Tokyo");
+		expect(systemTimezone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
 	});
 });

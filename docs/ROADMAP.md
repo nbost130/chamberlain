@@ -51,7 +51,7 @@ A user who installs 0.1 gets a clock and no useful checks. Most of 0.2 moves wel
    `CHAMBERLAIN_ALARM_KEY`.
 5. **Brief fragments (S).** `brief.d/NN-name.md` in the config directory are appended, in order, to the Steward's hand-off,
    so project-specific procedure is configuration, and later features (gates, landing) can emit their own. Done, verbatim
-   (no substitution) and in byte order of filename (README, `brief.d/`).
+   (no substitution) and in byte order of filename ([CONFIGURATION.md](CONFIGURATION.md), `brief.d/`).
 6. **A tunnel template and a "moving to another host" guide (S).** One template unit `chamberlain-tunnel@.service` (and a
    launchd equivalent) driven by a per-server env file, whose important trick is idling quietly while a laptop sleeps; for
    tailnet users no unit is needed. State is one database file, so the guide is short.

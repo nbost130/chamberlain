@@ -10,7 +10,14 @@ test("the keeper renames only on a change, and retries until a rename lands", as
 	let open = 1;
 	const calls: string[] = [];
 	let outcome: "set" | "no-token" | "failed" = "no-token";
-	const tick = titleKeeper(() => open, async (t) => { calls.push(t); return outcome; }, () => {});
+	const tick = titleKeeper(
+		() => open,
+		async (t) => {
+			calls.push(t);
+			return outcome;
+		},
+		() => {},
+	);
 	await tick(); // no token yet: tried, not remembered
 	outcome = "set";
 	await tick();
@@ -24,7 +31,15 @@ test("a throwing rename is logged and retried", async () => {
 	const calls: string[] = [];
 	const logged: string[] = [];
 	let fail = true;
-	const tick = titleKeeper(() => 3, async (t) => { calls.push(t); if (fail) throw Error("socket"); return "set"; }, (e) => logged.push(e));
+	const tick = titleKeeper(
+		() => 3,
+		async (t) => {
+			calls.push(t);
+			if (fail) throw Error("socket");
+			return "set";
+		},
+		(e) => logged.push(e),
+	);
 	await tick();
 	fail = false;
 	await tick();

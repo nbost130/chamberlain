@@ -6,9 +6,22 @@
 import { execFile } from "node:child_process";
 import type { GhRead } from "./hold-reconcile.ts";
 
-export const ghRead: GhRead = (path, jq) => new Promise((resolve, reject) => {
-	execFile(process.env.CHAMBERLAIN_GH ?? "gh", ["api", path, "--jq", jq], { timeout: 30_000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
-		if (err) return reject(Error(`GitHub read failed: ${(stderr || err.message).toString().replace(/\s+/g, " ").slice(0, 160)}`));
-		try { resolve(JSON.parse(stdout)); } catch { reject(Error(`GitHub read gave no JSON: ${stdout.slice(0, 80)}`)); }
+export const ghRead: GhRead = (path, jq) =>
+	new Promise((resolve, reject) => {
+		execFile(
+			process.env.CHAMBERLAIN_GH ?? "gh",
+			["api", path, "--jq", jq],
+			{ timeout: 30_000, maxBuffer: 1 << 20 },
+			(err, stdout, stderr) => {
+				if (err)
+					return reject(
+						Error(`GitHub read failed: ${(stderr || err.message).toString().replace(/\s+/g, " ").slice(0, 160)}`),
+					);
+				try {
+					resolve(JSON.parse(stdout));
+				} catch {
+					reject(Error(`GitHub read gave no JSON: ${stdout.slice(0, 80)}`));
+				}
+			},
+		);
 	});
-});

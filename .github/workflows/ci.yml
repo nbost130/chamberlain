@@ -5,15 +5,64 @@ on:
     branches: [main]
   pull_request:
 
+permissions: {}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
       - run: bunx tsc --noEmit
+      - run: bun run check
       # Includes src/architecture.test.ts, which fails if src/core/ imports from src/adapters/.
       - run: bun test
+
+  # The same four binaries the release builds, all from one runner. The macOS job below runs the Apple Silicon one.
+  binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/build.ts
+      - name: Smoke-test the linux-x64 binary from an empty directory
+        run: bun scripts/smoke.ts dist/chamberlain-*-linux-x64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/*.tar.gz
+          retention-days: 3
+
+  # Proof that the Apple Silicon binary starts on a Mac: the one built above, run by scripts/smoke.ts from an empty directory.
+  macos:
+    needs: binaries
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist
+      - name: Smoke-test the darwin-arm64 binary
+        run: bun scripts/smoke.ts dist/chamberlain-*-darwin-arm64.tar.gz

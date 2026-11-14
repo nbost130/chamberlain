@@ -16,7 +16,7 @@ ExecStart=%h/.bun/bin/bun src/daemon.ts
 # The standalone binary needs no checkout: delete the two lines above and use
 #   ExecStart=%h/.local/bin/chamberlain daemon
 Environment=HOME=%h
-# Optional: CHAMBERLAIN_* settings, one KEY=value per line (see README, "Configuration reference").
+# Optional: CHAMBERLAIN_* settings, one KEY=value per line (see docs/CONFIGURATION.md).
 EnvironmentFile=-%h/.config/chamberlain/daemon.env
 Restart=always
 RestartSec=10

@@ -35,7 +35,7 @@ class Chamberlain < Formula
     bin.install "chamberlain"
   end
 
-  # `brew services start chamberlain` runs the daemon. Its settings are in ~/.config/chamberlain (see the README).
+  # `brew services start chamberlain` runs the daemon. Its settings are in ~/.config/chamberlain (see docs/CONFIGURATION.md in the repository).
   service do
     run [opt_bin/"chamberlain", "daemon"]
     keep_alive true

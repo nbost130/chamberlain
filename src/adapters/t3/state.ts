@@ -10,7 +10,8 @@ const prState = (p: any) => String(p?.snapshot?.state ?? "").toLowerCase();
 /** T3 names the machine-pairing card differently across versions; every variant is a link request. */
 export const normalizeWaitKind = (type: string): string => (/link/i.test(type) ? "link_request" : type);
 /** Whether a turn item's type is one of the kinds of waiting item the core knows. */
-export const isWaitKind = (type: string): type is WaitKind => ["user_input_request", "approval_request", "secret_request", "link_request"].includes(normalizeWaitKind(type));
+export const isWaitKind = (type: string): type is WaitKind =>
+	["user_input_request", "approval_request", "secret_request", "link_request"].includes(normalizeWaitKind(type));
 
 /** Pure: a timestamp field that is set: a string that parses as a date. Anything else (`{}`, `true`, a number, junk text) is not. */
 export const isStamp = (v: unknown): boolean => typeof v === "string" && Number.isFinite(Date.parse(v));
@@ -29,12 +30,15 @@ export function toState(t: Raw, now = Date.now()): ThreadState {
 		snoozed: snoozedUntil > now,
 		blockedOnThreadWait: Boolean(t.blockedOnThreadWait),
 		// branchPullRequest carries no state, so the linked list is the only source for it.
-		openPrs: [...new Set((t.pullRequests ?? []).filter((p: any) => prState(p) === "open").map((p: any) => Number(p.number)))] as number[],
+		openPrs: [
+			...new Set((t.pullRequests ?? []).filter((p: any) => prState(p) === "open").map((p: any) => Number(p.number))),
+		] as number[],
 		worktreePath: t.worktreePath ? String(t.worktreePath) : null,
 		linkedPrDone: (t.pullRequests ?? []).some((p: any) => ["merged", "closed"].includes(prState(p))),
 		backgroundTasks: Array.isArray(t.pendingBackgroundTasks) ? t.pendingBackgroundTasks.length : 0,
-		backgroundWork: Array.isArray(t.pendingBackgroundTasks) ? t.pendingBackgroundTasks.filter((x: any) => !String(x?.taskId).startsWith("pull-request-watch:")).length : 0,
+		backgroundWork: Array.isArray(t.pendingBackgroundTasks)
+			? t.pendingBackgroundTasks.filter((x: any) => !String(x?.taskId).startsWith("pull-request-watch:")).length
+			: 0,
 		latestRunId: t.latestRunId ? String(t.latestRunId) : null,
 	};
 }
-

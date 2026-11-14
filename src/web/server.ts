@@ -29,11 +29,29 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	const HOME = process.env.HOME!;
 	const TEST = argv.includes("--test");
 	if (TEST) {
-		if (!process.env.CHAMBERLAIN_CONF || !process.env.CHAMBERLAIN_STATE || CONF === configDir({}, HOME) || STATE === stateDir({}, HOME)) { console.error("--test needs CHAMBERLAIN_CONF and CHAMBERLAIN_STATE pointed at scratch directories, never the live ones"); process.exit(2); }
+		if (
+			!process.env.CHAMBERLAIN_CONF ||
+			!process.env.CHAMBERLAIN_STATE ||
+			CONF === configDir({}, HOME) ||
+			STATE === stateDir({}, HOME)
+		) {
+			console.error(
+				"--test needs CHAMBERLAIN_CONF and CHAMBERLAIN_STATE pointed at scratch directories, never the live ones",
+			);
+			process.exit(2);
+		}
 	}
 	let cfg;
-	try { cfg = loadConfig(CONF); } catch (e) { console.error(String((e as Error).message)); process.exit(2); }
-	if (TEST && !["127.0.0.1", "::1"].includes(cfg.host)) { console.error("--test binds to loopback only"); process.exit(2); }
+	try {
+		cfg = loadConfig(CONF);
+	} catch (e) {
+		console.error(String((e as Error).message));
+		process.exit(2);
+	}
+	if (TEST && !["127.0.0.1", "::1"].includes(cfg.host)) {
+		console.error("--test binds to loopback only");
+		process.exit(2);
+	}
 
 	const store = defaultStore();
 	const log = makeLog(store, { src: "queue-web" });
@@ -55,46 +73,83 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 			const out = list.map((server) => {
 				const key = JSON.stringify(server);
 				let held = pool.get(server.name);
-				if (!held || held.key !== key) { held = { key, adapter: makeAdapter(server, { conf: CONF, state: STATE, store, log, alarm: (k, t) => alarm(k, t) }) }; pool.set(server.name, held); }
+				if (!held || held.key !== key) {
+					held = {
+						key,
+						adapter: makeAdapter(server, { conf: CONF, state: STATE, store, log, alarm: (k, t) => alarm(k, t) }),
+					};
+					pool.set(server.name, held);
+				}
 				return { server, adapter: held.adapter };
 			});
 			for (const name of pool.keys()) if (!list.some((x) => x.name === name)) pool.delete(name);
 			return out;
-		} catch (e) { log("mirror-servers-error", { error: String(e).slice(0, 200) }); return []; }
+		} catch (e) {
+			log("mirror-servers-error", { error: String(e).slice(0, 200) });
+			return [];
+		}
 	};
-	const mirror = TEST ? undefined : createWaiting({
-		store, servers,
-		// The Decisions thread is never mirrored: its own views carry the queue.
-		skipThreads: () => [privateFile("decisions-thread")].filter((x): x is string => Boolean(x)), links: cfg.mirrorLinks, log });
+	const mirror = TEST
+		? undefined
+		: createWaiting({
+				store,
+				servers,
+				// The Decisions thread is never mirrored: its own views carry the queue.
+				skipThreads: () => [privateFile("decisions-thread")].filter((x): x is string => Boolean(x)),
+				links: cfg.mirrorLinks,
+				log,
+			});
 	const hostPort = cfg.host.includes(":") ? `[${cfg.host}]:${cfg.port}` : `${cfg.host}:${cfg.port}`;
 	const app = createApp({
-		store, state: STATE, log,
+		store,
+		state: STATE,
+		log,
 		// A thread-routed answer goes to its thread through its server's adapter (`send`), where it has the rights; test mode sends nothing.
 		sendToThread: TEST ? undefined : threadSender(servers),
-		hosts: [hostPort, ...(cfg.allowedHosts ?? []).flatMap((h) => [h, `${h}:${cfg.port}`])], threadLinks: cfg.threadLinks,
-		staticFiles: STATIC_FILES, testMode: TEST, mirror,
+		hosts: [hostPort, ...(cfg.allowedHosts ?? []).flatMap((h) => [h, `${h}:${cfg.port}`])],
+		threadLinks: cfg.threadLinks,
+		staticFiles: STATIC_FILES,
+		testMode: TEST,
+		mirror,
 	});
 	const server = Bun.serve({ hostname: cfg.host, port: cfg.port, fetch: app.fetch });
 	// The Decisions thread title shows the open count, on the server that hosts that thread and whose adapter can set a title;
 	// until the rights are there it keeps its fixed title.
 	const decisions = privateFile("decisions-thread");
-	const titled = qs && decisions ? servers().find((x) => x.server.origin === qs.origin && has(x.adapter, "setTitle")) : undefined;
-	const keepTitle = !TEST && titled && has(titled.adapter, "setTitle") ? titleKeeper(app.openCount, (title) => titled.adapter.setTitle!(title), log) : undefined;
+	const titled =
+		qs && decisions ? servers().find((x) => x.server.origin === qs.origin && has(x.adapter, "setTitle")) : undefined;
+	const keepTitle =
+		!TEST && titled && has(titled.adapter, "setTitle")
+			? titleKeeper(app.openCount, (title) => titled.adapter.setTitle!(title), log)
+			: undefined;
 	log("web-start", { host: cfg.host, port: server.port, test: TEST, title: keepTitle ? "live" : "fixed" });
 	console.log(`Chamberlain decision queue on http://${hostPort}${TEST ? " (test mode: no wakes)" : ""}`);
 
 	const tick = async () => {
-		try { await app.recover(); } catch (e) { log("recover-error", { error: String(e) }); }
+		try {
+			await app.recover();
+		} catch (e) {
+			log("recover-error", { error: String(e) });
+		}
 	};
 	// Startup recovery: every page claim whose wake is neither delivered nor in the outbox is written to the outbox now.
 	await tick();
 	log("startup-recovered");
 	setInterval(tick, 60_000);
 	// The mirror reads first, so the title counts mirrored cards from its first rename.
-	const pollMirror = async () => { try { await mirror?.poll(); } catch (e) { log("mirror-error", { error: String(e).slice(0, 200) }); } };
+	const pollMirror = async () => {
+		try {
+			await mirror?.poll();
+		} catch (e) {
+			log("mirror-error", { error: String(e).slice(0, 200) });
+		}
+	};
 	await pollMirror();
 	if (mirror) setInterval(pollMirror, 15_000);
-	if (keepTitle) { await keepTitle(); setInterval(keepTitle, 15_000); }
+	if (keepTitle) {
+		await keepTitle();
+		setInterval(keepTitle, 15_000);
+	}
 }
 
 if (import.meta.main) await main();

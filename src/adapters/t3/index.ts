@@ -21,10 +21,17 @@ import { createT3Waiting } from "./waiting.ts";
 
 /** The wake's server line: how the woken thread reaches this server with the ordinary t3_* tools. */
 export const t3ServerLine = (srv: { name: string; environmentId?: string }): string =>
-	srv.environmentId ? `server: ${srv.name} (linked: pass environmentId ${srv.environmentId} to the t3_* tools)` : `server: ${srv.name} (this server)`;
+	srv.environmentId
+		? `server: ${srv.name} (linked: pass environmentId ${srv.environmentId} to the t3_* tools)`
+		: `server: ${srv.name} (this server)`;
 
 /** The server a wake says it is about when there is no servers.json: one T3 server named "local". */
-export const defaultT3Server = (): ServerEntry => ({ name: "local", adapter: "t3", origin: process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773", tokenFile: "read-token" });
+export const defaultT3Server = (): ServerEntry => ({
+	name: "local",
+	adapter: "t3",
+	origin: process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773",
+	tokenFile: "read-token",
+});
 
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
@@ -36,7 +43,19 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		const id = env.steward();
 		return id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle";
 	};
-	const capabilities: OptionalCapability[] = ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact", "snapshot", "alertDesk", "handoffInstruction"];
+	const capabilities: OptionalCapability[] = [
+		"answer",
+		"listWaiting",
+		"setTitle",
+		"transcriptPath",
+		"inspect",
+		"send",
+		"stewardProbe",
+		"compact",
+		"snapshot",
+		"alertDesk",
+		"handoffInstruction",
+	];
 	return {
 		id: "t3",
 		capabilities,
@@ -61,7 +80,8 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 			return id ? t3Probe(t3StateDbPath(), id) : { readable: true };
 		},
 		compact: compactWake,
-		handoffInstruction: () => "Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",
+		handoffInstruction: () =>
+			"Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",
 		// The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained.
 		alertDesk: {
 			wake: webhookWake(() => env.readPrivate("desk-wake-url")),

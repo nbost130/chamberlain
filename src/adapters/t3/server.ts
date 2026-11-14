@@ -10,6 +10,7 @@ export type T3Server = ServerEntry & {
 
 /** The entry as a T3 server, or an error naming what it lacks. */
 export function t3Server(s: ServerEntry): T3Server {
-	if (typeof s.origin !== "string" || !s.origin || typeof s.tokenFile !== "string" || !s.tokenFile) throw Error(`servers.json: ${s.name}: a t3 server needs origin and tokenFile`);
+	if (typeof s.origin !== "string" || !s.origin || typeof s.tokenFile !== "string" || !s.tokenFile)
+		throw Error(`servers.json: ${s.name}: a t3 server needs origin and tokenFile`);
 	return s as T3Server;
 }

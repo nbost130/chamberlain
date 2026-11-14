@@ -8,6 +8,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import type { WakeTransport } from "./deliver.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
+import { noAlert } from "../testing/alert.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
@@ -20,10 +21,21 @@ import type { Gate } from "./hold.ts";
 
 const transport = () => {
 	const sent: { deliveryId: string; message: string }[] = [];
-	const t: WakeTransport = { ready: () => true, send: async (deliveryId, message) => { sent.push({ deliveryId, message }); return { ok: true, status: 202 }; } };
+	const t: WakeTransport = {
+		ready: () => true,
+		send: async (deliveryId, message) => {
+			sent.push({ deliveryId, message });
+			return { ok: true, status: 202 };
+		},
+	};
 	return { t, sent };
 };
-const row = (deliveryId: string, over: Record<string, unknown> = {}) => ({ deliveryId, message: `m ${deliveryId}`, queuedAt: Date.now(), ...over });
+const row = (deliveryId: string, over: Record<string, unknown> = {}) => ({
+	deliveryId,
+	message: `m ${deliveryId}`,
+	queuedAt: Date.now(),
+	...over,
+});
 
 describe("wakes are kept per receiver", () => {
 	test("held and rows read by lane: null is the Steward's, a name is that receiver's, nothing is all of them", () => {
@@ -43,7 +55,18 @@ describe("wakes are kept per receiver", () => {
 		const s = memStore();
 		s.wakes.hold(row("a", { kind: "sweep" }));
 		s.wakes.hold(row("b", { kind: "alert_desk", receiver: "desk" }));
-		const composed = s.wakes.compose(Date.now(), (held) => ({ deliveryId: "row1", message: "x", folded: 0, members: held.map((h) => h.deliveryId), kind: "alert_desk", receiver: "desk" }), "desk");
+		const composed = s.wakes.compose(
+			Date.now(),
+			(held) => ({
+				deliveryId: "row1",
+				message: "x",
+				folded: 0,
+				members: held.map((h) => h.deliveryId),
+				kind: "alert_desk",
+				receiver: "desk",
+			}),
+			"desk",
+		);
 		expect(composed).toMatchObject({ deliveryId: "row1", receiver: "desk" });
 		expect(composed!.members.map((m) => m.deliveryId)).toEqual(["b"]);
 		expect(s.wakes.held().map((h) => h.deliveryId)).toEqual(["a"]);
@@ -61,11 +84,20 @@ describe("wakes are kept per receiver", () => {
 });
 
 describe("one relay, two receivers, one store", () => {
-	const both = (s: ReturnType<typeof memStore>, steward: WakeTransport, desk: WakeTransport, o: { deskGate?: () => Gate; alarm?: (k: string) => void } = {}) =>
-		testRelay(s, steward, { receivers: { desk: { wake: desk, gate: o.deskGate ?? (() => "idle") } }, ...(o.alarm ? { alarm: o.alarm } : {}) });
+	const both = (
+		s: ReturnType<typeof memStore>,
+		steward: WakeTransport,
+		desk: WakeTransport,
+		o: { deskGate?: () => Gate; alarm?: (k: string) => void } = {},
+	) =>
+		testRelay(s, steward, {
+			receivers: { desk: { wake: desk, gate: o.deskGate ?? (() => "idle") } },
+			...(o.alarm ? { alarm: o.alarm } : {}),
+		});
 	test("each row goes to its own receiver's transport, by the row's receiver column", async () => {
 		const s = memStore();
-		const steward = transport(), desk = transport();
+		const steward = transport(),
+			desk = transport();
 		s.wakes.enqueue(row("steward-wake", { kind: "needs_input" }));
 		s.wakes.enqueue(row("desk-wake", { kind: "alert_desk", receiver: "desk" }));
 		await both(s, steward.t, desk.t).drain();
@@ -94,7 +126,10 @@ describe("one relay, two receivers, one store", () => {
 		s.wakes.hold(row("desk-held", { kind: "alert_desk", receiver: "desk" }));
 		s.wakes.enqueue(row("steward-wake", { kind: "needs_input" }));
 		// The desk was removed from config: this relay has the Steward's lane only.
-		const { relay } = testRelay(s, steward.t, { alarm: (key, title, summary) => alarms.push({ key, title, summary }), log: (e, data) => logs.push({ e, ...(data ? { data } : {}) }) });
+		const { relay } = testRelay(s, steward.t, {
+			alarm: (key, title, summary) => alarms.push({ key, title, summary }),
+			log: (e, data) => logs.push({ e, ...(data ? { data } : {}) }),
+		});
 		await relay.pass();
 		relay.audit();
 		relay.audit();
@@ -106,7 +141,9 @@ describe("one relay, two receivers, one store", () => {
 		expect(orphan[0]!.summary).toContain("2 outbox rows and 1 held wake");
 		expect(orphan[0]!.summary).toContain("desk-1, desk-2");
 		expect(orphan[0]!.summary).toContain(`${selfCommand("wakes")} cancel`);
-		expect(logs.filter((l) => l.e === "deliver-receiver-unconfigured")).toEqual([{ e: "deliver-receiver-unconfigured", data: { receiver: "desk", rows: 2, held: 1 } }]);
+		expect(logs.filter((l) => l.e === "deliver-receiver-unconfigured")).toEqual([
+			{ e: "deliver-receiver-unconfigured", data: { receiver: "desk", rows: 2, held: 1 } },
+		]);
 		// Not dropped and not delivered.
 		expect(s.wakes.rows("pending", "desk").map((r) => r.deliveryId)).toEqual(["desk-1", "desk-2"]);
 		expect(s.wakes.held("desk")).toHaveLength(1);
@@ -133,7 +170,8 @@ describe("one relay, two receivers, one store", () => {
 	});
 	test("a busy desk holds only the desk's wakes: the Steward's go out, and the desk's go as ONE digest when it is idle", async () => {
 		const s = memStore();
-		const steward = transport(), desk = transport();
+		const steward = transport(),
+			desk = transport();
 		let deskGate: Gate = "busy";
 		s.wakes.hold(row("d1", { kind: "alert_desk", receiver: "desk", queuedAt: 1 }));
 		s.wakes.hold(row("d2", { kind: "alert_desk", receiver: "desk", queuedAt: 2 }));
@@ -194,9 +232,13 @@ describe("the engine drains the inbox into the desk", () => {
 	afterEach(async () => {
 		for (const e of engines.splice(0)) await e.stop();
 		for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-		if (saved === undefined) delete process.env.ALERT_DESK_INBOX; else process.env.ALERT_DESK_INBOX = saved;
+		if (saved === undefined) delete process.env.ALERT_DESK_INBOX;
+		else process.env.ALERT_DESK_INBOX = saved;
 	});
-	function rig(caps?: Parameters<typeof createFakeAdapter>[0], desk: Record<string, unknown> = { startAt: "beginning" }) {
+	function rig(
+		caps?: Parameters<typeof createFakeAdapter>[0],
+		desk: Record<string, unknown> = { startAt: "beginning" },
+	) {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-desk-`);
 		dirs.push(root);
 		const conf = `${root}/conf`;
@@ -208,14 +250,22 @@ describe("the engine drains the inbox into the desk", () => {
 		const logged: { event: string; [k: string]: unknown }[] = [];
 		const fake = createFakeAdapter(caps);
 		const engine = createEngine({
-			conf, lock: testRelayLock(store), store, housekeeping: true, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
-			log: (event, data) => logged.push({ event, ...data }), timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 },
+			conf,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			housekeeping: true,
+			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
+			log: (event, data) => logged.push({ event, ...data }),
+			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
+			relay: { retryAfterMs: () => 0 },
 		});
 		engines.push(engine);
 		void engine.start();
 		return { root, fake, engine, store, logged };
 	}
-	const alert = (family: string) => `${JSON.stringify({ v: 1, source: "monitor", family, title: `${family} down`, body: "b", ts: new Date().toISOString(), severity: "critical" })}\n`;
+	const alert = (family: string) =>
+		`${JSON.stringify({ v: 1, source: "monitor", family, title: `${family} down`, body: "b", ts: new Date().toISOString(), severity: "critical" })}\n`;
 
 	test("an inbox line reaches the desk transport, as a wake the Steward's transport never sees", async () => {
 		const r = rig();
@@ -228,14 +278,16 @@ describe("the engine drains the inbox into the desk", () => {
 		expect(r.fake.deskWakes[0]!.message).toContain("delivery id: desk:");
 		expect(r.fake.wakes).toEqual([]);
 	});
-	test("a first start with the default startAt \"end\" skips what the inbox already holds, logs it, and wakes on what comes after", async () => {
+	test('a first start with the default startAt "end" skips what the inbox already holds, logs it, and wakes on what comes after', async () => {
 		const r = rig(undefined, {});
 		appendFileSync(`${r.root}/inbox.jsonl`, alert("monitor:old-1") + alert("monitor:old-2"));
 		const size = statSync(`${r.root}/inbox.jsonl`).size;
 		await r.engine.tick();
 		await Bun.sleep(50);
 		expect(r.fake.deskWakes).toEqual([]);
-		expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([{ event: "alert-desk-start", startAt: "end", inbox: `${r.root}/inbox.jsonl`, offset: size, skippedBytes: size }]);
+		expect(r.logged.filter((l) => l.event === "alert-desk-start")).toEqual([
+			{ event: "alert-desk-start", startAt: "end", inbox: `${r.root}/inbox.jsonl`, offset: size, skippedBytes: size },
+		]);
 		appendFileSync(`${r.root}/inbox.jsonl`, alert("monitor:new"));
 		await r.engine.tick();
 		const end = Date.now() + 3000;
@@ -245,7 +297,18 @@ describe("the engine drains the inbox into the desk", () => {
 		expect(r.logged.filter((l) => l.event === "alert-desk-start")).toHaveLength(1);
 	});
 	test("a backend without the alertDesk capability never reads the inbox", async () => {
-		const r = rig({ capabilities: ["answer", "listWaiting", "setTitle", "transcriptPath", "inspect", "send", "stewardProbe", "compact"] });
+		const r = rig({
+			capabilities: [
+				"answer",
+				"listWaiting",
+				"setTitle",
+				"transcriptPath",
+				"inspect",
+				"send",
+				"stewardProbe",
+				"compact",
+			],
+		});
 		appendFileSync(`${r.root}/inbox.jsonl`, alert("monitor:disk"));
 		await r.engine.tick();
 		await Bun.sleep(50);
@@ -269,12 +332,15 @@ describe("the engine drains the inbox into the desk", () => {
 describe("one relay, one serial queue, for every receiver", () => {
 	test("simultaneous Steward and desk wakes are POSTed strictly one at a time, each through its own transport", async () => {
 		const store = memStore();
-		let inFlight = 0, maxInFlight = 0;
+		let inFlight = 0,
+			maxInFlight = 0;
 		const order: string[] = [];
 		const slow = (who: string): WakeTransport => ({
 			ready: () => true,
 			send: async (deliveryId) => {
-				inFlight++; maxInFlight = Math.max(maxInFlight, inFlight); order.push(`${who}:${deliveryId}`);
+				inFlight++;
+				maxInFlight = Math.max(maxInFlight, inFlight);
+				order.push(`${who}:${deliveryId}`);
 				await Bun.sleep(25);
 				inFlight--;
 				return { ok: true, status: 202 };
@@ -284,7 +350,17 @@ describe("one relay, one serial queue, for every receiver", () => {
 		const adapter = { ...fake, wake: slow("steward"), alertDesk: { wake: slow("desk"), isBusy: () => "idle" as Gate } };
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-one-relay-`);
 		mkdirSync(`${root}/conf`, { recursive: true, mode: 0o700 });
-		const engine = createEngine({ conf: `${root}/conf`, lock: testRelayLock(store), store, housekeeping: false, servers: [{ server: { name: "fake", adapter: "fake" }, adapter }], log: () => {}, timing: { tickMs: 3_600_000 }, relay: { retryAfterMs: () => 0 } });
+		const engine = createEngine({
+			conf: `${root}/conf`,
+			lock: testRelayLock(store),
+			store,
+			alert: noAlert,
+			housekeeping: false,
+			servers: [{ server: { name: "fake", adapter: "fake" }, adapter }],
+			log: () => {},
+			timing: { tickMs: 3_600_000 },
+			relay: { retryAfterMs: () => 0 },
+		});
 		for (let i = 0; i < 3; i++) {
 			store.wakes.enqueue(row(`s${i}`, { kind: "needs_input" }));
 			store.wakes.enqueue(row(`d${i}`, { kind: "alert_desk", receiver: "desk" }));

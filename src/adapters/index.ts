@@ -29,12 +29,21 @@ export function adapterEntry(name: string): AdapterEntry {
 /** servers.json, or one T3 server named "local" at CHAMBERLAIN_T3_ORIGIN with its token in `read-token`. */
 export const loadServers = (conf = CONF): ServerEntry[] => readServers(conf) ?? [defaultT3Server()];
 
-export type EnvParts = { conf?: string; state?: string; store?: AdapterEnv["store"]; log?: AdapterEnv["log"]; alarm?: AdapterEnv["alarm"] };
+export type EnvParts = {
+	conf?: string;
+	state?: string;
+	store?: AdapterEnv["store"];
+	log?: AdapterEnv["log"];
+	alarm?: AdapterEnv["alarm"];
+};
 /** The environment an adapter for `server` runs in: the directories, the Steward's thread, and the private files. */
 export function adapterEnv(server: ServerEntry, p: EnvParts = {}): AdapterEnv {
 	const conf = p.conf ?? CONF;
 	return {
-		server, conf, state: p.state ?? STATE, ...(p.store ? { store: p.store } : {}),
+		server,
+		conf,
+		state: p.state ?? STATE,
+		...(p.store ? { store: p.store } : {}),
 		log: p.log ?? (() => {}),
 		alarm: p.alarm ?? (() => {}),
 		steward: () => privateFile(conf, "steward-thread"),
@@ -43,7 +52,8 @@ export function adapterEnv(server: ServerEntry, p: EnvParts = {}): AdapterEnv {
 }
 
 /** One adapter for one server entry, by the name the entry gives. */
-export const makeAdapter = (server: ServerEntry, p: EnvParts = {}): Adapter => adapterEntry(server.adapter).create(adapterEnv(server, p));
+export const makeAdapter = (server: ServerEntry, p: EnvParts = {}): Adapter =>
+	adapterEntry(server.adapter).create(adapterEnv(server, p));
 
 /** The server the Steward runs on and its adapter: what wakes, the busy check and `ask` go through. */
 export function homeAdapter(p: EnvParts = {}): { server: ServerEntry; adapter: Adapter } {
