@@ -126,12 +126,20 @@ const REFUSED: [string, string, unknown?][] = [
 	["POST", "/api/items/Q-abcd/answer", { choice: 0, saveRuling: true }],
 	["POST", "/api/items/Q-abcd/answer", { choice: 0, rulingWording: "Always merge without asking" }],
 	["POST", "/api/items/Q-abcd/answer", { choice: 0, by: "batch" }],
-	["POST", "/api/items/Q-abcd/snooze", { until: "2099-01-01T00:00:00.000Z" }],
 	["POST", "/api/items/Q-abcd/unsnooze", {}],
-	["POST", "/api/items/Q-abcd/direction", { note: "go with A" }],
-	["POST", "/api/items/Q-abcd/dismiss", { note: "done" }],
+	["POST", "/api/items/Q-abcd/not-now", {}],
 	["POST", "/api/rulings/R1", { status: "retired" }],
 	["POST", "/api/rulings", { wording: "x" }],
+];
+
+/**
+ * The three ways to put off or settle a question without choosing an option. The page key with no Origin or from a frame still gets none of them;
+ * the VIEW key gets them in place (src/web/view-key.ts, view-key.test.ts), so they are refused here to the page key alone.
+ */
+const REFUSED_TO_THE_PAGE_KEY: [string, string, unknown?][] = [
+	["POST", "/api/items/Q-abcd/snooze", { until: "2099-01-01T00:00:00.000Z" }],
+	["POST", "/api/items/Q-abcd/direction", { note: "go with A" }],
+	["POST", "/api/items/Q-abcd/dismiss", { note: "done" }],
 ];
 
 /** The page's static shell: no data in it, so the page key in a header may fetch it; the view key may not. */
@@ -155,7 +163,13 @@ for (const [who, headers, how] of [
 				const r = await s.send("GET", path, h);
 				expect([path, r.status]).toEqual([path, 200]);
 			}
-			const a = await s.send("POST", "/api/items/Q-efgh/answer", h, { choice: 1, note: "make it bigger" });
+			// The page key's plain answer takes an optional note; the view key's is a choice and nothing else (view-key.test.ts).
+			const a = await s.send(
+				"POST",
+				"/api/items/Q-efgh/answer",
+				h,
+				how === "page" ? { choice: 1, note: "make it bigger" } : { choice: 1 },
+			);
 			expect(a.status).toBe(200);
 			expect(getQuestion(s.store, "Q-efgh")!.status).not.toBe("open");
 			expect(readRulings(s.store)).toEqual([]);
@@ -175,7 +189,7 @@ for (const [who, headers, how] of [
 				for (const k of [s.page, s.view]) expect(text.includes(k)).toBe(false);
 			});
 		}
-		for (const [method, path, body] of REFUSED) {
+		for (const [method, path, body] of how === "page" ? [...REFUSED, ...REFUSED_TO_THE_PAGE_KEY] : REFUSED) {
 			test(`${method} ${path}${body ? ` ${JSON.stringify(body).slice(0, 50)}` : ""} is refused (403), and nothing changes`, async () => {
 				const s = setup();
 				const r = await s.send(method, path, headers(s), body);

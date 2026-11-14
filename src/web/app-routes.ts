@@ -8,7 +8,7 @@ import {
 	SESSION_COOKIE,
 	sessionOf,
 } from "../core/challenge.ts";
-import { notNow } from "../core/questions.ts";
+import { type KeyUsed, notNow } from "../core/questions.ts";
 import { ranked, snoozed } from "../core/questions-wake.ts";
 import { readRulings } from "../core/rulings.ts";
 import { confirmRuling, editRuling, retireRuling } from "../core/rulings-change.ts";
@@ -20,6 +20,7 @@ import { type AnswerIn, acceptAll, answer } from "./app-answer.ts";
 import { type Ctx, cardView, view } from "./app-ctx.ts";
 import { fail, json } from "./app-http.ts";
 import { ITEM_ACTIONS } from "./queue-actions.ts";
+import { type Authority, keyUsed, mayDo } from "./view-key.ts";
 import { checkCard, needsConfirmation } from "./waiting.ts";
 
 function rulingsView(ctx: Ctx) {
@@ -108,7 +109,7 @@ function confirmCard(
 		now: d.now?.(),
 	});
 	const decision = cardChoiceLabel(checked.card, checked.choice);
-	d.log("card-confirmation-issued", { id, type: checked.card.type, choice: decision });
+	d.log("card-confirmation-issued", { id, type: checked.card.type, choice: decision, key: "page" });
 	return withSession(json({ ok: true, challenge: token, expiresAt, expiresInMs: CHALLENGE_TTL_MS, decision }));
 }
 
@@ -131,19 +132,19 @@ function unconfirmedRefusal(
 					now: d.now?.(),
 				});
 	if (verdict === "ok") return undefined;
-	d.log("card-confirmation-refused", { id, type: card.type, verdict });
+	d.log("card-confirmation-refused", { id, type: card.type, verdict, key: "page" });
 	const [status, error] = confirmationRefusal(verdict);
 	return json({ error, code: `confirmation-${verdict}` }, status);
 }
 
-/** One API POST: the request and its URL, the URL's decoded path parts, the parsed JSON body, and whether it came from an inline frame. */
-type Call = { req: Request; url: URL; parts: string[]; body: Record<string, unknown>; inline: boolean };
+/** One API POST: the request and its URL, the URL's decoded path parts, the parsed JSON body, and who the request is (`Authority`, ./view-key.ts). */
+type Call = { req: Request; url: URL; parts: string[]; body: Record<string, unknown>; authority: Authority };
 
 async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "confirm"): Promise<Response> {
-	const { req, body, inline } = call;
+	const { req, body, authority } = call;
 	const { d } = ctx;
 	// Approvals and cards are answered on the full page only (see inlineVerdict); this is the second lock on the same door.
-	if (inline)
+	if (authority !== "full")
 		return fail(403, "refused: question cards and approvals are answered on the full page, not in an inline frame");
 	const { mirror } = d;
 	if (!mirror) return fail(404, "not found");
@@ -165,26 +166,30 @@ async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "co
 		card?.answerable && needsConfirmation(card) ? unconfirmedRefusal(ctx, { id, card, b }, session) : undefined;
 	if (refused) return refused;
 	const r = await ctx.serial(() => mirror.answer(id, b.choice, b.sig));
+	// Only the full page gets here, so the key is the page's own: recorded with the card it answered, whatever the card's own answer was.
+	d.log("card-answered", { id, status: r.status, key: keyUsed(authority) });
 	return json(r.body, r.status);
 }
 
-function notNowRoute(ctx: Ctx, id: string): Promise<Response> {
+function notNowRoute(ctx: Ctx, id: string, key: KeyUsed): Promise<Response> {
 	return ctx.serial(() => {
 		const i = ctx.state().get(id);
 		if (i?.status !== "open") return fail(404, "no open item");
 		notNow(ctx.d.store, id);
+		ctx.d.log("not-now", { id, key });
 		return json({ ok: true });
 	});
 }
 
 /**
- * Snooze, un-snooze, direction and dismiss change state, so they are the full page's alone: `inlineVerdict` refuses them to a frame, and this is the
- * second lock on the same door (an `inline` request is a frame's, or one that holds only a view key or no origin).
+ * Snooze, un-snooze, direction and dismiss change state. The full page does all four; the view key does snooze, direction and dismiss and not
+ * un-snooze; any other key from a frame or with no Origin none (`mayDo`). The origin and key gates refuse the rest first, and this is the second
+ * lock on the same door. The change is recorded with the key it was made with.
  */
-function itemActionRoute(ctx: Ctx, id: string, action: string, { body, inline }: Pick<Call, "body" | "inline">) {
-	if (inline)
-		return fail(403, "refused: snooze, direction and dismiss are done on the full page, not in an inline frame");
-	return ctx.items.run(id, action, body).then((r) => json(r.body, r.status));
+function itemActionRoute(ctx: Ctx, id: string, action: string, { body, authority }: Pick<Call, "body" | "authority">) {
+	if (!mayDo(authority, action))
+		return fail(403, `refused: ${action} is done on the full page, not with the key an inline view holds`);
+	return ctx.items.run(id, action, body, keyUsed(authority)).then((r) => json(r.body, r.status));
 }
 
 /** The change a ruling action makes. Undefined for an action that is not one. */
@@ -202,7 +207,8 @@ function rulingRoute(ctx: Ctx, id: string, action: string, body: Record<string, 
 	try {
 		const r = changeRuling(ctx, id, action, decides);
 		if (!r) return fail(404, "unknown action");
-		ctx.d.log("ruling-changed", { id, action });
+		// Only the full page gets here (apiPost), so the key is the page's own.
+		ctx.d.log("ruling-changed", { id, action, key: "page" });
 		return json({ ok: true, ruling: r });
 	} catch (e) {
 		return fail(400, String((e as Error).message));
@@ -223,16 +229,26 @@ const pathParts = (pathname: string) =>
 
 /** The POST routes. `body` is the parsed JSON object. */
 async function apiPost(ctx: Ctx, call: Call): Promise<Response> {
-	const { url, parts, body, inline } = call;
+	const { url, parts, body, authority } = call;
 	if (parts[1] === "cards" && parts[2] && (parts[3] === "answer" || parts[3] === "confirm") && parts.length === 4)
 		return cardsRoute(ctx, call, parts[2], parts[3]);
 	if (parts[1] === "items" && parts[2] && parts[3] === "answer") {
-		const r = await answer(ctx, parts[2], body as unknown as AnswerIn, { by: "page", inline });
+		const via = {
+			by: "page",
+			inline: authority !== "full",
+			key: keyUsed(authority),
+			choiceOnly: authority === "view",
+		} as const;
+		const r = await answer(ctx, parts[2], body as unknown as AnswerIn, via);
 		return json(r.body, r.status);
 	}
 	if (parts[1] === "items" && parts[2] && parts.length === 4 && ITEM_ACTIONS.has(String(parts[3])))
 		return itemActionRoute(ctx, parts[2], String(parts[3]), call);
-	if (parts[1] === "items" && parts[2] && parts[3] === "not-now") return notNowRoute(ctx, parts[2]);
+	// Everything below changes more than the view key's list (./view-key.ts) allows: the full page's alone. The second lock behind the origin
+	// and key gates, so a route added to a list by mistake still does not reach one of these.
+	if (authority !== "full")
+		return fail(403, "refused: this needs the page's own link, not the key an inline view holds");
+	if (parts[1] === "items" && parts[2] && parts[3] === "not-now") return notNowRoute(ctx, parts[2], "page");
 	if (url.pathname === "/api/accept-all") {
 		const r = await acceptAll(ctx, body.ids);
 		return json(r.body, r.status);
@@ -241,14 +257,14 @@ async function apiPost(ctx: Ctx, call: Call): Promise<Response> {
 	return fail(404, "not found");
 }
 
-export async function api(ctx: Ctx, req: Request, url: URL, inline: boolean): Promise<Response> {
+export async function api(ctx: Ctx, req: Request, url: URL, authority: Authority): Promise<Response> {
 	const parts = pathParts(url.pathname);
 	const read = req.method === "GET" ? apiRead(ctx, url, parts) : undefined;
 	if (read) return read;
 	if (req.method !== "POST") return fail(404, "not found");
 	const body = (await req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
 	if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "expected a JSON body");
-	return apiPost(ctx, { req, url, parts, body, inline });
+	return apiPost(ctx, { req, url, parts, body, authority });
 }
 
 // ---- the pages ----------------------------------------------------------------------------------------

@@ -161,10 +161,10 @@ describe("ruling actions", () => {
 			body: { error: "unknown action" },
 		});
 		expect(s.logs.filter((l) => l.event === "ruling-changed").map((l) => l.data)).toEqual([
-			{ id: a, action: "edit" },
-			{ id: b, action: "confirm" },
-			{ id: c, action: "once" },
-			{ id: d, action: "retire" },
+			{ id: a, action: "edit", key: "page" },
+			{ id: b, action: "confirm", key: "page" },
+			{ id: c, action: "once", key: "page" },
+			{ id: d, action: "retire", key: "page" },
 		]);
 	});
 

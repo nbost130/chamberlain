@@ -2,7 +2,7 @@
 
 import { crashPoint } from "../core/crash.ts";
 import { ledgerEvents } from "../core/obs/ledger.ts";
-import type { Answer, QuestionState } from "../core/questions.ts";
+import type { Answer, KeyUsed, QuestionState } from "../core/questions.ts";
 import { type Claim, claimWake, enqueueClaim, pageClaim, wokenBy } from "../core/questions-claim.ts";
 import { answerDeliveryId, batchable } from "../core/questions-wake.ts";
 import { recordInForce, stageRulings } from "../core/rulings.ts";
@@ -12,6 +12,7 @@ import type { Ctx } from "./app-ctx.ts";
 import { INLINE_ANSWER_FIELDS } from "./app-http.ts";
 import { follow } from "./app-relay.ts";
 import { takenReply, unsettleable } from "./queue-actions.ts";
+import { VIEW_KEY_ANSWER_FIELDS } from "./view-key.ts";
 
 export type AnswerIn = { choice: number; note?: string; saveRuling?: boolean; rulingWording?: string };
 type Reply = { status: number; body: unknown };
@@ -22,15 +23,19 @@ const pass = <T>(value: T): Step<T> => ({ ok: true, value });
 const stop = (status: number, error: string): Step<never> => ({ ok: false, reply: refusal(status, error) });
 
 /**
- * An inline frame answers a question with a choice and a note. A ruling field in its request is refused, not ignored, whatever
- * the item or the ticked box would have made of it: only the full page may save a ruling.
+ * An inline frame answers a question with a choice and a note; the view key's answer is a choice and nothing else (`choiceOnly`). Any other
+ * field, a ruling field or a note on the view key's, is refused, not ignored, whatever the item or the ticked box would have made of it:
+ * only the full page may save a ruling.
  */
-function inlineRefusal(body: AnswerIn): Reply | undefined {
-	const extra = Object.keys(body).filter((k) => !INLINE_ANSWER_FIELDS.has(k));
+function inlineRefusal(body: AnswerIn, choiceOnly: boolean): Reply | undefined {
+	const allowed = choiceOnly ? VIEW_KEY_ANSWER_FIELDS : INLINE_ANSWER_FIELDS;
+	const extra = Object.keys(body).filter((k) => !allowed.has(k));
 	if (extra.length)
 		return refusal(
 			403,
-			`an inline frame may only choose an option and add a note, not ${extra.map((k) => JSON.stringify(k)).join(", ")}: answer on the full page`,
+			choiceOnly
+				? `the Decisions view may only choose an option, not ${extra.map((k) => JSON.stringify(k)).join(", ")}: a note is a direction, or answer on the full page`
+				: `an inline frame may only choose an option and add a note, not ${extra.map((k) => JSON.stringify(k)).join(", ")}: answer on the full page`,
 		);
 	if (body.note !== undefined && typeof body.note !== "string") return refusal(400, "note must be text");
 	return undefined;
@@ -130,7 +135,7 @@ function recordedReply(
 	const a = claim.answer;
 	if (!a) throw Error(`the page's claim on ${i.id} carries no answer`);
 	ledgerEvents(ctx.d.store).answered(i.id, a);
-	ctx.d.log("answered", { id: i.id, choice: a.choice, by, ruling: a.ruling?.id });
+	ctx.d.log("answered", { id: i.id, choice: a.choice, by, key: a.key, ruling: a.ruling?.id });
 	if (claim.relay) ctx.track(follow(ctx, claim));
 	return {
 		status: 200,
@@ -146,11 +151,14 @@ function recordedReply(
 	};
 }
 
-/** Who an answer comes from and how it reached the page: from the page itself or a batch, and from an inline frame or the full page. */
-type Via = { by: "page" | "batch"; inline?: boolean };
+/**
+ * Who an answer comes from and how it reached the page: from the page itself or a batch, from an inline frame (or any key that is not the page's
+ * own) or the full page, with the key it proved, and whether the answer may carry a choice only (the view key's).
+ */
+export type Via = { by: "page" | "batch"; inline?: boolean; key?: KeyUsed; choiceOnly?: boolean };
 
-function answerNow(ctx: Ctx, id: string, body: AnswerIn, { by, inline }: Via): Reply {
-	const bad = inline ? inlineRefusal(body) : undefined;
+function answerNow(ctx: Ctx, id: string, body: AnswerIn, { by, inline, key, choiceOnly }: Via): Reply {
+	const bad = inline ? inlineRefusal(body, choiceOnly === true) : undefined;
 	if (bad) return bad;
 	const found = answerableItem(ctx, id);
 	if (!found.ok) return found.reply;
@@ -169,6 +177,7 @@ function answerNow(ctx: Ctx, id: string, body: AnswerIn, { by, inline }: Via): R
 		label: chosen.value,
 		...(note ? { note } : {}),
 		by,
+		key: key ?? "page",
 		t: new Date().toISOString(),
 		deliveryId: answerDeliveryId(i.id),
 	};

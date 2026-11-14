@@ -56,12 +56,20 @@ export type Question = {
  * is "already handled / no longer needed" (not an answer: it settles nothing). Both carry `choice: -1`.
  */
 export type AnswerKind = "direction" | "dismissed";
+/**
+ * The key a write on the page was made with: the page's own key (its cookie, or the key itself) or the VIEW key the Decisions view holds
+ * (src/web/view-key.ts). Recorded with every answer, direction, dismissal and snooze, so the trail tells the two apart. A record from before
+ * this field has none, and reads as the page.
+ */
+export type KeyUsed = "page" | "view";
 export type Answer = {
 	choice: number;
 	label: string;
 	note?: string;
 	ruling?: { id: string; decides: string };
 	by: "page" | "batch";
+	/** The key the answer was made with (a batch is the page's). */
+	key?: KeyUsed;
 	t: string;
 	deliveryId: string;
 	kind?: AnswerKind;
@@ -72,6 +80,8 @@ type Snooze = {
 	until: string;
 	/** When it was snoozed. */
 	at: string;
+	/** The key the snooze was made with; absent on one made before the field, which was the page's. */
+	key?: KeyUsed;
 	/** `until` has not passed yet: the item is in the Snoozed section, not the active list. */
 	active: boolean;
 	/** The daemon has handled its return (src/core/snooze.ts `returnDueSnoozes`). */
@@ -158,7 +168,7 @@ export function plainQuestion(q: QuestionState): Question {
 }
 
 /** The payload fields a snooze keeps (see `snoozeOf`): read into `snooze`, so they are not also left on the question. */
-const SNOOZE_FIELDS = ["snoozedUntil", "snoozedAt", "snoozeReturned"] as const;
+const SNOOZE_FIELDS = ["snoozedUntil", "snoozedAt", "snoozedKey", "snoozeReturned"] as const;
 const withoutSnoozeFields = (q: Question): Question => {
 	const filed: Record<string, unknown> = { ...q };
 	for (const k of SNOOZE_FIELDS) delete filed[k];
@@ -195,6 +205,7 @@ function snoozeOf(payload: Record<string, unknown>, now: number): Snooze | undef
 	return {
 		until: payload.snoozedUntil,
 		at: typeof payload.snoozedAt === "string" ? payload.snoozedAt : payload.snoozedUntil,
+		...(payload.snoozedKey === "view" || payload.snoozedKey === "page" ? { key: payload.snoozedKey } : {}),
 		active: until > now,
 		returned: payload.snoozeReturned === payload.snoozedUntil,
 	};
