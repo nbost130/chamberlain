@@ -1,5 +1,6 @@
 /** Stalled-thread recovery: the environment one recovery runs in (its state, timers and breaker) and the checks on a pending retry. */
-import type { RunLook, ThreadState } from "./adapter.ts";
+import type { ThreadState } from "./adapter.ts";
+import type { RunLook } from "./adapter-inspect.ts";
 import { type FailureKind, neverRetryThread, type RecoverTiming, type ThreadContext } from "./recover-classify.ts";
 import { attempt } from "./recover-run.ts";
 import type { RecoverDeps, RecoverState, RecoverStore, ThreadRecord } from "./recover-state.ts";

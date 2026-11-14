@@ -1,6 +1,7 @@
 import { selfCommand } from "./config.ts";
 import { describeShape, parseGatherer, parseShapes, type ShapeSet } from "./desk-shapes.ts";
-import { CONFIG_FILE, configValue } from "./layout.ts";
+import { configValue } from "./layout.ts";
+import { CONFIG_FILE } from "./layout-schema.ts";
 
 /**
  * The Morning sweep's own sources, the operator's (alert-desk.json): `morningCommands`, each run exactly as written (`<N>` stands for a

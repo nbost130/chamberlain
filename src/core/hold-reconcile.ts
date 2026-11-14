@@ -25,7 +25,7 @@ import {
 	isCardHold,
 	itemIdOf,
 	REF_SHAPES,
-} from "./afk.ts";
+} from "./afk-held.ts";
 import { type GhRead, type GitHubKind, lookup, type Seen, type Sighting } from "./hold-lookup.ts";
 import { type MachineSnapshot, type ThreadView, threadViewAcross } from "./hold-threads.ts";
 import { QUEUE, type QuestionState, questionStates } from "./questions.ts";

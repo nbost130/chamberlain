@@ -2,7 +2,7 @@
  * Closing the cards that resolved in their threads: each open card is read against its own (server, thread), a card hold
  * and its pointer question close together only on positive evidence, and a card with no evidence for too long raises an alarm.
  */
-import type { CardRef } from "./afk.ts";
+import type { CardRef } from "./afk-held.ts";
 import { closeCard } from "./card-hold.ts";
 import { CARD_UNVERIFIED, cardAlarmKey, cardKey, type OpenCard, openCards } from "./card-open.ts";
 import type { Store } from "./store.ts";

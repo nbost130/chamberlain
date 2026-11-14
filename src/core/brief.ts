@@ -14,7 +14,7 @@
  */
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import type { BriefNotes } from "./adapter.ts";
-import type { Afk } from "./afk.ts";
+import type { Afk } from "./afk-held.ts";
 import { type CommandName, Principal, principal, principalPoss, STATE, selfCommand } from "./config.ts";
 import { awayModeLine } from "./messages.ts";
 import { authorityProblem } from "./private.ts";

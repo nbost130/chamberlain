@@ -5,10 +5,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld, HELD, heldOpen } from "../core/afk.ts";
+import { appendHeld, HELD, heldOpen } from "../core/afk-held.ts";
 import { newToken, TOKEN_HEADER } from "../core/capability.ts";
 import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import { askQuestion, QUEUE, type Question, questionStates, readRelay } from "../core/questions.ts";
+import { askQuestion, QUEUE, type Question, questionStates } from "../core/questions.ts";
+import { readRelay } from "../core/questions-claim.ts";
 import { findSettled } from "../core/settled.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath, type Store } from "../core/store.ts";

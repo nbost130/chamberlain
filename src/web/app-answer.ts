@@ -1,16 +1,8 @@
 /** Answering one queue item (or a batch of them): the checks, the claim, the ruling it saves and the reply. */
 import { crashPoint } from "../core/crash.ts";
-import {
-	type Answer,
-	answerDeliveryId,
-	batchable,
-	type Claim,
-	claimWake,
-	enqueueClaim,
-	pageClaim,
-	type QuestionState,
-	wokenBy,
-} from "../core/questions.ts";
+import type { Answer, QuestionState } from "../core/questions.ts";
+import { type Claim, claimWake, enqueueClaim, pageClaim, wokenBy } from "../core/questions-claim.ts";
+import { answerDeliveryId, batchable } from "../core/questions-wake.ts";
 import { recordInForce, stageRulings } from "../core/rulings.ts";
 import { expiresProblem, isExpired } from "../core/rulings-expiry.ts";
 import { clearSnooze } from "../core/snooze.ts";

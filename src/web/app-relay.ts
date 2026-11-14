@@ -1,17 +1,16 @@
 /** A thread-routed answer's direct send: the one relay, its record and its fallback wake. */
-import { closeHeldForItem } from "../core/afk.ts";
+import { closeHeldForItem } from "../core/afk-held.ts";
 import {
 	type Claim,
 	type ClaimRelay,
 	enqueueClaim,
-	fallbackWake,
 	finishRelay,
 	PAGE,
 	readRelay,
-	recordAnswerDelivered,
 	recoverClaims,
 	startRelay,
-} from "../core/questions.ts";
+} from "../core/questions-claim.ts";
+import { fallbackWake, recordAnswerDelivered } from "../core/questions-wake.ts";
 import type { Ctx } from "./app-ctx.ts";
 
 type Relayed = { delivered: true } | { delivered: false; message: string };

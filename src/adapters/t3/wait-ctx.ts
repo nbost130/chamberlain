@@ -1,5 +1,5 @@
 /** What one T3 server's waiting-card adapter is made of, shared by its listing (./wait-scan.ts) and its answers (./wait-answer.ts). */
-import type { ThreadLinks } from "../../core/adapter.ts";
+import type { ThreadLinks } from "../../core/adapter-waiting.ts";
 import type { openWithin } from "./ping.ts";
 import type { Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";

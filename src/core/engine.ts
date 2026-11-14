@@ -6,19 +6,11 @@
  * adapter lacks switches one feature off (see the table in adapter.ts). src/daemon.ts builds the real deps for it.
  */
 import { execFile } from "node:child_process";
-import {
-	type Adapter,
-	has,
-	type Inspector,
-	isWaitingRead,
-	normalizeThread,
-	type PostResult,
-	type ThreadEvent,
-	type ThreadState,
-	type WaitingItem,
-	type WaitingRead,
-} from "./adapter.ts";
-import { closeHeldForCard, readAfk } from "./afk.ts";
+import { type Adapter, normalizeThread, type PostResult, type ThreadEvent, type ThreadState } from "./adapter.ts";
+import { has } from "./adapter-conformance.ts";
+import type { Inspector } from "./adapter-inspect.ts";
+import { isWaitingRead, type WaitingItem, type WaitingRead } from "./adapter-waiting.ts";
+import { closeHeldForCard, readAfk } from "./afk-held.ts";
 import { drainAlertDesk } from "./alert-desk.ts";
 import { DESK_RECEIVER, inboxPath } from "./alert-desk-config.ts";
 import { cardWaitOf, holdCard } from "./card-hold.ts";
@@ -70,7 +62,7 @@ import type { IdleThreadSource } from "./idle-select.ts";
 import { createJudge, type Judge, judgeOff, readJudgeConfig } from "./judge.ts";
 import { readNamed, setting } from "./layout.ts";
 import { type Log, makeLog } from "./log.ts";
-import { recordAnswerDelivered } from "./questions.ts";
+import { recordAnswerDelivered } from "./questions-wake.ts";
 import { type ReportOutcome, settleReport } from "./report.ts";
 import {
 	epochOf,

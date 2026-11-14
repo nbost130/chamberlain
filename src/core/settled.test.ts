@@ -5,10 +5,12 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { parseSettings, type SettledMatch } from "./config.ts";
-import { askQuestion, claimWake, pageClaim, QUEUE, type Question } from "./questions.ts";
+import { askQuestion, QUEUE, type Question } from "./questions.ts";
+import { claimWake, pageClaim } from "./questions-claim.ts";
 import { addInForce, propose } from "./rulings.ts";
 import { retireRuling } from "./rulings-change.ts";
-import { findSettled, matchSettings, refusalLines, sameTopic, titlesOverlap, tokens } from "./settled.ts";
+import { findSettled, matchSettings, refusalLines } from "./settled.ts";
+import { sameTopic, titlesOverlap, tokens } from "./settled-title.ts";
 import type { Store } from "./store.ts";
 
 const DEFAULT: SettledMatch = {};

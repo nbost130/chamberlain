@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
+import type { ThreadState } from "./adapter.ts";
 import { normalizeThread } from "./adapter.ts";
+import type { RunFailure, RunLook } from "./adapter-inspect.ts";
 import type { JudgeAnswer } from "./judge.ts";
 import { breakerItem, createRecovery, outcomeOf, verdictItem } from "./recover.ts";
 import {

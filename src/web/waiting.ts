@@ -5,8 +5,9 @@
  * is and how to answer it live in the adapter; a server whose adapter has neither capability is simply not mirrored,
  * and a card it can list but not answer is shown read-only.
  */
-import type { Adapter, WaitingCard } from "../core/adapter.ts";
-import { has } from "../core/adapter.ts";
+import type { Adapter } from "../core/adapter.ts";
+import { has } from "../core/adapter-conformance.ts";
+import type { WaitingCard } from "../core/adapter-waiting.ts";
 import { releaseCardAnswer, reserveCardAnswer, settleCardAnswer } from "../core/card-answers.ts";
 import type { ServerEntry } from "../core/servers.ts";
 import type { Store } from "../core/store.ts";
@@ -162,9 +163,7 @@ async function sendReserved(
 	d: WaitingDeps,
 	st: WaitingState,
 	adapter: Adapter & Required<Pick<Adapter, "answer">>,
-	card: WaitingCard,
-	choice: number,
-	sig: string,
+	{ card, choice, sig }: { card: WaitingCard; choice: number; sig: string },
 ): Promise<AnswerReply> {
 	const drop = () =>
 		st.byServer.set(
@@ -203,8 +202,7 @@ async function answerCard(
 	d: WaitingDeps,
 	st: WaitingState,
 	id: string,
-	choice: unknown,
-	sig: unknown,
+	{ choice, sig }: { choice: unknown; sig: unknown },
 ): Promise<AnswerReply> {
 	const checked = checkCard(
 		[...st.byServer.values()].flat().find((c) => c.id === id),
@@ -221,7 +219,7 @@ async function answerCard(
 	// sent twice from here (src/core/card-answers.ts); the adapter's fixed command IDs also let it drop a repeat.
 	if (!reserveCardAnswer(d.store, { cardId: card.id, sig: checked.sig, choice: checked.choice }))
 		return { status: 409, body: { error: "this answer was already sent; check its thread before answering again" } };
-	return sendReserved(d, st, pair.adapter, card, checked.choice, checked.sig);
+	return sendReserved(d, st, pair.adapter, { card, choice: checked.choice, sig: checked.sig });
 }
 
 export function createWaiting(d: WaitingDeps) {
@@ -246,7 +244,7 @@ export function createWaiting(d: WaitingDeps) {
 	const list = () => [...st.byServer.values()].flat();
 	/** Servers whose last read failed, so the view can say its list may be missing what waits there. */
 	const unreachable = () => [...st.failing].map(([server, since]) => ({ server, since }));
-	const answer = (id: string, choice: unknown, sig: unknown) => answerCard(d, st, id, choice, sig);
+	const answer = (id: string, choice: unknown, sig: unknown) => answerCard(d, st, id, { choice, sig });
 
 	const secret = (q: SecretAsk) => secretRequest(d, st, q);
 

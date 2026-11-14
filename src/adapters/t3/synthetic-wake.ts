@@ -9,7 +9,7 @@
  * events table records `synthetic-wake-queued`. (An earlier version POSTed straight to the webhook, beside whatever the relay had in flight.)
  */
 import { readFileSync } from "node:fs";
-import { readAfk } from "../../core/afk.ts";
+import { readAfk } from "../../core/afk-held.ts";
 import { CONF, selfCommand } from "../../core/config.ts";
 import { RIGHTS_MARKER } from "../../core/decide.ts";
 import { defaultStore } from "../../core/default-store.ts";

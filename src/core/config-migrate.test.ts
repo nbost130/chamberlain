@@ -40,17 +40,9 @@ import { envValue, parseEnvFile } from "./config-fold.ts";
 import { migrateLayout, setThread, startupLayout } from "./config-migrate.ts";
 import { planMigration } from "./config-plan.ts";
 import { revertLayout } from "./config-revert.ts";
-import {
-	attachDeprecationLog,
-	cfg,
-	ENV_KEYS,
-	readConfigFile,
-	readNamed,
-	readSecret,
-	resetLayout,
-	setting,
-	thread,
-} from "./layout.ts";
+import { cfg, readConfigFile, readNamed, readSecret, setting, thread } from "./layout.ts";
+import { attachDeprecationLog, resetLayout } from "./layout-legacy.ts";
+import { ENV_KEYS } from "./layout-schema.ts";
 import { readServers } from "./servers.ts";
 import { holdFlock } from "./singleton.ts";
 import { readSweepConfig } from "./sweep.ts";

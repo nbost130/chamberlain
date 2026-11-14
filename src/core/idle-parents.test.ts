@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { type LastAssistant, normalizeThread, type ThreadInput } from "./adapter.ts";
+import { normalizeThread, type ThreadInput } from "./adapter.ts";
+import type { LastAssistant } from "./adapter-inspect.ts";
 import type { Classified } from "./classifier/classify.ts";
 import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
 import {

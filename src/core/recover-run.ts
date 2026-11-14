@@ -1,5 +1,6 @@
 /** Stalled-thread recovery: sending one retry and handling one failure. */
-import type { RunFailure, ThreadState } from "./adapter.ts";
+import type { ThreadState } from "./adapter.ts";
+import type { RunFailure } from "./adapter-inspect.ts";
 import { type Classified, classifyFailure, judgeBrief, neverRetryThread, type Verdict } from "./recover-classify.ts";
 import {
 	arm,

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { getValue, main, planLines, showLines } from "./config-cmd.ts";
 import type { Plan } from "./config-plan.ts";
-import { resetLayout } from "./layout.ts";
+import { resetLayout } from "./layout-legacy.ts";
 
 const dirs: string[] = [];
 const fresh = () => {

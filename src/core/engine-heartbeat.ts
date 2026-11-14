@@ -2,7 +2,7 @@
  * The heartbeat: once a minute, write the daemon's state for the page and turn a server that stays disconnected into an alarm. Split out of
  * createEngine (src/core/engine.ts), which passes it the few things it reads.
  */
-import { readAfk } from "./afk.ts";
+import { readAfk } from "./afk-held.ts";
 import { type AlarmText, alarms } from "./messages.ts";
 import type { Store } from "./store.ts";
 

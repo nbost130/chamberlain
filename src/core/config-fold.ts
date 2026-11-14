@@ -1,18 +1,17 @@
 /** Reading the old files into the document a migration plans (./config-plan.ts): each old setting, thread id and daemon.env variable folded into it. */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { Plan } from "./config-plan.ts";
+import { envNumber } from "./layout.ts";
+import { legacyValue, oldFileState } from "./layout-legacy.ts";
 import {
 	ENV_KEYS,
-	envNumber,
 	LEGACY_THREAD_FILES,
-	legacyValue,
-	oldFileState,
 	SCALARS,
 	type ScalarKey,
 	type ScalarKind,
 	THREADS,
 	type ThreadKey,
-} from "./layout.ts";
+} from "./layout-schema.ts";
 import { isPrivateFile, modeText } from "./private.ts";
 
 export const isObject = (v: unknown): v is Record<string, unknown> =>

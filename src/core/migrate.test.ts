@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { assertSupported, FILES, migrateStorage, STEPS, upgradeData } from "./migrate.ts";
+import { assertSupported, migrateStorage } from "./migrate.ts";
+import { FILES, STEPS, upgradeData } from "./migrate-steps.ts";
 import { LATEST_MIGRATION } from "./migrations.ts";
 import { checkVersion, SCHEMA_VERSION, SchemaTooNewError, stamp, versionOf } from "./schema.ts";
 import { readServers } from "./servers.ts";
@@ -63,12 +64,12 @@ describe("upgradeData: steps walk the chain", () => {
 		servers: [],
 	} as unknown as typeof STEPS;
 	test("from 0 runs every step, from 2 only the last, from the target none", () => {
-		expect(upgradeData("json", {}, 0, 3, steps)).toEqual({ schemaVersion: 3, a: 1, b: 2, c: 3 });
-		expect(upgradeData("json", { schemaVersion: 2 }, 2, 3, steps)).toEqual({ schemaVersion: 3, c: 3 });
-		expect(upgradeData("json", { x: 1 }, 3, 3, steps)).toEqual({ x: 1 });
+		expect(upgradeData("json", {}, 0, { to: 3, steps })).toEqual({ schemaVersion: 3, a: 1, b: 2, c: 3 });
+		expect(upgradeData("json", { schemaVersion: 2 }, 2, { to: 3, steps })).toEqual({ schemaVersion: 3, c: 3 });
+		expect(upgradeData("json", { x: 1 }, 3, { to: 3, steps })).toEqual({ x: 1 });
 	});
 	test("a missing step is an error, never a silent skip", () =>
-		expect(() => upgradeData("jsonl", {}, 0, 1, steps)).toThrow("no migration for jsonl from schemaVersion 0"));
+		expect(() => upgradeData("jsonl", {}, 0, { to: 1, steps })).toThrow("no migration for jsonl from schemaVersion 0"));
 	test("the shipped steps cover 0 to SCHEMA_VERSION for every kind", () => {
 		for (const kind of Object.keys(STEPS) as (keyof typeof STEPS)[]) expect(STEPS[kind]).toHaveLength(SCHEMA_VERSION);
 	});

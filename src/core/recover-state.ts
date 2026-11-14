@@ -1,5 +1,6 @@
 /** Stalled-thread recovery: what handling a failure can be, what the engine gives recovery, and the state it keeps between ticks. */
-import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
+import type { ThreadState } from "./adapter.ts";
+import type { RunFailure, RunLook } from "./adapter-inspect.ts";
 import type { JudgeAnswer, Trigger } from "./judge.ts";
 import type { FailureKind, RecoverTiming, Verdict } from "./recover-classify.ts";
 

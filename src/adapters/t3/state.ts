@@ -2,7 +2,8 @@
  * T3's thread, as the core reads it: the shell stream's raw thread record turned into a ThreadState, and T3's names
  * for the kinds of waiting item turned into the core's.
  */
-import type { ThreadState, WaitKind } from "../../core/adapter.ts";
+import type { ThreadState } from "../../core/adapter.ts";
+import type { WaitKind } from "../../core/adapter-waiting.ts";
 
 type RawPr = { number?: unknown; snapshot?: { state?: unknown } | null } | null;
 type RawTask = { taskId?: unknown } | null;

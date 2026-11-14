@@ -3,7 +3,8 @@
  * threshold, as plain records. Plain code; no model is called here.
  */
 import { createHash } from "node:crypto";
-import type { LastAssistant, ThreadState } from "./adapter.ts";
+import type { ThreadState } from "./adapter.ts";
+import type { LastAssistant } from "./adapter-inspect.ts";
 import { looksLikeAsk } from "./decide.ts";
 
 /**

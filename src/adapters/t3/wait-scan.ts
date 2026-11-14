@@ -1,5 +1,5 @@
 /** Listing one T3 server's waiting cards: its shell snapshot, each thread's projection, and the goal proposals found in idle threads. */
-import type { ListWaitingOptions } from "../../core/adapter.ts";
+import type { ListWaitingOptions } from "../../core/adapter-waiting.ts";
 import { readToken, redact } from "./ping.ts";
 import type { Rpc } from "./rpc.ts";
 import {

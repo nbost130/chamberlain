@@ -13,26 +13,17 @@ import { CONF } from "./config.ts";
 import { migrateLayout } from "./config-migrate.ts";
 import type { Plan } from "./config-plan.ts";
 import { revertLayout } from "./config-revert.ts";
+import { cfg, configValue, isPrivateSecret, readConfigFile, setting, settingSource, thread } from "./layout.ts";
+import { homeOfOld, oldFileState, reappearedFiles, SECRET_FILE } from "./layout-legacy.ts";
 import {
 	CONFIG_FILE,
-	cfg,
-	configValue,
 	envName,
-	homeOfOld,
-	isPrivateSecret,
-	oldFileState,
-	readConfigFile,
-	reappearedFiles,
 	SCALARS,
 	type ScalarKey,
-	SECRET_FILE,
 	SECRETS_DIR,
-	setting,
-	settingSource,
 	THREADS,
 	type ThreadKey,
-	thread,
-} from "./layout.ts";
+} from "./layout-schema.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 

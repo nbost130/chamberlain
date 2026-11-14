@@ -1,7 +1,8 @@
 /** What the page's handlers run on: its dependencies, the context made from them, and how an item or card is shown. */
-import type { WaitingCard } from "../core/adapter.ts";
+import type { WaitingCard } from "../core/adapter-waiting.ts";
 import type { Capability } from "../core/capability.ts";
-import { batchable, type QuestionState, questionStates } from "../core/questions.ts";
+import { type QuestionState, questionStates } from "../core/questions.ts";
+import { batchable } from "../core/questions-wake.ts";
 import type { Clock } from "../core/rulings.ts";
 import type { Store } from "../core/store.ts";
 import { createItemActions } from "./queue-actions.ts";

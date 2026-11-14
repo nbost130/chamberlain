@@ -1,5 +1,5 @@
 /** The JSON API: the three reads, the card routes, the item actions and the ruling routes. */
-import type { WaitingCard } from "../core/adapter.ts";
+import type { WaitingCard } from "../core/adapter-waiting.ts";
 import {
 	CHALLENGE_TTL_MS,
 	consumeChallenge,
@@ -8,7 +8,8 @@ import {
 	SESSION_COOKIE,
 	sessionOf,
 } from "../core/challenge.ts";
-import { notNow, ranked, snoozed } from "../core/questions.ts";
+import { notNow } from "../core/questions.ts";
+import { ranked, snoozed } from "../core/questions-wake.ts";
 import { readRulings } from "../core/rulings.ts";
 import { confirmRuling, editRuling, retireRuling } from "../core/rulings-change.ts";
 import { isExpired } from "../core/rulings-expiry.ts";

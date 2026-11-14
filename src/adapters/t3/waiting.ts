@@ -14,7 +14,7 @@
  * - A card carrying a queue item tag ([Q-…]) is left out: those questions are already queue items.
  * What is generic (one list across servers, the unreachable record, one answer per card) lives in src/web/waiting.ts.
  */
-import type { ListWaitingOptions } from "../../core/adapter.ts";
+import type { ListWaitingOptions } from "../../core/adapter-waiting.ts";
 import { CALL_TIMEOUT_MS, createRpcPing, openWithin, readToken, within } from "./ping.ts";
 import { checkProjection } from "./projection.ts";
 import { connect } from "./rpc.ts";

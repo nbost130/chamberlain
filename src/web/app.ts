@@ -2,7 +2,7 @@
  * The decision-queue web app: the queue, an item's detail and the rulings page, over one JSON API. Everything that
  * touches the network or the clock comes in through deps, so the tests drive the real handler.
  */
-import { ranked } from "../core/questions.ts";
+import { ranked } from "../core/questions-wake.ts";
 import { type AnswerIn, acceptAll, answer } from "./app-answer.ts";
 import { type AppDeps, type Ctx, makeCtx } from "./app-ctx.ts";
 import { fail, inlineCors, withSecurity } from "./app-http.ts";

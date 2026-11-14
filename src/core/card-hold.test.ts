@@ -6,8 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import type { WaitingItem } from "./adapter.ts";
-import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
+import type { WaitingItem } from "./adapter-waiting.ts";
+import { closeHeldForCard, heldId, heldOpen } from "./afk-held.ts";
 import {
 	cardQuestion,
 	cardWaitOf,
@@ -20,7 +20,8 @@ import {
 import { CARD_UNVERIFIED, cardKey, openCards } from "./card-open.ts";
 import { reconcileCardHolds, trackUnverified, unverifiedAlarm } from "./card-reconcile.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
-import { askQuestion, getQuestion, isUrgent, questionStates, ranked } from "./questions.ts";
+import { askQuestion, getQuestion, isUrgent, questionStates } from "./questions.ts";
+import { ranked } from "./questions-wake.ts";
 import { findSettled } from "./settled.ts";
 import { openStore } from "./sqlite-store.ts";
 

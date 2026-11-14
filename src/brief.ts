@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { adapterEntry, loadServers } from "./adapters/index.ts";
-import { readAfk } from "./core/afk.ts";
+import { readAfk } from "./core/afk-held.ts";
 import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/alert-desk-prompt.ts";
 import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, principal, REPO, selfCommand } from "./core/config.ts";

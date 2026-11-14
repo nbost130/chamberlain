@@ -3,7 +3,7 @@
  * approval, a secret or link request, a goal proposal), and the fingerprint each carries. Nothing here reads or answers.
  */
 import { createHash } from "node:crypto";
-import type { WaitingCard } from "../../core/adapter.ts";
+import type { WaitingCard } from "../../core/adapter-waiting.ts";
 import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
 import { tagIn } from "../../core/questions.ts";
 import { normalizeWaitKind } from "./state.ts";

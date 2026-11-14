@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { appendHeld, HELD, type Held, heldId, heldOpen } from "./afk.ts";
+import { appendHeld, HELD, type Held, heldId, heldOpen } from "./afk-held.ts";
 import type { GhRead } from "./hold-lookup.ts";
 import {
 	BACKOFF_MS,
@@ -17,7 +17,8 @@ import {
 	takeSnapshots,
 	threadViewAcross,
 } from "./hold-threads.ts";
-import { type Answer, askQuestion, claimWake, notNow, pageClaim, QUEUE, type Question } from "./questions.ts";
+import { type Answer, askQuestion, notNow, QUEUE, type Question } from "./questions.ts";
+import { claimWake, pageClaim } from "./questions-claim.ts";
 import type { Store } from "./store.ts";
 
 const T0 = new Date("2026-11-13T01:00:00.000Z");

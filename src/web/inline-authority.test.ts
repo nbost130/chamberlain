@@ -7,7 +7,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { askQuestion, getQuestion, type Question, readClaim } from "../core/questions.ts";
+import { askQuestion, getQuestion, type Question } from "../core/questions.ts";
+import { readClaim } from "../core/questions-claim.ts";
 import { readRulings } from "../core/rulings.ts";
 import { openCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";

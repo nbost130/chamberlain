@@ -1,5 +1,6 @@
 /** Stalled-thread recovery: what a failed run's message says (its kind, whether it may be retried, how long to wait), and the brief a second failure sends to the judge. */
-import type { RunFailure, ThreadState } from "./adapter.ts";
+import type { ThreadState } from "./adapter.ts";
+import type { RunFailure } from "./adapter-inspect.ts";
 import { scrubForJudge } from "./judge.ts";
 
 export type FailureKind =

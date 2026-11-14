@@ -28,8 +28,8 @@
  * by hand (`closeCardByHand`, `afk.ts close-card`). Nothing closes such a card on its own.
  */
 
-import type { WaitingItem, WaitKind } from "./adapter.ts";
-import { appendHeld, type CardRef, closeHeldForCard, closeHeldWhere, heldOpen } from "./afk.ts";
+import type { WaitingItem, WaitKind } from "./adapter-waiting.ts";
+import { appendHeld, type CardRef, closeHeldForCard, closeHeldWhere, heldOpen } from "./afk-held.ts";
 import { CARD_UNVERIFIED, cardAlarmKey, cardKey, cardRefOf, openCards, sameCard } from "./card-open.ts";
 import { askQuestion, newItemId, QUEUE, type Question, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";

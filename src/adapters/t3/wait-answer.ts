@@ -1,5 +1,5 @@
 /** Answering one waiting card through T3's own command, after reading it again live from its thread. */
-import type { AnswerOutcome } from "../../core/adapter.ts";
+import type { AnswerOutcome } from "../../core/adapter-waiting.ts";
 import { messageCommand, readToken, redact, stableId, within } from "./ping.ts";
 import {
 	approvalCard,

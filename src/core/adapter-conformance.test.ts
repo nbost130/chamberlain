@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
-import { type Adapter, conformance } from "./adapter.ts";
+import type { Adapter } from "./adapter.ts";
+import { conformance } from "./adapter-conformance.ts";
 
 describe("conformance: every problem, in a fixed order", () => {
 	test("a missing id, then required methods, then wake, then each optional capability, then unknown ones", () => {

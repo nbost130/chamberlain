@@ -18,7 +18,8 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { ensureSecretsDir, readSecret, SECRETS_DIR } from "./layout.ts";
+import { ensureSecretsDir, readSecret } from "./layout.ts";
+import { SECRETS_DIR } from "./layout-schema.ts";
 import { holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 /** The secret's name in `secrets/`. */

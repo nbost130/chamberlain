@@ -1,5 +1,5 @@
 /** The open cards: every open card hold and pointer question, as the cards they wait on, keyed by (server, request ID). */
-import { type CardRef, type Held, heldId, heldOpen, isCardHold } from "./afk.ts";
+import { type CardRef, type Held, heldId, heldOpen, isCardHold } from "./afk-held.ts";
 import { type QuestionState, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 

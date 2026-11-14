@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { Transcript } from "./adapter.ts";
+import type { Transcript } from "./adapter-inspect.ts";
 import { setting } from "./layout.ts";
 import { handoffWake } from "./messages.ts";
 import type { Store } from "./store.ts";
