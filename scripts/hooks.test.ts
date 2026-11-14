@@ -1,8 +1,29 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import {
+	existsSync,
+	lstatSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	readlinkSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { droppedJobs, isBypass, pushedShas, releaseLock, snapshotCommit, snapshotIndex, takeLock } from "./hooks.ts";
+import { git, gitTestEnv } from "../src/testing/git.ts";
+import { GIT_REDIRECTING, sealedGitEnv } from "./git-env.ts";
+import {
+	droppedJobs,
+	isBypass,
+	pushedShas,
+	releaseLock,
+	runTests,
+	snapshotCommit,
+	snapshotIndex,
+	takeLock,
+} from "./hooks.ts";
 
 const made: string[] = [];
 /** A fresh temporary directory, removed when the file's tests are done. */
@@ -84,27 +105,142 @@ describe("the heavy-work lock", () => {
 
 describe("snapshots", () => {
 	const repo = tmp("hooks-snap-test-");
-	const sh = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: repo });
-	sh("init", "-q");
-	sh("config", "user.email", "t@example.com");
-	sh("config", "user.name", "T");
-	writeFileSync(join(repo, "a.ts"), "const v = 1;\n");
-	sh("add", "a.ts");
-	sh("commit", "-q", "-m", "one");
-	const first = sh("rev-parse", "HEAD").stdout.toString().trim();
+	let first = "";
+	beforeAll(() => {
+		git(repo, "init", "-q");
+		writeFileSync(join(repo, "a.ts"), "const v = 1;\n");
+		git(repo, "add", "a.ts");
+		git(repo, "commit", "-q", "-m", "one");
+		first = git(repo, "rev-parse", "HEAD");
+	});
 
 	test("the index snapshot holds the staged bytes, not the working tree", () => {
 		writeFileSync(join(repo, "a.ts"), 'const v: number = "bad";\n');
-		sh("add", "a.ts");
+		git(repo, "add", "a.ts");
 		writeFileSync(join(repo, "a.ts"), "const v = 2;\n");
 		const dir = tmp("hooks-snap-out-");
-		expect(snapshotIndex(repo, dir)).toBe(true);
+		expect(snapshotIndex(repo, dir, gitTestEnv())).toBe(true);
 		expect(readFileSync(join(dir, "a.ts"), "utf8")).toBe('const v: number = "bad";\n');
 	});
 
 	test("the commit snapshot holds that commit, whatever is checked out", () => {
 		const dir = tmp("hooks-snap-out-");
-		expect(snapshotCommit(repo, first, dir)).toBe(true);
+		expect(snapshotCommit(repo, first, dir, gitTestEnv())).toBe(true);
 		expect(readFileSync(join(dir, "a.ts"), "utf8")).toBe("const v = 1;\n");
 	});
+});
+
+describe("sealedGitEnv", () => {
+	test("drops every variable git exports to a hook or reads to find a repository or a config, and keeps the rest", () => {
+		const leaky: Record<string, string> = { PATH: "/bin", HOME: "/home/x", TMPDIR: "/scratch" };
+		for (const name of GIT_REDIRECTING) leaky[name] = "leaked";
+		Object.assign(leaky, {
+			GIT_CONFIG_KEY_0: "user.name",
+			GIT_CONFIG_VALUE_0: "T",
+			GIT_CONFIG_KEY_17: "k",
+			GIT_CONFIG_VALUE_17: "v",
+		});
+		expect(sealedGitEnv(leaky)).toEqual({ PATH: "/bin", HOME: "/home/x", TMPDIR: "/scratch" });
+	});
+	test("leaves out undefined values", () => {
+		expect(sealedGitEnv({ A: "1", B: undefined })).toEqual({ A: "1" });
+	});
+});
+
+/** Every file under `dir` (bytes, symlink targets, directory names) as one digest per path: what "unchanged" means for the sentinel. */
+function digest(dir: string, prefix = ""): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const name of readdirSync(dir).sort()) {
+		const path = join(dir, name);
+		const key = `${prefix}${name}`;
+		const st = lstatSync(path);
+		if (st.isDirectory()) {
+			out[`${key}/`] = "dir";
+			Object.assign(out, digest(path, `${key}/`));
+		} else if (st.isSymbolicLink()) out[key] = `link:${readlinkSync(path)}`;
+		else out[key] = createHash("sha256").update(readFileSync(path)).digest("hex");
+	}
+	return out;
+}
+
+describe("the test-launch path cannot reach the repository that launched the hook", () => {
+	// A test written the way the leaking one was: plain `git` in a temp repository, no environment passed on, run through both
+	// of the ways a test starts a child (Bun.spawnSync and node:child_process).
+	const leakyTest = `
+import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+test("makes a repository the careless way", () => {
+	const repo = mkdtempSync(tmpdir() + "/leaky-");
+	const sh = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: repo });
+	const node = (...args: string[]) => spawnSync("git", args, { cwd: repo });
+	expect(sh("init", "-q").exitCode).toBe(0);
+	sh("config", "user.email", "t@example.com");
+	sh("config", "user.name", "T");
+	sh("config", "--global", "leaked.global", "yes");
+	node("config", "leaked.node", "yes");
+	writeFileSync(repo + "/a.ts", "const v = 1;\\n");
+	sh("add", "a.ts");
+	expect(sh("commit", "-q", "-m", "one").exitCode).toBe(0);
+	node("commit", "-q", "--allow-empty", "-m", "two");
+	node("update-ref", "refs/heads/leaked", "HEAD");
+	sh("config", "core.bare", "true");
+});
+`;
+
+	/** The variables of each family, aimed at the sentinel at `gitDir` (its working tree is `tree`). */
+	const families: Record<string, (gitDir: string, tree: string) => Record<string, string>> = {
+		"repository location (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY, GIT_PREFIX)": (
+			gitDir,
+			tree,
+		) => ({
+			GIT_DIR: gitDir,
+			GIT_WORK_TREE: tree,
+			GIT_COMMON_DIR: gitDir,
+			GIT_INDEX_FILE: join(gitDir, "index"),
+			GIT_OBJECT_DIRECTORY: join(gitDir, "objects"),
+			GIT_PREFIX: "",
+		}),
+		"GIT_DIR alone": (gitDir) => ({ GIT_DIR: gitDir }),
+		"GIT_COMMON_DIR alone": (gitDir) => ({ GIT_COMMON_DIR: gitDir }),
+		GIT_CONFIG: (gitDir) => ({ GIT_CONFIG: join(gitDir, "config") }),
+		"GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM": (gitDir) => ({
+			GIT_CONFIG_GLOBAL: join(gitDir, "config"),
+			GIT_CONFIG_SYSTEM: join(gitDir, "config"),
+			GIT_CONFIG_NOSYSTEM: "0",
+		}),
+		"GIT_CONFIG_COUNT with KEY/VALUE pairs": () => ({
+			GIT_CONFIG_COUNT: "2",
+			GIT_CONFIG_KEY_0: "user.name",
+			GIT_CONFIG_VALUE_0: "Leaked",
+			GIT_CONFIG_KEY_1: "core.bare",
+			GIT_CONFIG_VALUE_1: "true",
+		}),
+		GIT_CONFIG_PARAMETERS: () => ({ GIT_CONFIG_PARAMETERS: "'core.bare=true' 'user.email=leaked@example.com'" }),
+	};
+
+	for (const [family, vars] of Object.entries(families)) {
+		test(`${family}, aimed at a sentinel repository, leaves it byte for byte unchanged`, async () => {
+			const sentinel = tmp("hooks-sentinel-");
+			git(sentinel, "init", "-q", "-b", "main");
+			writeFileSync(join(sentinel, "keep.txt"), "sentinel\n");
+			git(sentinel, "add", "keep.txt");
+			git(sentinel, "commit", "-q", "-m", "sentinel commit");
+			const gitDir = join(sentinel, ".git");
+			const before = digest(sentinel);
+			const config = readFileSync(join(gitDir, "config"), "utf8");
+			const refs = git(sentinel, "for-each-ref");
+
+			const project = tmp("hooks-leaky-project-");
+			writeFileSync(join(project, "leaky.test.ts"), leakyTest);
+			const code = await runTests(["bun", "test"], project, { ...process.env, ...vars(gitDir, sentinel) });
+
+			// The sentinel first: a launch that reached it must fail on that, not only on the run's exit code.
+			expect(readFileSync(join(gitDir, "config"), "utf8")).toBe(config);
+			expect(git(sentinel, "for-each-ref")).toBe(refs);
+			expect(digest(sentinel)).toEqual(before);
+			expect(code).toBe(0);
+		}, 60_000);
+	}
 });
