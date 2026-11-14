@@ -27,7 +27,7 @@
  * Lines of `context` that start with "- " render as bullets on the queue page and the Decisions view; write a few short ones.
  * Prints the item ID. A secret item posts no card: its value is entered in its own thread, never on a card or the page.
  */
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { homeAdapter } from "./adapters/index.ts";
 import { readToken } from "./core/capability.ts";

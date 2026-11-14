@@ -107,7 +107,12 @@ export function createOutbox(d: OutboxDeps) {
 		return out.kind;
 	}
 	/** A wake with nothing else to record. `alongside` returning false means the decision was already taken elsewhere: nothing is written. */
-	const deliver = (message: string, deliveryId: string, meta?: WakeMeta, alongside?: () => boolean | void): Committed =>
+	const deliver = (
+		message: string,
+		deliveryId: string,
+		meta?: WakeMeta,
+		alongside?: () => boolean | undefined,
+	): Committed =>
 		commit(() => (alongside?.() === false ? undefined : { message, deliveryId, ...(meta ? { meta } : {}) }));
 	return { commit, deliver };
 }

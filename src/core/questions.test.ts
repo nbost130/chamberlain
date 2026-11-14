@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +20,6 @@ import {
 	recordAnswerDelivered,
 	wokenBy,
 } from "./questions.ts";
-import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 
 export const item = (id: string, over: Partial<Question> = {}): Question => ({

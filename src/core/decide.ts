@@ -1,5 +1,5 @@
 import type { ThreadState, WakeKind } from "./adapter.ts";
-import { principal, principalPoss } from "./config.ts";
+import { principalPoss } from "./config.ts";
 
 /** Pure rules: which thread transitions are worth waking the Steward for. They read the normalized ThreadState (adapter.ts). */
 export type { ThreadState, WaitQuestion, WakeKind } from "./adapter.ts";

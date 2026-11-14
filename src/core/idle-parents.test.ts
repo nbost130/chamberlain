@@ -5,7 +5,6 @@ import {
 	EXCERPT_CHARS,
 	excerptOf,
 	IDLE_PARENTS_DEFAULTS,
-	IDLE_PARENTS_SOURCE,
 	type IdleSelection,
 	type IdleThread,
 	type IdleThreadSource,

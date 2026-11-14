@@ -49,7 +49,7 @@ export function readStewardQueue(dbPath: string, threadId: string): StewardQueue
 			running: runs.length - queued.length,
 			oldestQueuedAt: queued[0]?.requested_at,
 			compactPending: runs.some((r) => r.text?.trim() === "/compact"),
-			lastActivityAt: (started > moved ? started : moved) || undefined,
+			lastActivityAt: [started, moved].sort().at(-1) || undefined,
 			openCardSince: card?.since ?? undefined,
 		};
 	} catch {

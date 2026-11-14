@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { askQuestion, type Question, recordAnswerDelivered } from "../core/questions.ts";
+import { askQuestion, type Question } from "../core/questions.ts";
 import { openCapability } from "../testing/capability.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";

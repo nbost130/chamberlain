@@ -14,14 +14,10 @@
  */
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from "node:fs";
 import type { BriefNotes } from "./adapter.ts";
-import { type Afk, readAfk } from "./afk.ts";
-import { CONF, type CommandName, Principal, principal, principalPoss, STATE, selfCommand } from "./config.ts";
+import type { Afk } from "./afk.ts";
+import { type CommandName, Principal, principal, principalPoss, STATE, selfCommand } from "./config.ts";
 import { awayModeLine } from "./messages.ts";
-import { startup } from "./migrate.ts";
 import { authorityProblem } from "./private.ts";
-import { loadOperatingRules } from "./rules.ts";
-import { rulingsText } from "./rulings.ts";
-import { readServers } from "./servers.ts";
 
 export type Environment = { name: string; environmentId?: string; mayBeOffline?: boolean };
 export type BriefInput = {

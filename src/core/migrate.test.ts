@@ -123,7 +123,7 @@ describe("assertSupported", () => {
 	test("a newer record in any versioned config file stops everything, and the message names the file", () => {
 		for (const name of ["web.json", "settings.json", "sweep.json", "servers.json"]) {
 			const w = world();
-			put(`${w.conf}/${name}`, JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 }) + "\n");
+			put(`${w.conf}/${name}`, `${JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 })}\n`);
 			expect(() => assertSupported(w)).toThrow(
 				new RegExp(`${name.replace(".", "\\.")} has schemaVersion ${SCHEMA_VERSION + 1}`),
 			);

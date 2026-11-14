@@ -27,12 +27,10 @@
 import { createHash } from "node:crypto";
 import {
 	closeSync,
-	constants,
 	existsSync,
 	fstatSync,
 	openSync,
 	readdirSync,
-	readFileSync,
 	readSync,
 	renameSync,
 	statSync,
@@ -371,7 +369,7 @@ export function signature(e: Pick<DeskEvent, "severity" | "title" | "body">): st
 // ---- wake text --------------------------------------------------------------------------------------
 
 export type Reason = "new" | "changed" | "repeat";
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const wakeId = (family: string, sig: string, ts: string) =>
 	`desk:${createHash("sha1").update(`${family}\n${sig}\n${ts}`).digest("hex").slice(0, 16)}`;
 

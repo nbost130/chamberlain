@@ -15,8 +15,6 @@
  * What is generic (one list across servers, the unreachable record, one answer per card) lives in src/web/waiting.ts.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { isPrivateFile } from "../../core/private.ts";
 import {
 	CALL_TIMEOUT_MS,
 	createRpcPing,
@@ -281,7 +279,7 @@ async function snapshot(rpc: Rpc, timeoutMs = 10_000): Promise<ShellThread[]> {
 export function goalProposal(items: TurnItem[]): { messageId: string; goal: string } | undefined {
 	const msgs = items.filter((i) => i.type === "assistant_message" || i.type === "user_message");
 	const last = msgs.at(-1);
-	if (!last || last.type !== "assistant_message" || last.status !== "completed" || typeof last.text !== "string")
+	if (last?.type !== "assistant_message" || last.status !== "completed" || typeof last.text !== "string")
 		return undefined;
 	const blocks = [...last.text.matchAll(/```[a-z]*\n(\/goal [\s\S]*?)\n```/g)].map((m) => m[1]!.trim());
 	const goal = blocks.at(-1);
@@ -472,7 +470,7 @@ export function createT3Waiting(d: WaitingDeps) {
 				if (card.type === "approval") {
 					// Byte-for-byte: the live approval must give the fingerprint the principal was shown.
 					const now = approvalCard(card.server, true, { id: card.threadId, title: card.threadTitle }, live);
-					if (!now || !now.answerable || now.sig !== sig || now.sig !== card.sig)
+					if (!now?.answerable || now.sig !== sig || now.sig !== card.sig)
 						return stale("the approval changed since you saw it: refresh and answer again");
 					const decision = APPROVAL_DECISIONS[choice]!;
 					await dispatch(
@@ -502,7 +500,7 @@ export function createT3Waiting(d: WaitingDeps) {
 				const now = cardsFrom(card.server, true, { id: card.threadId, title: card.threadTitle }, [live])[0];
 				const q = live.questions?.[0];
 				const raw = q?.options?.[choice]?.label;
-				if (!now || !now.answerable || now.sig !== sig || !q || raw === undefined)
+				if (!now?.answerable || now.sig !== sig || !q || raw === undefined)
 					return stale("the card changed since you saw it: refresh and answer again");
 				await dispatch(
 					{

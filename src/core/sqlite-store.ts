@@ -55,8 +55,6 @@ export class DatabaseTooNewError extends SchemaTooNewError {
 type Row = Record<string, unknown>;
 const json = (v: unknown): string | null => (v === undefined || v === null ? null : JSON.stringify(v));
 const parse = <T>(s: unknown): T | undefined => (typeof s === "string" ? (JSON.parse(s) as T) : undefined);
-const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
 const mergeInto = (base: Record<string, unknown>, patch: Record<string, unknown>) => ({ ...base, ...patch });
 
 export type OpenOptions = {

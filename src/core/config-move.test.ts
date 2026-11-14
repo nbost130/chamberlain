@@ -24,7 +24,6 @@ import { readConfig } from "./alert-desk.ts";
 import { getValue, reappearedLine, showLines } from "./config-cmd.ts";
 import { migrateLayout, revertLayout, setThread, startupLayout } from "./config-migrate.ts";
 import {
-	attachDeprecationLog,
 	cfg,
 	readConfigFile,
 	readNamed,

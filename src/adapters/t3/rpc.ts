@@ -35,7 +35,7 @@ export class Rpc {
 				this.pending.delete(String(m.requestId));
 				m.exit?._tag === "Success"
 					? p.resolve(m.exit.value)
-					: p.reject(Error("rpc failure: " + JSON.stringify(m.exit).slice(0, 20000)));
+					: p.reject(Error(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
 			} else if (m._tag === "Defect" || m._tag === "ClientProtocolError") this.ws.close();
 		}
 	}

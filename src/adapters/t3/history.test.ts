@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { idleKey, principalWroteWithin, stewardInstruction, type TurnItem } from "../../core/decide";
-import type { InstructionRead } from "../../core/history";
 import { HISTORY_PAGES_MAX, historyGet, readInstruction, readWhenConnected } from "./history";
 
 const noise = (n: number): TurnItem[] =>

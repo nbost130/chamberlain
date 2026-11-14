@@ -125,7 +125,7 @@ describe("analyze over a small fixture", () => {
 		// An answer wake with no creation time anywhere.
 		delivered(400, "answer:item:Q-1"),
 		// A post that no run answers.
-		delivered(500, "D:ended:x:" + at(490), { queuedAt: at(490), kind: "turn_ended", thread: "D" }),
+		delivered(500, `D:ended:x:${at(490)}`, { queuedAt: at(490), kind: "turn_ended", thread: "D" }),
 	];
 	test("waits, turn lengths, the worst waits, and what could not be measured", () => {
 		const { path, run, db } = fixtureDb();

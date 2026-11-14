@@ -15,7 +15,7 @@
  * - Turn length: the Steward's runs with both a start and a completion, whatever started them.
  */
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { CONF, STATE } from "../../core/config.ts";
 import { thread } from "../../core/layout.ts";
 import { openStore } from "../../core/sqlite-store.ts";

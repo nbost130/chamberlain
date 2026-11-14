@@ -13,7 +13,6 @@ import {
 	pageClaim,
 	type Question,
 	readClaims,
-	recordAnswerDelivered,
 	wokenBy,
 } from "../core/questions.ts";
 import { openStore } from "../core/sqlite-store.ts";

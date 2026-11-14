@@ -19,7 +19,6 @@ import type { TurnItem } from "./decide.ts";
 import { withDeliveryId } from "./deliver.ts";
 import { createEngine, type EngineDeps } from "./engine.ts";
 import type { HeldItem } from "./hold.ts";
-import type { Judge } from "./judge.ts";
 import { MIGRATIONS } from "./migrations.ts";
 import { askQuestion, claimWake, getQuestion, pageClaim, questionStates } from "./questions.ts";
 import { openStore } from "./sqlite-store.ts";
@@ -1654,7 +1653,7 @@ describe("a HAND OFF verdict from the Steward-health check", () => {
 				content: [{ type: "tool_use", id: `read-${i}`, name: "Read", input: { file_path: `${dir}/session-1.jsonl` } }],
 			},
 		});
-		writeFileSync(path, [1, 2, 3].map((i) => JSON.stringify(call(i))).join("\n") + "\n");
+		writeFileSync(path, `${[1, 2, 3].map((i) => JSON.stringify(call(i))).join("\n")}\n`);
 		return path;
 	}
 

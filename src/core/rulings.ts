@@ -457,7 +457,7 @@ export const confirmRuling = (store: Store, id: string, decides?: string, clock:
 			if (r.status === "retired") throw Error(`${id} is retired`);
 			if (isExpired(r, nowMs)) throw Error(`${id} expired on ${r.expires}`);
 			const t = iso(nowMs);
-			if (decides && decides.trim() && decides.trim() !== r.decides) {
+			if (decides?.trim() && decides.trim() !== r.decides) {
 				(r.history ??= []).push({ t, what: "wording edited on the page", from: r.decides });
 				r.decides = decides.trim();
 			}

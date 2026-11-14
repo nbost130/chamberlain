@@ -39,7 +39,6 @@ import {
 	LEGACY_THREAD_FILES,
 	legacyValue,
 	MIGRATED_SUFFIX,
-	migratedNames,
 	NON_SECRET_HOME,
 	oldFileState,
 	parseConfigDoc,

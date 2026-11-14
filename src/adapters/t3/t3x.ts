@@ -86,7 +86,6 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 
 	if (!srv!.operateTokenFile) throw Error(`${srv!.name} has no operateTokenFile; it is read-only`);
 	const rpc = await connect(srv!.origin, priv(srv!.operateTokenFile));
-	const now = new Date().toISOString();
 
 	if (cmd === "respond") {
 		const p = await projection(rpc);

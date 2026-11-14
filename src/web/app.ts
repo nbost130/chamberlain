@@ -592,7 +592,7 @@ export function createApp(d: AppDeps) {
 			const id = parts[2];
 			return serial(() => {
 				const i = state().get(id);
-				if (!i || i.status !== "open") return fail(404, "no open item");
+				if (i?.status !== "open") return fail(404, "no open item");
 				notNow(d.store, id);
 				return json({ ok: true });
 			});

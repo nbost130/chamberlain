@@ -18,7 +18,6 @@ import {
 	pageClaim,
 	type Question,
 	readRelay,
-	recordAnswerDelivered,
 	startRelay,
 } from "../core/questions.ts";
 import { openStore } from "../core/sqlite-store.ts";

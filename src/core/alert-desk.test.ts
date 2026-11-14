@@ -313,7 +313,7 @@ describe("the inbox file", () => {
 	test("reads only what is new, and leaves a torn last line for the next pass", () => {
 		const r = rig();
 		const cur = fresh();
-		writeFileSync(r.inbox, line({ at: min(0) }) + line({ at: min(1), family: "g" }) + '{"v":1,"fam');
+		writeFileSync(r.inbox, `${line({ at: min(0) }) + line({ at: min(1), family: "g" })}{"v":1,"fam`);
 		expect(readInbox(cur, r.inbox, min(2), cfg).events).toHaveLength(2);
 		expect(readInbox(cur, r.inbox, min(2), cfg).events).toHaveLength(0);
 		appendFileSync(r.inbox, `ily":"h","title":"x","ts":"${new Date(min(2)).toISOString()}"}\n`);

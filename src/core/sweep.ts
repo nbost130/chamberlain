@@ -13,7 +13,7 @@
  * Judgement the checks cannot do (choosing new work) stays in a full sweep every six hours.
  */
 import { spawn } from "node:child_process";
-import { CONF, principal, selfCommand } from "./config.ts";
+import { CONF, selfCommand } from "./config.ts";
 import { IDLE_PARENTS, type IdleParentsConfig, parseIdleParents } from "./idle-parents.ts";
 import { cfg } from "./layout.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";

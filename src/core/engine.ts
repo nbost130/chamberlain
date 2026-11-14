@@ -162,7 +162,7 @@ export type EngineDeps = {
 	gh?: GhRead;
 };
 
-const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 /** Pure: a word quoted for a POSIX shell, so a command printed in an alarm can be pasted as it is. */
 const shellWord = (s: string) => (/^[A-Za-z0-9_.:@%+=,/-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 /** What an adapter without a history reports for every thread: nothing says who instructed it. */

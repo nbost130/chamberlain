@@ -210,7 +210,7 @@ describe("one relay per state directory", () => {
 		try {
 			expect(await refusedFor(db, { env: { XDG_RUNTIME_DIR: `${root}/r2` } })).toBe("refused");
 			expect(
-				await refusedFor(`${state}/`.replace(/\/$/, "/../" + "d".repeat(60) + "/chamberlain.db"), {
+				await refusedFor(`${state}/`.replace(/\/$/, `/../${"d".repeat(60)}/chamberlain.db`), {
 					env: { XDG_RUNTIME_DIR: `${root}/r3` },
 				}),
 			).toBe("refused");

@@ -123,7 +123,7 @@ function parse(args: string[], spec: Spec, what: string): Parsed | Verdict {
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i]!;
 		if (!a.startsWith("-")) {
-			if (!spec.positional || !spec.positional.test(a))
+			if (!spec.positional?.test(a))
 				return no(`${what}: the argument ${JSON.stringify(a.slice(0, 40))} is not allowed`);
 			pos.push(a);
 			continue;

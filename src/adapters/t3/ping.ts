@@ -19,7 +19,7 @@
  *   operator  user / server   the principal's own accepted proposal (a /goal).
  */
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readSecret } from "../../core/layout.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";

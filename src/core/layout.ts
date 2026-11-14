@@ -35,7 +35,6 @@ import {
 	readFileSync,
 	renameSync,
 	statSync,
-	writeFileSync,
 	writeSync,
 } from "node:fs";
 import { dirname } from "node:path";

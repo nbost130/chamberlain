@@ -28,14 +28,7 @@
  */
 
 import { crashPoint } from "./crash.ts";
-import {
-	maxAttemptsFromEnv,
-	STALE_AFTER_MS,
-	type WakeDraft,
-	type WakeResult,
-	type WakeTransport,
-	withDeliveryId,
-} from "./deliver.ts";
+import { maxAttemptsFromEnv, STALE_AFTER_MS, type WakeResult, type WakeTransport, withDeliveryId } from "./deliver.ts";
 import { composeWake, type Gate, HOLD_CEILING_MS, observe } from "./hold.ts";
 import { type AlarmText, alarms } from "./messages.ts";
 import {

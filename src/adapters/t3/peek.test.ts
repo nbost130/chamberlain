@@ -17,7 +17,7 @@ describe("peekLines", () => {
 		]);
 	});
 	test("keeps the end of a long message, because that is where threads ask", () => {
-		expect(peekLines([{ type: "assistant_message", text: "x".repeat(50) + "ask" }], 1, 5)[0]).toContain(
+		expect(peekLines([{ type: "assistant_message", text: `${"x".repeat(50)}ask` }], 1, 5)[0]).toContain(
 			"xxask [end of 53]",
 		);
 	});

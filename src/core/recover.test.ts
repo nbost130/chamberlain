@@ -1016,7 +1016,7 @@ describe("failures are counted per thread over a longer horizon", () => {
 
 describe("the judge's brief scrubs and caps class and code too", () => {
 	test("a class or code carrying a path, an email or a long token reaches the judge scrubbed and clipped", () => {
-		const evil = "provider /home/someone/secret a@b.co " + "k".repeat(80);
+		const evil = `provider /home/someone/secret a@b.co ${"k".repeat(80)}`;
 		const b = judgeBrief(
 			"capacity",
 			{ runId: "1", class: evil, code: evil, message: "m" },
