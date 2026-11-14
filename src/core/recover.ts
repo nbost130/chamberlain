@@ -27,8 +27,10 @@
  * on `restore()`. Without a store the state is in memory only.
  */
 import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
+
 export type { RunLook };
-import { scrubForJudge, type JudgeAnswer, type Trigger } from "./judge.ts";
+
+import { type JudgeAnswer, scrubForJudge, type Trigger } from "./judge.ts";
 
 export type FailureKind =
 	| "stream_closed"
@@ -311,7 +313,7 @@ export function createRecovery(d: RecoverDeps) {
 			return () => clearTimeout(h);
 		});
 	const store = d.store ?? memoryRecoverStore();
-	let st: RecoverState = store.load() ?? freshState();
+	const st: RecoverState = store.load() ?? freshState();
 	const timers = new Map<string, () => void>();
 
 	const save = () => {

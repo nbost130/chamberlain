@@ -27,18 +27,19 @@
  * evidence for longer than a set period raises an alarm in the engine, naming the hold, the card and the command that closes it
  * by hand (`closeCardByHand`, `afk.ts close-card`). Nothing closes such a card on its own.
  */
+
+import type { WaitingItem, WaitKind } from "./adapter.ts";
 import {
 	appendHeld,
+	type CardRef,
 	closeHeldForCard,
 	closeHeldWhere,
+	type Held,
 	heldId,
 	heldOpen,
 	isCardHold,
-	type CardRef,
-	type Held,
 } from "./afk.ts";
-import type { WaitingItem, WaitKind } from "./adapter.ts";
-import { askQuestion, newItemId, questionStates, QUEUE, type Question } from "./questions.ts";
+import { askQuestion, newItemId, QUEUE, type Question, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
 /** What the engine passes on of one waiting card. The card's questions, options and any value are not part of it. */

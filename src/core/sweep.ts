@@ -14,11 +14,11 @@
  */
 import { spawn } from "node:child_process";
 import { CONF, principal, selfCommand } from "./config.ts";
-import { IDLE_PARENTS, parseIdleParents, type IdleParentsConfig } from "./idle-parents.ts";
+import { IDLE_PARENTS, type IdleParentsConfig, parseIdleParents } from "./idle-parents.ts";
 import { cfg } from "./layout.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
-import { type Finding, type ItemSource, type SourceOutcome } from "./source.ts";
+import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
+import type { Finding, ItemSource, SourceOutcome } from "./source.ts";
 import type { ItemMode } from "./store.ts";
 
 export const SWEEP_MS = 2 * 3600_000;

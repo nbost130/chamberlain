@@ -6,14 +6,15 @@
  * - relay path: the real src/daemon.ts sends a row a producer wrote, and dies at each of the relay's steps.
  * Every child runs with HOME, CHAMBERLAIN_CONF and CHAMBERLAIN_STATE in a scratch directory, and wakes go to a local webhook.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ensureToken } from "./core/capability.ts";
 import { CRASH_STEPS } from "./core/crash.ts";
 import { withDeliveryId } from "./core/deliver.ts";
-import { askQuestion, getQuestion, readClaim, type Question } from "./core/questions.ts";
+import { askQuestion, getQuestion, type Question, readClaim } from "./core/questions.ts";
 import { LEGACY_STAMP } from "./core/rights-sent.ts";
 import { readRulings } from "./core/rulings.ts";
 import { openStore } from "./core/sqlite-store.ts";

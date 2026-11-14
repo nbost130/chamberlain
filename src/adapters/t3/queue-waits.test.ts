@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../../testing/store.ts";
-import { analyze, format, fromDeliveryId, pct, readRuns, stat, wakesFrom, type Delivered } from "./queue-waits.ts";
+import { analyze, type Delivered, format, fromDeliveryId, pct, readRuns, stat, wakesFrom } from "./queue-waits.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

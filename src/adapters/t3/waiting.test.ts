@@ -2,12 +2,14 @@
  * The T3 side of the waiting-card mirror, driven through the page's aggregator (src/web/waiting.ts) the way the page uses
  * it: it shows question cards only, answers only where web.json grants a token, and drops a card answered in its thread.
  */
-import { memStore } from "../../testing/store.ts";
+
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Adapter } from "../../core/adapter.ts";
+import { memStore } from "../../testing/store.ts";
 import { createWaiting, threadSender, withAnswerRights } from "../../web/waiting.ts";
+import { t3Linker } from "./links.ts";
 import {
 	cardsFrom,
 	createT3Waiting,
@@ -17,7 +19,6 @@ import {
 	type Server,
 	type WaitingDeps,
 } from "./waiting.ts";
-import { t3Linker } from "./links.ts";
 
 /** The page's mirror over T3 servers: one T3 reader per server (kept between polls, as the adapter keeps its own), listed and answered through the aggregator. */
 type MirrorDeps = Pick<WaitingDeps, "conf" | "log" | "connect" | "timeoutMs" | "linker"> & {

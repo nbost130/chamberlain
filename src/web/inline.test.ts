@@ -2,12 +2,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { askQuestion, type Question, recordAnswerDelivered } from "../core/questions.ts";
+import { openCapability } from "../testing/capability.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
 import { fetchWake } from "../testing/wake.ts";
-import { askQuestion, recordAnswerDelivered, type Question } from "../core/questions.ts";
 import { createApp } from "./app.ts";
-import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";

@@ -15,9 +15,9 @@
 import { Database } from "bun:sqlite";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
-import { decideNotification, NOTIFY_ONCE } from "./notification.ts";
 import type { Butler } from "./butler.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
+import { decideNotification, NOTIFY_ONCE } from "./notification.ts";
 import { DIR_MODE, enforceMode, FILE_MODE } from "./private.ts";
 import { HOUSEKEEPING, type RetiredHow, type Ruling } from "./rulings.ts";
 import { SchemaTooNewError } from "./schema.ts";

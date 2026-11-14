@@ -45,9 +45,9 @@
  * `networkFilesystem` lets the daemon say so at start. Replacing or deleting `chamberlain.db` while the daemon runs makes a different
  * database, and moving it to another directory puts it under that directory's lock.
  */
-import { dlopen, FFIType, read, type Pointer } from "bun:ffi";
-import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dlopen, FFIType, type Pointer, read } from "bun:ffi";
 import { execFileSync } from "node:child_process";
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { FILE_MODE } from "./private.ts";
 import { requireTestEnv } from "./test-env.ts";

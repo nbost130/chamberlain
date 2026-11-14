@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { memStore } from "../testing/store.ts";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
-import { askQuestion, type Question } from "./questions.ts";
 import { tmpdir } from "node:os";
+import { memStore } from "../testing/store.ts";
 import {
+	type Afk,
 	appendHeld,
 	brief,
 	briefMarkdown,
@@ -13,14 +13,14 @@ import {
 	closeHeldForCard,
 	closeHeldForItem,
 	fyiReason,
+	type Held,
 	heldId,
 	heldOpen,
 	noteHeld,
 	readAfk,
-	type Afk,
-	type Held,
 } from "./afk.ts";
 import { awayModeLine } from "./messages.ts";
+import { askQuestion, type Question } from "./questions.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath } from "./store.ts";
 

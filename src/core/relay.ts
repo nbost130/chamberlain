@@ -26,30 +26,31 @@
  * accepted POST whose delivered commit fails is never POSTed again by this process: the commit is retried on every pass. Only a process
  * that exits before that commit leaves the row pending, and the restart sends it again under the same id, counted like any other attempt.
  */
-import { alarms, type AlarmText } from "./messages.ts";
+
 import { crashPoint } from "./crash.ts";
 import {
 	maxAttemptsFromEnv,
 	STALE_AFTER_MS,
-	withDeliveryId,
 	type WakeDraft,
 	type WakeResult,
 	type WakeTransport,
+	withDeliveryId,
 } from "./deliver.ts";
-import { composeWake, HOLD_CEILING_MS, observe, type Gate } from "./hold.ts";
+import { composeWake, type Gate, HOLD_CEILING_MS, observe } from "./hold.ts";
+import { type AlarmText, alarms } from "./messages.ts";
 import {
 	epochOf,
 	invalidateRights,
 	loadRightsSent,
 	needsRights,
-	recordOf,
 	RIGHTS_SENT_KEY,
+	type RightsState,
+	recordOf,
 	rightsEpoch,
 	rightsFirstId,
 	rightsFirstKey,
 	rightsGap,
 	rightsStateKey,
-	type RightsState,
 } from "./rights-sent.ts";
 import { isRelayLock, lockCovers, type RelayLock } from "./singleton.ts";
 import type { HoldClock, OutboxRow, RightsStamp, Store } from "./store.ts";

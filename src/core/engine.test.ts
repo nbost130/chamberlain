@@ -3,26 +3,27 @@
  * Nothing here knows T3. Each test drives a fake thread event through the real rules, the real delivery and the real hold
  * store, on a scratch directory, and reads the wake the fake received.
  */
+
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Database } from "bun:sqlite";
-import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { noAlert } from "../testing/alert.ts";
+import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
-import { MIGRATIONS } from "./migrations.ts";
-import { openStore } from "./sqlite-store.ts";
+import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
 import { appendHeld, heldOpen } from "./afk.ts";
 import { closeCardByHand } from "./card-hold.ts";
-import { askQuestion, claimWake, getQuestion, pageClaim, questionStates } from "./questions.ts";
-import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
-import type { Judge } from "./judge.ts";
+import type { TurnItem } from "./decide.ts";
 import { withDeliveryId } from "./deliver.ts";
 import { createEngine, type EngineDeps } from "./engine.ts";
 import type { HeldItem } from "./hold.ts";
+import type { Judge } from "./judge.ts";
+import { MIGRATIONS } from "./migrations.ts";
+import { askQuestion, claimWake, getQuestion, pageClaim, questionStates } from "./questions.ts";
+import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
-import type { TurnItem } from "./decide.ts";
 
 const dirs: string[] = [];
 const engines: { stop: () => Promise<void> }[] = [];

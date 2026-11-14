@@ -13,10 +13,10 @@
  * the effective uid and writable by no group or other user, and neither may be a symlink.
  */
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync } from "node:fs";
-import { readAfk, type Afk } from "./afk.ts";
-import { awayModeLine } from "./messages.ts";
 import type { BriefNotes } from "./adapter.ts";
-import { CONF, STATE, Principal, principal, principalPoss, selfCommand, type CommandName } from "./config.ts";
+import { type Afk, readAfk } from "./afk.ts";
+import { CONF, type CommandName, Principal, principal, principalPoss, STATE, selfCommand } from "./config.ts";
+import { awayModeLine } from "./messages.ts";
 import { startup } from "./migrate.ts";
 import { authorityProblem } from "./private.ts";
 import { loadOperatingRules } from "./rules.ts";

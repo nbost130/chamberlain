@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { memStore } from "../testing/store.ts";
 import { deliveredRow } from "../testing/relay.ts";
+import { memStore } from "../testing/store.ts";
 import { EVENT_KEEP_MS, ITEM_KEEP_MS, maintain } from "./maintain.ts";
 
 const DAY = 24 * 3600_000;

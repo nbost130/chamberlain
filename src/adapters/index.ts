@@ -6,8 +6,9 @@
  * A server in servers.json picks its adapter by name (`"adapter": "t3"`, the default). The core never imports this file's
  * adapters directly: it is handed an Adapter, and only the entry points (daemon, page, tools) read the registry.
  */
-import { CONF, STATE } from "../core/config.ts";
+
 import type { Adapter, AdapterEntry, AdapterEnv } from "../core/adapter.ts";
+import { CONF, STATE } from "../core/config.ts";
 import { readNamed, thread } from "../core/layout.ts";
 import { homeServer, readServers, type ServerEntry } from "../core/servers.ts";
 import { defaultT3Server, t3Entry } from "./t3/index.ts";

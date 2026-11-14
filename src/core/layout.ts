@@ -31,8 +31,8 @@ import {
 	lstatSync,
 	mkdirSync,
 	openSync,
-	readFileSync,
 	readdirSync,
+	readFileSync,
 	renameSync,
 	statSync,
 	writeFileSync,
@@ -40,7 +40,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { authorityProblem, isPrivateFile, modeText } from "./private.ts";
-import { SchemaTooNewError, checkVersion } from "./schema.ts";
+import { checkVersion, SchemaTooNewError } from "./schema.ts";
 import { parseSettings, parseSettledMatch } from "./settings-parse.ts";
 import { configDir } from "./state-dir.ts";
 

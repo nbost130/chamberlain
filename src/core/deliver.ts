@@ -6,9 +6,10 @@
  * A wake that can wait (HOLDABLE_KINDS in hold.ts: a turn end, the sweep) is held instead, and the relay composes what is held into one
  * row when the Steward is idle. Every other wake is a pending row at once.
  */
-import { setting } from "./layout.ts";
+
 import { crashPoint } from "./crash.ts";
 import { holdable } from "./hold.ts";
+import { setting } from "./layout.ts";
 import type { Store, WakeMeta } from "./store.ts";
 
 /**

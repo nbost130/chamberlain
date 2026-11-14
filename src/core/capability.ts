@@ -15,8 +15,8 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { SECRETS_DIR, ensureSecretsDir, readSecret } from "./layout.ts";
-import { RelayLockUnavailableError, holdFlock } from "./singleton.ts";
+import { ensureSecretsDir, readSecret, SECRETS_DIR } from "./layout.ts";
+import { holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 /** The secret's name in `secrets/`. */
 export const TOKEN_FILE = "web-token";

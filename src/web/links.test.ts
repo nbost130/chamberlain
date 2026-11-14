@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { TOKEN_FILE, ensureToken } from "../core/capability.ts";
+import { ensureToken, TOKEN_FILE } from "../core/capability.ts";
 import { acceptedHosts, linkLines, linkTargets, pageBases } from "./server.ts";
 
 const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");

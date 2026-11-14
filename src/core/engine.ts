@@ -6,76 +6,77 @@
  * adapter lacks switches one feature off (see the table in adapter.ts). src/daemon.ts builds the real deps for it.
  */
 import { execFile } from "node:child_process";
-import { closeHeldForCard, readAfk } from "./afk.ts";
 import {
+	type Adapter,
+	has,
+	type Inspector,
+	isWaitingRead,
+	normalizeThread,
+	type ThreadEvent,
+	type ThreadState,
+	type WaitingItem,
+	type WaitingRead,
+} from "./adapter.ts";
+import { closeHeldForCard, readAfk } from "./afk.ts";
+import { DESK_RECEIVER, drainAlertDesk, inboxPath } from "./alert-desk.ts";
+import {
+	type CardThreadRead,
 	cardWaitOf,
 	holdCard,
 	reconcileCardHolds,
 	trackUnverified,
 	unverifiedAlarm,
-	type CardThreadRead,
 } from "./card-hold.ts";
-import type { Question } from "./questions.ts";
-import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
-import {
-	has,
-	normalizeThread,
-	type Adapter,
-	type Inspector,
-	type ThreadEvent,
-	type ThreadState,
-	type WaitingItem,
-	type WaitingRead,
-	isWaitingRead,
-} from "./adapter.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal, selfCommand } from "./config.ts";
-import { alarms, awayModeLine, threadHappened, threadWakeHead, type AlarmText } from "./messages.ts";
-import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createStewardCheck } from "./engine-steward.ts";
 import { createSweep } from "./engine-sweep.ts";
-import { createRelay, type RelayDeps } from "./relay.ts";
-import { DESK_RECEIVER, drainAlertDesk, inboxPath } from "./alert-desk.ts";
-import type { RelayLock } from "./singleton.ts";
+import { type GhRead, reconcileItemHolds, reconcileRefHolds, takeSnapshots } from "./hold-reconcile.ts";
+import { type AlarmText, alarms, awayModeLine, threadHappened, threadWakeHead } from "./messages.ts";
+import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
+import type { Question } from "./questions.ts";
 import {
 	createRecovery,
 	DEFAULT_RECOVER_TIMING,
-	outcomeOf,
 	type Handling,
 	type Outcome,
-	type Recovery,
+	outcomeOf,
 	type RecoverState,
 	type RecoverTiming,
+	type Recovery,
 } from "./recover.ts";
+import { createRelay, type RelayDeps } from "./relay.ts";
+import type { RelayLock } from "./singleton.ts";
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
-import { createIdleParents } from "./engine-idle.ts";
-import type { IdleThreadSource } from "./idle-parents.ts";
-import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
+
 import {
+	type Candidate,
 	decide,
 	endKind,
 	idleKey,
-	lastInstruction,
 	idleWorkLine,
 	LIVE,
+	lastInstruction,
 	principalWroteWithin,
 	questionText,
+	type RightsSent,
 	reportKey,
 	rightsUnreadable,
 	routeNeedsInput,
 	stewardInstruction,
 	turnBegan,
-	type Candidate,
-	type RightsSent,
 } from "./decide.ts";
+import { createIdleParents } from "./engine-idle.ts";
+import { failedRead, type InstructionRead, skipEvent } from "./history.ts";
 import type { Gate } from "./hold.ts";
-import { failedRead, skipEvent, type InstructionRead } from "./history.ts";
-import { recordAnswerDelivered } from "./questions.ts";
-import { makeLog, type Log } from "./log.ts";
+import type { IdleThreadSource } from "./idle-parents.ts";
+import { createJudge, type Judge, judgeOff, readJudgeConfig } from "./judge.ts";
 import { readNamed, setting } from "./layout.ts";
+import { type Log, makeLog } from "./log.ts";
+import { recordAnswerDelivered } from "./questions.ts";
 import { settleReport } from "./report.ts";
 import {
 	epochOf,
@@ -87,17 +88,17 @@ import {
 	rightsStamp,
 } from "./rights-sent.ts";
 import { readRulings, renderInForce } from "./rulings.ts";
-import type { Store } from "./store.ts";
 import { homeServer, type ServerEntry } from "./servers.ts";
 import {
 	HEALTH_CONFIG,
+	type Health,
 	handoffDeliveryId,
 	handoffWakeMessage,
 	healthTicker,
 	liveHealth,
-	type Health,
 } from "./steward-health.ts";
-import { BUSY_TURNS, commitsAhead, SWEEP_MS, type BusyFact } from "./sweep.ts";
+import type { Store } from "./store.ts";
+import { BUSY_TURNS, type BusyFact, commitsAhead, SWEEP_MS } from "./sweep.ts";
 
 /** One configured server and the adapter that serves it. */
 export type EngineServer = { server: ServerEntry; adapter: Adapter };

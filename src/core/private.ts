@@ -9,7 +9,7 @@
  * them, so 0644 is fine. The danger is someone else WRITING them, so the rule (`authorityProblem`) is: the expected kind (never a symlink),
  * owned by this process's effective uid, and no group or world write bit.
  */
-import { chmodSync, readFileSync, statSync, type Stats } from "node:fs";
+import { chmodSync, readFileSync, type Stats, statSync } from "node:fs";
 
 export const FILE_MODE = 0o600;
 export const DIR_MODE = 0o700;

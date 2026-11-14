@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createFakeAdapter, ALL_CAPABILITIES } from "../testing/fake-adapter.ts";
-import { conformance, has, normalizeThread, type Adapter } from "./adapter.ts";
+import { ALL_CAPABILITIES, createFakeAdapter } from "../testing/fake-adapter.ts";
+import { type Adapter, conformance, has, normalizeThread } from "./adapter.ts";
 
 describe("normalizeThread", () => {
 	test("fills every optional field with its neutral value", () => {

@@ -17,14 +17,14 @@
  * host); tests pass fakes.
  */
 import {
-	closeHeldWhere,
 	cleanRef,
+	closeHeldWhere,
+	type Held,
+	type HoldRef,
 	heldOpen,
 	isCardHold,
 	itemIdOf,
 	REF_SHAPES,
-	type Held,
-	type HoldRef,
 } from "./afk.ts";
 import { QUEUE, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";

@@ -3,7 +3,7 @@
  * createEngine (src/core/engine.ts), which passes it the few things it reads.
  */
 import { readAfk } from "./afk.ts";
-import { alarms, type AlarmText } from "./messages.ts";
+import { type AlarmText, alarms } from "./messages.ts";
 import type { Store } from "./store.ts";
 
 export type HeartbeatDeps = {

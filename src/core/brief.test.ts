@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { type BriefInput, loadBriefFragments, OPEN_WORK_HEADING, stewardBrief, withFragments } from "./brief.ts";
 import { authorityProblem } from "./private.ts";
-import { loadBriefFragments, OPEN_WORK_HEADING, stewardBrief, withFragments, type BriefInput } from "./brief.ts";
 
 const base: BriefInput = {
 	mode: "test",

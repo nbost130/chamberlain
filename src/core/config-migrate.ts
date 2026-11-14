@@ -14,49 +14,50 @@
  * `migrateLayout` does it under a `flock(2)` on the config directory. It is idempotent and never overwrites: a key config.json already holds
  * wins, a secret already in secrets/ wins, and a difference is reported, not resolved. `revertLayout` undoes it.
  */
+
+import type { Stats } from "node:fs";
 import {
 	chmodSync,
 	copyFileSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
-	readFileSync,
 	readdirSync,
+	readFileSync,
 	renameSync,
 	rmSync,
 	statSync,
 	utimesSync,
 } from "node:fs";
-import type { Stats } from "node:fs";
 import { dirname } from "node:path";
-import { isPrivateFile, modeText } from "./private.ts";
 import {
+	attachDeprecationLog,
 	CONFIG_FILE,
 	ENV_KEYS,
-	LEGACY_THREAD_FILES,
-	SCALARS,
-	SECRETS_DIR,
-	THREADS,
-	JOURNAL,
-	MIGRATED_SUFFIX,
-	NON_SECRET_HOME,
-	SECRET_FILE,
-	attachDeprecationLog,
 	ensureSecretsDir,
+	JOURNAL,
+	LEGACY_THREAD_FILES,
 	legacyValue,
+	MIGRATED_SUFFIX,
 	migratedNames,
+	NON_SECRET_HOME,
 	oldFileState,
 	parseConfigDoc,
 	readConfigFile,
 	readJournal,
 	reappeared,
 	reappearedFiles,
+	SCALARS,
+	type ScalarKey,
+	SECRET_FILE,
+	SECRETS_DIR,
 	syncDir,
+	THREADS,
+	type ThreadKey,
 	writeConfigFile,
 	writeFileDurable,
-	type ScalarKey,
-	type ThreadKey,
 } from "./layout.ts";
+import { isPrivateFile, modeText } from "./private.ts";
 import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);

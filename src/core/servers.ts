@@ -4,7 +4,7 @@
  */
 import { CONF } from "./config.ts";
 import { cfg } from "./layout.ts";
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
+import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
 
 /** The adapter a server entry names when it names none: every server was T3 Code before adapters existed. */
 export const DEFAULT_ADAPTER = "t3";

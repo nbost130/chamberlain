@@ -3,14 +3,14 @@ import {
 	chmodSync,
 	existsSync,
 	lstatSync,
-	readdirSync,
-	utimesSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
 	symlinkSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,23 +19,27 @@ import {
 	DAEMON_ENV,
 	DECISION_RIGHTS,
 	FAKE,
+	legacyFiles,
 	OPERATING_RULES,
 	SERVERS,
 	SETTINGS,
 	SWEEP,
-	WEB,
-	legacyFiles,
 	tokensFor,
+	WEB,
 	writeLegacyConf,
 } from "../testing/legacy-conf.ts";
 
 const TOKENS = tokensFor();
+
+import { loadConfig } from "../web/config.ts";
+import { readConfig, readOperator } from "./alert-desk.ts";
+import { readSettings } from "./config.ts";
 import { planLines, showLines } from "./config-cmd.ts";
 import { envValue, migrateLayout, parseEnvFile, planMigration, setThread, startupLayout } from "./config-migrate.ts";
 import {
-	ENV_KEYS,
 	attachDeprecationLog,
 	cfg,
+	ENV_KEYS,
 	readConfigFile,
 	readNamed,
 	readSecret,
@@ -45,9 +49,6 @@ import {
 } from "./layout.ts";
 import { readServers } from "./servers.ts";
 import { readSweepConfig } from "./sweep.ts";
-import { readConfig, readOperator } from "./alert-desk.ts";
-import { loadConfig } from "../web/config.ts";
-import { readSettings } from "./config.ts";
 
 const dirs: string[] = [];
 const fresh = () => {

@@ -8,24 +8,24 @@ import { rightsUnchanged } from "./decide.ts";
 import {
 	fullStamp,
 	invalidateRights,
+	LEGACY_STAMP,
 	loadRightsSent,
 	needsRights,
 	openRightsSent,
 	parseRightsSent,
-	recordOf,
 	RIGHTS_SENT_KEY,
-	rightsFor,
+	recordOf,
+	rightsEpoch,
 	rightsFirstId,
 	rightsFirstKey,
 	rightsFirstMessage,
+	rightsFor,
 	rightsGap,
 	rightsHash,
-	rightsEpoch,
 	rightsHighWater,
 	rightsStamp,
 	rightsStateKey,
 	saveRightsSent,
-	LEGACY_STAMP,
 } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 

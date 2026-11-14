@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
 	appendFileSync,
 	chmodSync,
@@ -20,20 +20,20 @@ import {
 	claimWake,
 	getQuestion,
 	pageClaim,
+	type Question,
 	questionStates,
 	recordAnswerDelivered,
-	type Question,
 } from "../core/questions.ts";
 import { addInForce, propose, readRulings } from "../core/rulings.ts";
 import { openStore } from "../core/sqlite-store.ts";
-import { dbPath } from "../core/store.ts";
 import { HEALTH_KEY } from "../core/steward-health.ts";
+import { dbPath } from "../core/store.ts";
+import { openCapability } from "../testing/capability.ts";
 import { testRelay } from "../testing/relay.ts";
 import { fetchWake } from "../testing/wake.ts";
-import { createApp, type AppDeps } from "./app.ts";
+import { type AppDeps, createApp } from "./app.ts";
 import { canonicalIp, checkBind, loadConfig, parseConfig } from "./config.ts";
 import { resolveEvidence } from "./evidence.ts";
-import { openCapability } from "../testing/capability.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];

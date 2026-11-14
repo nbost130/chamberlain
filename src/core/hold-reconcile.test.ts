@@ -1,21 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { appendHeld, heldId, heldOpen, HELD, type Held } from "./afk.ts";
-import { askQuestion, claimWake, notNow, pageClaim, QUEUE, type Answer, type Question } from "./questions.ts";
+import { appendHeld, HELD, type Held, heldId, heldOpen } from "./afk.ts";
 import {
 	BACKOFF_MS,
 	classifyThread,
+	type GhRead,
 	MAX_REQUESTS,
+	type MachineSnapshot,
 	REF_PASS_MS,
 	reconcileItemHolds,
 	reconcileRefHolds,
 	refsOf,
+	type ThreadFacts,
 	takeSnapshots,
 	threadViewAcross,
-	type GhRead,
-	type MachineSnapshot,
-	type ThreadFacts,
 } from "./hold-reconcile.ts";
+import { type Answer, askQuestion, claimWake, notNow, pageClaim, QUEUE, type Question } from "./questions.ts";
 import type { Store } from "./store.ts";
 
 const T0 = new Date("2026-11-13T01:00:00.000Z");

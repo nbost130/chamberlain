@@ -17,9 +17,9 @@ import { t3StateDbPath } from "./settings.ts";
 import { t3Probe } from "./steward.ts";
 import { t3TitleSetter } from "./title.ts";
 import { t3Transcript } from "./transcript.ts";
-import { T3Link } from "./watch.ts";
-import { webhookWake } from "./wake.ts";
 import { createT3Waiting } from "./waiting.ts";
+import { webhookWake } from "./wake.ts";
+import { T3Link } from "./watch.ts";
 
 /** The wake's server line: how the woken thread reaches this server with the ordinary t3_* tools. */
 export const t3ServerLine = (srv: { name: string; environmentId?: string }): string =>

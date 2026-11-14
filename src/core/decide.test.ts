@@ -3,21 +3,21 @@ import { normalizeThread } from "./adapter.ts";
 import {
 	decide,
 	endKind,
-	principalWroteWithin,
-	reportKey,
-	turnBegan,
 	idleKey,
 	idleWorkLine,
 	looksLikeAsk,
-	PRINCIPAL_HERE_MS,
-	reportStillDue,
-	rightsInFull,
 	looksLikeStall,
 	needsCompact,
+	PRINCIPAL_HERE_MS,
+	principalWroteWithin,
 	questionText,
+	reportKey,
+	reportStillDue,
+	rightsInFull,
 	routeNeedsInput,
 	stewardInstruction,
 	type ThreadState,
+	turnBegan,
 } from "./decide.ts";
 
 const base: ThreadState = {

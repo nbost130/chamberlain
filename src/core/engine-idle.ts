@@ -5,7 +5,7 @@
  * restart. No model call is made (src/core/idle-parents.ts). Split out of createEngine (src/core/engine.ts), like the sweep.
  */
 import type { Outbox } from "./deliver.ts";
-import { idleParentsSource, idlePrior, selectIdleThreads, type IdleThreadSource } from "./idle-parents.ts";
+import { type IdleThreadSource, idleParentsSource, idlePrior, selectIdleThreads } from "./idle-parents.ts";
 import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
 import { evaluateSource, recordEvaluation } from "./source.ts";

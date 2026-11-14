@@ -4,18 +4,17 @@
  * record becomes a normalized state for the core; the same socket serves the on-demand reads (`inspect`).
  */
 import { statSync } from "node:fs";
-import type { AdapterEnv, Inspector, RunFailure, WaitingRead, WatchSink } from "../../core/adapter.ts";
+import type { AdapterEnv, Inspector, RunFailure, ThreadSnapshot, WaitingRead, WatchSink } from "../../core/adapter.ts";
 import { failedRead } from "../../core/history.ts";
 import { SECRETS_DIR, secretPath } from "../../core/layout.ts";
 import { alarms } from "../../core/messages.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
+import { failureOf, lookOf } from "./failure.ts";
 import { historyGet, readWhenConnected } from "./history.ts";
+import { checkProjection, isObject, type Projection, readCards } from "./projection.ts";
 import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
-import type { ThreadSnapshot } from "../../core/adapter.ts";
 import type { T3Server } from "./server.ts";
 import { toState } from "./state.ts";
-import { failureOf, lookOf } from "./failure.ts";
-import { checkProjection, isObject, readCards, type Projection } from "./projection.ts";
 
 const TOKEN_MAX_AGE_DAYS = 25;
 

@@ -1,26 +1,26 @@
+import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
+import { type ItemSource, runSources } from "./source.ts";
 import {
 	checkSource,
 	commitsAheadCommand,
 	configuredSources,
 	exec,
-	fenced,
 	FULL_SWEEP_MS,
+	fenced,
 	parseCheckOutput,
 	parseSweepConfig,
 	principalHereNote,
 	readSweepConfig,
 	renderSweepPrompt,
 	runawaySource,
+	type SweepAction,
 	sweepAction,
 	sweepClock,
 	sweepMessage,
-	type SweepAction,
 } from "./sweep.ts";
-import { runSources, type ItemSource } from "./source.ts";
 
 const SOON = 60_000;
 /** A source that reports what the test says, as a check would. */

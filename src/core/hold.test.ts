@@ -3,21 +3,22 @@
  * into one digest row when it is idle. Every other wake (a question, a failure, an answer) is a pending row at once. Producers write rows
  * (the daemon's outbox, the page); the relay sends them, with a clock and a Steward gate the test moves by hand.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { askQuestion, questionStates, recordAnswerDelivered, type Question } from "./questions.ts";
+import { openCapability } from "../testing/capability.ts";
+import { testRelayLock } from "../testing/lock.ts";
+import { fetchWake } from "../testing/wake.ts";
+import { createApp } from "../web/app.ts";
+import { RIGHTS_MARKER } from "./decide.ts";
 import { createOutbox, withDeliveryId } from "./deliver.ts";
+import { composeWake, type Gate, type HeldItem, HOLD_CEILING_MS, observe } from "./hold.ts";
+import { askQuestion, type Question, questionStates, recordAnswerDelivered } from "./questions.ts";
 import { createRelay } from "./relay.ts";
 import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
-import { fetchWake } from "../testing/wake.ts";
-import { testRelayLock } from "../testing/lock.ts";
-import { RIGHTS_MARKER } from "./decide.ts";
-import { composeWake, HOLD_CEILING_MS, observe, type Gate, type HeldItem } from "./hold.ts";
-import { createApp } from "../web/app.ts";
-import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const MIN = 60_000;

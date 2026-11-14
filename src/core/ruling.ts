@@ -17,7 +17,7 @@
 import { principal } from "./config.ts";
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
-import { addInForce, propose, readRulings, type RulingOpts } from "./rulings.ts";
+import { addInForce, propose, type RulingOpts, readRulings } from "./rulings.ts";
 
 const USAGE =
 	'usage: ruling.ts [--stated-in-chat] [--expires <ISO>] [--until "<event>"] [--supersedes R32,R16] [--] "<their exact words>" "<what it decides>" | list';

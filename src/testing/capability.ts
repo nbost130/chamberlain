@@ -1,5 +1,5 @@
 /** Capabilities for tests of the page (src/core/capability.ts). */
-import { makeCapability, type Capability } from "../core/capability.ts";
+import { type Capability, makeCapability } from "../core/capability.ts";
 import { requireTestEnv } from "../core/test-env.ts";
 
 /**

@@ -11,14 +11,14 @@
 import { readFileSync } from "node:fs";
 import { readAfk } from "../../core/afk.ts";
 import { CONF, selfCommand } from "../../core/config.ts";
+import { RIGHTS_MARKER } from "../../core/decide.ts";
 import { defaultStore } from "../../core/default-store.ts";
-import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
 import { createOutbox } from "../../core/deliver.ts";
 import { makeLog } from "../../core/log.ts";
-import { readServers } from "../../core/servers.ts";
-import { RIGHTS_MARKER } from "../../core/decide.ts";
-import { t3ServerLine } from "./index.ts";
+import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
 import { rulingsText } from "../../core/rulings.ts";
+import { readServers } from "../../core/servers.ts";
+import { t3ServerLine } from "./index.ts";
 
 export function main(argv: string[] = process.argv.slice(2)) {
 	const [name, threadId, title, waitNote, last] = argv;

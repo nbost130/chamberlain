@@ -2,32 +2,10 @@
  * The decision-queue web app: the queue, an item's detail and the rulings page, over one JSON API. Everything that
  * touches the network or the clock comes in through deps, so the tests drive the real handler.
  */
-import { TOKEN_HEADER, TOKEN_PARAM, type Capability } from "../core/capability.ts";
-import { crashPoint } from "../core/crash.ts";
-import { readHealth, HEALTH_CONFIG } from "../core/steward-health.ts";
+
+import type { WaitingCard } from "../core/adapter.ts";
 import { closeHeldForItem } from "../core/afk.ts";
-import {
-	answerDeliveryId,
-	batchable,
-	claimWake,
-	enqueueClaim,
-	fallbackWake,
-	finishRelay,
-	notNow,
-	PAGE,
-	pageClaim,
-	questionStates,
-	ranked,
-	readRelay,
-	recordAnswerDelivered,
-	recoverClaims,
-	startRelay,
-	wokenBy,
-	type Answer,
-	type Claim,
-	type ClaimRelay,
-	type QuestionState,
-} from "../core/questions.ts";
+import { type Capability, TOKEN_HEADER, TOKEN_PARAM } from "../core/capability.ts";
 import {
 	CHALLENGE_TTL_MS,
 	consumeChallenge,
@@ -36,7 +14,31 @@ import {
 	SESSION_COOKIE,
 	sessionOf,
 } from "../core/challenge.ts";
+import { crashPoint } from "../core/crash.ts";
 import {
+	type Answer,
+	answerDeliveryId,
+	batchable,
+	type Claim,
+	type ClaimRelay,
+	claimWake,
+	enqueueClaim,
+	fallbackWake,
+	finishRelay,
+	notNow,
+	PAGE,
+	pageClaim,
+	type QuestionState,
+	questionStates,
+	ranked,
+	readRelay,
+	recordAnswerDelivered,
+	recoverClaims,
+	startRelay,
+	wokenBy,
+} from "../core/questions.ts";
+import {
+	type Clock,
 	citations,
 	confirmRuling,
 	editRuling,
@@ -47,12 +49,11 @@ import {
 	recordInForce,
 	retireRuling,
 	stageRulings,
-	type Clock,
 } from "../core/rulings.ts";
+import { HEALTH_CONFIG, readHealth } from "../core/steward-health.ts";
 import type { Store } from "../core/store.ts";
-import type { WaitingCard } from "../core/adapter.ts";
 import { resolveEvidence } from "./evidence.ts";
-import { openPage, type Linker } from "./thread-links.ts";
+import { type Linker, openPage } from "./thread-links.ts";
 import { checkCard, needsConfirmation, type SendToThread } from "./waiting.ts";
 
 export type AppDeps = {

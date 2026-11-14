@@ -19,11 +19,11 @@
  *   operator  user / server   the principal's own accepted proposal (a /goal).
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readSecret } from "../../core/layout.ts";
-import { t3BaseDir } from "./settings.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
+import { t3BaseDir } from "./settings.ts";
 
 export type Identity = "steward" | "daemon" | "operator";
 export const IDENTITIES: Record<Identity, { createdBy: "agent" | "user"; creationSource: "mcp" | "server" }> = {

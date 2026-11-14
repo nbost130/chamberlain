@@ -49,15 +49,14 @@ class El {
 		};
 	}
 	get classList() {
-		const self = this;
 		return {
 			add: (c: string) => {
-				self.className += ` ${c}`;
+				this.className += ` ${c}`;
 			},
 			toggle: (c: string, on: boolean) => {
-				const set = new Set(self.className.split(" ").filter(Boolean));
+				const set = new Set(this.className.split(" ").filter(Boolean));
 				on ? set.add(c) : set.delete(c);
-				self.className = [...set].join(" ");
+				this.className = [...set].join(" ");
 			},
 		};
 	}

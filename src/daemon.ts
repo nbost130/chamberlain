@@ -4,24 +4,25 @@
  * Config dir: ~/.config/chamberlain/ (CHAMBERLAIN_CONF), state dir: ~/.local/state/chamberlain/ (CHAMBERLAIN_STATE).
  * It is the one relay that sends wakes (core/relay.ts), so one daemon runs per state directory: a second exits 5 (core/singleton.ts).
  */
+
+import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
 import { CONF, STATE, selfArgv } from "./core/config.ts";
-import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { createEngine } from "./core/engine.ts";
 import { ghRead } from "./core/gh.ts";
-import { maintain } from "./core/maintain.ts";
-import { makeLog } from "./core/log.ts";
 import { setting } from "./core/layout.ts";
+import { makeLog } from "./core/log.ts";
+import { maintain } from "./core/maintain.ts";
 import { startup } from "./core/migrate.ts";
 import {
 	holdRelayLock,
 	networkFilesystem,
 	RelayDatabaseLinkedError,
+	type RelayLock,
 	RelayLockUnavailableError,
 	RelayRunningError,
-	type RelayLock,
 } from "./core/singleton.ts";
-import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
+import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 
 /** Runs the daemon until it is stopped. It takes no arguments: its settings are the environment and the config directory. */
 export async function main(_argv: string[] = process.argv.slice(2)) {

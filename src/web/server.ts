@@ -11,24 +11,25 @@
  * --test runs against fixture data: CHAMBERLAIN_CONF and CHAMBERLAIN_STATE must point away from the live directories, the
  * address must be loopback, no wake is sent and no card is touched.
  */
-import { CONF, STATE } from "../core/config.ts";
-import { ensureToken, fileCapability, inlineScriptSrc, pageLink, readToken, rotateToken } from "../core/capability.ts";
-import { STATIC_FILES } from "../embedded.ts";
+
+import { loadServers, makeAdapter } from "../adapters/index.ts";
+import type { Adapter } from "../core/adapter.ts";
 import { has } from "../core/adapter.ts";
-import { configDir, stateDir } from "../core/state-dir.ts";
+import { ensureToken, fileCapability, inlineScriptSrc, pageLink, readToken, rotateToken } from "../core/capability.ts";
+import { CONF, STATE } from "../core/config.ts";
 import { defaultStore } from "../core/default-store.ts";
+import { readNamed } from "../core/layout.ts";
 import { makeLog } from "../core/log.ts";
 import { maintain } from "../core/maintain.ts";
 import { startup } from "../core/migrate.ts";
-import { readNamed } from "../core/layout.ts";
 import type { ServerEntry } from "../core/servers.ts";
-import { loadServers, makeAdapter } from "../adapters/index.ts";
-import type { Adapter } from "../core/adapter.ts";
+import { configDir, stateDir } from "../core/state-dir.ts";
+import { STATIC_FILES } from "../embedded.ts";
 import { createApp } from "./app.ts";
 import { loadConfig } from "./config.ts";
 import { createLinker } from "./thread-links.ts";
 import { titleKeeper } from "./title.ts";
-import { createWaiting, threadSender, withAnswerRights, type ServerAdapter } from "./waiting.ts";
+import { createWaiting, type ServerAdapter, threadSender, withAnswerRights } from "./waiting.ts";
 
 /** The Host header values the page accepts: its bind address and every allowed host name, bare and with the port. Anything else gets 421. */
 export function acceptedHosts(cfg: { host: string; port: number; allowedHosts?: string[] }): string[] {

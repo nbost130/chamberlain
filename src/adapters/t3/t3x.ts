@@ -8,13 +8,14 @@
  *   bun src/adapters/t3/t3x.ts respond <server> <threadId> "<question header>=<option label>" ...
  *   bun src/adapters/t3/t3x.ts send    <server> <threadId> <text>
  */
-import { readSecret } from "../../core/layout.ts";
+
 import { CONF } from "../../core/config.ts";
+import { readSecret } from "../../core/layout.ts";
 import { startup } from "../../core/migrate.ts";
-import { connect, type Rpc } from "./rpc.ts";
-import { messageCommand } from "./ping.ts";
 import { readServers } from "../../core/servers.ts";
-import { t3Server, type T3Server } from "./server.ts";
+import { messageCommand } from "./ping.ts";
+import { connect, type Rpc } from "./rpc.ts";
+import { type T3Server, t3Server } from "./server.ts";
 
 type Server = T3Server;
 

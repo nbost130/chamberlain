@@ -17,13 +17,14 @@
  * `holdFlock`). It is released when the holder ends or dies, and it is never broken by age: an earlier version used a lock file that any
  * other process removed after 120 s, so a slow migration could be entered twice and its owner could delete its successor's lock.
  */
-import { assertPrivateDir, InsecureModeError, isPrivateFile } from "./private.ts";
-import { copyFileSync, constants, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
-import { STATE, CONF } from "./config.ts";
-import { SCHEMA_VERSION, SchemaTooNewError, checkVersion, versionOf } from "./schema.ts";
-import { ConfigFileError, SECRETS_DIR, attachDeprecationLog, oldFileState, readConfigFile } from "./layout.ts";
+
+import { constants, copyFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { CONF, STATE } from "./config.ts";
 import { startupLayout } from "./config-migrate.ts";
+import { attachDeprecationLog, ConfigFileError, oldFileState, readConfigFile, SECRETS_DIR } from "./layout.ts";
+import { assertPrivateDir, InsecureModeError, isPrivateFile } from "./private.ts";
+import { checkVersion, SCHEMA_VERSION, SchemaTooNewError, versionOf } from "./schema.ts";
+import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "./singleton.ts";
 
 /** json: one document. jsonl: one record per line. servers: servers.json. */
 export type Kind = "json" | "jsonl" | "servers";

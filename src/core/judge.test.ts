@@ -5,11 +5,11 @@ import { join, relative } from "node:path";
 import {
 	createJudge,
 	defaultJudgeConfig,
+	type JudgeRunner,
 	judgeOff,
 	parseJudgeConfig,
 	readJudgeConfig,
 	scrubForJudge,
-	type JudgeRunner,
 } from "./judge.ts";
 
 const verdicts = ["retry_later", "do_not_retry", "ask_principal"] as const;

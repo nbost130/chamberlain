@@ -3,7 +3,7 @@
  * `compactTokens` and `settledMatch` keys of config.json (src/core/layout.ts). This module only parses and checks the OLD file, so the
  * layout code can read it without importing config.ts (which imports the layout).
  */
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
+import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
 
 export type Settings = {
 	schemaVersion?: number;

@@ -17,9 +17,9 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { type MigrationReport, migrateStorage } from "./migrate.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
 import { holdFlock } from "./singleton.ts";
-import { migrateStorage, type MigrationReport } from "./migrate.ts";
 
 const WORKER = new URL("../testing/migrate-worker.ts", import.meta.url).pathname;
 const dirs: string[] = [];

@@ -1,8 +1,8 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import type { Transcript } from "./adapter.ts";
-import { handoffWake } from "./messages.ts";
 import { setting } from "./layout.ts";
+import { handoffWake } from "./messages.ts";
 import type { Store } from "./store.ts";
 
 export const HEALTH_CONFIG = {

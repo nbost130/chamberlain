@@ -3,8 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
 	DEFAULT_PRINCIPAL,
-	parseSettings,
 	Principal,
+	parseSettings,
 	principal,
 	principalPoss,
 	readSettings,

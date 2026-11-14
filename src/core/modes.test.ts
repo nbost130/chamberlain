@@ -16,6 +16,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { loadConfig } from "../web/config.ts";
 import { readSettings, resetSettings } from "./config.ts";
 import { migrateStorage } from "./migrate.ts";
 import { assertPrivateDir, enforceMode, InsecureModeError, isPrivateFile, modeText, privateFile } from "./private.ts";
@@ -23,7 +24,6 @@ import { loadOperatingRules } from "./rules.ts";
 import { readServers } from "./servers.ts";
 import { openStore } from "./sqlite-store.ts";
 import { readSweepConfig } from "./sweep.ts";
-import { loadConfig } from "../web/config.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

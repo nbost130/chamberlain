@@ -13,10 +13,14 @@ import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import {
 	ALERT_DESK,
+	type CrashPoint,
 	CURSOR_KEY,
+	type Cursor,
 	DAY_MS,
 	DEFAULTS,
 	DESK_RECEIVER,
+	type DeskConfig,
+	type DeskEvent,
 	drainAlertDesk,
 	inboxPath,
 	localDay,
@@ -33,12 +37,9 @@ import {
 	severityOf,
 	signature,
 	systemTimezone,
-	type Cursor,
-	type CrashPoint,
-	type DeskConfig,
-	type DeskEvent,
 } from "./alert-desk.ts";
 import { createOutbox } from "./deliver.ts";
+
 const MIB = 1024 * 1024;
 
 const T0 = Date.parse("2026-11-13T15:00:00Z"); // 10:00 ET

@@ -1,22 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { normalizeThread, type LastAssistant, type ThreadInput } from "./adapter.ts";
+import { type LastAssistant, normalizeThread, type ThreadInput } from "./adapter.ts";
 import {
 	EXCERPT_CHARS,
+	excerptOf,
 	IDLE_PARENTS_DEFAULTS,
 	IDLE_PARENTS_SOURCE,
-	excerptOf,
-	idleKey,
-	idlePrior,
-	idleParentCandidate,
-	idleParentFindings,
-	idleParentsSource,
-	messageHash,
-	parseIdleParents,
-	selectIdleThreads,
 	type IdleSelection,
 	type IdleThread,
 	type IdleThreadSource,
+	idleKey,
+	idleParentCandidate,
+	idleParentFindings,
+	idleParentsSource,
+	idlePrior,
+	messageHash,
+	parseIdleParents,
+	selectIdleThreads,
 } from "./idle-parents.ts";
 import { runSource } from "./source.ts";
 import { parseSweepConfig } from "./sweep.ts";

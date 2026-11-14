@@ -10,13 +10,9 @@
  */
 import { readdirSync } from "node:fs";
 import { CONF } from "./config.ts";
-import { migrateLayout, revertLayout, type Plan } from "./config-migrate.ts";
+import { migrateLayout, type Plan, revertLayout } from "./config-migrate.ts";
 import {
 	CONFIG_FILE,
-	SCALARS,
-	SECRETS_DIR,
-	SECRET_FILE,
-	THREADS,
 	cfg,
 	configValue,
 	envName,
@@ -25,11 +21,15 @@ import {
 	oldFileState,
 	readConfigFile,
 	reappearedFiles,
+	SCALARS,
+	type ScalarKey,
+	SECRET_FILE,
+	SECRETS_DIR,
 	setting,
 	settingSource,
-	thread,
-	type ScalarKey,
+	THREADS,
 	type ThreadKey,
+	thread,
 } from "./layout.ts";
 
 const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);

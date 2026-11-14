@@ -3,7 +3,7 @@
  * apart from the code that decides when to say them, so the wording can be read and changed in one place. Each function is pure: the caller
  * passes the facts, this returns the text. (The longer standing prompts are the markdown templates in docs/steward-*.md.)
  */
-import { principal, Principal, principalPoss, selfCommand } from "./config.ts";
+import { Principal, principal, principalPoss, selfCommand } from "./config.ts";
 
 /** One alarm: the line that names it and the sentence that says what it means. */
 export type AlarmText = { title: string; summary: string };

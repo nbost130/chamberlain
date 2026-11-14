@@ -6,8 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
 import type { WaitingItem } from "./adapter.ts";
+import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
 import {
 	CARD_UNVERIFIED,
 	cardKey,

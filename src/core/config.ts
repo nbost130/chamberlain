@@ -11,8 +11,10 @@
 import { cfg, setting } from "./layout.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
 import { parseSettledMatch, type Settings, type SettledMatch } from "./settings-parse.ts";
-export { parseSettings } from "./settings-parse.ts";
+
 export type { Settings, SettledMatch } from "./settings-parse.ts";
+export { parseSettings } from "./settings-parse.ts";
+
 import { configDir, stateDir } from "./state-dir.ts";
 
 const HOME = process.env.HOME!;

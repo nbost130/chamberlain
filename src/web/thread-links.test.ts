@@ -5,12 +5,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { newToken } from "../core/capability.ts";
-import type { Adapter, WaitingCard } from "../core/adapter.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
 import { t3Linker } from "../adapters/t3/links.ts";
-import { createFakeAdapter } from "../testing/fake-adapter.ts";
+import type { Adapter, WaitingCard } from "../core/adapter.ts";
+import { newToken } from "../core/capability.ts";
+import { askQuestion, type Question } from "../core/questions.ts";
 import { memoryCapability } from "../testing/capability.ts";
+import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";
 import { createLinker, openPage } from "./thread-links.ts";

@@ -2,22 +2,23 @@
  * The desk as a second wake receiver of the ONE relay: rows and held wakes are kept per receiver, each row goes to its receiver's transport
  * through the one serial queue, and the desk's gate holds only the desk's wakes. Then the engine, against the fake adapter, drains a real inbox file into the desk transport and never into the Steward's.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WakeTransport } from "./deliver.ts";
-import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { noAlert } from "../testing/alert.ts";
+import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
 import { selfCommand } from "./config.ts";
-import { openStore } from "./sqlite-store.ts";
+import type { WakeTransport } from "./deliver.ts";
 import { createEngine } from "./engine.ts";
-import { createRelay } from "./relay.ts";
-import { runWakesCli } from "./wakes-cli.ts";
 import type { Gate } from "./hold.ts";
+import { createRelay } from "./relay.ts";
+import { openStore } from "./sqlite-store.ts";
+import { runWakesCli } from "./wakes-cli.ts";
 
 const transport = () => {
 	const sent: { deliveryId: string; message: string }[] = [];

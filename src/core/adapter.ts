@@ -21,12 +21,13 @@
  *   - no `transcriptPath`  Steward health reports "unavailable"
  *   - no `threadLinks`     a card links to its thread only where the page's config names a link prefix for its server
  */
-import type { Gate } from "./hold.ts";
+
 import type { WakeTransport } from "./deliver.ts";
 import type { InstructionRead } from "./history.ts";
+import type { Gate } from "./hold.ts";
 import type { Question } from "./questions.ts";
-import type { Store } from "./store.ts";
 import type { ServerEntry } from "./servers.ts";
+import type { Store } from "./store.ts";
 
 // ---- the normalized thread -----------------------------------------------------------------------
 

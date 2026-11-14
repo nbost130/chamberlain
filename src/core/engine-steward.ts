@@ -6,7 +6,7 @@
 import type { StewardProbe } from "./adapter.ts";
 import { needsCompact } from "./decide.ts";
 import type { Log } from "./log.ts";
-import { alarms, type AlarmText } from "./messages.ts";
+import { type AlarmText, alarms } from "./messages.ts";
 import { type openRightsSent, rightsHighWater } from "./rights-sent.ts";
 
 const QUEUE_READ_FAILURES_MAX = 5;

@@ -13,8 +13,9 @@
  *   - Events older than 90 days.
  *   - Confirmation challenges that expired or were consumed more than a day ago.
  */
-import { NOTIFICATION_LOG } from "./notification.ts";
+
 import { DELIVERED_KEEP_MS } from "./deliver.ts";
+import { NOTIFICATION_LOG } from "./notification.ts";
 import type { Store } from "./store.ts";
 
 export const ITEM_KEEP_MS = 30 * 24 * 3600_000;

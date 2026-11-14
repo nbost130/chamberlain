@@ -1,19 +1,20 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { parseAsk } from "../ask.ts";
+import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
+import { createOutbox } from "./deliver.ts";
+import { askQuestion, QUEUE } from "./questions.ts";
 import {
 	HEALTH_CONFIG as C,
+	type Health,
 	handoffDeliveryId,
 	handoffWakeMessage,
-	measure as measureWith,
 	healthTicker,
+	measure as measureWith,
 	readHealth,
-	type Health,
 } from "./steward-health.ts";
-import { createOutbox } from "./deliver.ts";
-import { testRelay } from "../testing/relay.ts";
-import { askQuestion, QUEUE } from "./questions.ts";
-import { parseAsk } from "../ask.ts";
+
 // The format signal reads a prompt hook that grades each reply; this is its pattern, as an operator would configure it.
 const formatPattern = /FORMAT CONTRACT[^\n]*Last response (broke:|was clean)/;
 // What an adapter tells the health check about its tools: here the fixtures' `t3_thread_read` and a `peek.ts` shell call.

@@ -7,6 +7,7 @@
  */
 export const SERVER_NAMES = ["main", "laptop", "desktop"] as const;
 export type ServerNames = readonly [string, string, string];
+
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 
 export const FAKE = {

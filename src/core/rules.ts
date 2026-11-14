@@ -32,9 +32,9 @@
  * file, brief.ts uses `operating-rules.md` from the config directory whole, if there is one.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isPrivateFile, modeText } from "./private.ts";
 import { cfg as cfgValue } from "./layout.ts";
-import { SCHEMA_VERSION, checkVersion } from "./schema.ts";
+import { isPrivateFile, modeText } from "./private.ts";
+import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
 
 /** The 0.1 selector: a section, whole or by line prefixes. */
 export type RuleSpec = [section: string, lines: string[] | "whole"];

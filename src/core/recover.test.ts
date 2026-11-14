@@ -1,26 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import type { RunFailure, RunLook, ThreadState } from "./adapter.ts";
 import { normalizeThread } from "./adapter.ts";
-import { retrySeed } from "./recover.ts";
+import type { JudgeAnswer } from "./judge.ts";
 import {
 	breakerItem,
 	classifyFailure,
 	createRecovery,
 	DEFAULT_RECOVER_TIMING,
+	type FailureKind,
+	type Handling,
 	judgeBrief,
-	memoryRecoverStore,
 	MIN,
+	memoryRecoverStore,
 	neverRetryThread,
 	outcomeOf,
 	RETRY_KINDS,
 	RETRY_TEXT,
-	verdictItem,
-	type FailureKind,
-	type Handling,
 	type RecoverDeps,
 	type RecoverStore,
+	retrySeed,
+	verdictItem,
 } from "./recover.ts";
-import type { JudgeAnswer } from "./judge.ts";
 
 const NOW = Date.parse("2026-11-13T12:00:00Z");
 

@@ -1,14 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { assertSupported, FILES, migrateStorage, STEPS, upgradeData } from "./migrate.ts";
+import { LATEST_MIGRATION } from "./migrations.ts";
+import { checkVersion, SCHEMA_VERSION, SchemaTooNewError, stamp, versionOf } from "./schema.ts";
 import { readServers } from "./servers.ts";
 import { holdFlock } from "./singleton.ts";
-import { LATEST_MIGRATION } from "./migrations.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath } from "./store.ts";
-import { SCHEMA_VERSION, SchemaTooNewError, checkVersion, stamp, versionOf } from "./schema.ts";
 
 const dirs: string[] = [];
 const world = () => {

@@ -40,10 +40,10 @@ import {
 } from "node:fs";
 import { basename, dirname } from "node:path";
 import { selfCommand } from "./config.ts";
-import { type ShapeSet, describeShape, parseGatherer, parseShapes } from "./desk-shapes.ts";
 import type { Outbox, WakeDraft } from "./deliver.ts";
-import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
+import { describeShape, parseGatherer, parseShapes, type ShapeSet } from "./desk-shapes.ts";
 import { CONFIG_FILE, cfg, configValue } from "./layout.ts";
+import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import type { Item, Store } from "./store.ts";
 
 export const ALERT_DESK = "alert-desk";

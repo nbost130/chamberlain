@@ -29,25 +29,26 @@
  */
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
-import { CONF, STATE } from "./core/config.ts";
-import { readToken } from "./core/capability.ts";
-import { cfg } from "./core/layout.ts";
 import { homeAdapter } from "./adapters/index.ts";
+import { readToken } from "./core/capability.ts";
+import { CONF, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
+import { cfg } from "./core/layout.ts";
 import { startup } from "./core/migrate.ts";
-import { expiresProblem, isExpired } from "./core/rulings.ts";
 import {
 	alwaysUrgent,
 	askQuestion,
+	type Evidence,
 	evidenceRoot,
 	isUrgent,
 	KINDS,
 	newItemId,
-	type Evidence,
-	type Question,
 	type Option,
+	type Question,
 } from "./core/questions.ts";
+import { expiresProblem, isExpired } from "./core/rulings.ts";
 import { findSettled, refusalLines } from "./core/settled.ts";
+
 export { newItemId };
 
 const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);

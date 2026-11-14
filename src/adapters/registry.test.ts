@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { conformance, has } from "../core/adapter.ts";
-import { adapterEntry, adapterNames, makeAdapter, loadServers } from "./index.ts";
+import { adapterEntry, adapterNames, loadServers, makeAdapter } from "./index.ts";
 import { t3Server } from "./t3/server.ts";
 import { postWebhook, webhookWake } from "./t3/wake.ts";
 

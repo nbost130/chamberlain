@@ -4,7 +4,7 @@
  * trusted, means the next wake sends them in full: doubt always sends them again.
  */
 import { createHash } from "node:crypto";
-import { RIGHTS_MARKER, rightsInFull, rightsUnchanged, type RightsSent } from "./decide.ts";
+import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged } from "./decide.ts";
 import { rightsWake } from "./messages.ts";
 import type { RightsStamp, Store } from "./store.ts";
 

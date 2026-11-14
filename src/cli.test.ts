@@ -9,15 +9,15 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../package.json" with { type: "json" };
-import { awayModeLine } from "./core/messages.ts";
-import { stewardBrief, type BriefInput } from "./core/brief.ts";
-import { COMMANDS, DEBUG_COMMANDS, REPO, selfArgv, selfCommand, setCompiled, type CommandName } from "./core/config.ts";
-import { renderStartPrompt, sweepMessage, type SweepAction } from "./core/sweep.ts";
 import { t3Brief } from "./adapters/t3/brief.ts";
-import { createApp } from "./web/app.ts";
-import { memStore } from "./testing/store.ts";
 import { debugUsage, run, usage, VERSION } from "./cli.ts";
+import { type BriefInput, stewardBrief } from "./core/brief.ts";
+import { COMMANDS, type CommandName, DEBUG_COMMANDS, REPO, selfArgv, selfCommand, setCompiled } from "./core/config.ts";
+import { awayModeLine } from "./core/messages.ts";
+import { renderStartPrompt, type SweepAction, sweepMessage } from "./core/sweep.ts";
 import { openCapability } from "./testing/capability.ts";
+import { memStore } from "./testing/store.ts";
+import { createApp } from "./web/app.ts";
 
 afterEach(() => setCompiled());
 

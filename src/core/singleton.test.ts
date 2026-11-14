@@ -8,8 +8,9 @@
  * the lock, it tries again in the same process and opens and closes other descriptors to the database and its directory. Under POSIX `fcntl` locks that
  * released the holder's lock; under `flock` it must not.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
 	closeSync,
 	existsSync,

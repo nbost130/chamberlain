@@ -17,8 +17,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isPrivateFile } from "../../core/private.ts";
-import { connect, type Rpc } from "./rpc.ts";
 import {
+	CALL_TIMEOUT_MS,
 	createRpcPing,
 	messageCommand,
 	openWithin,
@@ -26,17 +26,18 @@ import {
 	redact,
 	stableId,
 	within,
-	CALL_TIMEOUT_MS,
 } from "./ping.ts";
+import { connect, type Rpc } from "./rpc.ts";
 
 // The one send path lives in ./ping.ts; these are re-exported because the page and the tests import them from here.
-export { redact, stableId, within, CALL_TIMEOUT_MS };
-import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
-import { normalizeWaitKind } from "./state.ts";
-import { checkProjection } from "./projection.ts";
-import { tagIn } from "../../core/questions.ts";
+export { CALL_TIMEOUT_MS, redact, stableId, within };
+
 import type { AnswerOutcome, ListWaitingOptions, ThreadLinks, WaitingCard } from "../../core/adapter.ts";
+import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
+import { tagIn } from "../../core/questions.ts";
+import { checkProjection } from "./projection.ts";
 import type { T3Server } from "./server.ts";
+import { normalizeWaitKind } from "./state.ts";
 
 export type Server = Pick<T3Server, "name" | "origin" | "tokenFile" | "operateTokenFile">;
 type Question = {

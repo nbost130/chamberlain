@@ -4,9 +4,10 @@
  * quiet window, then any background work or child threads, for up to REPORT_HOLD_MS. Past that it goes anyway: a hung
  * task must not swallow a report.
  */
-import { setting } from "./layout.ts";
+
 import { reportStillDue, type ThreadState } from "./decide.ts";
-import { skipEvent, type InstructionRead } from "./history.ts";
+import { type InstructionRead, skipEvent } from "./history.ts";
+import { setting } from "./layout.ts";
 
 export const REPORT_HOLD_MS = 60 * 60_000;
 /** The hold in force: `reportHoldMs` (CHAMBERLAIN_REPORT_HOLD_MS, else config.json), else the default above. */

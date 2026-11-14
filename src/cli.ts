@@ -7,7 +7,7 @@
  * The diagnostic commands (DEBUG_COMMANDS) are run as `chamberlain debug <name>`; `chamberlain <name>` still works for them, unlisted.
  */
 import pkg from "../package.json" with { type: "json" };
-import { COMMANDS, DEBUG_COMMANDS, isDebugCommand, type CommandName } from "./core/config.ts";
+import { COMMANDS, type CommandName, DEBUG_COMMANDS, isDebugCommand } from "./core/config.ts";
 
 type Tool = { main: (argv: string[]) => unknown };
 

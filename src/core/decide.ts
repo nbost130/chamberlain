@@ -1,8 +1,8 @@
-import { principal, principalPoss } from "./config.ts";
 import type { ThreadState, WakeKind } from "./adapter.ts";
+import { principal, principalPoss } from "./config.ts";
 
 /** Pure rules: which thread transitions are worth waking the Steward for. They read the normalized ThreadState (adapter.ts). */
-export type { ThreadState, WakeKind, WaitQuestion } from "./adapter.ts";
+export type { ThreadState, WaitQuestion, WakeKind } from "./adapter.ts";
 export type Candidate = { kind: WakeKind; thread: ThreadState; key: string };
 
 export const LIVE = new Set(["running", "queued", "starting", "preparing", "waiting"]);

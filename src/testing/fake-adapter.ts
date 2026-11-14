@@ -12,11 +12,11 @@
  * declare has no method at all, so the core's degraded paths run exactly as they would for a thin real backend.
  */
 import {
-	normalizeThread,
 	type Adapter,
 	type AnswerOutcome,
 	type Inspector,
 	type LastAssistant,
+	normalizeThread,
 	type OptionalCapability,
 	type PostOptions,
 	type PostResult,
@@ -32,8 +32,8 @@ import {
 	type WatchSink,
 } from "../core/adapter.ts";
 import type { WakeTransport } from "../core/deliver.ts";
-import type { Gate } from "../core/hold.ts";
 import type { InstructionRead } from "../core/history.ts";
+import type { Gate } from "../core/hold.ts";
 import type { Question } from "../core/questions.ts";
 
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = [

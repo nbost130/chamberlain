@@ -5,10 +5,10 @@
  * looks like now is composed from those rows (`questionStates`).
  */
 import { randomBytes } from "node:crypto";
-import type { Store } from "./store.ts";
 import { principal } from "./config.ts";
 import { answerWakeText } from "./messages.ts";
 import type { Ruling } from "./rulings.ts";
+import type { Store } from "./store.ts";
 
 export type Kind = "only-you" | "product" | "ruling" | "idea";
 export const KINDS: Kind[] = ["only-you", "product", "ruling", "idea"];

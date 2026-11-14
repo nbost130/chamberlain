@@ -3,10 +3,11 @@
  * tabbed view (the page, inline) and never a question card, so nothing in that thread blocks. With the page down it
  * is a one-line notice. The queue item is already recorded, so a failed post leaves the question on the page.
  */
-import { inlineScriptSrc, withoutToken } from "../../core/capability.ts";
-import { thread as configThread } from "../../core/layout.ts";
-import { CONF, PrincipalPoss } from "../../core/config.ts";
+
 import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
+import { inlineScriptSrc, withoutToken } from "../../core/capability.ts";
+import { CONF, PrincipalPoss } from "../../core/config.ts";
+import { thread as configThread } from "../../core/layout.ts";
 import { cardTag, type Question } from "../../core/questions.ts";
 import { pingViaCli, t3Cli } from "./ping.ts";
 

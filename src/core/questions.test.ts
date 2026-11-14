@@ -1,27 +1,27 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { parseAsk, stageEvidence } from "../ask.ts";
+import { memStore } from "../testing/store.ts";
 import {
-	askQuestion,
+	type Answer,
 	answerWake,
+	askQuestion,
 	batchable,
 	claimWake,
 	getQuestion,
 	notNow,
 	pageClaim,
-	questionStates,
 	QUEUE,
+	type Question,
+	questionStates,
 	ranked,
 	readClaim,
 	recordAnswerDelivered,
 	wokenBy,
-	type Answer,
-	type Question,
 } from "./questions.ts";
 import { openStore } from "./sqlite-store.ts";
-import { memStore } from "../testing/store.ts";
 import type { Store } from "./store.ts";
 
 export const item = (id: string, over: Partial<Question> = {}): Question => ({

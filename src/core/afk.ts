@@ -29,11 +29,11 @@
  * the prose: only the `item` field links a hold to an answer, so a hold with no item closes through its refs or by `close`.
  */
 import { createHash } from "node:crypto";
-import { principal, selfCommand } from "./config.ts";
-import { awayModeLine } from "./messages.ts";
-import { defaultStore } from "./default-store.ts";
-import { startup } from "./migrate.ts";
 import { closeCardByHand } from "./card-hold.ts";
+import { principal, selfCommand } from "./config.ts";
+import { defaultStore } from "./default-store.ts";
+import { awayModeLine } from "./messages.ts";
+import { startup } from "./migrate.ts";
 import { getQuestion } from "./questions.ts";
 import { findSettled, refusalLines } from "./settled.ts";
 import type { AwayRecord, Store } from "./store.ts";
