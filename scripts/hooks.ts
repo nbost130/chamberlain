@@ -11,6 +11,10 @@
 //               the files it changes against origin/main, knip, jscpd, and the full tests under the one heavy-work lock
 //               all worktrees of this clone share
 //
+// Every check and the test run is started with an explicit environment that has no GIT_* variable (scripts/git-env.ts): git exports
+// GIT_DIR and others to a hook, and a child that inherits them points the git commands of a test at the real repository. The test run
+// also gets a scratch HOME and global git config under TMPDIR and no system config.
+//
 // Each hook is one lefthook job that runs its steps here in order and stops at the first failure, so a failed check never
 // reaches the step that marks a tree verified, and never starts the 100-second test run.
 //
@@ -18,19 +22,10 @@
 // <git-common-dir>/chamberlain-hooks/bypass.log. Git has no hook after a `git push --no-verify`, and
 // LEFTHOOK=0 or excluding every job stops lefthook before any code of ours runs; CI runs the same
 // checks on every PR and is what catches those.
-import {
-	appendFileSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { withLock } from "./hooks-lock.ts";
+import { inSnapshot, run, runTests, snapshotCommit, snapshotIndex } from "./hooks-run.ts";
 
 const DROPPING_VARS = ["LEFTHOOK_EXCLUDE", "LEFTHOOK_ONLY"];
 export const LOCK_TIMEOUT_MS = 600_000;
@@ -39,8 +34,16 @@ const NO_SHA = /^0+$/;
 /** Reflog actions whose commits git makes without running pre-commit: not a bypass. */
 const REPLAY_ACTIONS = ["cherry-pick", "revert", "rebase", "merge", "pull", "am"];
 
-function git(args: string[], cwd?: string): { ok: boolean; out: string } {
-	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", ...(cwd ? { cwd } : {}) });
+/**
+ * Runs git. The hook's own git calls keep the environment git gave the hook (GIT_DIR, GIT_INDEX_FILE: they name the repository
+ * being pushed or committed to); a caller that works on some other repository, as the tests do, passes a sealed `env`.
+ */
+export function git(
+	args: string[],
+	cwd?: string,
+	env: Record<string, string | undefined> = process.env,
+): { ok: boolean; out: string } {
+	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", env, ...(cwd ? { cwd } : {}) });
 	return { ok: proc.exitCode === 0, out: proc.stdout.toString().trim() };
 }
 
@@ -108,33 +111,6 @@ function audit(): number {
 
 // ---- snapshots: the checks run on the bytes that will be committed or pushed ----------------------------------------
 
-/** Writes every file of the index (what the next commit will contain) under `dir`. */
-export function snapshotIndex(root: string, dir: string): boolean {
-	return git(["checkout-index", "--all", `--prefix=${dir}/`], root).ok;
-}
-
-/** Writes the tree of commit `sha` under `dir`. */
-export function snapshotCommit(root: string, sha: string, dir: string): boolean {
-	const archive = Bun.spawnSync(["git", "archive", "--format=tar", sha], { cwd: root, stdout: "pipe", stderr: "pipe" });
-	if (archive.exitCode !== 0) return false;
-	return Bun.spawnSync(["tar", "-x", "-C", dir], { stdin: archive.stdout }).exitCode === 0;
-}
-
-/** Fills a fresh temporary directory, links the clone's node_modules into it, runs `body` there, and removes it. */
-async function inSnapshot(root: string, fill: (dir: string) => boolean, body: (dir: string) => Promise<number>) {
-	const dir = mkdtempSync(join(tmpdir(), "chamberlain-hook-"));
-	try {
-		if (!fill(dir)) {
-			console.error("hooks: could not take a snapshot to check");
-			return 1;
-		}
-		symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
-		return await body(dir);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-}
-
 const LINTED = /^(src|scripts)\/.*\.ts$/;
 /** The snapshot has no .git, so Biome must not look for one. */
 const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-unmatched", "--vcs-enabled=false"];
@@ -143,10 +119,6 @@ const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-
 function listed(args: string[], root: string): string[] | undefined {
 	const out = git(args, root);
 	return out.ok ? out.out.split("\n").filter((file) => LINTED.test(file)) : undefined;
-}
-
-export async function run(cmd: string[], cwd: string): Promise<number> {
-	return await Bun.spawn(cmd, { cwd, stdio: ["inherit", "inherit", "inherit"] }).exited;
 }
 
 /** Biome on `files` (every file when undefined); nothing to check is a pass. */
@@ -228,7 +200,7 @@ const checksOf = (root: string, sha: string): Promise<number> =>
 				["biome on the changed files", () => lint(changedBy(root, sha), dir)],
 				["knip", () => run(["bun", "run", "knip"], dir)],
 				["jscpd", () => run(["bun", "run", "jscpd"], dir)],
-				["tests", () => withLock(["bun", "test"], dir)],
+				["tests", () => withLock(() => runTests(["bun", "test"], dir))],
 			]),
 	);
 
@@ -250,7 +222,7 @@ async function prePush(): Promise<number> {
 async function install(): Promise<number> {
 	if (process.env.CI) return 0;
 	if (!git(["rev-parse", "--git-dir"]).ok) return 0;
-	return await run(["bunx", "lefthook", "install"], process.cwd());
+	return await run(["bunx", "lefthook", "install"], process.cwd(), process.env);
 }
 
 if (import.meta.main) {

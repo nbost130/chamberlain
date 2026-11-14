@@ -1,7 +1,7 @@
 /** The one lock all worktrees of a clone share for the heavy hook work: taking it, reclaiming one a dead process left, releasing it. */
 import { linkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { LOCK_TIMEOUT_MS, readLines, run, stateDir } from "./hooks.ts";
+import { LOCK_TIMEOUT_MS, readLines, stateDir } from "./hooks.ts";
 
 function alive(pid: number): boolean {
 	try {
@@ -60,7 +60,7 @@ export function releaseLock(path: string): void {
 	if (ownerOf(path) === process.pid) rmSync(path, { force: true });
 }
 
-export async function withLock(cmd: string[], cwd: string): Promise<number> {
+export async function withLock(job: () => Promise<number>): Promise<number> {
 	const path = join(stateDir(), "heavy.lock");
 	const deadline = Date.now() + LOCK_TIMEOUT_MS;
 	while (!takeLock(path)) {
@@ -75,7 +75,7 @@ export async function withLock(cmd: string[], cwd: string): Promise<number> {
 		process.exit(130);
 	});
 	try {
-		return await run(cmd, cwd);
+		return await job();
 	} finally {
 		releaseLock(path);
 	}
