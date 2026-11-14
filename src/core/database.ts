@@ -11,6 +11,7 @@
 import { type Changes, Database } from "bun:sqlite";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
+import { applyMigrations } from "./apply-migrations.ts";
 import type { Migration } from "./migrations.ts";
 import { DIR_MODE, enforceMode, FILE_MODE } from "./private.ts";
 
@@ -29,6 +30,8 @@ export type Db = {
 	all(sql: string, ...p: unknown[]): Row[];
 	one(sql: string, ...p: unknown[]): Row | undefined;
 	run(sql: string, ...p: unknown[]): Changes;
+	/** Runs `fn` with the busy timeout at zero, so a held write lock is an error at once and not a wait of seconds. */
+	nowait<T>(fn: () => T): T;
 };
 
 /** A database's migrations, and what to throw when the file has a newer one than the last of them. */
@@ -38,7 +41,7 @@ export type Schema = {
 };
 
 /** The directory 0700 and the file 0600, each CHECKED after the chmod, and the file created before SQLite makes its own -wal and -shm files. */
-function preparePrivateFile(path: string, o: OpenOptions): void {
+export function preparePrivateFile(path: string, o: OpenOptions): void {
 	const dir = dirname(path);
 	mkdirSync(dir, { recursive: true, mode: DIR_MODE });
 	// Private before anything else: the directory 0700 and the file 0600, each CHECKED after the chmod. A mode that cannot be set
@@ -68,21 +71,49 @@ export function openDatabase(path: string, o: OpenOptions, schema: Schema): Data
 	return db;
 }
 
-/** The transaction wrapper and query helpers over `db`. */
-export function queries(db: Database): Db {
+/**
+ * The transaction wrapper and query helpers over `db`, opened with `o`. `after(fn)` runs `fn` once the outermost transaction has committed
+ * (at once when none is open) and never when it rolls back: the telemetry of a ledger write waits for the write to be real.
+ */
+export function queries(db: Database, o: OpenOptions = {}): Db & { after: (fn: () => void) => void } {
+	const busyMs = Math.max(1, Math.floor(o.busyMs ?? 10_000));
+	const { tx, after } = makeTx(db);
 	return {
-		tx: makeTx(db),
+		tx,
+		after,
 		all: (sql, ...p) => db.query(sql).all(...(p as never[])) as Row[],
 		one: (sql, ...p) => (db.query(sql).get(...(p as never[])) ?? undefined) as Row | undefined,
 		run: (sql, ...p) => db.query(sql).run(...(p as never[])),
+		nowait: (fn) => {
+			db.exec("PRAGMA busy_timeout = 0");
+			try {
+				return fn();
+			} finally {
+				db.exec(`PRAGMA busy_timeout = ${busyMs}`);
+			}
+		},
 	};
 }
 
 // ---- transactions -------------------------------------------------------------------------------
 
-/** A transaction wrapper over `db`: BEGIN IMMEDIATE at the top level and a savepoint inside one. A callback that returns a promise is refused. */
-function makeTx(db: Database): Db["tx"] {
+/**
+ * A transaction wrapper over `db`: BEGIN IMMEDIATE at the top level and a savepoint inside one. A callback that returns a promise is refused.
+ * `after(fn)` runs `fn` once the outermost transaction has committed (at once when none is open), and never when it rolls back: the telemetry
+ * of a ledger write waits for the write to be real.
+ */
+function makeTx(db: Database): { tx: Db["tx"]; after: (fn: () => void) => void } {
 	let depth = 0;
+	let later: (() => void)[] = [];
+	function ran(fns: (() => void)[]) {
+		for (const fn of fns) {
+			try {
+				fn();
+			} catch {
+				/* a telemetry callback never fails a commit */
+			}
+		}
+	}
 	function outermost<T>(fn: () => T): T {
 		db.exec("BEGIN IMMEDIATE");
 		depth = 1;
@@ -91,8 +122,13 @@ function makeTx(db: Database): Db["tx"] {
 			if (out && typeof (out as { then?: unknown }).then === "function")
 				throw Error("a store transaction cannot await");
 			db.exec("COMMIT");
+			const done = later;
+			later = [];
+			depth = 0;
+			ran(done);
 			return out;
 		} catch (e) {
+			later = [];
 			try {
 				db.exec("ROLLBACK");
 			} catch {
@@ -105,6 +141,7 @@ function makeTx(db: Database): Db["tx"] {
 	}
 	function nested<T>(fn: () => T): T {
 		const name = `sp${depth}`;
+		const mark = later.length;
 		db.exec(`SAVEPOINT ${name}`);
 		depth++;
 		try {
@@ -112,6 +149,7 @@ function makeTx(db: Database): Db["tx"] {
 			db.exec(`RELEASE ${name}`);
 			return out;
 		} catch (e) {
+			later.length = mark;
 			db.exec(`ROLLBACK TO ${name}`);
 			db.exec(`RELEASE ${name}`);
 			throw e;
@@ -119,40 +157,14 @@ function makeTx(db: Database): Db["tx"] {
 			depth--;
 		}
 	}
-	return <T>(fn: () => T): T => (depth === 0 ? outermost(fn) : nested(fn));
+	return {
+		tx: <T>(fn: () => T): T => (depth === 0 ? outermost(fn) : nested(fn)),
+		after: (fn) => (depth === 0 ? ran([fn]) : later.push(fn)),
+	};
 }
 
 // ---- migrations ---------------------------------------------------------------------------------
 
 function migrate(db: Database, path: string, schema: Schema) {
-	db.exec(
-		"CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)",
-	);
-	const newest = () => (db.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number | null }).v ?? 0;
-	const found = newest();
-	const latest = schema.migrations[schema.migrations.length - 1]?.version ?? 0;
-	if (found > latest) throw schema.tooNew(path, found);
-	for (const m of schema.migrations) {
-		if (m.version <= found) continue;
-		db.exec("BEGIN IMMEDIATE");
-		try {
-			// Another process may have applied it while this one waited for the lock.
-			if (m.version > newest()) {
-				db.exec(m.sql);
-				db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, ?)").run(
-					m.version,
-					m.name,
-					new Date().toISOString(),
-				);
-			}
-			db.exec("COMMIT");
-		} catch (e) {
-			try {
-				db.exec("ROLLBACK");
-			} catch {
-				/* ended */
-			}
-			throw e;
-		}
-	}
+	applyMigrations(db, schema.migrations, (found) => schema.tooNew(path, found));
 }

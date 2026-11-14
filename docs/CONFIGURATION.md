@@ -372,7 +372,9 @@ Chamberlain keeps no cache files today; `$XDG_CACHE_HOME/chamberlain` is reserve
 ```
 ~/.config/chamberlain/        what you write: config.json, secrets/ (a file per token or URL, mode 0600), decision-rights.md
 ~/.local/state/chamberlain/   what Chamberlain writes, and what a backup must keep
-  chamberlain.db              the one SQLite database (mode 0600), with chamberlain.db-wal and -shm beside it while it is open
+  chamberlain.db              the SQLite ledger database (mode 0600), with chamberlain.db-wal and -shm beside it while it is open
+  obs.db                      the telemetry database (mode 0600, WAL): events, and the logger's counters. Safe to delete with the daemon stopped (the reconciler rebuilds the
+                              ledger-derived events at the next start); a backup of the ledger does not need it
   mail.db                     only with the optional `mail` module on: its own database, same rules (mode 0600, WAL)
   evidence/<item>/            the screenshots and recordings the database's evidence rows point to
   steward-brief.md            the Steward's hand-off
@@ -419,7 +421,9 @@ that are not config keys:
 | --- | --- | --- |
 | `CHAMBERLAIN_CONF`, `CHAMBERLAIN_STATE` | `$XDG_CONFIG_HOME/chamberlain`, `$XDG_STATE_HOME/chamberlain` (else `~/.config/chamberlain`, `~/.local/state/chamberlain`) | The two directories. They name where `config.json` is, so they are never keys in it. Point them at scratch directories to try things out without touching your real ones. |
 | `CHAMBERLAIN_DRY` | unset | `1`: the daemon watches and logs, and posts nothing. A switch for one run, so not a key. |
-| `CHAMBERLAIN_VERBOSE` | unset | Also print each log line to stdout. |
+| `CHAMBERLAIN_VERBOSE` | unset | Also print each log line to stdout, as the old `events` table holds it. |
+| `CHAMBERLAIN_LOG` | unset | `debug`: also store `debug` rows in `obs.db` (otherwise a `debug` call is dropped). |
+| `CHAMBERLAIN_HOST` | the hostname | The `host` column of every row this process writes: lowercase letters, digits and dashes, 32 at most. |
 | `CHAMBERLAIN_ALARM_KEY` | set by Chamberlain | Not for you to set. It is in the environment of your `alertCmd` when Chamberlain runs it: the alarm's stable key (for example `steward-stalled`), so a command that pages someone can de-duplicate on it. |
 | `T3CODE_CLI_PATH` | auto | The `t3` binary `chamberlain ask` uses; otherwise `<t3Dir>/bin/t3`, then the newest installed runtime. |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where to find the Steward's Claude Code transcripts for health measurement. |

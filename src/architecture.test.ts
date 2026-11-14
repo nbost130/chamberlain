@@ -453,12 +453,14 @@ describe("one item system", () => {
 		expect(callers).toEqual(["core/sqlite-store.ts"]);
 	});
 
-	test("nothing in src/core/ but the store and the shared opener opens a database: the core reaches state only through the Store", () => {
+	test("nothing in src/core/ but the store, the shared opener and the telemetry opener opens a database: the core reaches state only through the Store", () => {
+		// The ledger database is opened through the shared opener (src/core/database.ts, which an optional module's own database file uses too) and
+		// the Store's own read-only fold (sqlite-store.ts). The telemetry database (`obs.db`), and the read-only open of the ledger that the
+		// reconciler needs, are the one other place: core/obs/db.ts, which everything else in core/obs/ goes through.
 		const opens = sources().filter(
 			(f) => f.startsWith("core/") && /from\s*["']bun:sqlite["']/.test(readFileSync(join(SRC, f), "utf8")),
 		);
-		// The store, and the one opener it shares with an optional module's own database file (src/core/database.ts).
-		expect(opens).toEqual(["core/database.ts", "core/sqlite-store.ts"]);
+		expect(opens.sort()).toEqual(["core/database.ts", "core/obs/db.ts", "core/sqlite-store.ts"]);
 	});
 
 	test("the checker catches each kind of second mechanism (so a pass means something)", () => {

@@ -7,6 +7,7 @@
  */
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
+import { ledgerEvents } from "./obs/ledger.ts";
 import { citedIds } from "./rulings.ts";
 import type { DecisionRow } from "./store.ts";
 
@@ -38,7 +39,8 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		process.exit(2);
 	}
 	const rec = decisionRecord(thread, decision, ruling, ref);
-	defaultStore().decisions.append(rec);
+	const store = defaultStore();
+	ledgerEvents(store).decision(store.decisions.append(rec), rec);
 	console.log(rec.rulingIds ? `logged, citing ${rec.rulingIds.join(", ")}` : "logged");
 }
 

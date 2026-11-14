@@ -72,11 +72,19 @@ function required(r: Row | undefined, what: string): Row {
 /** Opens (creating and migrating) the database at `path`, or `:memory:`. */
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o, { migrations: MIGRATIONS, tooNew: (p, found) => new DatabaseTooNewError(p, found) });
-	const c = queries(db);
+	const c = queries(db, o);
+	const closers: (() => void)[] = [];
 	return {
 		path,
 		tx: c.tx,
-		close: () => db.close(),
+		close: () => {
+			for (const fn of closers.splice(0)) fn();
+			db.close();
+		},
+		afterCommit: c.after,
+		onClose: (fn) => {
+			closers.push(fn);
+		},
 		items: makeItems(c),
 		claims: makeClaims(c),
 		evidence: makeEvidence(c),
@@ -554,17 +562,18 @@ const toDecision = (r: Row): DecisionRow => ({
 	ref: (r.ref as string | null) ?? null,
 });
 const makeDecisions = (c: Db): Store["decisions"] => ({
-	append: (d) => {
-		c.run(
-			"INSERT INTO decisions (t, thread, decision, ruling, ruling_ids, ref) VALUES (?, ?, ?, ?, ?, ?)",
-			d.t,
-			d.thread,
-			d.decision,
-			d.ruling,
-			json(d.rulingIds),
-			d.ref,
-		);
-	},
+	append: (d) =>
+		Number(
+			c.run(
+				"INSERT INTO decisions (t, thread, decision, ruling, ruling_ids, ref) VALUES (?, ?, ?, ?, ?, ?)",
+				d.t,
+				d.thread,
+				d.decision,
+				d.ruling,
+				json(d.rulingIds),
+				d.ref,
+			).lastInsertRowid,
+		),
 	list: () => c.all("SELECT * FROM decisions ORDER BY id").map(toDecision),
 });
 
@@ -929,17 +938,34 @@ const eventWhere = (q: EventQuery) => {
 	}
 	return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", p };
 };
+const BUSY = /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i;
+const appendEvent = (c: Db, e: LogEvent, importKey?: string) => {
+	const { t, event, src, ...data } = e;
+	c.run(
+		"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
+		t,
+		event,
+		src ?? null,
+		JSON.stringify(data),
+		importKey ?? null,
+	);
+};
 const makeEvents = (c: Db): Store["events"] => ({
-	append(e, importKey) {
-		const { t, event, src, ...data } = e;
-		c.run(
-			"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
-			t,
-			event,
-			src ?? null,
-			JSON.stringify(data),
-			importKey ?? null,
-		);
+	append: (e, importKey) => {
+		appendEvent(c, e, importKey);
+	},
+	tryAppendMany(lines) {
+		try {
+			c.nowait(() =>
+				c.tx(() => {
+					for (const [e, key] of lines) appendEvent(c, e, key);
+				}),
+			);
+			return true;
+		} catch (err) {
+			if (BUSY.test(String(err))) return false;
+			throw err;
+		}
 	},
 	query(q = {}) {
 		const w = eventWhere(q);

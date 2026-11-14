@@ -28,7 +28,7 @@ import {
 import { CONF, STATE } from "../core/config.ts";
 import { defaultStore } from "../core/default-store.ts";
 import { readNamed } from "../core/layout.ts";
-import { makeLog } from "../core/log.ts";
+import { type Logger, logFor } from "../core/log.ts";
 import { maintain } from "../core/maintain.ts";
 import { startup } from "../core/migrate.ts";
 import type { ServerEntry } from "../core/servers.ts";
@@ -182,7 +182,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	}
 
 	const store = defaultStore();
-	const log = makeLog(store, { src: "queue-web" });
+	const log = logFor(store, { src: "queue-web" });
 	const privateFile = (name: string) => readNamed(CONF, name);
 	// The daemon raises alarms; the page only logs them, so a page problem never alerts the principal twice.
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
@@ -225,7 +225,7 @@ function makeApp(
 	cfg: WebConfig,
 	TEST: boolean,
 	store: ReturnType<typeof defaultStore>,
-	log: ReturnType<typeof makeLog>,
+	log: Logger,
 	servers: () => ServerAdapter[],
 	mirror: ReturnType<typeof createWaiting> | undefined,
 ) {
@@ -250,17 +250,17 @@ function makeApp(
  * granted rights. The Decisions server's comes from web.json (decisionsServer), the others' from web.json's answerTokens; any
  * server without one is read-only. servers.json is read again on every poll, and an adapter is kept while its entry is unchanged.
  */
-function serverAdapters(
-	cfg: WebConfig,
-	store: ReturnType<typeof defaultStore>,
-	log: ReturnType<typeof makeLog>,
-): () => ServerAdapter[] {
+function serverAdapters(cfg: WebConfig, store: ReturnType<typeof defaultStore>, log: Logger): () => ServerAdapter[] {
 	const alarm = (key: string, title: string) => log("alarm", { key, title });
 	const pool = new Map<string, { key: string; adapter: Adapter }>();
 	return () => {
 		try {
 			// Answer rights come only from web.json. Any operateTokenFile a servers.json entry carries is dropped.
 			const list: ServerEntry[] = withAnswerRights(loadServers(CONF), cfg.decisionsServer, cfg.answerTokens);
+			log.obs.allow(
+				"server",
+				list.map((server) => server.name),
+			);
 			const out = list.map((server) => {
 				const key = JSON.stringify(server);
 				let held = pool.get(server.name);
@@ -286,7 +286,7 @@ function serverAdapters(
 function titleKeeperFor(
 	titled: ServerAdapter | undefined,
 	openCount: Parameters<typeof titleKeeper>[0],
-	log: ReturnType<typeof makeLog>,
+	log: Logger,
 ): (() => Promise<void>) | undefined {
 	const adapter = titled?.adapter;
 	if (!adapter || !has(adapter, "setTitle")) return undefined;
@@ -298,7 +298,7 @@ async function runLoops(
 	app: ReturnType<typeof createApp>,
 	mirror: ReturnType<typeof createWaiting> | undefined,
 	keepTitle: (() => Promise<void>) | undefined,
-	log: ReturnType<typeof makeLog>,
+	log: Logger,
 ): Promise<void> {
 	const tick = async () => {
 		try {

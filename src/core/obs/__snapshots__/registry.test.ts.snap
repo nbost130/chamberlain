@@ -1,0 +1,197 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`the registry a field named for a duration is a duration, and the registry's types are pinned: loosening one changes this listing and fails until the snapshot is updated on purpose 1`] = `
+"wake.queued.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
+wake.held.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
+wake.composed.members: list(hex12,200) <- members (corrs)
+wake.composed.kept: list(hex12,200) <- kept (corrs)
+wake.composed.folded: int
+wake.composed.forced: enum(ceiling)
+wake.delivered.http: int <- http
+wake.delivered.attempt: int <- attempt
+wake.delivered.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
+wake.delivered.receiver: known(receiver) <- receiver
+wake.delivered.members: int <- members (len)
+wake.error.attempt: int <- attempt
+wake.error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+wake.dead-letter.attempts: int
+wake.dead-letter.receiver: known(receiver) <- receiver
+wake.dead-letter-reported.attempts: int
+wake.stale.age_ms: ms <- ageMs
+wake.not-ready.receiver: known(receiver) <- receiver
+wake.no-receiver.receiver: known(receiver) <- receiver
+wake.receiver-unconfigured.receiver: known(receiver) <- receiver
+wake.receiver-unconfigured.rows: int
+wake.receiver-unconfigured.held: int
+wake.record-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+wake.hook-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+relay-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+gate-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+gate-error.receiver: known(receiver) <- receiver
+rights-first-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+rights-full-stale.epoch: int
+rights-full-stale.current: int
+rights-invalidated.reason: enum(compaction|context shrink)
+rights-invalidated.epoch: int
+rights-invalidated.used: int
+rights-sent-unsaved.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+fire.server: known(server) <- server
+fire.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
+fire.idle: bool
+fire.used: int
+fire-error.server: known(server) <- server
+fire-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+skip-children-running.server: known(server) <- server
+skip-turn-ended.server: known(server) <- server
+skip-read-failed.server: known(server) <- server
+skip-read-truncated.server: known(server) <- server
+skip-empty.server: known(server) <- server
+skip-empty-wait.server: known(server) <- server
+skip-request-seen.server: known(server) <- server
+skip-decisions-thread.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
+skip-report-superseded.server: known(server) <- server
+held-by-daemon.server: known(server) <- server
+held-by-daemon.kind: enum(user_input_request|approval_request|secret_request|link_request)
+read-failed.server: known(server) <- server
+read-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+instruction-read.server: known(server) <- server
+idle-check-failed.server: known(server) <- server
+idle-check-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+card-item-ignored.server: known(server) <- server
+card-question-post-failed.server: known(server) <- server
+card-question-post-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+card-read-unavailable.server: known(server) <- server
+card-read-recovered.server: known(server) <- server
+card-unverified.server: known(server) <- server
+card-reconciled.server: known(server) <- server
+held-closed.server: known(server) <- server
+held-closed.closed: int
+held-close-error.server: known(server) <- server
+held-close-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+held-closed-for-item.item: item <- item
+held-closed-for-item.closed: int
+held-close-failed.item: item <- item
+held-close-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+held-reconciled.closed: int
+held-reconciled.errors: int
+held-reconciled.ran: bool
+held-reconcile-error.pass: enum(items|refs|cards)
+held-reconcile-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+claim-recovered.item: item <- item
+claim-recover-error.item: item <- item
+claim-recover-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+idle-parents.reported: int
+idle-parents.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+idle-parents-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+sweep.wake: enum(none|findings|full) <- wake
+sweep.findings: int <- findings (len)
+sweep.errored: int
+sweep.shadow: int <- shadow (len)
+sweep-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+sweep-afk-unreadable.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+rulings-unreadable.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+web-start.port: int
+web-start.test: bool
+alarm-emit-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+mirror-servers-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+mirror-error.server: known(server) <- server
+mirror-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+mirror-recovered.server: known(server) <- server
+mirror-answer-error.server: known(server) <- server
+mirror-goal-accepted.server: known(server) <- server
+mirror-approval-answered.server: known(server) <- server
+mirror-answered.server: known(server) <- server
+background-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+recover-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+relayed-to-thread.item: item <- item
+relay-record-failed.item: item <- item
+relay-record-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+answered.item: item <- id
+answered.choice: int
+answered.by: enum(page|batch|card|daemon|reconciler) <- by
+wake-queued.item: item <- id
+card-confirmation-issued.item: item <- id
+card-confirmation-refused.item: item <- id
+snoozed.item: item <- id
+unsnoozed.item: item <- id
+snooze-returned.item: item <- id
+snooze-returned.notified: bool
+snooze-post-failed.item: item <- id
+snooze-return-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+title-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+recover-state-unsaved.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+recover-stand-down.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-ping-failed.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-retried.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-read-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+recover-breaker.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-breaker.count: int
+recover-breaker.fresh: bool
+recover-breaker-alarm.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-breaker-alarm.count: int
+recover-ask.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-ask.count: int
+recover-ask-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+recover-scheduled.kind: enum(stream_closed|rate_limit|capacity|provider_turn_failed|oom|auth|cloudflare|safety|quota|workspace|interrupted|unknown) <- kind
+recover-scheduled.in_ms: ms <- inMs
+judge-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+classifier-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+classifier.provider: enum(rules|jev|haiku|none)
+classifier.mode: enum(shadow|live)
+classifier.calls: int
+classifier.cached: int
+classifier.escalate: int
+classifier.nudge: int
+classifier.settle: int
+classifier.ignore: int
+classifier.unknown: int
+classifier.dailyBudgetSpent: bool
+alert-desk-start.offset: int
+alert-desk-start.skippedBytes: int
+alert-desk.events: int
+alert-desk.bad: int
+alert-desk.stale: int
+alert-desk.woke: int <- woke (len)
+alert-desk.deferred: int
+alert-desk-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+start.dry: bool
+maintain-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+tick-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+heartbeat-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+relay-audit-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+steward-check-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+steward-health-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+steward-usage-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+watch-error.server: known(server) <- server
+watch-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+relay-lock-unavailable.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+relay-database-linked.links: int
+connected.server: known(server) <- server
+disconnected.server: known(server) <- server
+session-error.server: known(server) <- server
+session-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+compat-ok.server: known(server) <- server
+compat-warning.server: known(server) <- server
+decision.logged.cited: int
+question.asked.item: item <- item
+question.asked.options: int
+question.asked.recommended: int
+question.asked.urgent: bool
+question.asked.own_thread: bool
+question.asked.card: bool
+question.answered.item: item <- item
+question.answered.choice: int
+question.answered.recommended: bool
+question.answered.by: enum(page|batch|card|daemon|reconciler) <- by
+question.answered.wait_ms: ms
+question.answered.ruled: bool
+hold.closed.open_ms: ms
+hold.closed.card: bool
+server.state.name: known(server)
+server.state.state: enum(up|down)
+server.state.suppressed: int
+server.state.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other)
+obs.reconciled.scanned: int
+obs.reconciled.emitted: int
+obs.reconciled.skipped: int"
+`;
