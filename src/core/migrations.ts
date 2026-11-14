@@ -459,6 +459,37 @@ CREATE TABLE thread_dispositions (
 CREATE INDEX thread_dispositions_by_time ON thread_dispositions (classified_at);
 `,
 	},
+	{
+		version: 14,
+		name: "the Steward's token usage per wake",
+		sql: `
+-- What the Steward spent on each wake, read from its own Claude Code transcript (src/core/steward-tokens.ts), for the optional token metric
+-- (config key stewardTokens). One row per transcript segment, keyed by the Steward's session and the wake's delivery id (or, for a wake from
+-- before delivery ids and any other prompt, the prompt row's uuid). The four columns of the API's usage object are summed over the segment's
+-- distinct model requests. No text is kept: a key, a kind and numbers. Rows are upserted, so a backfill run twice writes the same rows.
+-- Additive only: nothing existing changes. A build that knows only migrations up to 13 refuses this database.
+CREATE TABLE steward_wake_usage (
+	session TEXT NOT NULL,
+	wake_key TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	variant TEXT,
+	delivery_id TEXT,
+	started_at INTEGER NOT NULL,
+	ended_at INTEGER NOT NULL,
+	requests INTEGER NOT NULL CHECK (requests >= 0),
+	input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+	cache_read_input_tokens INTEGER NOT NULL CHECK (cache_read_input_tokens >= 0),
+	cache_creation_input_tokens INTEGER NOT NULL CHECK (cache_creation_input_tokens >= 0),
+	output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+	context_start INTEGER,
+	context_end INTEGER,
+	context_peak INTEGER,
+	compactions INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (session, wake_key)
+) WITHOUT ROWID;
+CREATE INDEX steward_wake_usage_started ON steward_wake_usage (started_at);
+`,
+	},
 ];
 
 export const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
