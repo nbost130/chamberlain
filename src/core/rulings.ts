@@ -163,8 +163,10 @@ export function expiresProblem(expires: string): string | undefined {
 }
 
 /** Pure: has this ruling's `expires` passed at `nowMs`? A ruling without one never does. One that can't be read counts as passed. */
-export const isExpired = (r: Pick<Ruling, "expires">, nowMs: number = Date.now()) =>
-	Boolean(r.expires) && !(expiresAt(r.expires!) > nowMs);
+export const isExpired = (r: Pick<Ruling, "expires">, nowMs: number = Date.now()) => {
+	const { expires } = r;
+	return Boolean(expires && !(expiresAt(expires) > nowMs));
+};
 
 /** A new ruling's options, checked: an unreadable or already-past expiry is refused, so a typo can't be recorded as a ruling. */
 export function checkOpts(o: RulingOpts = {}, nowMs: number = Date.now()): RulingOpts {
@@ -202,6 +204,13 @@ export function findHeld(
 	);
 }
 
+/** In place: one more line in the ruling's history, which is started if it has none. */
+function logChange(r: Ruling, entry: RulingChange) {
+	const history = r.history ?? [];
+	history.push(entry);
+	r.history = history;
+}
+
 /** In place: every ruling `r` supersedes leaves force, pointing at `r`. A missing id is an error; one already retired is left as it is. */
 function applySupersedes(list: Ruling[], r: Ruling, nowMs: number) {
 	const t = iso(nowMs);
@@ -209,7 +218,7 @@ function applySupersedes(list: Ruling[], r: Ruling, nowMs: number) {
 		const old = list.find((x) => x.id === id);
 		if (!old) throw Error(`supersedes ${id}: no such ruling`);
 		if (old.id === r.id || old.status === "retired") continue;
-		(old.history ??= []).push({ t, what: `superseded by ${r.id}` });
+		logChange(old, { t, what: `superseded by ${r.id}` });
 		old.status = "retired";
 		old.retiredAt = t;
 		old.retiredHow = "superseded";
@@ -224,7 +233,7 @@ const needsPromote = (r: Ruling) => r.status === "proposed" || !r.confirmed;
 /** In place: a held proposal (or unconfirmed card answer) becomes in force and confirmed because the principal has now said the same thing. */
 function promote(list: Ruling[], r: Ruling, how: string, nowMs: number) {
 	if (!needsPromote(r)) return;
-	(r.history ??= []).push({ t: iso(nowMs), what: how });
+	logChange(r, { t: iso(nowMs), what: how });
 	r.status = "in-force";
 	r.confirmed = true;
 	r.confirmedAt = iso(nowMs);
@@ -235,7 +244,7 @@ function promote(list: Ruling[], r: Ruling, how: string, nowMs: number) {
 function adopt(r: Ruling, o: RulingOpts, nowMs: number) {
 	const added = (["expires", "until"] as const).filter((k) => o[k] && !r[k]);
 	for (const k of added) r[k] = o[k];
-	if (added.length) (r.history ??= []).push({ t: iso(nowMs), what: `${added.join(" and ")} added on a restatement` });
+	if (added.length) logChange(r, { t: iso(nowMs), what: `${added.join(" and ")} added on a restatement` });
 }
 
 /**
@@ -246,7 +255,7 @@ function mergeSupersedes(list: Ruling[], held: Ruling, o: RulingOpts, nowMs: num
 	const added = newSupersedes(held, o);
 	if (!added.length) return [];
 	held.supersedes = [...(held.supersedes ?? []), ...added];
-	(held.history ??= []).push({ t: iso(nowMs), what: `supersedes ${added.join(", ")} added on a restatement` });
+	logChange(held, { t: iso(nowMs), what: `supersedes ${added.join(", ")} added on a restatement` });
 	if (held.status === "in-force") applySupersedes(list, { ...held, supersedes: added }, nowMs);
 	return added;
 }
@@ -458,10 +467,10 @@ export const confirmRuling = (store: Store, id: string, decides?: string, clock:
 			if (isExpired(r, nowMs)) throw Error(`${id} expired on ${r.expires}`);
 			const t = iso(nowMs);
 			if (decides?.trim() && decides.trim() !== r.decides) {
-				(r.history ??= []).push({ t, what: "wording edited on the page", from: r.decides });
+				logChange(r, { t, what: "wording edited on the page", from: r.decides });
 				r.decides = decides.trim();
 			}
-			(r.history ??= []).push({
+			logChange(r, {
 				t,
 				what: r.status === "proposed" ? "confirmed on the page (was a proposal)" : "confirmed on the page",
 			});
@@ -480,9 +489,24 @@ export const confirmRuling = (store: Store, id: string, decides?: string, clock:
 export const editRuling = (store: Store, id: string, decides: string, clock: Clock = Date.now) =>
 	change(store, id, (r) => {
 		if (!decides.trim()) throw Error("empty wording");
-		(r.history ??= []).push({ t: iso(clock()), what: "wording edited on the page", from: r.decides });
+		logChange(r, { t: iso(clock()), what: "wording edited on the page", from: r.decides });
 		r.decides = decides.trim();
 	});
+
+/** Refuses a retirement that lacks what its reason needs. Returns the trimmed reason, if one was given. */
+function checkRetirement(id: string, how: RetiredHow, why: string | undefined, by: string | undefined) {
+	const reason = why?.trim();
+	if (how !== "retired" && how !== "only this once" && !reason) throw Error(`retiring ${id} as ${how} needs a reason`);
+	if (how === "duplicate" && !by) throw Error(`retiring ${id} as ${how} needs the ruling that replaces it`);
+	return reason;
+}
+
+/** The history line for a retirement. A housekeeping reason always has `reason` by now: checkRetirement refused it otherwise. */
+function retirementNote(how: RetiredHow, by: string | undefined, reason: string | undefined) {
+	if (how === "only this once") return "only this once: settled its case, stands for nothing more";
+	if (how === "retired") return "retired on the page";
+	return `${how}${by ? ` (${by})` : ""}: ${reason ?? ""}`;
+}
 
 /**
  * Takes a ruling out of force. The page uses "retired" and "only this once". The housekeeping reasons ("superseded",
@@ -502,23 +526,13 @@ export const retireRuling = (
 		id,
 		(r) => {
 			if (r.status === "retired") return;
-			if (how !== "retired" && how !== "only this once" && !why?.trim())
-				throw Error(`retiring ${id} as ${how} needs a reason`);
-			if (how === "duplicate" && !by) throw Error(`retiring ${id} as ${how} needs the ruling that replaces it`);
+			const reason = checkRetirement(id, how, why, by);
 			const t = iso(clock());
-			(r.history ??= []).push({
-				t,
-				what:
-					how === "only this once"
-						? "only this once: settled its case, stands for nothing more"
-						: how === "retired"
-							? "retired on the page"
-							: `${how}${by ? ` (${by})` : ""}: ${why!.trim()}`,
-			});
+			logChange(r, { t, what: retirementNote(how, by, reason) });
 			r.status = "retired";
 			r.retiredAt = t;
 			r.retiredHow = how;
-			if (why?.trim()) r.retiredWhy = why.trim();
+			if (reason) r.retiredWhy = reason;
 			if (by) r.supersededBy = by;
 		},
 		(list, r) => {
@@ -587,5 +601,6 @@ export function citations(
 /** Pure: the ruling IDs a decided.ts citation leads with ("R3", "R3, R7: why"). Free text gives none. */
 export function citedIds(ruling: string): string[] {
 	const m = ruling.trim().match(/^(R\d+(?:\s*[,+&]\s*R\d+)*)(?=$|[\s:;,.)-])/);
-	return m ? [...new Set(m[1]!.split(/\s*[,+&]\s*/))] : [];
+	const ids = m?.[1];
+	return ids ? [...new Set(ids.split(/\s*[,+&]\s*/))] : [];
 }
