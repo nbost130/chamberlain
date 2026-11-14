@@ -6,7 +6,7 @@
  *                      the evidence files, the hand-off): durable data that survives restarts but is not user-edited config
  *
  * `settings.json` in the config directory (mode 0600) holds the rest, and each value can be overridden by an environment
- * variable. See README.md, "Configuration reference".
+ * variable. See docs/CONFIGURATION.md.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isPrivateFile, modeText } from "./private.ts";

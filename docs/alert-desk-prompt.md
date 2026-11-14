@@ -1,4 +1,4 @@
-<!-- The Alert Desk's standing prompt. Print it filled in with `bun src/brief.ts desk`: {{principalName}} is the `principalName`
+<!-- The Alert Desk's standing prompt. Print it filled in with `chamberlain brief desk`: {{principalName}} is the `principalName`
      setting, {{serverName}} the Steward's own server in servers.json, {{allowlistHook}} the command that runs the allowlist hook, {{askCommand}} the
      command the desk allowlist accepts for filing a decision (`bun $DESK_ASK_PATH`, else this build's own `ask`), and {{morningSources}} the
      `morningCommands` and `morningNotes` in alert-desk.json. {{gatherStep}} and {{toolList}} name the `gatherer` agent in alert-desk.json (none

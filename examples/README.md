@@ -19,4 +19,4 @@ install -m 600 examples/decision-rights.md ~/.config/chamberlain/decision-rights
 | `brief.d/10-landing.md` | `brief.d/10-landing.md` | A brief fragment: a section of your own, appended to the Steward's hand-off. |
 
 Token files (`read-token`, `operate-token`, ...) hold one token each and are created with the `t3 auth session issue`
-command shown in the README; they are never kept in this repository.
+command shown in the README's first-wake steps; they are never kept in this repository.

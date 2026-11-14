@@ -1,5 +1,5 @@
 /**
- * Which T3 Code server versions this build has been tested against. One place: the README's Compatibility section
+ * Which T3 Code server versions this build has been tested against. One place: docs/COMPATIBILITY.md
  * repeats it, and the daemon warns (and keeps running) when a server is outside it.
  *
  *   bun src/adapters/t3/compat.ts [<origin>]     print what a server reports and whether it is in the tested range
@@ -25,7 +25,7 @@ export function compatWarning(env: ServerEnvironment | undefined, tested = T3_TE
 	if (typeof v !== "string" || !/^\d+\.\d+\.\d+/.test(v)) out.push(`the server reports no usable version (${JSON.stringify(v)})`);
 	else if (Bun.semver.order(v, tested.min) < 0 || Bun.semver.order(v, tested.max) > 0) out.push(`T3 ${v} is outside the tested range ${tested.min} to ${tested.max}`);
 	if (env.orchestrationProtocolVersion !== tested.orchestrationProtocol) out.push(`it speaks orchestration protocol ${JSON.stringify(env.orchestrationProtocolVersion)}, not ${tested.orchestrationProtocol}`);
-	return out.length ? `${out.join("; ")}. Chamberlain may misread threads or miss wakes; check docs/upstream-asks.md and the README's Compatibility section.` : undefined;
+	return out.length ? `${out.join("; ")}. Chamberlain may misread threads or miss wakes; check docs/upstream-asks.md and docs/COMPATIBILITY.md.` : undefined;
 }
 
 /** Reads T3's unauthenticated environment document. Never throws: a failure is `undefined`. */

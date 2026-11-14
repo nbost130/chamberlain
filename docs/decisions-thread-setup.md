@@ -1,7 +1,7 @@
 # Decisions thread: setup message
 
 The pinned Decisions thread shows the decision queue as one live view with Waiting, Rulings and Recent tabs. It
-never shows a card, so nothing in it blocks. `src/ask.ts` posts every new question there, and only there
+never shows a card, so nothing in it blocks. `chamberlain ask` posts every new question there, and only there
 (`~/.config/chamberlain/decisions-thread` names the thread): the live view when the queue page is up, or a one-line
 notice when it is down. The page keeps the title at "Decisions · N waiting" once `decisionsServer` in `web.json` names
 an orchestration:operate token.

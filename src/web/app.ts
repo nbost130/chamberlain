@@ -357,7 +357,7 @@ export function createApp(d: AppDeps) {
 		// The page binds to one address. A Host it doesn't know is a rebinding attempt or a mistake.
 		if (!d.hosts.includes(req.headers.get("host") ?? "")) return withSecurity(fail(421, "unknown host"));
 		const origin = req.headers.get("origin");
-		// T3 shows inline pages in a sandboxed frame whose origin is "null", and they carry no key. ACCEPTED RISK (see README, "Security
+		// T3 shows inline pages in a sandboxed frame whose origin is "null", and they carry no key. ACCEPTED RISK (see docs/SECURITY.md, "Security
 		// model"): any page open on one of the principal's own devices that runs code in a sandboxed (null-origin) frame can read the
 		// queue and post a plain answer, if it knows this page's address and an item ID. That is ALL it can do, and the server says so
 		// (inlineVerdict): three reads, and an answer that is a choice and a note. It cannot save a ruling, answer a card or an approval,

@@ -34,10 +34,10 @@ All counters reset at the latest compaction. Verdicts:
   starts the hand-off itself, at most once per native session: it queues one wake (kind `handoff`, delivery id
   `steward-handoff:<session>`) telling the Steward to run its hand-off now, with no question to you. The wake is an
   ordinary outbox row sent by the one relay, so a failed delivery is retried with the usual pause and, after the
-  attempts run out, dead-lettered with the `wake-dead-letter` alarm; retry or cancel it with `wakes.ts`. The delivery id
+  attempts run out, dead-lettered with the `wake-dead-letter` alarm; retry or cancel it with `chamberlain wakes`. The delivery id
   is the record that this session was told, so a restart, a compaction or the next hourly check never queues a second.
   This needs the adapter's optional `handoffInstruction` capability (how a Steward on that backend starts its hand-off;
-  the T3 adapter has it). An adapter without it leaves the hand-off to you: one `only-you` question through `ask.ts`,
+  the T3 adapter has it). An adapter without it leaves the hand-off to you: one `only-you` question through `chamberlain ask`,
   at most once per session, recommending the `/steward-handoff` command, and nothing starts automatically.
 
 The limits are `HEALTH_CONFIG` in `src/core/steward-health.ts`. They are heuristics, not validated measurements: rereads
@@ -51,7 +51,7 @@ slipped reply and be anything else for a clean one. Without it the signal is off
 
 ## Use
 
-`bun src/steward-health.ts` prints a read-only live report. The daemon checks each minute whether an hour has passed,
+`chamberlain steward-health` prints a read-only live report. The daemon checks each minute whether an hour has passed,
 stores the verdict in the database (state record `steward-health`), and the decision page shows it with its age (stale after two
 hours). On the question path, a failed submission is retried at the next hourly check; the queue tag
-`steward-health:<session>` keeps a crash between `ask.ts` and the result write from asking twice.
+`steward-health:<session>` keeps a crash between `chamberlain ask` and the result write from asking twice.

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- With the standalone binary (README, "Install") there is no checkout: drop WorkingDirectory and make ProgramArguments
      /Users/YOUR_USER/.local/bin/chamberlain and "web" (or `brew services start chamberlain` for the daemon).
-     The Chamberlain decision-queue page on macOS (needs web.json; see README). An EXAMPLE: replace the label (reverse-DNS of your own domain), the
+     The Chamberlain decision-queue page on macOS (needs web.json; see docs/CONFIGURATION.md). An EXAMPLE: replace the label (reverse-DNS of your own domain), the
      paths and YOUR_USER, then
        cp deploy/launchd/com.example.chamberlain-web.plist ~/Library/LaunchAgents/
        launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.chamberlain-web.plist

@@ -10,7 +10,7 @@ Run this full supervision sweep quickly. Use small reads, and send a message onl
 5. New sessions, only while {{principalName}} is away. Only when there is idle, unblocked work you are not doing, and the machine has room: launch at most one new thread with a full brief and a workspaceStrategy worktree. Never for anything that needs {{principalName}}'s gate.
 6. Anything on the ASK list goes to {{principalName}}'s queue first, with `ask` (add `"urgent": false` when it can wait; it then sends no notification and is listed below the urgent ones), never to {{principalName}} mid-sweep as a message. Hold it only after that, with `afk hold ... --item <the Q-id ask printed>` (plus `--pr`, `--issue`, `--branch` or `--thread` if they apply). A hold with no `--item` is refused, and so is an ask or hold already settled (it prints the answer; act on that, or add `notSettled` / `--not-settled "<why>"` if it is truly a different question). A hold is a real wait on {{principalName}}, never an FYI; a new fact about an existing hold is `afk note <id> "<text>"`, not a second hold.
 
-While {{principalName}} is marked away, their standing mandate is the one in the away record your wakes carry.
+While {{principalName}} is marked away, the standing rules for it are the ones in the away record your wakes carry.
 
 If nothing needed action, reply with one line: 'sweep HH:MM: nothing to do'.
 

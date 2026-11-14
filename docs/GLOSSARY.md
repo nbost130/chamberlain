@@ -24,7 +24,7 @@ the reason is given.
 | Database (`chamberlain.db`) | The one SQLite file that holds all state. WAL mode, mode 0600. | SQLite database in write-ahead-log mode | [SQLite WAL](https://www.sqlite.org/wal.html) |
 | Migration (table `migrations`) | A versioned SQL step applied once inside a transaction; a database from a newer build is refused. | Schema migration | Chamberlain keeps the usual meaning. Config files have their own `schemaVersion` (a different mechanism, see `src/core/migrate.ts`). |
 | Evidence (table `evidence`, folder `evidence/<item>/`) | Screenshots, recordings and links a question carries. The rows point to files; the page serves only the files the rows list. | Attachments (PagerDuty's Events API carries `images` and `links` the same way) | Kept: "evidence" says what they are for (a decision is made on them). |
-| Rights record (state `rights-sent`) | What the Steward was last delivered of its rights and rulings: the rights hash (of the thread, rights and rulings; the away mandate is not in it), the Steward thread and session it went to, its context size then, and `at`, when the full text went out. Only the delivery of a wake carrying the full block writes it, in the transaction that marks that row delivered. A changed hash, thread, session or rights epoch, a shrunk context or no record sends the full block. | Cache validator (ETag) | Chamberlain keeps the usual meaning: the hash says "unchanged", so only the pointer line is sent. |
+| Rights record (state `rights-sent`) | What the Steward was last delivered of its rights and rulings: the rights hash (of the thread, rights and rulings; away mode is not in it), the Steward thread and session it went to, its context size then, and `at`, when the full text went out. Only the delivery of a wake carrying the full block writes it, in the transaction that marks that row delivered. A changed hash, thread, session or rights epoch, a shrunk context or no record sends the full block. | Cache validator (ETag) | Chamberlain keeps the usual meaning: the hash says "unchanged", so only the pointer line is sent. |
 | Rights epoch (`epoch` in state `rights-sent`) | An integer kept in the rights record's state row. A compaction bumps it, inside the relay's serial job for the compaction and before its POST, and drops the record in the same write; a context shrink bumps it the same way. Every full stamp records the epoch it was composed under, and a delivered full stamp writes the record only while that epoch is current, so a full block in flight across a compaction never restores the record. | Epoch number / fencing token | A write tagged with an older epoch than the current one is refused, as with a fencing token ([Kleppmann, "How to do distributed locking"](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html)). Here the refused write is the rights record; the row is still marked delivered. |
 | Rights stamp (`rights_for` on `outbox` and `held_wakes`) / prerequisite (rights-first wake) | A wake records the Steward thread, session and rights hash its rights text was composed for: `full` when it carries the block (its delivery writes the rights record), a pointer or `legacy-unstamped` stamp when it depends on the Steward already holding them. Before every attempt of a dependent Steward row the relay sends a standalone full-rights wake, the prerequisite (`<id>:rights-first:<state key>`, one per row and state), unless the rights record shows the Steward there now holds the rights in force now; then the row goes exactly as queued. | Prerequisite message ordering (send the prerequisite first, then the unchanged message) | Chamberlain never edits a queued message: outbox rows are immutable and their text is never searched, digests included. |
 | Hand-off wake (`steward-handoff:<session>`) | The wake the daemon queues when the health check says HAND OFF, telling the Steward to run its hand-off now. An outbox row like any other: retried, then dead-lettered. | Self-healing / automatic failover | The daemon starts the hand-off; the Steward does it. Needs the adapter's `handoffInstruction`; without it the operator is asked. |
@@ -150,8 +150,7 @@ The desk is a standing thread that reads every alert and says what it is (docs/a
 | Idempotent recording (`propose`, `addInForce`) | Recording a ruling whose words and decision match one already held (a proposal or in force, not expired; case and whitespace ignored) gives that ruling back instead of a second one. The check and the insert are one `BEGIN IMMEDIATE` transaction in `src/core/rulings.ts`, so `ruling.ts` and the page get the same guarantee, in any process. | Idempotent operation ([RFC 9110 §9.2.2](https://www.rfc-editor.org/rfc/rfc9110#name-idempotent-methods)); idempotency key | Kept in meaning. The "key" is the normalized words and decision rather than a client-supplied token. |
 | Decision (table `decisions`) | The Steward's own answer to something, logged with the rulings it cites. Append-only. | Audit log | Kept: it is literal. |
 | Decision rights (`decision-rights.md`) | Your standing rules for what the Steward may decide and what it must ask. Carried in full in a wake when the Steward may not hold the current text, otherwise as one line naming when the full text last went out. | Decision rights | A governance term (who may decide what); used in its ordinary sense. |
-| Away / AFK (table `away`) | The record that you are away, with your words, expected return and spend note. | Out of office | Kept: "AFK" is the common abbreviation. |
-| Mandate (`mandateLine`) | The standing instruction the Steward works under while you are away, from the away record's words. | Delegation of authority | Kept: the dictionary sense (an authority given to act). |
+| Away mode (table `away`, `awayModeLine`) | The record that you are away, with your words, expected return and spend note, and the standing instruction the Steward works under while it lasts. Persisted as `away`; `chamberlain afk` is its command. | Out of office | Chamberlain's own: "AFK" is the common abbreviation, used only in the command and table names. |
 | Held for return (source `held`, kind `hold`, `afk.ts hold`) | Things that wait for you while you are away: asks the Steward may not decide, never an FYI. Every hold names the question it waits on (`--item`, required: queue first, hold second), and closes when that question is answered on any path (by the `item` field only, never an ID named in its text), or when the PR, issue, branch or thread it names (`--pr`, `--issue`, `--branch`, `--thread`) is done; the daemon's reconciler (`src/core/hold-reconcile.ts`) closes it then, or you close it by hand. | Snooze / deferred task, linked to its request | Chamberlain-specific: a wait on a person, not on a timer. The link to its question is a foreign key held in the payload (`item`). |
 | Not urgent (`urgent: false` on a question) | A question that can wait: recorded and listed below every urgent one under NOT URGENT, and nothing is posted where you read, so no notification goes out. Absent means urgent. | Priority (low) / non-paging alert | Alertmanager and PagerDuty split alerts into those that page and those that only show in a list; this is the non-paging kind. |
 | Settled check (`src/core/settled.ts`, `settledMatch` in settings.json) | Before ask.ts records a question or `afk.ts hold` writes a hold, the subject is looked up in what you already settled: answered questions, rulings in force now (not a proposed, expired, superseded or retired one), and the Steward's decision log. A match is refused with exit 2, one line per match naming what it matched on (a shared commit, run or item; a PR, branch or thread beside the same topic; or title overlap). Deterministic: no model, fixed word rules, `titleOverlap` and `ignoreWords` the only settings. | Duplicate detection / de-duplication against the decision log | Like an issue tracker's duplicate check, but against decisions rather than open tickets. |
@@ -161,33 +160,11 @@ The desk is a standing thread that reads every alert and says what it is (docs/a
 | Compaction | Shrinking the Steward's context into a summary when it passes `compactTokens`. | Context compaction | Agent platforms' own term. |
 | Ledger | An append-only table whose rows are not rewritten: rulings, decisions, butlers, delivered wakes. | Ledger / append-only log | Ordinary use. |
 
-## Renamed in this pass
-
-The database has never been released, so migration 1 was rewritten rather than followed by a rename migration.
-
-| Was | Is |
-| --- | --- |
-| item state `open`, `woken` | `triggered` (a notified item has `notification_count > 0`) |
-| `items.key`, `Finding.key`, `{"key": ...}` | `dedup_key`, `dedupKey` |
-| mode `off`, `log` | `silenced`, `shadow` |
-| `alert_count`, `next_alert_at`, `would_alert_count`, `would_next_alert_at` | `notification_count`, `next_notification_at`, `shadow_notification_count`, `shadow_next_notification_at` |
-| `decideAlert`, `alert.ts`, `Ladder`, `ONCE`, `repeating`, `escalating`, `stepsMs`, `cap` | `decideNotification`, `notification.ts`, `RepeatPolicy`, `NOTIFY_ONCE`, `repeatEvery`, `repeatAtIntervals`, `intervalsMs`, `maxNotifications` |
-| `repeatMs`, `maxAlerts` (check output) | `repeatIntervalMs`, `maxNotifications` |
-| "blind" (`blind`, `BLIND`, sweep log field `blind`) | `evaluation_error`, `EVALUATION_ERROR`, `errored` |
-| sweep log field `would` | `shadow` |
-| source `wake`, kind `fired`; `engine.fired()` | source `notification-log`, kind `sent`; `engine.notified()` |
-| `pending_wakes`, `PendingWake`, `addPending`, `pendingIds` | `outbox`, `OutboxEntry`, `enqueue`, `outboxIds` |
-| `landed_wakes`, `landed_at`, `isLanded`, `land()`, `onLanded`, "landing" | `delivered_wakes` (since migration 6: an outbox row's status `delivered`), `isDelivered`, `onDelivered`, "delivery" |
-| crash steps `pending`, `landed` | `enqueued`, `delivered` |
-| `rulings.n` | `rulings.seq` |
-| `CHAMBERLAIN_CACHE` (state directory) | `CHAMBERLAIN_STATE` |
-| `stateDb`, `CHAMBERLAIN_STATE_DB` (T3's database) | `t3StateDb`, `CHAMBERLAIN_T3_STATE_DB` |
-
-## Kept on purpose
+## Names that are Chamberlain's own
 
 `item`, `source`, `kind`, `check`, `sweep`, `runaway`, `wake`, `held` / `hold`, `digest`, `claim`, `relay`, `deliveryId`,
 `acknowledged`, `resolved`, `baseline`, `alarm`, `heartbeat`, `subject`, `first_seen` / `last_seen`, `evidence`, `ruling`,
-`decision`, `mandate`, `butler`, `steward`, `principal`, `away` and `dry run` keep their names, for the reasons in the tables.
+`decision`, `butler`, `steward`, `principal`, `away` and `dry run` have the names the tables give them, for the reasons there.
 The ones that agree with an industry term (`acknowledged`, `resolved`, `digest`, `check`, `baseline`, `subject`,
-`first_seen`, `heartbeat`, `deliveryId`) say which. The ones that do not (`wake`, `held`, `claim`, `ruling`, `mandate`,
+`first_seen`, `heartbeat`, `deliveryId`) say which. The ones that do not (`wake`, `held`, `claim`, `ruling`,
 `butler`, `steward`, `sweep`) are Chamberlain's own vocabulary, and the tables say what they mean and why no standard term fits.

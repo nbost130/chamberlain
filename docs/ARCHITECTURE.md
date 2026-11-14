@@ -373,7 +373,7 @@ Two directories, both private, laid out by the XDG Base Directory Specification.
 `CHAMBERLAIN_STATE` (default `~/.local/state/chamberlain`) holds everything the processes write while they run and must
 keep, **in one SQLite database, `chamberlain.db`**, plus the evidence files and the hand-off. It is state, not cache: the
 rulings and the decision log are in it, so nothing may delete it. (The cache directory, `~/.cache/chamberlain`, holds
-nothing today. A build that kept the database there moves it to the state directory on its first start; see the README.) The daemon and the page are separate processes that open the same database file; they never talk to each
+nothing today.) The daemon and the page are separate processes that open the same database file; they never talk to each
 other, and they never lose each other's writes. Only the daemon sends wakes (its relay holds a `flock` on the state directory).
 
 The database is opened in WAL mode with a busy timeout, foreign keys on and `synchronous = FULL`. A change is made in a

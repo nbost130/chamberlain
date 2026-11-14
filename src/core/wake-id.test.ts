@@ -85,6 +85,6 @@ describe("the Steward's templates and the delivery docs say a repeated delivery 
 		const arch = read("docs/ARCHITECTURE.md");
 		const section = arch.slice(arch.indexOf("## Delivery guarantees and the windows that remain"), arch.indexOf("## Where state lives"));
 		for (const part of ["delivery id", "repeat", "no row is POSTed more than `maxAttempts` times between explicit retries", "The windows that remain, exactly", "owed", "dead_letter"]) expect(section).toContain(part);
-		expect(read("README.md")).toMatch(/delivery id/);
+		expect(read("docs/DELIVERY.md")).toMatch(/delivery id/);
 	});
 });

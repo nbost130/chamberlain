@@ -5,7 +5,7 @@ daemon drains it (`src/core/alert-desk.ts`), dedupes per alert family through th
 one relay sends them, as a second receiver (`receivers: { desk }`), through the adapter's `alertDesk` capability and the relay's one serial POST
 queue, with the desk thread's own busy gate, so
 the hold-and-digest path folds a burst of families into one wake and a busy desk never holds the Steward's wakes. The desk's standing prompt is
-`docs/alert-desk-prompt.md`, a template: `bun src/brief.ts desk` prints it filled in from your config (`principalName`, the Steward's
+`docs/alert-desk-prompt.md`, a template: `chamberlain brief desk` prints it filled in from your config (`principalName`, the Steward's
 own server in `servers.json`, this checkout, and the morning sources below).
 
 ```
@@ -50,8 +50,8 @@ the cursor starts at its beginning, so the first lines written to it are read. `
 
 **Removing the desk.** With no `desk-wake-url` the desk's lane stays and its waiting wakes raise `desk:wake-not-ready`. If the receiver
 itself is gone (the home server in `servers.json` is now one whose adapter has no `alertDesk`), desk wakes still waiting are kept, never
-dropped or sent to the Steward: the relay raises `desk:wake-unconfigured` naming the receiver and the count, and `bun src/wakes.ts list`
-shows each row with `for desk`, so `bun src/wakes.ts cancel <id>` can give it up.
+dropped or sent to the Steward: the relay raises `desk:wake-unconfigured` naming the receiver and the count, and `chamberlain wakes list`
+shows each row with `for desk`, so `chamberlain wakes cancel <id>` can give it up.
 
 ## Delivery guarantee
 
@@ -62,25 +62,26 @@ desk skips an id it has already handled: its prompt says to search the thread fo
 
 ## The command allowlist is enforced
 
-`src/desk-allowlist.ts` is a Claude Code PreToolUse hook that DENIES BY DEFAULT. It allows only: Bash in a fixed set of command shapes (journalctl,
+`chamberlain debug desk-allowlist hook` (`src/desk-allowlist.ts`) is a Claude Code PreToolUse hook that DENIES BY DEFAULT. It allows only: Bash in a fixed set of command shapes (journalctl,
 systemctl status, read-only gh and git commands, docker ps/logs/inspect with a plain `--format`, your own `commandShapes`, and the Morning sweep's own commands);
 Read, Grep and Glob under `/var/log`, `~/.cache/alert-desk` and `DESK_LOG_DIRS` (never a credential path, after `..` and symlinks are resolved); and the
 Agent tool only to start the `gatherer` agent you name in `alert-desk.json`, which is how the desk fans out (with none named, no agent starts). Every other tool is refused: the write tools, every MCP tool, and any
 name it does not know. A command's whole argument list is parsed: a flag that is not on that command's list is refused, a flag given twice in any
-spelling (`--format` then `-f`) is refused, and every value is checked. `bun src/desk-allowlist.ts check '<command>'` tests one by hand.
+spelling (`--format` then `-f`) is refused, and every value is checked. `chamberlain debug desk-allowlist check '<command>'` tests one by hand.
 
 The matcher must cover every tool, or the default deny never sees the tool it is meant to refuse. Install it in the desk project's `.claude/settings.json`
 (`"*"` matches all tools, MCP tools included):
 
 ```json
-{ "hooks": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
+{ "hooks": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "chamberlain debug desk-allowlist hook" } ] } ] } }
 ```
 
-With the standalone binary the hook command is `chamberlain debug desk-allowlist hook`.
+From a checkout the hook command is `bun <the checkout>/src/desk-allowlist.ts hook`. `chamberlain desk-allowlist hook`, the name before the
+commands were grouped, still works, so a hook installed earlier keeps running.
 
 Filing a decision is allowed in one spelling only, `<ask command> '<json>'`, matched as the whole string. The ask command is `bun $DESK_ASK_PATH` when
 `DESK_ASK_PATH` is set in the hook's environment, else this build's own: `chamberlain ask` from the standalone binary, `bun <that checkout>/src/ask.ts` from source.
-`bun src/brief.ts desk` (`chamberlain brief desk`) fills the standing prompt with the same command (`{{askCommand}}`), so set
+`chamberlain brief desk` (from a checkout, `bun src/brief.ts desk`) fills the standing prompt with the same command (`{{askCommand}}`), so set
 `DESK_ASK_PATH` for both or for neither. Each configured morning command is matched exactly as written (a `<N>` slot is a number), with nothing
 trimmed: a leading or trailing space, tab, newline, no-break space or byte-order mark is refused.
 
@@ -90,18 +91,15 @@ The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing
 append only when the desk is on: `ALERT_DESK_ENABLED=1` in their environment, or the flag file `~/.config/alert-desk/enabled` (`touch` it; remove it to
 switch them off; no restart is needed).
 
-## Go-live (the operator's approvals, in this order)
+## Switching it on
 
-Migration 8 cannot be undone by the old build: a database from a newer build is refused (`checkVersion`), so going back needs the backup below.
+1. Create the desk thread with the output of `chamberlain brief desk` as its first message, install the allowlist hook in its project, bind a
+   webhook scheduled task to it, and save its URL as `desk-wake-url` (0600) and its thread id as `desk-thread` in the config directory.
+2. Write `alert-desk.json` (below) if you want a time zone, morning sources, extra command shapes or a gatherer agent.
+3. `touch ~/.config/alert-desk/enabled` to switch the writers on.
 
-1. **Back up the database first**, with the daemon running or stopped (this is an online-safe backup):
-   `sqlite3 "${CHAMBERLAIN_STATE:-$HOME/.local/state/chamberlain}/chamberlain.db" ".backup '${CHAMBERLAIN_STATE:-$HOME/.local/state/chamberlain}/chamberlain.db.pre-alert-desk'"`
-   (without the sqlite3 tool: `bun -e 'import {Database} from "bun:sqlite"; new Database(process.argv[1]).run("VACUUM INTO ?", [process.argv[2]])' <db> <backup>`).
-   **To go back:** stop the daemon, `cp <backup> <db>`, `rm -f <db>-wal <db>-shm`, check out the old build, start it. Anything the new build did after the backup is lost.
-2. Deploy and restart Chamberlain on this branch (migration 8 runs at startup).
-3. Create the desk thread with the output of `bun src/brief.ts desk` as its first message, install the allowlist hook in its project, bind a webhook scheduled task to it,
-   and save its URL as `desk-wake-url` (0600) and its thread id as `desk-thread` in the config directory.
-4. `touch ~/.config/alert-desk/enabled` to switch the writers on.
+The alert-desk tables arrived with database migration 8, which an older build cannot open (a database from a newer build is refused);
+back the database up first if you may go back ([CONFIGURATION.md](CONFIGURATION.md#state-directory-localstatechamberlain-chamberlain_state)).
 
 ## Config
 
@@ -118,7 +116,7 @@ Migration 8 cannot be undone by the old build: a database from a newer build is 
 
 `morningCommands` are the sources the Morning sweep reads that the inbox does not carry, each run exactly as written (`<N>` is a number the
 desk fills in, 1 to 12 digits; `<N:1-5>` gives the slot its own width, here 1 to 5 digits, and `<N:10>` exactly 10, any width within 1 to
-12; a command with a malformed slot, such as `<N:0-3>` or `<N:5-2>`, is left out with a warning), and `morningNotes` says how to read them. Both go into the prompt (`bun src/brief.ts desk`), and `src/desk-allowlist.ts` allows
+12; a command with a malformed slot, such as `<N:0-3>` or `<N:5-2>`, is left out with a warning), and `morningNotes` says how to read them. Both go into the prompt (`chamberlain brief desk`), and `src/desk-allowlist.ts` allows
 exactly these commands, so they widen what the desk may run: they are read only when `alert-desk.json` is owned by you and no group or other
 user can write it (0600 or 0644). Nothing of the kind is built in; with none configured, the Morning sweep reports only what its wake carries.
 
@@ -153,6 +151,6 @@ morning wake, which runs the Morning sweep in the desk's prompt over the `mornin
 
 ## Schema
 
-(The rollback needs the backup in the go-live steps above.) Migration 8 adds a nullable `receiver` column to `outbox` and `held_wakes` (NULL is the Steward, as every row so far) and freezes it with the row.
+Migration 8 adds a nullable `receiver` column to `outbox` and `held_wakes` (NULL is the Steward, as every row so far) and freezes it with the row.
 `store.wakes.held(lane)` and `rows(status, lane)` read one receiver's wakes (`null`: the Steward's, a name: that receiver's, nothing: all of them);
 `compose` takes one receiver's held wakes only. The relay passes `null` for the Steward's lane and `"desk"` for the desk's.
