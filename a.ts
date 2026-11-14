@@ -1,1 +1,1 @@
-const v = 1;
+const v: number = "bad";
