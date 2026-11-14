@@ -73,7 +73,7 @@ function reqText(o: Raw, k: string): string {
 }
 
 /** `{}` unless `cond`, so an optional field is left off an item rather than set to undefined. */
-const when = (cond: unknown, fields: object): object => (cond ? fields : {});
+const when = <T extends object>(cond: unknown, fields: T): Partial<T> => (cond ? fields : {});
 
 /** Option `n`'s thread routing (its `route: "thread"` and the `relay` text the thread gets), or undefined for a steward option; a malformed one is refused. */
 function parseRouting(opt: Raw | undefined, n: number): { route: "thread"; relay: string } | undefined {
