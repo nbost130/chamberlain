@@ -91,7 +91,10 @@ export function bankVersion(bank: Bank, c: ClassifierConfig, model: string): str
 /** Pure: the start of `now`'s UTC day, in ms. The daily budget resets there. */
 export const utcDayStart = (now: number) => now - (now % DAY_MS);
 
-const short = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 200);
+const short = (e: unknown) =>
+	String(e instanceof Error ? e.message : e)
+		.slice(0, 200)
+		.toWellFormed();
 const unknownOf = (error: string): Classified => ({ action: "unknown", reasons: [], error });
 const decided = (d: Decision): Classified => ({ action: d.action, reasons: d.reasons });
 

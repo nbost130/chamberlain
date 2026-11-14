@@ -198,7 +198,9 @@ export function loadBank(conf: string, c: Pick<ClassifierConfig, "questions" | "
 		try {
 			raw = JSON.parse(readFileSync(path, "utf8"));
 		} catch (e) {
-			throw Error(`${W}.questions: cannot read ${c.questions} as JSON (${(e as Error).message.slice(0, 120)})`);
+			throw Error(
+				`${W}.questions: cannot read ${c.questions} as JSON (${(e as Error).message.slice(0, 120).toWellFormed()})`,
+			);
 		}
 		bank = parseBank(raw, c.questions);
 	}
