@@ -189,10 +189,13 @@ How it uses the existing pieces:
   the claim is written as now, and no wake row is queued. The module reads answered mail cards by item id on every run and on a one-minute
   timer, carries out the choice (archive, label, save), and records the item id as done in `mail.db`, so a crash repeats an archive, which
   is harmless, and never skips one. The existing rule stands: an answer with a note always reaches the Steward as an answer wake.
-  Record-only claims need two more changes in B5, because today's claim recovery (`recoverClaims` in `src/core/questions.ts`) re-sends any
-  unresolved claim whose wake is not delivered, and the page owns every page claim: recovery skips a record-only claim (it has no wake to
-  send), and the claim is resolved when the module records the item done, in `chamberlain.db`, keyed by item id. A test restarts the daemon
-  between the claim and the module's action and asserts the action happens once and no wake is sent.
+  Record-only claims need two more changes in B5. Today `recoverClaims` (`src/core/questions.ts`) walks the page's unresolved claims and
+  enqueues the stored wake of any whose delivery id is neither delivered nor known to the outbox; a record-only claim's id never reaches
+  the outbox, so recovery would send it. B5 marks the claim record-only, and recovery treats it as done once the module has recorded the
+  item done (and resolves the item then), never enqueueing it. Every action is idempotent, so a crash at any point repeats it safely:
+  archive, label and mark-read are idempotent at the mailbox, and an append to the save file first looks for the card's own marker line
+  (`<!-- chamberlain:Q-… -->`) and skips if it is there. Tests crash the module after the claim, after the mailbox call and after the
+  append, and assert one archive state, one appended block and no wake.
 - **Rulings stay the Steward's.** A triage rule is not written to `rulings`, because every wake repeats the rulings in force, and dozens of
   sender rules would ride in every wake for nothing. Triage rules live in `mail.db` (`mail_rules`) with the ruling lifecycle and its
   words: `proposed`, `in-force`, `retired`; recording is idempotent on the normalized match and action; `supersedes` and `expires` work as
@@ -274,7 +277,7 @@ plain text.
 | Guarantee | How it is enforced (not by a prompt) | Test |
 | --- | --- | --- |
 | The reading model cannot act | Every call is `claude -p --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands --no-session-persistence --system-prompt <fixed> --output-format json`, mail on stdin, never in argv. The argv is built in one function. | Snapshot test of the argv; a test that the runner refuses any argv missing `--tools ""`. |
-| Instructions in mail gain no authority | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL; a `clean` label only adds the message to the cleanup card; card text is rendered as text, with any URL in it shown unlinked. | Fuzz test: malformed replies (extra fields, wrong slots, long text, tool-call shapes) become `ask`. Injection test: *valid* replies a hostile mail could produce (`clean` for a flagged message, a summary holding an instruction or a URL, a link reference not in the table) are run through every consumer (outcome mapping, cards, page, save file, rule proposal) and change nothing but card text. |
+| Instructions in mail gain no authority | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL; a `clean` label only adds the message to the cleanup card; card text is rendered as text, with any URL in it shown unlinked. | Fuzz test: malformed replies (extra fields, wrong slots, long text, tool-call shapes) become `ask`. Injection test: *valid* replies a hostile mail could produce (`clean` for a flagged message, a summary holding an instruction or a URL, a link reference not in the table) are run through every consumer (outcome mapping, cards, page, rule proposal, save). Before any tap they change nothing but card text. After a Save tap they reach the save target only as the capped title and gist, as plain text, with the one URL taken from the code's link table. |
 | Never sends, replies or forwards | `MailProvider` has no such method; gog runs with `--gmail-no-send` and an exact allowlist that names no send command. Two layers, either enough. | B2 runs the real `gog` with the module's flags and an empty `--home` (no credentials, so nothing can reach a mailbox), and asserts that `send`, `reply`, `forward` and `drafts` fail with gog's command-policy refusal (its own message, matched exactly), while an allowed command with the same flags gets past the policy and fails only at authentication. The control proves the refusal is the allowlist, not a missing login. |
 | Never deletes | No delete or trash method; `trash`, `batch delete` and `labels delete` are outside gog's allowlist; `label()` refuses `TRASH`, `SPAM` and every other system label, except removing `INBOX` or `UNREAD` and, for undo only, adding them back; added labels must otherwise start with `labels.prefix/`. | Unit tests on `label()`; B2's refusal test includes `trash` and `batch delete`. |
 | Cleanup is reversible | Archive keeps the message in All Mail; every module action also adds `<prefix>/Triaged`. Before acting, the module records each message's inbox and read state and the labels it will add (`mail_actions`, 90 days). `chamberlain mail undo <run-id>` restores exactly that: `INBOX` and `UNREAD` back where they were, its own added labels removed. It never removes a label it did not add. | Round-trip test against the fake provider comparing the full label set and read state before the action and after undo. |
@@ -289,7 +292,7 @@ plain text.
 | --- | --- | --- |
 | Provider message and thread id, from-address, `List-Id`, date, category, outcome, rule id, tier, tokens | `mail.db` `mail_messages` | 90 days |
 | Subject, cut to 120 characters | `mail_messages.subject` | 30 days, then set to NULL |
-| Summary (≤400 characters), facts, highlights (≤5 × 200 characters, with link) | the card's question in `chamberlain.db`, and `mail_cards` | 30 days after the card is answered. Queue items are history and are never pruned (`maintain.ts`), so B5 adds a core `scrubQuestion(id)` the module calls at 30 days: it replaces the card's title, context and option details with "mail card, text removed after 30 days" and keeps its kind, choice and times. A claim's stored message for a mail card holds no mail text (record-only); a note's answer wake is an outbox row, pruned 30 days after delivery as today. |
+| Summary (≤400 characters), facts, highlights (≤5 × 200 characters, with link) | the card's question in `chamberlain.db`, and `mail_cards` | 30 days after the card is answered. Queue items are history and are never pruned (`maintain.ts`), so B5 adds a core `scrubQuestion(id)` the module calls at 30 days: it replaces the card's title, context and option details with "mail card, text removed after 30 days" and keeps its kind, choice and times. Claims are kept too: a claim stores its whole answer wake and the answer, note included (`pageClaim`), and queue claims outlive resolution. So `scrubQuestion` scrubs, in the same transaction, the card's claim (its wake text and note become the same stub; the choice and times stay). A note's answer wake is also an outbox row, frozen by trigger, and pruned 30 days after delivery as today. |
 | Triage rules | `mail_rules` | for good (a ledger) |
 | Run report | `reports/mail/` | 30 days |
 | Mail bodies | memory, for one model call | never stored |
@@ -313,12 +316,18 @@ Three, each one tap. Everything else above is decided and can be changed later.
 | B2 gog provider: the five verbs, the allowlist and flags, `label()` guards, partial-list errors; the `command` provider contract; a fake provider for tests; the real-binary refusal test | new | B1 |
 | B3 rules stage, header facts, `important` routing, cursor and history, shadow recording | new | B1, B2 |
 | B4 driver and escalation: batching, the reply schema, triggers, budgets and caps, env allowlist, `mail.attempt` events, rules-only mode | new | B1, B3; OBSERVABILITY B1 (registry) and B4 (`plan_usage`) when built, caps alone until then |
-| B5 cards: `fileQuestion` and `scrubQuestion` in core, `route: "record"` with claim recovery and resolution, the answer handler, cleanup batch and ask cards, `mail_actions` and `mail undo` | new | B3, B4 |
+| B5 cards: `fileQuestion` and `scrubQuestion` (question and claim) in core, `route: "record"` with claim recovery and resolution, the answer handler, cleanup batch and ask cards, `mail_actions` and `mail undo` | new | B3, B4 |
 | B6 learned rules: proposal from answers, backtest, confirm and retire, `mail rules list|retire` | new | B5 |
 | B7 newsletter digests: link table, extraction, interest scoring, the card, `save.file` and `save.command` | new | B4, B5 |
 | B8 scheduling and reporting: the timer, `mail run|pause|resume`, the lock, the report file, the `mail` wake kind and the sweep line | new | B3 |
 | B9 a shadow fortnight on Nathan's mailbox, then measured token use and agreement with his taps, before `live` | new | B1 to B8 |
 
-## 11. Review log
+## 11. Review log (Sol, gpt-6.1-sol, reasoningEffort high)
 
-Sol review (reasoningEffort high), 2026-11-14: see the PR for findings and what was folded.
+Round 1, 2026-11-14: hold, 4 blocking and 6 should-fix findings, all folded: the important-sender check now runs before rules; `deeper`
+always escalates and reads the thread; the injection claim is narrowed to authority, with a valid-schema injection test; `save.command` is
+named as outside the no-fetch guarantee; card text is scrubbed at 30 days because queue items are never pruned; record-only claims and
+recovery; undo restores read state and labels; the gog refusal test has a control; the provider child's environment is an allowlist;
+budget totals and dependencies fixed. Round 2 (delta check): 8 folded, 3 partly, and one new blocking finding (claims keep note text).
+All four were then folded without a third round: claims are scrubbed with their question, recovery is described as the code does it,
+every action is idempotent with crash tests, and the injection test separates effects before and after a Save tap. Not re-checked by Sol.
