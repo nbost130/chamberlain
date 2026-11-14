@@ -112,10 +112,20 @@ export function readToken(conf: string): string | undefined {
 	return t && t.length >= MIN_TOKEN_CHARS ? t : undefined;
 }
 
-/** The view key in `<conf>/secrets/view-key`, or undefined when there is none. Same rules as readToken. */
+/**
+ * The view key in `<conf>/secrets/view-key`, or undefined when there is none. Same rules as readToken, plus one: a view key that holds the SAME
+ * value as the page's token (a symlink, a copy) is no view key at all, because it would hand the page's authority to every post.
+ */
 export function readViewKey(conf: string): string | undefined {
 	const t = readSecret(conf, VIEW_KEY_FILE);
-	return t && t.length >= MIN_TOKEN_CHARS ? t : undefined;
+	if (!t || t.length < MIN_TOKEN_CHARS) return undefined;
+	let page: string | undefined;
+	try {
+		page = readSecret(conf, TOKEN_FILE);
+	} catch {
+		page = undefined; // an unreadable page token is refused by the page itself
+	}
+	return page !== undefined && sameSecret(t, page) ? undefined : t;
 }
 
 /**
@@ -125,8 +135,12 @@ export function readViewKey(conf: string): string | undefined {
 export const ensureToken = (conf: string, seam: { afterMiss?: () => void } = {}): string =>
 	ensureSecret(conf, TOKEN_FILE, seam);
 /** The view key, made now if the install has none, the same way and with the same never-replace rule as the page's token. */
-export const ensureViewKey = (conf: string, seam: { afterMiss?: () => void } = {}): string =>
-	ensureSecret(conf, VIEW_KEY_FILE, seam);
+export function ensureViewKey(conf: string, seam: { afterMiss?: () => void } = {}): string {
+	const v = ensureSecret(conf, VIEW_KEY_FILE, seam);
+	if (readViewKey(conf) === undefined)
+		throw Error(`${SECRETS_DIR}/${VIEW_KEY_FILE} holds the page's own token: ${fixFor(VIEW_KEY_FILE)}`);
+	return v;
+}
 
 function ensureSecret(conf: string, file: string, seam: { afterMiss?: () => void }): string {
 	const dir = ensureSecretsDir(conf);
@@ -248,3 +262,12 @@ export function inlineScriptSrc(base: string, viewKey: string, item?: string): s
 /** Pure: `s` with every occurrence of `token` replaced, for a message that may have come to hold one. */
 export const withoutToken = (s: string, token: string | undefined): string =>
 	token ? s.split(token).join("[token]").split(encodeURIComponent(token)).join("[token]") : s;
+
+/** Every spelling of `token` a text could hold: raw, URL-encoded, and every character as `%XX` (either case of the hex digits). */
+const spellings = (token: string): string[] => {
+	const pct = [...Buffer.from(token, "utf8")].map((b) => `%${b.toString(16).padStart(2, "0")}`).join("");
+	return [token, encodeURIComponent(token), pct, pct.toUpperCase()];
+};
+/** Pure: true when `s` holds `token` in any spelling `spellings` knows. For a guard on what may be sent; withoutToken is for what comes back. */
+export const holdsToken = (s: string, token: string | undefined): boolean =>
+	Boolean(token) && spellings(token as string).some((x) => s.includes(x));

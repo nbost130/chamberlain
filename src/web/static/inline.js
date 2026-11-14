@@ -179,7 +179,7 @@
 		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
 		if (imgs.length) {
 			const ev = el("div", "dq-ev");
-			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; ev.append(i); }
+			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; i.onerror = () => i.replaceWith(el("div", "dq-meta", "Image evidence shows on the full queue page.")); ev.append(i); }
 			c.append(ev);
 		}
 		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); return c; }

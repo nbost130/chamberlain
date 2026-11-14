@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { Question } from "../../core/questions.ts";
 import { decisionsDownMessage, decisionsMessage, postCard, t3Post } from "./post.ts";
@@ -95,6 +95,25 @@ describe("a Decisions post never holds the page's key", () => {
 			"refusing to post the page's key",
 		);
 		expect(k.sent()).not.toContain(PAGE_KEY);
+	});
+	test("a title that spells the key in any encoding (every character as %XX, either case) is refused too", () => {
+		const k = keyed();
+		process.env.T3CODE_CLI_PATH = `${k.conf}/t3`;
+		const pct = [...Buffer.from(PAGE_KEY)].map((b) => `%${b.toString(16).padStart(2, "0")}`).join("");
+		for (const spelled of [pct, pct.toUpperCase(), encodeURIComponent(PAGE_KEY)])
+			expect(() => postCard(item("Q-abcd", { title: `see ${spelled}` }), k.conf, "http://q.test", KEY)).toThrow(
+				"refusing to post the page's key",
+			);
+		expect(k.sent()).toBe("");
+	});
+	test("the guard does not fail open when the page's token file has the wrong mode: the key is still in it", () => {
+		const k = keyed();
+		process.env.T3CODE_CLI_PATH = `${k.conf}/t3`;
+		chmodSync(`${k.conf}/secrets/web-token`, 0o644);
+		expect(() => postCard(item("Q-abcd", { title: `see ${PAGE_KEY}` }), k.conf, "http://q.test", KEY)).toThrow(
+			"refusing to post the page's key",
+		);
+		expect(k.sent()).toBe("");
 	});
 	test("the page-down notice never holds it either", () => {
 		const k = keyed();

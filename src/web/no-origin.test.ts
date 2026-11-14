@@ -173,12 +173,16 @@ for (const [who, headers, how] of [
 				expect(s.store.wakes.rows("all")).toEqual([]);
 			});
 		}
-		test("a preflight is not answered with CORS grants to a request with no Origin", async () => {
-			if (how === "page" || who.includes("Origin: null")) return; // a frame's preflight is unchanged and tested in inline-authority.test.ts
+		test("its preflight: with no Origin it is refused and grants no CORS; from a null-origin frame it is the unchanged, grant-nothing 204", async () => {
 			const s = setup();
 			const r = await s.send("OPTIONS", "/api/queue", headers(s));
-			expect(r.status).toBe(403);
-			expect(r.headers.get("access-control-allow-origin")).toBeNull();
+			if (who.includes("Origin: null")) {
+				expect(r.status).toBe(204);
+				expect(r.headers.get("access-control-allow-origin")).toBe("null");
+			} else {
+				expect(r.status).toBe(403);
+				expect(r.headers.get("access-control-allow-origin")).toBeNull();
+			}
 		});
 	});
 }

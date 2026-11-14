@@ -3,7 +3,8 @@
  * tabbed view (the page, inline) and never a question card, so nothing in that thread blocks. With the page down it
  * is a one-line notice. The queue item is already recorded, so a failed post leaves the question on the page.
  */
-import { inlineScriptSrc, readToken, withoutToken } from "../../core/capability.ts";
+import { TOKEN_FILE, holdsToken, inlineScriptSrc, withoutToken } from "../../core/capability.ts";
+import { readFileSync } from "node:fs";
 import { thread as configThread } from "../../core/layout.ts";
 import { CONF, PrincipalPoss } from "../../core/config.ts";
 import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
@@ -59,20 +60,23 @@ export function postCard(i: Question, conf = CONF, base?: string, viewKey?: stri
 	// A view needs the page's address AND the view key: with either missing the operator gets the one-line notice, never a link that cannot work.
 	const view = base !== undefined && viewKey !== undefined;
 	const text = view ? decisionsMessage(i, base, viewKey) : decisionsDownMessage(i);
-	// The one door every Decisions post goes through: whatever built the text, it never leaves holding the page's key, raw or URL-encoded.
+	// The one door every Decisions post goes through: whatever built the text, it never leaves holding the page's key, in any spelling holdsToken knows.
 	const pageKey = readPageKey(conf);
-	if (pageKey && withoutToken(text, pageKey) !== text)
+	if (holdsToken(text, pageKey))
 		throw Error("ask: refusing to post the page's key into the Decisions thread (a post carries the view key only)");
 	const r = pingViaCli(thread, text, undefined, (out) => withoutToken(withoutToken(out, viewKey), pageKey));
 	return { ok: r.ok, detail: r.detail, where: view ? "view" : "notice" };
 }
 
-/** The page's key for the post's last check; a key that cannot be read (wrong mode) is one the post cannot hold either way. */
+/**
+ * The page's key for the post's last check, read from the file whatever its mode: a token file the page distrusts (not 0600) still HOLDS a key
+ * that must not be posted, so the guard cannot fail open on it.
+ */
 const readPageKey = (conf: string): string | undefined => {
 	try {
-		return readToken(conf);
+		return readFileSync(`${conf}/secrets/${TOKEN_FILE}`, "utf8").trim() || undefined;
 	} catch {
-		return undefined;
+		return undefined; // no file, so no key to leak
 	}
 };
 

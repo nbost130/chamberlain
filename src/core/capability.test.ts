@@ -9,6 +9,7 @@ import {
 	readdirSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +23,7 @@ import {
 	ensureToken,
 	ensureViewKey,
 	fileCapability,
+	holdsToken,
 	inlineScriptSrc,
 	makeCapability,
 	newToken,
@@ -211,6 +213,29 @@ describe("the view key", () => {
 		chmodSync(`${c}/secrets/${VIEW_KEY_FILE}`, 0o644);
 		expect(cap.acceptsView(v)).toBe(false);
 		expect(cap.accepts(t)).toBe(true);
+	});
+	test("a view key that holds the page's own token (a copy, a symlink) is no view key: it is not read, not made, not accepted", () => {
+		const c = conf();
+		const t = ensureToken(c);
+		symlinkSync(`${c}/secrets/${TOKEN_FILE}`, `${c}/secrets/${VIEW_KEY_FILE}`);
+		expect(readViewKey(c)).toBeUndefined();
+		expect(() => ensureViewKey(c)).toThrow("holds the page's own token");
+		const cap = fileCapability(c);
+		expect(cap.acceptsView(t)).toBe(false);
+		expect(cap.accepts(t)).toBe(true);
+		rmSync(`${c}/secrets/${VIEW_KEY_FILE}`);
+		writeFileSync(`${c}/secrets/${VIEW_KEY_FILE}`, `${t}\n`, { mode: 0o600 });
+		expect(readViewKey(c)).toBeUndefined();
+		expect(fileCapability(c).acceptsView(t)).toBe(false);
+	});
+	test("holdsToken sees the raw key, its URL-encoding and every character as %XX in either case, and nothing else", () => {
+		const T = "ab-_CD0123456789abcdefghijklmnopqrstuvwxyz";
+		const pct = [...Buffer.from(T)].map((b) => `%${b.toString(16).padStart(2, "0")}`).join("");
+		for (const s of [`x ${T} y`, `x ${pct} y`, `x ${pct.toUpperCase()} y`, `x ${encodeURIComponent(T)} y`])
+			expect(holdsToken(s, T)).toBe(true);
+		expect(holdsToken(`x ${T.slice(0, -1)} y`, T)).toBe(false);
+		expect(holdsToken("anything", undefined)).toBe(false);
+		expect(holdsToken("anything", "")).toBe(false);
 	});
 	test("a post's script address takes whatever key it is given, URL-encoded, and nothing else", () => {
 		expect(inlineScriptSrc("http://q.test/", "a b+/", "Q-abcd")).toBe(
