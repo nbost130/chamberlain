@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { git, gitTestEnv } from "../testing/git.ts";
 import { memStore } from "../testing/store.ts";
 import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
 import { type ItemSource, runSources } from "./source.ts";
@@ -8,7 +9,7 @@ import {
 	checkSource,
 	commitsAheadCommand,
 	configuredSources,
-	exec,
+	type exec,
 	FULL_SWEEP_MS,
 	fenced,
 	parseCheckOutput,
@@ -385,13 +386,21 @@ describe("operator checks", () => {
 describe("commitsAheadCommand", () => {
 	test("quotes a path with spaces and a quote", () =>
 		expect(commitsAheadCommand("/tmp/a b'c")).toStartWith("cd '/tmp/a b'\\''c' && "));
-	test("really counts branch commits in a repository", async () => {
+	test("really counts branch commits in a repository", () => {
 		const dir = mkdtempSync(`${tmpdir()}/ahead-`);
-		const sh = (c: string) => exec("/bin/sh", ["-c", `cd '${dir}' && ${c}`]);
-		await sh(
-			"git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m one && git update-ref refs/remotes/origin/main main && git switch -q -c work && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m two && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m three",
-		);
-		expect((await exec("/bin/sh", ["-c", commitsAheadCommand(dir)])).trim()).toBe("2");
+		git(dir, "init", "-q", "-b", "main");
+		git(dir, "commit", "-q", "--allow-empty", "-m", "one");
+		git(dir, "update-ref", "refs/remotes/origin/main", "main");
+		git(dir, "switch", "-q", "-c", "work");
+		git(dir, "commit", "-q", "--allow-empty", "-m", "two");
+		git(dir, "commit", "-q", "--allow-empty", "-m", "three");
+		// The command under test is a shell line that runs plain `git`: give it the same sealed environment, not the run's own.
+		const p = Bun.spawnSync(["/bin/sh", "-c", commitsAheadCommand(dir)], {
+			env: gitTestEnv(),
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		expect(p.stdout.toString().trim()).toBe("2");
 	});
 });
 
