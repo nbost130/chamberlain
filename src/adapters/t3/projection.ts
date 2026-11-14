@@ -5,7 +5,11 @@ import { normalizeWaitKind } from "./state.ts";
  * The shape the T3 adapter expects of a thread projection (`orchestration.getThreadProjection`). Every read of one goes
  * through `checkProjection`: an answer in any other shape throws, so it is a failed read and never an empty thread.
  */
-export type Projection = { turnItems: any[]; runs?: any[]; subagents?: { status?: string }[] };
+export type Projection = {
+	turnItems: Record<string, unknown>[];
+	runs?: { id?: string; ordinal?: number; status?: string }[];
+	subagents?: { status?: string }[];
+};
 export const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
