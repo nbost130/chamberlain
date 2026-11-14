@@ -24,7 +24,7 @@ export function obsFor(store: Store): Obs {
 		path: store.path === ":memory:" ? ":memory:" : obsPath(dirname(store.path)),
 		mirror: (line, key) => {
 			try {
-				store.events.append(line, key);
+				return store.events.tryAppend(line, key);
 			} finally {
 				if (process.env.CHAMBERLAIN_VERBOSE) console.log(JSON.stringify(line));
 			}

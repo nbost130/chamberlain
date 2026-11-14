@@ -83,6 +83,8 @@ type Db = {
 	all(sql: string, ...p: unknown[]): Row[];
 	one(sql: string, ...p: unknown[]): Row | undefined;
 	run(sql: string, ...p: unknown[]): Changes;
+	/** Runs `fn` with the busy timeout at zero, so a held write lock is an error at once and not a wait of seconds. */
+	nowait<T>(fn: () => T): T;
 };
 
 /** The directory 0700 and the file 0600, each CHECKED after the chmod, and the file created before SQLite makes its own -wal and -shm files. */
@@ -187,12 +189,21 @@ function makeTx(db: Database): { tx: Db["tx"]; after: (fn: () => void) => void }
 /** Opens (creating and migrating) the database at `path`, or `:memory:`. */
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o);
+	const busyMs = Math.max(1, Math.floor(o.busyMs ?? 10_000));
 	const { tx, after } = makeTx(db);
 	const c: Db = {
 		tx,
 		all: (sql, ...p) => db.query(sql).all(...(p as never[])) as Row[],
 		one: (sql, ...p) => (db.query(sql).get(...(p as never[])) ?? undefined) as Row | undefined,
 		run: (sql, ...p) => db.query(sql).run(...(p as never[])),
+		nowait: (fn) => {
+			db.exec("PRAGMA busy_timeout = 0");
+			try {
+				return fn();
+			} finally {
+				db.exec(`PRAGMA busy_timeout = ${busyMs}`);
+			}
+		},
 	};
 	const closers: (() => void)[] = [];
 	return {
@@ -1059,17 +1070,30 @@ const eventWhere = (q: EventQuery) => {
 	}
 	return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", p };
 };
+const BUSY = /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i;
+const appendEvent = (c: Db, e: LogEvent, importKey?: string) => {
+	const { t, event, src, ...data } = e;
+	c.run(
+		"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
+		t,
+		event,
+		src ?? null,
+		JSON.stringify(data),
+		importKey ?? null,
+	);
+};
 const makeEvents = (c: Db): Store["events"] => ({
-	append(e, importKey) {
-		const { t, event, src, ...data } = e;
-		c.run(
-			"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
-			t,
-			event,
-			src ?? null,
-			JSON.stringify(data),
-			importKey ?? null,
-		);
+	append: (e, importKey) => {
+		appendEvent(c, e, importKey);
+	},
+	tryAppend(e, importKey) {
+		try {
+			c.nowait(() => appendEvent(c, e, importKey));
+			return true;
+		} catch (err) {
+			if (BUSY.test(String(err))) return false;
+			throw err;
+		}
 	},
 	query(q = {}) {
 		const w = eventWhere(q);

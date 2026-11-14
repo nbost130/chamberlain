@@ -11,10 +11,11 @@
  */
 import type { LogEvent } from "../store.ts";
 import type { CallOptions, Obs } from "./obs.ts";
+import type { EventName } from "./registry.ts";
 import type { Ctx } from "./row.ts";
 
 type Fields = Record<string, unknown>;
-type Emit = (event: string, fields?: Fields, opts?: CallOptions) => void;
+type Emit = (event: EventName, fields?: Fields, opts?: CallOptions) => void;
 
 /** What a call is bound to: the module, the thread (a UUID), the correlation id, and the raw delivery id (stored as its digest). */
 export type Binding = Ctx;

@@ -154,36 +154,35 @@ const itemRow = (i: Item, answer?: unknown): Row => ({
  * and never throws, so a telemetry failure can never fail a ledger write (the reconciler repairs what this misses). `corr` joins a question with its answer wake.
  */
 export const ledgerEvents = (store: Store) => {
-	const obs = obsFor(store);
-	const safe = (fn: () => unknown) =>
+	const safe = (fn: (obs: Obs) => unknown) =>
 		store.afterCommit(() => {
 			try {
-				fn();
+				fn(obsFor(store));
 			} catch {
 				/* the reconciler emits it */
 			}
 		});
 	return {
 		decision: (id: number, d: { t: string; thread: string; rulingIds?: string[] }) =>
-			safe(() =>
+			safe((obs) =>
 				emit(
 					obs,
 					decisionEvent({ id, t: d.t, thread: d.thread, ruling_ids: d.rulingIds ? JSON.stringify(d.rulingIds) : null }),
 				),
 			),
 		asked: (id: string) =>
-			safe(() => {
+			safe((obs) => {
 				const i = store.items.get("queue", id);
 				if (i) emit(obs, askedEvent(itemRow(i)), corrOf(`item:${id}`));
 			}),
 		answered: (id: string, answer?: unknown) =>
-			safe(() => {
+			safe((obs) => {
 				const i = store.items.get("queue", id);
 				const d = i ? answeredEvent(itemRow(i, answer)) : undefined;
 				if (d) emit(obs, d, corrOf(`item:${id}`));
 			}),
 		holdClosed: (handle: string) =>
-			safe(() => {
+			safe((obs) => {
 				const i = store.items.get("held", handle);
 				if (i?.status === "resolved") emit(obs, holdClosedEvent(itemRow(i)));
 			}),

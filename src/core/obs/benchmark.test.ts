@@ -15,6 +15,15 @@ function p99(samples: number[]): number {
 	return sorted[Math.floor(sorted.length * 0.99)] ?? 0;
 }
 
+/**
+ * The p99 of three independent rounds, middle one: a neighbour that stalls this process for a moment spoils one round and not the median,
+ * while a call that is really slow is slow in all three.
+ */
+function steadyP99(call: (i: number) => void): number {
+	const rounds = [0, 1, 2].map(() => p99(measure(call, 7000)));
+	return rounds.sort((a, b) => a - b)[1] ?? 0;
+}
+
 function measure(call: (i: number) => void, n = 20_000): number[] {
 	for (let i = 0; i < 1000; i++) call(i);
 	const out: number[] = [];
@@ -31,9 +40,9 @@ test("a typed call's append is under 1 ms at p99, with a bound thread and correl
 	dirs.push(dir);
 	const obs = memObs({ path: `${dir}/obs.db` });
 	const log = makeLogger(obs, { mod: "relay", thread: THREAD, corr: "0123456789ab" });
-	const samples = measure((i) => log.info("wake.delivered", { http: 202, attempt: i % 3 }));
+	const budget = steadyP99((i) => log.info("wake.delivered", { http: 202, attempt: i % 3 }));
 	obs.close();
-	expect(p99(samples)).toBeLessThan(1);
+	expect(budget).toBeLessThan(1);
 	expect(obs.counters).toEqual({ rejected: 0, redacted: 0, failed: 0, dropped: 0 });
 });
 
@@ -43,15 +52,15 @@ test("so is a call through the old shape, which the registry reads", () => {
 	const obs = memObs({ path: `${dir}/obs.db` });
 	obs.allow("server", ["mac"]);
 	const log = makeLogger(obs, {});
-	const samples = measure((i) =>
+	const budget = steadyP99((i) =>
 		log("fire", { server: "mac", kind: "needs_input", threadId: THREAD, title: "Fix the login bug", n: i }),
 	);
 	obs.close();
-	expect(p99(samples)).toBeLessThan(1);
+	expect(budget).toBeLessThan(1);
 });
 
 test("and a rejected call, the cheapest path, never costs more", () => {
 	const obs = memObs();
 	const log = makeLogger(obs, {});
-	expect(p99(measure(() => log.info("not.registered", { a: 1 })))).toBeLessThan(1);
+	expect(steadyP99(() => log.info("not.registered" as never, { a: 1 }))).toBeLessThan(1);
 });

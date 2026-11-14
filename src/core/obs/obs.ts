@@ -21,7 +21,8 @@ import { canonical, EVENTS, type EventSpec, FAMILIES, type Level } from "./regis
 import { type Columns, type Ctx, columnsOf, projectLegacy, projectTyped } from "./row.ts";
 import { hit, RULES, type Rule, scrub } from "./scrub.ts";
 
-type Mirror = (line: LogEvent, key?: string) => void;
+/** Writes a line to the old table. `false` means the database was busy and nothing was written: the line waits in memory for a retry. */
+type Mirror = (line: LogEvent, key?: string) => unknown;
 export type ObsOptions = {
 	/** `obs.db`'s path, or `:memory:`. */
 	path: string;
@@ -70,6 +71,9 @@ type Call = {
 const LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/;
 /** A derived row's key: only the shapes the ledger's own ids make (src/core/obs/ledger.ts). A later piece that derives rows from something else adds its shape here. */
 const SOURCE_KEY = /^(?:decision:\d{1,12}|item:Q-[a-z0-9]{4,16}:(?:asked|answered)|hold:[0-9a-f]{8}:closed)$/;
+/** A time column: an ISO timestamp from the clock or from a derived row's ledger, nothing else. */
+const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/;
+const RUN = /^[0-9a-f]{12}$/;
 const BUFFER = 500;
 const RETRY_MS = 250;
 const FLUSH_MS = 5000;
@@ -103,6 +107,8 @@ export class Obs {
 	private readonly flushed: Counters = { rejected: 0, redacted: 0, failed: 0, dropped: 0 };
 	private lastFlush = 0;
 	private lastRetry = 0;
+	private lastMirrorRetry = 0;
+	private readonly pendingMirror: [LogEvent, string | undefined][] = [];
 	private lastComplaint = -COMPLAIN_MS;
 	private readonly registry: Readonly<Record<string, EventSpec>>;
 	private readonly rules: readonly Rule[];
@@ -110,7 +116,7 @@ export class Obs {
 
 	constructor(private readonly o: ObsOptions) {
 		this.host = o.host !== undefined && LABEL.test(o.host) ? o.host : hostName();
-		this.run = o.run ?? randomBytes(6).toString("hex");
+		this.run = o.run !== undefined && RUN.test(o.run) ? o.run : randomBytes(6).toString("hex");
 		this.registry = o.registry ?? EVENTS;
 		this.rules = o.rules ?? RULES;
 		this.now = o.now ?? Date.now;
@@ -129,6 +135,14 @@ export class Obs {
 		this.known.set(set, s);
 	}
 
+	/** `t` when it is an ISO timestamp, else now (and the bad value is counted): no column takes what a caller hands it unchecked. */
+	private timeOf(t: string | undefined): string {
+		if (t === undefined) return this.stamp();
+		if (ISO.test(t)) return t;
+		this.counters.rejected++;
+		return this.stamp();
+	}
+
 	/** The time of a call now, as the ISO string both tables hold. */
 	stamp(): string {
 		return new Date(this.now()).toISOString();
@@ -141,7 +155,7 @@ export class Obs {
 		try {
 			const spec = own(this.registry, name);
 			if (!spec || (opts.sourceKey !== undefined && !SOURCE_KEY.test(opts.sourceKey))) return this.reject();
-			const t = opts.t ?? new Date(this.now()).toISOString();
+			const t = this.timeOf(opts.t);
 			const p = projectTyped(spec, fields, this.known);
 			const { cols, rejected } = columnsOf({}, ctx);
 			this.counters.rejected += p.rejected + rejected;
@@ -176,7 +190,7 @@ export class Obs {
 		try {
 			const name = canonical(event);
 			const spec = name ? own(this.registry, name) : undefined;
-			if (name && spec) keep = this.legacyRow(name, spec, data, ctx, line.t);
+			if (name && spec) keep = this.legacyRow(name, spec, data, ctx, this.stamp());
 			else this.counters.rejected++;
 		} catch (e) {
 			this.failure(e);
@@ -297,12 +311,32 @@ export class Obs {
 		];
 	}
 
+	/**
+	 * The dual write never waits on another process: a busy ledger leaves the line in a 500-line buffer, tried again (in order) on a later call and at close.
+	 * The old table can therefore trail by moments under contention, and loses the buffer in a crash; `obs.db` is the record that matters.
+	 */
 	private mirrorLine(line: LogEvent, key?: string): void {
+		const mirror = this.o.mirror;
+		if (!mirror) return;
 		try {
-			this.o.mirror?.(line, key);
+			this.drainMirror(mirror);
+			if (this.pendingMirror.length === 0 && mirror(line, key) !== false) return;
 		} catch (e) {
 			this.complain(`could not write the event log: ${String(e).slice(0, 160)}`);
+			return;
 		}
+		if (this.pendingMirror.length >= BUFFER) {
+			this.pendingMirror.shift();
+			this.counters.dropped++;
+		}
+		this.pendingMirror.push([line, key]);
+	}
+
+	private drainMirror(mirror: Mirror, force = false): void {
+		const t = this.now();
+		if (this.pendingMirror.length === 0 || (!force && t - this.lastMirrorRetry < RETRY_MS)) return;
+		this.lastMirrorRetry = t;
+		while (this.pendingMirror[0] && mirror(...this.pendingMirror[0]) !== false) this.pendingMirror.shift();
 	}
 
 	// ---- the database --------------------------------------------------------------------------------
@@ -424,6 +458,11 @@ export class Obs {
 	close(): void {
 		this.lastRetry = Number.NEGATIVE_INFINITY;
 		this.retry();
+		try {
+			if (this.o.mirror) this.drainMirror(this.o.mirror, true);
+		} catch {
+			/* the old table is unavailable: what waits is lost with the process */
+		}
 		this.flush();
 		this.checkpoint();
 		this.insert = undefined;

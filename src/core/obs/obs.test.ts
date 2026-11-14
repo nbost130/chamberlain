@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dataOf, eventRows, everything, HOST, memObs, THREAD } from "../../testing/obs.ts";
 import { memStore } from "../../testing/store.ts";
 import { logFor, obsFor } from "../log.ts";
+import { openStore } from "../sqlite-store.ts";
 import { OBS_MIGRATIONS } from "./db.ts";
 import { corrOf } from "./fields.ts";
 import { makeLogger } from "./logger.ts";
@@ -76,7 +77,7 @@ describe("typed calls", () => {
 	test("an unknown event is dropped and counted; an unknown field or a wrong value is dropped from its row and counted", () => {
 		const obs = memObs();
 		const log = makeLogger(obs, { mod: "relay" });
-		log.info("wake.never-registered", { http: 202 });
+		log.info("wake.never-registered" as never, { http: 202 });
 		expect(eventRows(obs)).toEqual([]);
 		expect(obs.counters.rejected).toBe(1);
 		log.info("wake.delivered", { http: 202, note: "Fix the login bug", attempt: "one" });
@@ -248,9 +249,9 @@ describe("the counters", () => {
 		const path = `${dir}/obs.db`;
 		const a = memObs({ path });
 		const b = memObs({ path });
-		makeLogger(a, {}).info("nothing.registered");
-		makeLogger(b, {}).info("nothing.registered");
-		makeLogger(b, {}).info("nothing.registered");
+		makeLogger(a, {}).info("nothing.registered" as never);
+		makeLogger(b, {}).info("nothing.registered" as never);
+		makeLogger(b, {}).info("nothing.registered" as never);
 		b.flush();
 		expect(a.totals()).toEqual({ rejected: 3, redacted: 0, failed: 0, dropped: 0 });
 		a.close();
@@ -438,4 +439,54 @@ describe("nothing here reads the developer's home", () => {
 		expect(process.env.CHAMBERLAIN_STATE?.startsWith(process.env.TMPDIR ?? "/")).toBe(true);
 		store.close();
 	});
+});
+
+describe("the dual write waits for no one", () => {
+	test("a ledger another process holds locked does not stall a log call: obs.db is written, the old table catches up in order", async () => {
+		const dir = scratch();
+		const store = openStore(`${dir}/chamberlain.db`);
+		const obs = obsFor(store);
+		const log = logFor(store);
+		log("start", { dry: false });
+		const other = new Database(`${dir}/chamberlain.db`);
+		other.exec("PRAGMA busy_timeout = 0");
+		other.exec("BEGIN IMMEDIATE");
+		const started = performance.now();
+		for (let i = 0; i < 200; i++) log("fire", { kind: "failed", n: i });
+		expect(performance.now() - started).toBeLessThan(500);
+		expect(eventRows(obs).filter((r) => r.event === "fire")).toHaveLength(200);
+		expect(store.events.query().filter((e) => e.event === "fire")).toHaveLength(0);
+		other.exec("ROLLBACK");
+		other.close();
+		await Bun.sleep(300);
+		log("fire", { kind: "failed", n: 200 });
+		const old = store.events.query().filter((e) => e.event === "fire");
+		expect(old.map((e) => e.n)).toEqual(Array.from({ length: 201 }, (_, i) => i));
+		store.close();
+	});
+
+	test("what still waits when the store closes is written then", () => {
+		const dir = scratch();
+		const store = openStore(`${dir}/chamberlain.db`);
+		const log = logFor(store);
+		const other = new Database(`${dir}/chamberlain.db`);
+		other.exec("BEGIN IMMEDIATE");
+		log("fire", { kind: "failed", n: 1 });
+		other.exec("ROLLBACK");
+		other.close();
+		store.events.append({ t: "2026-11-01T00:00:00.000Z", event: "marker" });
+		store.close();
+		const check = openStore(`${dir}/chamberlain.db`);
+		expect(check.events.query().map((e) => e.event)).toEqual(["marker", "fire"]);
+		check.close();
+	});
+
+	// A misspelled event name is a compile error (tsc checks the tests too); this is never called.
+	const _typo = () =>
+		makeLogger(memObs(), {}).info(
+			// @ts-expect-error not in the registry
+			"wake.delivred",
+			{},
+		);
+	void _typo;
 });

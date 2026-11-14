@@ -55,8 +55,8 @@ function fuzz(obs: Obs) {
 				corr: poison as string,
 				delivery: poison as string,
 			});
-			log.info(name, typed);
-			log.warn(name, typed);
+			log.info(name as never, typed);
+			log.warn(name as never, typed);
 			const old = Object.fromEntries(legacyKeys(spec).map((k) => [k, poison]));
 			makeLogger(obs, { mod: poison as string })(spec.legacy ?? name, old);
 			obs.record("info", name, typed, { mod: "ledger" }, { sourceKey: `item:${poison}` as string });
@@ -114,14 +114,14 @@ describe("the scrubber backstop, with the registry's own checks out of the way",
 				? { "leak.test": { level: "info", fields: { [field]: { type: { kind: "enum", values: ["x"] } } } } }
 				: leaky(value);
 			const obs = memObs({ registry });
-			makeLogger(obs, { mod: "leak" }).info("leak.test", { [field]: v.key ? "x" : value });
+			makeLogger(obs, { mod: "leak" }).info("leak.test" as never, { [field]: v.key ? "x" : value });
 			expect(everything(obs)).not.toContain(MARK);
 			expect(obs.counters.redacted).toBe(1);
 			expect(eventRows(obs)).toHaveLength(1);
 			expect(JSON.parse(eventRows(obs)[0]?.data ?? "{}")).toEqual({});
 			// With every other rule in place and this one gone, the same call stores it: this rule is what stops it.
 			const mutant = memObs({ registry, rules: RULES.filter((r) => r.name !== rule) });
-			makeLogger(mutant, { mod: "leak" }).info("leak.test", { [field]: v.key ? "x" : value });
+			makeLogger(mutant, { mod: "leak" }).info("leak.test" as never, { [field]: v.key ? "x" : value });
 			expect(mutant.counters.redacted).toBe(0);
 			expect(JSON.parse(eventRows(mutant)[0]?.data ?? "{}")).toEqual({ [field]: v.key ? "x" : value });
 		});
@@ -140,6 +140,69 @@ describe("the scrubber backstop, with the registry's own checks out of the way",
 			{ sourceKey: "decision:ghp_0123456789abcdefghij" },
 		);
 		expect(eventRows(obs)).toEqual([]);
+		expect(obs.counters.rejected).toBe(1);
+	});
+});
+
+describe("every column, not only `data`", () => {
+	const SHAPES: Record<string, RegExp> = {
+		t: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,3})?Z$/,
+		level: /^(debug|info|warn|error)$/,
+		host: /^[a-z0-9][a-z0-9-]{0,31}$/,
+		run: /^[0-9a-f]{12}$/,
+		mod: /^[a-z0-9][a-z0-9-]{0,31}$/,
+		corr: /^[0-9a-f]{12}$/,
+		delivery: /^[0-9a-f]{12}$/,
+		thread: /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/,
+		source_key: /^(decision:\d+|item:Q-[a-z0-9]{4,16}:(asked|answered)|hold:[0-9a-f]{8}:closed)$/,
+	};
+
+	test("with poison in the time, the run, the host, the module and every context column, each column of each row still has its shape", () => {
+		const obs = memObs({ debug: true, run: `Bearer ${MARK}`, host: `https://x.example/${MARK}` });
+		obs.allow("server", ["mac"]);
+		for (const poison of POISON) {
+			const log = makeLogger(obs, {
+				mod: poison as string,
+				thread: poison as string,
+				corr: poison as string,
+				delivery: poison as string,
+			});
+			for (const name of ["wake.delivered", "fire", "answered", "wake.composed"] as const) {
+				log.info(name, { http: 202 }, { t: poison as string });
+				log(EVENTS[name].legacy ?? name, {
+					t: poison,
+					http: 202,
+					id: poison,
+					item: poison,
+					deliveryId: poison,
+					threadId: poison,
+					server: "mac",
+				});
+			}
+			obs.record(
+				"info",
+				"decision.logged",
+				{ cited: 1 },
+				{ mod: "ledger" },
+				{ t: poison as string, sourceKey: poison as string },
+			);
+		}
+		const rows = eventRows(obs);
+		expect(rows.length).toBeGreaterThan(20);
+		for (const r of rows)
+			for (const [col, shape] of Object.entries(SHAPES)) {
+				const v = (r as unknown as Record<string, string | null>)[col];
+				if (v !== null) expect(`${col}=${v}`.slice(col.length + 1)).toMatch(shape);
+			}
+		expect(everything(obs).toLowerCase()).not.toContain(MARK.toLowerCase());
+	});
+
+	test("a time the caller supplies is used only when it is a timestamp", () => {
+		const obs = memObs();
+		obs.record("info", "decision.logged", { cited: 1 }, { mod: "ledger" }, { t: "2026-11-01T00:00:00.000Z" });
+		obs.record("info", "decision.logged", { cited: 1 }, { mod: "ledger" }, { t: "Bearer abc" });
+		expect(eventRows(obs).map((r) => r.t)[0]).toBe("2026-11-01T00:00:00.000Z");
+		expect(eventRows(obs)[1]?.t).not.toContain("Bearer");
 		expect(obs.counters.rejected).toBe(1);
 	});
 });

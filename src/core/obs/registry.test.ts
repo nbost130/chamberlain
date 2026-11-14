@@ -29,6 +29,25 @@ describe("the registry", () => {
 		}
 	});
 
+	test("a field named for a duration is a duration, and the registry's types are pinned: loosening one changes this listing and fails until the snapshot is updated on purpose", () => {
+		const lines: string[] = [];
+		const show = (t: { kind: string; values?: readonly string[]; set?: string; of?: unknown; max?: number }): string =>
+			t.kind === "enum"
+				? `enum(${t.values?.join("|")})`
+				: t.kind === "known"
+					? `known(${t.set})`
+					: t.kind === "list"
+						? `list(${show(t.of as never)},${t.max})`
+						: t.kind;
+		for (const [name, spec] of Object.entries(EVENTS)) {
+			for (const [field, f] of Object.entries(spec.fields)) {
+				if (field.endsWith("_ms")) expect(f.type.kind).toBe("ms");
+				lines.push(`${name}.${field}: ${show(f.type)}${f.from ? ` <- ${f.from}` : ""}${f.via ? ` (${f.via})` : ""}`);
+			}
+		}
+		expect(lines.join("\n")).toMatchSnapshot();
+	});
+
 	test("legacy names are unique and never shadow another event's name", () => {
 		const legacy = Object.values(EVENTS).flatMap((s) => (s.legacy ? [s.legacy] : []));
 		expect(new Set(legacy).size).toBe(legacy.length);
@@ -56,7 +75,7 @@ describe("the registry", () => {
 
 	test("the transition families name events and sets the registry has, and a field that is no family's has no `enters` or `leaves`", () => {
 		for (const fam of Object.values(FAMILIES)) {
-			expect(EVENTS[fam.event]).toBeDefined();
+			expect((EVENTS as Record<string, unknown>)[fam.event]).toBeDefined();
 			expect(fam.states.length).toBeGreaterThan(1);
 		}
 		for (const spec of Object.values(EVENTS))

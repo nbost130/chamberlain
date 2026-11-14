@@ -110,7 +110,7 @@ const failure = (legacy?: string) => e("warn", { err: ERR }, legacy);
 /** A server problem: which server and what class of error. */
 const serverFailure = (level: Level = "warn") => e(level, { server: SRV, err: ERR });
 
-export const EVENTS: Readonly<Record<string, EventSpec>> = {
+export const EVENTS = {
 	// ---- the wake path -----------------------------------------------------------------------------
 	"wake.queued": e("info", { kind: KIND }, "deliver-queued"),
 	"wake.held": e("info", { kind: KIND }, "deliver-held"),
@@ -304,7 +304,9 @@ export const EVENTS: Readonly<Record<string, EventSpec>> = {
 		err: { type: ERR_TYPE },
 	}),
 	"obs.reconciled": e("info", { scanned: int(), emitted: int(), skipped: int() }),
-};
+} satisfies Record<string, EventSpec>;
+/** The names of the registered events: what a typed call may name. */
+export type EventName = keyof typeof EVENTS;
 
 /** Transition families (`log.change("server.mac", "down")`): the event a state change is stored as, its name's set and its states. */
 export const FAMILIES: Readonly<Record<string, { event: string; set: string; states: readonly string[] }>> = {

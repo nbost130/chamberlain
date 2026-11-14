@@ -379,6 +379,8 @@ export type LogEvent = { t: string; event: string; src?: string } & Record<strin
 export type EventQuery = { since?: string; until?: string; events?: string[]; src?: string; limit?: number };
 interface EventStore {
 	append(e: LogEvent, importKey?: string): void;
+	/** Like `append`, but never waits for another process's write lock: false when the database is busy (nothing is written), so the caller can try again. */
+	tryAppend(e: LogEvent, importKey?: string): boolean;
 	/** Oldest first. */
 	query(q?: EventQuery): LogEvent[];
 	count(q?: EventQuery): number;
