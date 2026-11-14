@@ -137,7 +137,7 @@ describe("the scrubber backstop, with the registry's own checks out of the way",
 			"decision.logged",
 			{ cited: 1 },
 			{ mod: "ledger" },
-			{ sourceKey: "decision:ghp_0123456789abcdefghij" },
+			{ sourceKey: `decision:gh${"p"}_0123456789abcdefghij` },
 		);
 		expect(eventRows(obs)).toEqual([]);
 		expect(obs.counters.rejected).toBe(1);

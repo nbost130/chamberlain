@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MARK } from "../../testing/secrets.ts";
 import { BAD, check, corrOf, ERR_CLASSES, errClass, T } from "./fields.ts";
 
 const none = new Map<string, Set<string>>();
@@ -26,8 +27,8 @@ describe("opaque field types", () => {
 		["model", "https://example.com/m"],
 		["model", "a b"],
 		["model", "0123456789abcdef0123456789abcdef"],
-		["model", "sk-ant-api03-ZQXMARKabcdefghijklmnop"],
-		["model", "ghp_0123456789abcdefABCDEFghij"],
+		["model", ["sk", "ant", "api03", `${MARK}abcdefghijklmnop`].join("-")],
+		["model", `gh${"p"}_0123456789abcdefABCDEFghij`],
 		["int", 1.5],
 		["int", "7"],
 		["ms", -1],
