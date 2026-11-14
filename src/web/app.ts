@@ -775,7 +775,7 @@ async function api(ctx: Ctx, req: Request, url: URL, inline: boolean): Promise<R
 	if (read) return read;
 	if (req.method !== "POST") return fail(404, "not found");
 	const body = (await req.json().catch(() => undefined)) as Record<string, unknown> | undefined;
-	if (!body || typeof body !== "object") return fail(400, "expected a JSON body");
+	if (!body || typeof body !== "object" || Array.isArray(body)) return fail(400, "expected a JSON body");
 	return apiPost(ctx, req, url, parts, body, inline);
 }
 

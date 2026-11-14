@@ -9,7 +9,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { newToken, TOKEN_HEADER } from "../core/capability.ts";
-import { askQuestion, getQuestion, type Question, readClaim } from "../core/questions.ts";
+import { askQuestion, getQuestion, QUEUE, type Question, readClaim } from "../core/questions.ts";
 import { readRulings } from "../core/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
@@ -187,6 +187,7 @@ for (const [who, headers, how] of [
 				expect(readRulings(s.store)).toEqual([]);
 				expect(getQuestion(s.store, "Q-abcd")!.status).toBe("open");
 				expect(readClaim(s.store, "Q-abcd")).toBeUndefined();
+				expect(s.store.items.get(QUEUE, "Q-abcd")?.payload.snoozedUntil).toBeUndefined();
 				expect(s.cardAnswers).toEqual([]);
 				await s.app.idle();
 				expect(s.store.wakes.rows("all")).toEqual([]);

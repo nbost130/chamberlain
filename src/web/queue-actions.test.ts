@@ -295,7 +295,7 @@ describe("direction: a note and no option", () => {
 		expect(wakes(s)).toHaveLength(1);
 	});
 
-	test("closes its afk hold, once the daemon's reconciler runs, as any answer does", async () => {
+	test("closes its afk hold the moment it settles; the reconciler finds nothing left", async () => {
 		const s = setup();
 		askQuestion(s.store, question("Q-aaaa"));
 		const h = hold(s.store, "Q-aaaa");
