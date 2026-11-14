@@ -496,6 +496,34 @@ describe("the dual write is off the caller's path", () => {
 		store.close();
 	});
 
+	test("a reader inside a transaction that rolls back loses no queued line, outer or nested", async () => {
+		const store = openStore(`${scratch()}/chamberlain.db`);
+		const log = logFor(store);
+		log("fire", { kind: "failed", n: 1 });
+		expect(() =>
+			store.tx(() => {
+				store.events.count();
+				throw Error("outer rolls back");
+			}),
+		).toThrow();
+		log("fire", { kind: "failed", n: 2 });
+		store.tx(() => {
+			expect(() =>
+				store.tx(() => {
+					store.events.query();
+					throw Error("inner rolls back");
+				}),
+			).toThrow();
+		});
+		log("fire", { kind: "failed", n: 3 });
+		store.tx(() => {
+			store.events.prune("1970-01-01T00:00:00.000Z");
+		});
+		await Promise.resolve();
+		expect(store.events.query().map((e) => e.n)).toEqual([1, 2, 3]);
+		store.close();
+	});
+
 	test("what still waits when the store closes is written then", () => {
 		const dir = scratch();
 		const store = openStore(`${dir}/chamberlain.db`);

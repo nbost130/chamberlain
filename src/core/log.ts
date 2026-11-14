@@ -37,13 +37,15 @@ export function obsFor(store: Store): Obs {
 	return obs;
 }
 
-/** The old table's readers in this process see its own queued lines: each flushes the queue first. */
+/** The old table's readers in this process see its own queued lines: each flushes the queue first (outside a transaction; inside one, at its commit). */
 function readYourWrites(store: Store, obs: Obs): void {
 	const events = store.events;
 	for (const name of ["query", "count", "prune"] as const) {
 		const original = events[name].bind(events) as (...a: never[]) => unknown;
 		(events as unknown as Record<string, unknown>)[name] = (...a: never[]) => {
-			obs.flushMirror();
+			// Inside a transaction the flush waits for the commit (and is dropped on a rollback, which leaves the queue whole): a line written
+			// there would be undone with it, and the queue already counted it as written.
+			store.afterCommit(() => obs.flushMirror());
 			return original(...a);
 		};
 	}
