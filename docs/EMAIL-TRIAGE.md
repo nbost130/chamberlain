@@ -72,7 +72,7 @@ interface MailProvider {
   readonly id: string;                                            // "gog", "command"
   readonly can: { labels: boolean; history: boolean; categories: boolean };
   list(q: { query: string; max: number; cursor?: string }): Promise<{ refs: MailRef[]; cursor: string; complete: boolean }>;
-  read(id: string, o: { as: "headers" | "triage" | "newsletter"; maxChars: number }): Promise<MailRead>;
+  read(id: string, o: { as: "headers" | "triage" | "thread" | "newsletter"; maxChars: number }): Promise<MailRead>;
   archive(ids: string[]): Promise<ActResult>;                     // out of the inbox; still in All Mail
   label(ids: string[], o: { add: LabelName[]; remove: LabelName[] }): Promise<ActResult>;
   markRead(ids: string[]): Promise<ActResult>;
@@ -82,7 +82,7 @@ type LabelName = `${string}/${string}` | "INBOX" | "UNREAD";     // checked at r
 
 `list` returns a partial page as an error, never as a shorter list (the roadmap's rule: an error never reads as clear). `read` as
 `headers` returns `From`, `To`, `Subject`, `Date`, `List-Id`, `List-Unsubscribe`, `Precedence`, `Auto-Submitted` and the provider's
-category; as `triage`, those plus at most `maxChars` of text with links and HTML removed; as `newsletter`, the text with every link
+category, and the message's labels and read state as they are now (kept for undo, section 8); as `triage`, those plus at most `maxChars` of text with links and HTML removed; as `thread`, the same for every message of its thread; as `newsletter`, the text with every link
 replaced by `[L1]`, `[L2]`… and the links returned beside it in a table only code reads (section 6).
 
 **gog (first provider).** Each verb is one `gog gmail` command with `--json --no-input --gmail-no-send` and `-a <account>`, and an
@@ -93,14 +93,15 @@ exact command allowlist (`--enable-commands-exact`) naming only these:
 | `list` | `gmail messages search <query> --max N --page <token>`; later runs use `gmail history --since <historyId>` |
 | `read` headers | `gmail get <id> --format=metadata --headers=From,To,Subject,Date,List-Id,List-Unsubscribe,Precedence,Auto-Submitted` |
 | `read` triage | `gmail get <id> --format=full --sanitize-content` ("strip HTML, remove HTTP(S) URLs") |
+| `read` thread | `gmail thread get <threadId> --full --sanitize-content` |
 | `read` newsletter | `gmail get <id> --format=full`; links are extracted and replaced in code |
 | `archive` | `gmail archive <id>…` |
-| `label` | `gmail batch modify <id>… --add-label <l> --remove-label <l>`; `gmail labels list` and `gmail labels create` for the prefix |
+| `label` | `gmail batch modify <id>… --add-label <l> --remove-label <l>`; `gmail labels list` and `gmail labels create` for the prefix; undo restores `INBOX` and `UNREAD` the same way |
 | `markRead` | `gmail mark-read <id>…` |
 
 Never in the allowlist: `send`, `reply`, `reply-all`, `forward`, `autoreply`, `drafts`, `import`, `track`, `trash`, `batch delete`,
 `labels delete`, `settings`, `attachment`, `url`. The read verbs also run with `--readonly`, which gog describes as "Block mutating API
-requests at runtime". The exact dot-path spelling `--enable-commands-exact` takes is pinned by B2's test against the real binary.
+requests at runtime". The gog child gets an environment built from an allowlist (`HOME`, `PATH`, `LANG`, `TMPDIR`, plus any names the operator lists in `gog.env`, such as the keyring's variables); `GOG_ACCESS_TOKEN` is never passed, so gog uses its own stored login. Its stderr is discarded and its errors are reduced to fixed phrases, as the classifier's providers do, so nothing it prints is logged. The exact dot-path spelling `--enable-commands-exact` takes is pinned by B2's test against the real binary.
 
 **Other providers.** `"provider": "command"` runs an operator's own command that speaks the same five verbs as JSON on stdin and stdout
 (the roadmap's plugin rule: commands, not dynamic imports), so another mail system needs no change to Chamberlain:
@@ -121,21 +122,24 @@ literature it is an *LLM cascade* ([FrugalGPT, Chen, Zaharia and Zou, 2023](http
 1. **Fetch.** New messages since the last cursor, at most `maxMessagesPerRun`, headers only. A message already triaged (by provider id)
    is skipped.
 2. **Rules (code, no model).** In order, first match wins:
+   - an `important` sender, or an `important` word in the subject, is flagged first. A flagged message is acted on by a triage rule only
+     when the rule's match is that exact from-address; a broader rule (domain, `List-Id`, category, subject prefix) skips it. Otherwise it
+     goes to the driver flagged, and it is never cleaned without a tap (step 4);
    - a triage rule in force (section 5) whose match fits: its action;
    - a configured newsletter: the newsletter stage (section 6);
-   - an `important` sender, or an `important` word in the subject: never cleaned by anything but a rule Nathan confirmed for exactly that
-     sender; goes to the driver flagged;
    - everything else goes to the driver, with the header facts attached: list mail (`List-Id`, [RFC 2919](https://www.rfc-editor.org/rfc/rfc2919);
      `List-Unsubscribe`, [RFC 2369](https://www.rfc-editor.org/rfc/rfc2369)), bulk (`Precedence: bulk`), machine-sent (`Auto-Submitted`,
      [RFC 3834](https://www.rfc-editor.org/rfc/rfc3834)) and the provider's category.
 3. **Driver (Haiku).** Up to 10 messages per call: headers, facts and at most 1,500 characters of sanitized text each. It answers, per
    message slot, `{label: clean | newsletter | deeper | ask | keep, confidence, why (at most 200 characters), facts: {due?, amount?, waitingOn?}}`.
-4. **Escalation (Sonnet), only when** the driver said `ask` or `deeper` with confidence under 0.7; or a flagged message was labelled
-   `clean` (a disagreement with code is never settled by the cheaper model); or the driver's answer for a slot failed validation twice.
-   Sonnet reads the whole thread, sanitized, up to 12,000 characters, and answers in the same shape plus a summary of at most 400 characters.
+4. **Escalation (Sonnet), only when** the driver said `deeper` (at any confidence: digging deeper *is* the escalation); or `ask` with
+   confidence under 0.7; or a flagged message was labelled `clean` (a disagreement with code is never settled by the cheaper model, and a
+   flagged message goes to an ask card whatever Sonnet says); or the driver's answer for a slot failed validation twice. With the escalation
+   budget spent, a `deeper` message becomes an ask card carrying the driver's `why` and a note that it was not read in full. Sonnet reads
+   the whole thread (`read(as: "thread")`), sanitized, up to 12,000 characters, and answers in the same shape plus a summary of at most 400 characters.
 5. **Top tier (Opus), only when** Sonnet says `ask` with confidence under 0.6 about an `important` sender. Off by default
    (`topCallsPerRun: 0`); at most one call a run when on.
-6. **Outcome (code).** `clean` → the cleanup batch; `deeper` → the escalation's summary becomes an ask card or a note in the report;
+6. **Outcome (code).** `clean` → the cleanup batch (never an action on its own; section 9 asks about that); `deeper` → Sonnet's summary becomes an ask card or a note in the report;
    `ask` → an ask card; `newsletter` from an unknown sender → a one-tap "Digest this sender?" card; `keep` → left alone.
 
 **Budgets.** Every limit is an acceptance test. The driver and escalation calls go through the `claude` CLI on the operator's own
@@ -143,20 +147,21 @@ subscription login. There is **no pay-per-token lane**: the runner passes the CL
 `LANG`, `TMPDIR`, `CLAUDE_CONFIG_DIR`), so `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
 `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` never reach it, and `--setting-sources ""` keeps an `apiKeyHelper` out.
 
-| Per run (estimates until B6 measures them) | Calls | Input tokens | Output tokens |
+| Per run (estimates until B9 measures them) | Calls | Input tokens | Output tokens |
 | --- | --- | --- | --- |
 | Driver, 10 messages a call (about 1k CLI overhead, about 900 per message) | at most 10 | about 100k | about 15k |
 | Escalation, one thread a call | at most 8 | about 36k | about 4k |
 | Newsletters, one issue a call | at most 3 | about 21k | about 5k |
 | Top tier | 0 (1 when on) | 0 (about 15k) | 0 (about 1k) |
-| **Ceiling** | **21** | **about 157k** | **about 24k** |
+| **Ceiling** | **21** (22 with Opus on) | **about 157k** (172k) | **about 24k** (25k) |
 | Typical: 50 new messages, 60% settled by rules, one newsletter | 3 | about 30k | about 5k |
 
 The ceiling is under a third of one Steward wake (about 540k tokens, mostly cache reads, per OBSERVABILITY.md section 8). Per day the
 module stops at `inputTokensPerDay` (600k, so at most about four full runs) and `maxRunsPerDay`. A run that reaches a cap stops calling
-models, files what it has, leaves the rest for the next run and says so in its report. Once `plan_usage` exists (OBSERVABILITY.md, B4), a
+models, files what it has, leaves the rest for the next run and says so in its report. Once `plan_usage` exists (OBSERVABILITY.md, B4; designed, not built), a
 run starts in **rules-only** mode, with no model call at all, whenever the five-hour window is at or above 80% or the weekly window at or
-above 90%. Each call writes one `mail.attempt` event (model, input and output tokens, latency), because these calls run with
+above 90%. Each call writes one `mail.attempt` event (model, input and output tokens, latency; through OBSERVABILITY.md's registry once its B1 lands, and
+until then through today's `log.ts` with numbers only), because these calls run with
 `--no-session-persistence` and so no transcript reader sees them; this is the lesson of the classifier's `classifier.attempt`.
 
 ## 5. Three outcomes, mapped onto what Chamberlain has
@@ -184,6 +189,10 @@ How it uses the existing pieces:
   the claim is written as now, and no wake row is queued. The module reads answered mail cards by item id on every run and on a one-minute
   timer, carries out the choice (archive, label, save), and records the item id as done in `mail.db`, so a crash repeats an archive, which
   is harmless, and never skips one. The existing rule stands: an answer with a note always reaches the Steward as an answer wake.
+  Record-only claims need two more changes in B5, because today's claim recovery (`recoverClaims` in `src/core/questions.ts`) re-sends any
+  unresolved claim whose wake is not delivered, and the page owns every page claim: recovery skips a record-only claim (it has no wake to
+  send), and the claim is resolved when the module records the item done, in `chamberlain.db`, keyed by item id. A test restarts the daemon
+  between the claim and the module's action and asserts the action happens once and no wake is sent.
 - **Rulings stay the Steward's.** A triage rule is not written to `rulings`, because every wake repeats the rulings in force, and dozens of
   sender rules would ride in every wake for nothing. Triage rules live in `mail.db` (`mail_rules`) with the ruling lifecycle and its
   words: `proposed`, `in-force`, `retired`; recording is idempotent on the normalized match and action; `supersedes` and `expires` work as
@@ -222,7 +231,9 @@ by code and never written by the model.** The word *digest* already means a comp
    as JSON on stdin (for Readwise Reader or a to-do app). The newsletter mail is then archived and labelled `<prefix>/Digested`.
 
 The link saved is the one in the mail, which may be a tracking redirect. Code unwraps a redirect only when the target sits in its own query
-string (such as `?url=`), without fetching anything; otherwise the link is saved as it is, and it is followed only when Nathan opens it.
+string (such as `?url=`), without fetching anything; otherwise the link is saved as it is. With `save.file` it is followed only when
+Nathan opens it. A `save.command` is the operator's own program and may fetch what it is given (Readwise Reader does): it runs only on
+Nathan's "Save" tap, it is outside the module's no-fetch guarantee (section 8), and the config docs say so beside the key.
 
 ## 7. Scheduling, and reporting without filling the Steward's context
 
@@ -254,19 +265,23 @@ changing the schedule; a normal run wakes nobody.**
 
 Mail is untrusted input written by anyone. The design follows the **dual LLM pattern**
 ([Simon Willison, 2023](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/)): the model that reads untrusted text has no tools and
-cannot cause an action, and the code that acts reads only that model's answer fields, validated.
+cannot cause an action, and the code that acts reads only that model's answer fields, validated. What the pattern does **not** give, and
+this design does not claim: a mail can still steer the model's *valid* answer (label a phishing message `clean`, or write an instruction
+into its summary). The design limits what such an answer can do: a model label alone never changes the mailbox (it only fills the cleanup
+card Nathan taps), a flagged message is never cleaned by a model label, and model text reaches only card text and the save target, as
+plain text.
 
 | Guarantee | How it is enforced (not by a prompt) | Test |
 | --- | --- | --- |
 | The reading model cannot act | Every call is `claude -p --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands --no-session-persistence --system-prompt <fixed> --output-format json`, mail on stdin, never in argv. The argv is built in one function. | Snapshot test of the argv; a test that the runner refuses any argv missing `--tools ""`. |
-| Instructions in mail are not followed | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL. | Fuzz test: replies with extra fields, wrong slots, long text, URLs and tool-call shapes all become `ask`. |
-| Never sends, replies or forwards | `MailProvider` has no such method; gog runs with `--gmail-no-send` and an exact allowlist that names no send command. Two layers, either enough. | B2 runs the real `gog` with the module's flags, an empty `--home` (no credentials, so nothing can reach a mailbox) and `--dry-run`, and asserts it refuses `send`, `reply`, `forward` and `drafts`. |
-| Never deletes | No delete or trash method; `trash`, `batch delete` and `labels delete` are outside gog's allowlist; `label()` refuses `TRASH`, `SPAM` and every system label except removing `INBOX` or `UNREAD` and adding `INBOX` back; added labels must start with `labels.prefix/`. | Unit tests on `label()`; B2's refusal test includes `trash` and `batch delete`. |
-| Cleanup is reversible | Archive keeps the message in All Mail; every module action also adds `<prefix>/Triaged`; `chamberlain mail undo <run-id>` puts that run's messages back in the inbox (adds `INBOX`). | Round-trip test against the fake provider. |
-| Tracking links are never opened | The module has no HTTP client: an architecture test fails if any file under `src/modules/mail/` calls `fetch(`, imports `node:http`, `node:https`, `node:net` or `undici`, or spawns anything but the provider and the model CLI. Triage text comes from `--sanitize-content` (URLs removed); newsletter links are swapped for references before the model sees them. No mail HTML is rendered anywhere, so no tracking pixel loads; the page's CSP is already `img-src 'self'`. | The architecture test; a test that model input contains no `http` substring. |
-| Only metadata and summaries are kept | `mail.db` has typed columns and no body column; summary and highlight columns carry `CHECK(length(...) <= n)`; bodies live in memory for one call and are written to no file, log, event or report. Events use OBSERVABILITY.md's registry, which has no free-text type. | A schema test that no `mail.db` column is named or sized for a body; a run test that greps the state directory for a planted body sentence and finds nothing. |
-| No credential is held | The provider is the mail tool (gog keeps its own keyring); `mail` config has no key, token or password field and `parseMail` rejects unknown keys. | Config tests. |
-| No pay-per-token lane | The model CLI's environment is an allowlist (section 4). | A test that a planted `ANTHROPIC_API_KEY` does not reach the child. |
+| Instructions in mail gain no authority | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL; a `clean` label only adds the message to the cleanup card; card text is rendered as text, with any URL in it shown unlinked. | Fuzz test: malformed replies (extra fields, wrong slots, long text, tool-call shapes) become `ask`. Injection test: *valid* replies a hostile mail could produce (`clean` for a flagged message, a summary holding an instruction or a URL, a link reference not in the table) are run through every consumer (outcome mapping, cards, page, save file, rule proposal) and change nothing but card text. |
+| Never sends, replies or forwards | `MailProvider` has no such method; gog runs with `--gmail-no-send` and an exact allowlist that names no send command. Two layers, either enough. | B2 runs the real `gog` with the module's flags and an empty `--home` (no credentials, so nothing can reach a mailbox), and asserts that `send`, `reply`, `forward` and `drafts` fail with gog's command-policy refusal (its own message, matched exactly), while an allowed command with the same flags gets past the policy and fails only at authentication. The control proves the refusal is the allowlist, not a missing login. |
+| Never deletes | No delete or trash method; `trash`, `batch delete` and `labels delete` are outside gog's allowlist; `label()` refuses `TRASH`, `SPAM` and every other system label, except removing `INBOX` or `UNREAD` and, for undo only, adding them back; added labels must otherwise start with `labels.prefix/`. | Unit tests on `label()`; B2's refusal test includes `trash` and `batch delete`. |
+| Cleanup is reversible | Archive keeps the message in All Mail; every module action also adds `<prefix>/Triaged`. Before acting, the module records each message's inbox and read state and the labels it will add (`mail_actions`, 90 days). `chamberlain mail undo <run-id>` restores exactly that: `INBOX` and `UNREAD` back where they were, its own added labels removed. It never removes a label it did not add. | Round-trip test against the fake provider comparing the full label set and read state before the action and after undo. |
+| Tracking links are never opened by the module | The module has no HTTP client: an architecture test fails if any file under `src/modules/mail/` calls `fetch(`, imports `node:http`, `node:https`, `node:net` or `undici`, or spawns anything but the provider, the model CLI and the configured `save.command` (the operator's own program, run only on a Save tap; section 6). Triage text comes from `--sanitize-content` (URLs removed); newsletter links are swapped for references before the model sees them. No mail HTML is rendered anywhere, so no tracking pixel loads; the page's CSP is already `img-src 'self'`. | The architecture test; a test that model input contains no `http` substring. |
+| Only metadata and bounded derived text are kept | Mail-derived text is written to exactly three places: `mail.db`'s capped columns (`CHECK(length(...) <= n)`), the card's question in `chamberlain.db`, and the save target on a Save tap. Bodies live in memory for one call and are written to no file, log, event or report; events carry numbers and enums only. A length cap bounds what is kept, it does not prove provenance: a mail shorter than 400 characters can be kept whole as its own summary, and this is accepted. | A schema test that no `mail.db` column is named or sized for a body; a run with a planted body sentence and a model reply that echoes it, then a search of the state directory, `mail.db`, `chamberlain.db` and the save file: the sentence appears only within the capped fields, never beyond the cap. |
+| No credential is held | The provider is the mail tool (gog keeps its own keyring); `mail` config has no key, token or password field and `parseMail` rejects unknown keys; the provider child's environment is an allowlist without `GOG_ACCESS_TOKEN`, and its stderr is never stored (section 3). | Config tests; a test that a planted `GOG_ACCESS_TOKEN` reaches neither the child nor any log. |
+| No pay-per-token lane | The model CLI's environment is an allowlist (section 4). | A test that plants each excluded variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`) and asserts none reaches the child. |
 
 **What is kept, and for how long.**
 
@@ -274,7 +289,7 @@ cannot cause an action, and the code that acts reads only that model's answer fi
 | --- | --- | --- |
 | Provider message and thread id, from-address, `List-Id`, date, category, outcome, rule id, tier, tokens | `mail.db` `mail_messages` | 90 days |
 | Subject, cut to 120 characters | `mail_messages.subject` | 30 days, then set to NULL |
-| Summary (≤400 characters), facts, highlights (≤5 × 200 characters, with link) | the card's item in `chamberlain.db`, and `mail_cards` | until the card is answered, then 30 days; the item itself until the existing item retention prunes it |
+| Summary (≤400 characters), facts, highlights (≤5 × 200 characters, with link) | the card's question in `chamberlain.db`, and `mail_cards` | 30 days after the card is answered. Queue items are history and are never pruned (`maintain.ts`), so B5 adds a core `scrubQuestion(id)` the module calls at 30 days: it replaces the card's title, context and option details with "mail card, text removed after 30 days" and keeps its kind, choice and times. A claim's stored message for a mail card holds no mail text (record-only); a note's answer wake is an outbox row, pruned 30 days after delivery as today. |
 | Triage rules | `mail_rules` | for good (a ledger) |
 | Run report | `reports/mail/` | 30 days |
 | Mail bodies | memory, for one model call | never stored |
@@ -297,8 +312,8 @@ Three, each one tap. Everything else above is decided and can be changed later.
 | B1 module seam: `src/modules/` and its registry, architecture rules, `parseMail`, `mail.db` and migrations, `src/core/llm/cli.ts` shared with the classifier | new | |
 | B2 gog provider: the five verbs, the allowlist and flags, `label()` guards, partial-list errors; the `command` provider contract; a fake provider for tests; the real-binary refusal test | new | B1 |
 | B3 rules stage, header facts, `important` routing, cursor and history, shadow recording | new | B1, B2 |
-| B4 driver and escalation: batching, the reply schema, triggers, budgets and caps, env allowlist, `mail.attempt` events, rules-only mode | new | B1, B3 |
-| B5 cards: `fileQuestion` in core, `route: "record"`, the answer handler, cleanup batch and ask cards, `mail undo` | new | B3, B4 |
+| B4 driver and escalation: batching, the reply schema, triggers, budgets and caps, env allowlist, `mail.attempt` events, rules-only mode | new | B1, B3; OBSERVABILITY B1 (registry) and B4 (`plan_usage`) when built, caps alone until then |
+| B5 cards: `fileQuestion` and `scrubQuestion` in core, `route: "record"` with claim recovery and resolution, the answer handler, cleanup batch and ask cards, `mail_actions` and `mail undo` | new | B3, B4 |
 | B6 learned rules: proposal from answers, backtest, confirm and retire, `mail rules list|retire` | new | B5 |
 | B7 newsletter digests: link table, extraction, interest scoring, the card, `save.file` and `save.command` | new | B4, B5 |
 | B8 scheduling and reporting: the timer, `mail run|pause|resume`, the lock, the report file, the `mail` wake kind and the sweep line | new | B3 |
