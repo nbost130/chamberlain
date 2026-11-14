@@ -91,6 +91,15 @@ The desk is off until the adapter has a `desk-wake-url` (the drain reads nothing
 append only when the desk is on: `ALERT_DESK_ENABLED=1` in their environment, or the flag file `~/.config/alert-desk/enabled` (`touch` it; remove it to
 switch them off; no restart is needed).
 
+## Upgrading from a build that had a fixed command set
+
+Two things changed on purpose, and a desk that relied on either needs one line of config to behave as before:
+
+- **The morning hour is read in the machine's own time zone** unless `timezone` is set. To keep a zone, set it: `"timezone": "<an IANA zone>"`.
+- **No gatherer agent and no extra command shapes are built in.** The desk starts no agent, and only runs journalctl, systemctl, docker and
+  read-only `gh` and `git`, until you name them. To keep a wrapper tool or a gatherer agent you used before, add `"gatherer": "<agent name>"`
+  and a `commandShapes` entry for each command (the fields are below); a wrapper whose shape matches `gh` or `git` takes the same shape under its own name.
+
 ## Switching it on
 
 1. Create the desk thread with the output of `chamberlain brief desk` as its first message, install the allowlist hook in its project, bind a

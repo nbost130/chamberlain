@@ -11,22 +11,34 @@ cannot decide goes to you on a **decision queue**.
 
 ## Install
 
+You need a T3 Code server on the machine and its `t3` command. Today, install from source with [Bun](https://bun.sh) 1.4 or newer:
+
+```sh
+git clone https://github.com/nbost130/chamberlain && cd chamberlain && bun install
+bun src/cli.ts --version
+```
+
+Wherever this README says `chamberlain <command>`, run `bun src/cli.ts <command>` (or `alias chamberlain='bun '"$PWD"'/src/cli.ts'`).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the rest of working from a checkout.
+
+**From the next release**, the same command will come two other ways, with no Bun and no checkout:
+
 ```sh
 brew install nbost130/tap/chamberlain
 ```
 
-or a standalone binary (no Bun, no checkout) from the [latest release](https://github.com/nbost130/chamberlain/releases/latest): pick
+or a standalone binary from the [releases page](https://github.com/nbost130/chamberlain/releases): pick
 `chamberlain-<version>-<os>-<arch>.tar.gz` for `linux-x64`, `linux-arm64`, `darwin-arm64` or `darwin-x64`, check it against `SHA256SUMS`,
 and put the `chamberlain` inside on your `PATH`:
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS      # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+mkdir -p ~/.local/bin
 tar -xzf chamberlain-<version>-<os>-<arch>.tar.gz && install chamberlain ~/.local/bin/
 chamberlain --version
 ```
 
 The macOS binaries are not notarized. If Gatekeeper stops one that a browser downloaded, run `xattr -d com.apple.quarantine chamberlain`.
-To run from a checkout instead, see [CONTRIBUTING.md](CONTRIBUTING.md). You need a T3 Code server on the machine and its `t3` command.
 
 ## Your first wake
 
@@ -50,7 +62,7 @@ $EDITOR ~/.config/chamberlain/decision-rights.md
 **3. Run the daemon, and send one test wake.**
 
 ```sh
-brew services start chamberlain        # or, without Homebrew: chamberlain daemon
+chamberlain daemon                     # with Homebrew: brew services start chamberlain
 chamberlain debug synthetic-wake       # queues one wake; the running daemon sends it and the Steward answers it
 ```
 
