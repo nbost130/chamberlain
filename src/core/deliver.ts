@@ -78,7 +78,7 @@ export function createOutbox(d: OutboxDeps) {
 	 * without its wake. An id that is already known (pending, held, delivered, dead-lettered or cancelled) writes nothing more.
 	 */
 	function commit(decide: () => WakeDraft | undefined): Committed {
-		const out = store.tx((): { kind: Committed; wake?: WakeDraft } => {
+		const out = store.tx((): { kind: "none" } | { kind: Exclude<Committed, "none">; wake: WakeDraft } => {
 			const wake = decide();
 			if (!wake) return { kind: "none" };
 			// A kill here leaves neither the decision nor the wake: they are one transaction.
@@ -96,7 +96,7 @@ export function createOutbox(d: OutboxDeps) {
 			};
 		});
 		if (out.kind === "none") return "none";
-		const { deliveryId, message, meta } = out.wake!;
+		const { deliveryId, message, meta } = out.wake;
 		if (out.kind === "dry") d.log("dry", { deliveryId, message });
 		else if (out.kind === "known") d.log("deliver-already-queued", { deliveryId });
 		else {

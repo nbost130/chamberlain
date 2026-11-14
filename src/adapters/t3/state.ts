@@ -4,8 +4,26 @@
  */
 import type { ThreadState, WaitKind } from "../../core/adapter.ts";
 
-type Raw = Record<string, any>;
-const prState = (p: any) => String(p?.snapshot?.state ?? "").toLowerCase();
+type RawPr = { number?: unknown; snapshot?: { state?: unknown } | null } | null;
+type RawTask = { taskId?: unknown } | null;
+type Raw = {
+	id?: unknown;
+	title?: unknown;
+	status?: unknown;
+	snoozedUntil?: string;
+	lineage?: { parentThreadId?: string | null } | null;
+	pendingRuntimeRequest?: { id?: unknown } | null;
+	settledAt?: unknown;
+	unsettledAt?: unknown;
+	archivedAt?: unknown;
+	blockedOnThreadWait?: unknown;
+	pullRequests?: RawPr[];
+	worktreePath?: unknown;
+	pendingBackgroundTasks?: unknown;
+	latestRunId?: unknown;
+	[field: string]: unknown;
+};
+const prState = (p: RawPr | undefined) => String(p?.snapshot?.state ?? "").toLowerCase();
 
 /** T3 names the machine-pairing card differently across versions; every variant is a link request. */
 export const normalizeWaitKind = (type: string): string => (/link/i.test(type) ? "link_request" : type);
@@ -31,13 +49,14 @@ export function toState(t: Raw, now = Date.now()): ThreadState {
 		blockedOnThreadWait: Boolean(t.blockedOnThreadWait),
 		// branchPullRequest carries no state, so the linked list is the only source for it.
 		openPrs: [
-			...new Set((t.pullRequests ?? []).filter((p: any) => prState(p) === "open").map((p: any) => Number(p.number))),
+			...new Set((t.pullRequests ?? []).filter((p) => prState(p) === "open").map((p) => Number(p?.number))),
 		] as number[],
 		worktreePath: t.worktreePath ? String(t.worktreePath) : null,
-		linkedPrDone: (t.pullRequests ?? []).some((p: any) => ["merged", "closed"].includes(prState(p))),
+		linkedPrDone: (t.pullRequests ?? []).some((p) => ["merged", "closed"].includes(prState(p))),
 		backgroundTasks: Array.isArray(t.pendingBackgroundTasks) ? t.pendingBackgroundTasks.length : 0,
 		backgroundWork: Array.isArray(t.pendingBackgroundTasks)
-			? t.pendingBackgroundTasks.filter((x: any) => !String(x?.taskId).startsWith("pull-request-watch:")).length
+			? (t.pendingBackgroundTasks as RawTask[]).filter((x) => !String(x?.taskId).startsWith("pull-request-watch:"))
+					.length
 			: 0,
 		latestRunId: t.latestRunId ? String(t.latestRunId) : null,
 	};
