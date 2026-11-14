@@ -38,7 +38,7 @@ type AdapterEnv = {
   server: ServerEntry;                          // your `servers` entry
   conf: string;  state: string;                 // the config and state directories
   store?: Store;                                // the database, if you must remember something across a restart: key it by your own name
-  log(event: string, data?: object): void;      // the event log (the database's events table)
+  log(event: string, data?: object): void;      // the event log (obs.db, and the database's events table until release C)
   alarm(key: string, title: string, summary: string): void;   // a dead-man alarm: an item that notifies at most once per 6 hours per key
   steward(): string | undefined;                // the Steward's thread id, read fresh (it changes at a hand-off)
   readPrivate(name: string): string | undefined; // a secret: `secrets/<name>` (mode 0600), trimmed; a thread id name (`steward-thread`) reads `threads` in config.json

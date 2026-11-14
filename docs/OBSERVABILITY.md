@@ -1,6 +1,6 @@
 # Observability: one log, one store, one question
 
-Design only. Nothing here is built. Written 2026-11-14 for Nathan, who asked for one logging and metrics approach that
+**Status: B1 is built** (issue #20: `obs.db`, the event registry, the typed logger, redaction, the dual write and the reconciler; section 11 says what it settled where this design was open). B2 to B8 are design only. Written 2026-11-14 for Nathan, who asked for one logging and metrics approach that
 answers **"Is our token spend producing valuable outcomes at an efficient rate?"** Every metric below names the change it
 should trigger; a metric with no lever is not added. No model runs in the logging, collection, metric or report path (R98).
 Counts below were read on 2026-11-14 at about 09:00 EST and drift.
@@ -245,3 +245,26 @@ plan reads; the false loss bound; metrics without a source; the gameable headlin
 Addenda, 2026-11-14: #14, #12 and #19 added to sections 1, 2, 4, 7, 9; the Steward's decisions applied (sections 4, 5, 6, 9). The plan tiers Nathan answered are in section 2. A Sol delta check on those (high) held with 1 blocker and 6
 should-fix findings, now folded: chunked, hash-framed pull and ack; receiver limits and deadline; a byte cap on the spool; a full-field `rev` for mutable facts; live-rule classifier savings from
 per-attempt cost events; the `steward-health tokens` cutover. Not re-checked by Sol.
+
+## 11. B1 as built (issue #20)
+
+Code: `src/core/obs/` (`fields.ts` the opaque types, `errClass`, `corrOf`; `registry.ts` the events; `scrub.ts` the backstop; `row.ts`, `obs.ts`, `logger.ts` the logger; `db.ts` the file and its migrations;
+`ledger.ts` the derived events and the reconciler) and `src/core/log.ts`, the one import (`logFor(store)`, `obsFor(store)`). Where the design was open or the code showed otherwise:
+
+- **The old call stays, read through the registry.** About 120 call sites say `log("fire", { server, title, threadId })`. Each still does, and each of the registry's events names the old name (`legacy`) and
+  the old key each typed field is read from (`from`, `via`): `delivered` is `wake.delivered`, `composed` is `wake.composed`, `deliver-held` is `wake.held`. What the registry does not name (a title, an error's text) is
+  left in the old `events` table and never reaches `obs.db`. New code calls `obs.child({ mod, thread, corr }).info("wake.delivered", { http: 202 })`, which is strict: an extra field is rejected and counted. An event name no one registered is counted
+  as `log.rejected` and still reaches the old table; a test fails if a call site names an unregistered event.
+- **Dual write.** Every line is also written to the old table with the same `source_key` as `import_key`, so release B's reconciliation can compare the two. The old table keeps the full line (release C drops it).
+- **`hold:<delivery>:closed` is `hold:<handle>:closed`.** A hold (a `held` item) has no delivery id; its own 8-hex handle is its key. `question.answered` also covers a question answered on its card (`by: "card"`).
+- **`log.change`.** `session-error` becomes one `server.state` row per outage (the old table's `session-error` line too); the `connected` that ends it writes the matching `up` row with the number of repeats suppressed. First connect, no row.
+- **Correlation.** `wake.composed` lists `members` and `kept` as corrs; its `corr` and `delivery` are the digest's; an answer wake (`answer:item:<id>`) takes the corr of its question. Rows the reconciler writes have `corr = NULL`; a row younger than a minute is
+  left to its writer, whose inline emission carries `corr`.
+- **A thread is stored only as a UUID** (T3's thread ids are). Anything else is dropped and counted; a decision's `thread` (free text, whatever the Steward typed) is left out silently.
+- **Names the operator picks** (server and receiver names) are `Known` sets the engine and the page fill from servers.json; a name that was not registered is rejected like any other bad value.
+- **Hot path.** `synchronous = NORMAL`, `busy_timeout = 0` (a held lock makes the row wait in a 500-row buffer; the oldest is dropped and counted when it fills) and `wal_autocheckpoint = 0`: SQLite's own checkpoint ran inside whichever INSERT crossed 1,000 pages and put p99 at 3 ms,
+  against 0.09 ms without it. The hourly pass checkpoints instead.
+- **After commit.** `store.afterCommit(fn)` runs the inline emission once the outermost transaction has committed and never on a rollback, so no event exists for a row that was not written.
+- **Left for B2 to B8.** `host` is on every row (B3 fills it for pulled rows); a new event is one registry entry, a new derived key shape one line in `SOURCE_KEY` (`obs.ts`), a new transition family one entry in `FAMILIES`, a new table one entry in `OBS_MIGRATIONS` (`db.ts`).
+  Not done here, because they belong to later pieces: retention and `event_daily` (B2), `chamberlain logs` (B2), `plans`, `planPriceUsd` and `outcomeWeights` config (B4, B6), moving `afk.ts` and `queue-waits.ts` to the new API (B8).
+

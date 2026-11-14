@@ -14,11 +14,14 @@ import { tmpdir } from "node:os";
 import { ensureToken } from "./core/capability.ts";
 import { CRASH_STEPS } from "./core/crash.ts";
 import { withDeliveryId } from "./core/deliver.ts";
+import { obsFor } from "./core/log.ts";
+import { reconcileStore } from "./core/obs/ledger.ts";
 import { askQuestion, getQuestion, type Question, readClaim } from "./core/questions.ts";
 import { LEGACY_STAMP } from "./core/rights-sent.ts";
 import { readRulings } from "./core/rulings.ts";
 import { openStore } from "./core/sqlite-store.ts";
 import { dbPath, type Store } from "./core/store.ts";
+import { eventRows } from "./testing/obs.ts";
 
 const SRC = new URL(".", import.meta.url).pathname;
 const TIMEOUT = 30_000;
@@ -295,6 +298,27 @@ describe("page path: the real queue server dies answering a real request, and th
 			expect(getQuestion(w.store, ID)).toMatchObject({ status: "answered", delivered: true });
 			await daemon(w);
 			wakes(ID, DELIVERY);
+		},
+		TIMEOUT,
+	);
+
+	test(
+		"killed between the ledger commit and the inline event: the answer's event is missing, and the reconciler repairs it once",
+		async () => {
+			const { w } = await crash("committed");
+			const obs = obsFor(w.store);
+			// The question's own event was written when it was asked; the answer's was never reached.
+			expect(eventRows(obs, `source_key = 'item:${ID}:asked'`)).toHaveLength(1);
+			expect(eventRows(obs, `source_key = 'item:${ID}:answered'`)).toEqual([]);
+			expect(reconcileStore(w.store, { graceMs: 0 })).toMatchObject({ emitted: 1 });
+			const [row, ...more] = eventRows(obs, `source_key = 'item:${ID}:answered'`);
+			expect(more).toEqual([]);
+			expect(row).toMatchObject({ event: "question.answered", corr: null });
+			expect(JSON.parse(row!.data)).toMatchObject({ item: ID, choice: 0, recommended: true, by: "page", ruled: false });
+			// A second pass, and the page answering for real afterwards, add nothing.
+			expect(reconcileStore(w.store, { graceMs: 0 })).toMatchObject({ emitted: 0 });
+			expect(eventRows(obs, `source_key = 'item:${ID}:answered'`)).toHaveLength(1);
+			expect(obs.counters).toEqual({ rejected: 0, redacted: 0, failed: 0, dropped: 0 });
 		},
 		TIMEOUT,
 	);

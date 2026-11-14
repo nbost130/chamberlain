@@ -34,6 +34,7 @@ import { principal, selfCommand } from "./config.ts";
 import { defaultStore } from "./default-store.ts";
 import { awayModeLine } from "./messages.ts";
 import { startup } from "./migrate.ts";
+import { ledgerEvents } from "./obs/ledger.ts";
 import { getQuestion } from "./questions.ts";
 import { findSettled, refusalLines } from "./settled.ts";
 import type { AwayRecord, Store } from "./store.ts";
@@ -131,6 +132,7 @@ export function closeHeld(store: Store, id: string, how: string, now = new Date(
 		const i = store.items.get(HELD, id);
 		if (!i || i.status === "resolved") throw Error(`no open held item ${id}`);
 		store.items.resolve(HELD, id, now.getTime(), { closedAt: now.toISOString(), how });
+		ledgerEvents(store).holdClosed(id);
 		return i.payload as Held;
 	});
 }
@@ -146,6 +148,7 @@ export function closeHeldWhere(store: Store, why: (h: Held) => string | undefine
 			const how = why(h);
 			if (!how) continue;
 			store.items.resolve(HELD, heldId(h), now.getTime(), { closedAt: now.toISOString(), how });
+			ledgerEvents(store).holdClosed(heldId(h));
 			n++;
 		}
 		return n;

@@ -162,7 +162,8 @@ export type DecisionRow = {
 	ref: string | null;
 };
 interface DecisionStore {
-	append(d: DecisionRow): void;
+	/** Returns the new row's id (the ledger key of its event: `decision:<id>`). */
+	append(d: DecisionRow): number;
 	list(): DecisionRow[];
 }
 interface ButlerStore {
@@ -445,6 +446,10 @@ export interface Store {
 	/** Runs `fn` as one transaction (BEGIN IMMEDIATE), or as a savepoint inside one. It must not await. */
 	tx<T>(fn: () => T): T;
 	close(): void;
+	/** Runs `fn` once the outermost open transaction has committed, at once when none is open, and never when it rolls back. It must not throw. */
+	afterCommit(fn: () => void): void;
+	/** Runs `fn` when the store closes (the telemetry database opened for this store, src/core/log.ts, closes with it). */
+	onClose(fn: () => void): void;
 	readonly items: ItemStore;
 	readonly claims: ClaimStore;
 	readonly evidence: EvidenceStore;

@@ -7,6 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { principal } from "./config.ts";
 import { answerWakeText } from "./messages.ts";
+import { ledgerEvents } from "./obs/ledger.ts";
 import type { Ruling } from "./rulings.ts";
 import type { ClaimRecord, EvidenceRow, Item, RelayRecord, Store } from "./store.ts";
 
@@ -108,6 +109,7 @@ export function askQuestion(store: Store, q: Question, now = Date.now()) {
 	const { evidence, ...rest } = withUrgency(q);
 	store.tx(() => {
 		if (store.items.get(QUEUE, q.id)) return;
+		ledgerEvents(store).asked(q.id);
 		store.items.observe({
 			source: QUEUE,
 			kind: "question",
