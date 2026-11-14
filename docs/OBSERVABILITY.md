@@ -93,7 +93,7 @@ log.warn / log.error / log.debug                                 // debug is not
    `ModelName`, `Enum[...]`, `Int`, `Ms`, `Bool`. There is no `string` and no `note`. An error is `errClass(e)` (an enum such as
    `ECONNREFUSED`, `timeout`, `http-4xx`), never its message. A thread title, a path, a URL and a prompt can be neither written nor spooled.
 2. *The same schema validates every spool row and every ingest row*, per table, with unknown columns rejected, so a buggy
-   collector cannot put text in the store. Spool and inbox directories are `0700`, files `0600`.
+   collector cannot put text in the store. The spool directory are `0700`, files `0600`.
 3. *A scrubber backstop* drops keys matching `token|secret|authorization|cookie|password|apikey` and values shaped like `Bearer …`, a
    JWT, `sk-…`, `gh[pousr]_…` or the page key. Each hit increments `log.redacted`, which must read zero: a hit is a bug and shows on the report.
 
@@ -103,8 +103,8 @@ minute; a log call never blocks or fails its caller. A CI test fuzzes every regi
 
 ## 4. The metrics layer (SQL views over `obs.db`, no model)
 
-**Buckets (R100).** A spend row's bucket, in order: (1) a `bucket:` line in the delegation brief, read from the session's first
-prompt by regex; (2) the Steward, Alert Desk and Decisions thread ids from config → `coordination`; (3) the thread's `delegate_task`
+**Buckets (R100).** A spend row's bucket, in order: (1) a `bucket: building|assurance|coordination` line among the first lines of the delegation brief, read from the session's first
+prompt by regex (until the parser lands, briefs are `unclassified` and that share is shown); (2) the Steward, Alert Desk and Decisions thread ids from config → `coordination`; (3) the thread's `delegate_task`
 role when T3 records it (`implementation` → `building`, `review` → `assurance`); (4) else `unclassified`. Spend reaches a PR by
 worktree branch → PR head branch; the rest is **unattributed**, and both shares are metrics.
 
@@ -116,7 +116,7 @@ worktree branch → PR head branch; the rest is **unattributed**, and both share
 | Nathan's attention | not dollars: questions, time to answer, recommended-picked rate, already-settled rate, interruptions | `question.asked` and `question.answered`; *already settled* = the existing settled matcher (`settled.ts`) finds an in-force ruling at answer time; *interruption* = a `message` turn in the Steward thread, a **proxy that also counts builder reports** until B3 can split by sender |
 
 **Headline.** `outcome points ÷ API-list-price spend`, weekly, with a 4-week median, always printed with raw counts, priced coverage
-and hosts reporting. Points: one per merged PR at its kind weight; an issue closes for a point only when no merged PR links it;
+and hosts reporting. Points: one per merged PR at its kind weight (config `outcomeWeights`, default `feat` 3, `fix` 3, `docs` 1, `chore` 0.5, any other kind 1; printed beside every weighted number); an issue closes for a point only when no merged PR links it;
 a release adds one point and its release-please PR adds none; a regression or revert subtracts the weight of the PR it undoes. A week
 is **provisional** until 7 days after its last merge and **partial** when under 90% of tokens are priced or a host is missing; a partial
 week prints no ratio. Splitting work to farm points shows up in the raw counts beside the points.
@@ -147,27 +147,31 @@ Not measured, and not claimed: regressions avoided, attention saved in minutes, 
 | --- | --- | --- |
 | `chamberlain report [--weeks N] [--json] [--bucket B]` | headline, buckets per PR and per week, the table above with value, trend and lever, the anomaly line | read-only SQL; exits 0 on partial data and names the gap |
 | `/report` on the existing page server | the same JSON rendered, per-host "data through" stamps, a flag where a threshold is crossed | same auth as the page; no write endpoint; thread links resolved live, titles never stored |
-| Never | a post into any thread, a push, an email | |
+| Weekly wake | once a week, one Steward wake (kind `report`) of at most 10 lines: the three metrics furthest past their thresholds, each with its lever, and the `/report` link | text composed by code from the report JSON, sent through the existing outbox; its own cost shows as coordination spend |
+| Never | the report itself in any thread, an email, a push notification | |
 
 ## 6. Collection from three machines
 
 `chamberlain collect` (a one-shot in the release binary, `scripts/build.ts`) runs on **each host** from a user timer every 15 minutes
-under `Nice=19`, idle IO and a 10% CPU quota (launchd: `Nice`, `LowPriorityIO`). It is deferred, never skipped. It needs no network to collect.
+under `Nice=19`, idle IO and a 10% CPU quota (launchd: `Nice`, `LowPriorityIO`). It is deferred, never skipped. It needs no network: a host only spools locally and never pushes.
 
 1. **Read.** Claude Code transcripts (honoring `CLAUDE_CONFIG_DIR`, including `subagents/`, as `role=subagent`) and Codex rollouts. Claude de-dupes by request id; Codex rollouts carry cumulative counters, so the reader takes deltas. Per request it keeps model and the cache-write TTL split before summing into a turn.
 2. **Resume correctly.** A late duplicate row or a queued prompt can change an earlier turn (the cause of #12's review blockers 3 and 5), so the cursor is the start of the previous two turns, a bounded replay, and an incomplete last line waits for its newline. Rows carry a monotonic `rev`; ingest keeps the higher one. A changed inode or head hash re-reads the file. The cursor advances only after the spool row is fsynced.
-3. **Spool and push.** NDJSON per day under `spool/<host>/`, pushed to Mithrandir's inbox over ssh as temp-file plus rename; the day file is deleted only after an ack. One lock file per host stops overlapping runs.
+3. **Spool.** NDJSON per day under `spool/`, written by temp-file plus rename. A day file is deleted only on `collect --ack <name>:<sha256>` (it checks the hash); unacknowledged files are kept up to 90 days. One lock file per host stops overlapping runs.
 4. **Plan utilization** (#16): one row per account, window and 15-minute slot. The source is recorded (`endpoint`, or a stale cache/rollout read); a stale read is stored but excluded from "time at or above 90%", and a missing slot is unknown, never carried forward. The account id is the provider's own account id, hashed, so hosts sharing an account de-duplicate.
 
-Mithrandir ingests its own spool and the inbox idempotently, through the schema validation. **Push, not pull**: Mithrandir cannot resolve
-`mac` today and Chamberlain's own mirror shows it refusing connections; Omar is reachable. Outcomes (PRs, issues, releases, reviews, reverts) come from
+**Pull, over the ssh Mithrandir already has** (no new key, no push). Config `collectHosts`: `omar` as `ssh omar`, and the Mac as `nbost@nathans-macbook-air`, each with the
+absolute path of its `chamberlain` binary (a non-interactive ssh shell does not have it on `PATH`). On its own 15-minute tick Mithrandir collects its own spool, then for
+each host runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <host> <bin> collect --emit` (at most 20 MB a pull; the rest next tick), validates every row against the
+table schema as untrusted input, ingests idempotently by `(host, session, turn_key, rev)`, and only then runs `--ack`. An unreachable host is one `log.change`
+transition, never an error loop. Timers on the Mac and Omar are user-level units. Outcomes (PRs, issues, releases, reviews, reverts) come from
 GitHub through the daemon's existing `gh` setting, hourly, from Mithrandir only.
 
 | Failure | What happens |
 | --- | --- |
-| Mac or Omar off | no spend there; its rows arrive at next boot; the report prints "mac: data through <t>" and never zero-fills |
+| Mac or Omar off or unreachable | no spend there; Mithrandir pulls at the first tick after it is back; the report prints "mac: data through <t>" and never zero-fills |
 | Timer or binary broken on a host | the report flags any host silent for over an hour that has reported before; the collector also logs its own `collect.run` (CPU ms, bytes read) |
-| Mithrandir offline or push fails | spool keeps everything unacknowledged; past 90 days the oldest is dropped and `spool.lost` is counted and shown |
+| Mithrandir offline, or a pull or ack fails | the host keeps every unacknowledged file; past 90 days the oldest is dropped and `spool.lost` is written to the spool, so it is counted and shown when the next pull lands; a failed ack means a re-pull, which ingest ignores |
 | Transcript pruned before collect | a gap; recorded as a gap when the oldest remaining file starts after the last cursor |
 
 ## 7. Migration and the reshape of #12, #15, #16
@@ -197,8 +201,8 @@ same `obs` query API as `report`; only `mark` writes the ledger. No change to #1
 | --- | --- | --- |
 | Log write | one prepared INSERT; 1.9k rows a day today, about 1.0k after the noise fix | p99 under 1 ms in a CI benchmark; write errors never reach the caller |
 | Collector CPU | stat plus appended bytes plus a two-turn replay; 96 runs a day | CPU seconds per run (not elapsed) logged and budgeted at 2 s; over 10 s is a `warn` |
-| Disk | events about 165 KB a day after the fix, about 12 MB at 90 days; `usage_turn` volume unmeasured (Steward alone made 12,003 requests in 7 d) | `obs.db` under 60 MB with indexes and WAL, `spool` under 20 MB a host; the retention job shortens raw retention (floor 14 d) when over, an alarm alone is not enforcement |
-| Tokens | zero in logging, collection, metrics and report | the weekly wake in section 9 (d), if allowed: one wake, about 540k total tokens (PR #12's `answer` median, mostly cache reads), about $0.20 at the report's blended Opus rate |
+| Disk | events about 165 KB a day after the fix, about 12 MB at 90 days; `usage_turn` volume unmeasured (Steward alone made 12,003 requests in 7 d) | `obs.db` under 60 MB with indexes and WAL, `spool` under 20 MB a host (its size is bounded by the 90-day cap, not by a successful pull); the retention job shortens raw retention (floor 14 d) when over, an alarm alone is not enforcement |
+| Tokens | zero in logging, collection, metrics and report | the weekly wake (section 5): one wake, about 540k total tokens (PR #12's `answer` median, mostly cache reads), about $0.20 at the report's blended Opus rate |
 
 ## 9. Build pieces, and what only Nathan can decide
 
@@ -206,17 +210,23 @@ same `obs` query API as `report`; only `mark` writes the ledger. No change to #1
 | --- | --- | --- |
 | B1 `obs.db`, schema, registry, logger API, validation, noise fix, dual-write, reconciler | new | |
 | B2 retention, rollups, `chamberlain logs` (tail, by corr, by thread) | new | B1 |
-| B3 `collect`: readers, replay, spool, push, ingest, bucket classifier | new | B1 |
+| B3 `collect`: readers, replay, spool, `--emit`/`--ack`, pull and ingest, bucket classifier | new | B1 |
 | B4 plan utilization | #16, reshaped | B3 |
 | B5 outcomes (gh), attention events, fix rounds, regressions, `disposition` facts | new | B1 |
 | #19 dispositions `list`, `mark`, evaluation summary | existing; reads through `obs` | B1, B5 |
-| B6 metric views and `chamberlain report` | #15, reshaped | B2, B3, B4, B5 |
+| B6 metric views, `chamberlain report` and the weekly wake text | #15, reshaped | B2, B3, B4, B5 |
 | B7 `/report` page | new | B6 |
 | B8 cutover: readers to `obs.db`, reconciliation proof, drop old `events` | new | B1 to B6 |
 
-**Decisions for Nathan.** (a) Outcome weights: `feat`/`fix` 3, `docs` 1, `chore` 0.5 is my proposal. (b) Timers on the Mac and Omar plus the ssh key that lets them push to Mithrandir:
-a deploy and a credential. (c) The plan tier and monthly price of each Claude and Codex plan, which no file records; without them the report shows list-price dollars and never "% of plan".
-(d) Whether one weekly Steward wake (top 3 suggested changes plus a link) is allowed, since nothing else posts into a thread. (e) The `bucket:` line in delegation briefs and the review-comment trailer, two small conventions the Steward's briefs and reviewers must follow.
+**Decided 2026-11-14 (Steward, for Nathan).**
+
+| Item | Decision |
+| --- | --- |
+| (a) outcome weights | the proposal, as a config default (`outcomeWeights`) printed beside every weighted number; reversible |
+| (b) Mac and Omar | pull over the existing ssh; user-level timers; no new key, no push (section 6) |
+| (c) plan tier and price | still asked of Nathan (Q-hlc5v582c); until a price is set in config the report shows API list-price dollars, labeled as such, and never "% of plan" |
+| (d) weekly wake | yes, one a week: top 3 changes plus the link (section 5) |
+| (e) `bucket:` line and review trailer | yes; the Steward uses them once the parsers land (B3 for the line, B5 for the trailer) |
 
 ## 10. Review log (Sol, reasoningEffort high: hold, 12 findings, all folded)
 
@@ -236,3 +246,4 @@ a deploy and a credential. (c) The plan tier and monthly price of each Claude an
 | 12 | overhead unsubstantiated | CPU not elapsed, 12 MB corrected, enforcement, wake moved to a decision (§8) |
 
 Addendum, 2026-11-14 09:10 (#14 merged, #12 renumbered, #19 filed): sections 1, 2, 4, 7 and 9 gained the dispositions source. This addendum was not re-reviewed by Sol.
+Second addendum, 2026-11-14 09:20: the Steward decided the five open items (section 9); collection is now pull-based (section 6), the weekly wake is in section 5.
