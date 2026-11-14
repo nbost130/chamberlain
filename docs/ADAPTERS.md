@@ -94,7 +94,7 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   state (`complete`, `truncated`, `failed`) that says whether "nothing to report" can be believed, and `waiting` never
   rejects either (below). Without `inspect` the core has no way to know who instructed a thread, so a turn end is reported
   once per turn instead of only for work the Steward sent. `lastAssistant` is optional (the last finished assistant message
-  with its id and finish time, or nothing): the `idle-parents` sweep check reads it, and without it that check lists nothing
+  with its id and finish time, or nothing): the `idle-parents` check reads it, and without it that check lists nothing
   for this adapter's threads.
 - **`waiting` returns a `WaitingRead`, and it reports only what it saw.** `{ ok: true, cards, resolved, ignored }` says the
   backend was connected for the whole read and answered in the shape you expect. It is NOT a complete list of the thread's

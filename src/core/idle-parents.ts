@@ -1,15 +1,19 @@
 /**
- * The `idle-parents` routine check: every top-level thread that finished its work and has sat idle past a threshold, reported to
- * the Steward in one compact list. A turn-end wake can miss a thread (its closing words matched no rule, or the wake went to a
+ * The `idle-parents` check: every top-level thread that finished its work and has sat idle past a threshold, reported to the
+ * Steward in one compact list. A turn-end wake can miss a thread (its closing words matched no rule, or the wake went to a
  * Steward that was busy), and a thread that waits for a word never moves on its own; this check is the net under those misses.
+ *
+ * It runs on its own timer (`intervalMinutes`, default 15), not on the two-hourly routine sweep (src/core/engine-idle.ts), and it
+ * calls no model: selection and ordering are plain code. `selectIdleThreads` is the one place that decides which threads are idle,
+ * and it returns plain records, so anything that later wants to classify or record a thread's disposition starts from them.
  *
  * It is an item source (src/core/source.ts), named `check:idle-parents`, so the item system alone decides what notifies:
  * one finding per thread and last message, keyed by a hash of that message. A thread already reported with the same last
- * message is never reported again; a new message makes a new finding. Threads whose last message reads as an ask
- * (`looksLikeAsk`) come first.
+ * message is never reported again, however many ticks pass; a new message makes a new finding. Threads whose last message
+ * reads as an ask (`looksLikeAsk`) come first.
  *
- * Config (`sweep.idleParents` in config.json): `enabled` (default true), `thresholdMinutes` (default 60), `maxThreads` (default 10,
- * the most NEW threads one wake lists; the rest are listed on a later sweep).
+ * Config (`sweep.idleParents` in config.json): `enabled` (default true), `intervalMinutes` (15), `thresholdMinutes` (30), `maxThreads`
+ * (10, the most NEW threads one wake lists; the rest are listed on a later tick).
  */
 import { createHash } from "node:crypto";
 import type { LastAssistant, ThreadState } from "./adapter.ts";
@@ -20,22 +24,32 @@ export const IDLE_PARENTS = "idle-parents";
 /** The item source name: the same `check:<name>` form every routine check has. */
 export const IDLE_PARENTS_SOURCE = `check:${IDLE_PARENTS}`;
 
-export type IdleParentsConfig = { enabled: boolean; thresholdMinutes: number; maxThreads: number };
-export const IDLE_PARENTS_DEFAULTS: IdleParentsConfig = { enabled: true, thresholdMinutes: 60, maxThreads: 10 };
+export type IdleParentsConfig = {
+	enabled: boolean;
+	intervalMinutes: number;
+	thresholdMinutes: number;
+	maxThreads: number;
+};
+export const IDLE_PARENTS_DEFAULTS: IdleParentsConfig = {
+	enabled: true,
+	intervalMinutes: 15,
+	thresholdMinutes: 30,
+	maxThreads: 10,
+};
 /** How much of the last message a finding carries. The tail, because that is where a question sits. */
 export const EXCERPT_CHARS = 300;
 
+const KEYS = ["enabled", "intervalMinutes", "thresholdMinutes", "maxThreads"];
 /** Pure: the `sweep.idleParents` section, with defaults for what it leaves out. Anything it does not understand throws. */
 export function parseIdleParents(raw: unknown): IdleParentsConfig {
 	if (raw === undefined) return { ...IDLE_PARENTS_DEFAULTS };
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("sweep.idleParents: expected an object");
 	const o = raw as Record<string, unknown>;
 	for (const k of Object.keys(o))
-		if (!["enabled", "thresholdMinutes", "maxThreads"].includes(k))
-			throw Error(`sweep.idleParents: unknown key "${k}" (known: enabled, thresholdMinutes, maxThreads)`);
+		if (!KEYS.includes(k)) throw Error(`sweep.idleParents: unknown key "${k}" (known: ${KEYS.join(", ")})`);
 	if (o.enabled !== undefined && typeof o.enabled !== "boolean")
 		throw Error("sweep.idleParents: enabled must be true or false");
-	const num = (k: "thresholdMinutes" | "maxThreads", whole: boolean) => {
+	const num = (k: "intervalMinutes" | "thresholdMinutes" | "maxThreads", whole: boolean) => {
 		const v = o[k];
 		if (v === undefined) return IDLE_PARENTS_DEFAULTS[k];
 		if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || (whole && !Number.isInteger(v)))
@@ -44,6 +58,7 @@ export function parseIdleParents(raw: unknown): IdleParentsConfig {
 	};
 	return {
 		enabled: o.enabled ?? IDLE_PARENTS_DEFAULTS.enabled,
+		intervalMinutes: num("intervalMinutes", false),
 		thresholdMinutes: num("thresholdMinutes", false),
 		maxThreads: num("maxThreads", true),
 	};
@@ -69,20 +84,90 @@ export function idleParentCandidate(th: ThreadState, skip: ReadonlySet<string>, 
 	);
 }
 
-/** One idle thread as a watcher read it. `at` is when its last message finished, in ms. */
-export type IdleParentFact = {
+/** One idle thread, as plain data. `lastMessage` is the whole text; `lastMessageHash` names that message (id and text). */
+export type IdleThread = {
 	server: string;
-	id: string;
+	threadId: string;
 	title: string;
-	last: LastAssistant;
-	at: number;
+	idleMinutes: number;
+	lastMessage: string;
+	lastMessageHash: string;
+	looksLikeAsk: boolean;
 };
-/** What a gather found: the idle parents it could read, and the threads it could not read (kept as they were, never read as cleared). */
-export type IdleParentsRead = { facts: IdleParentFact[]; unreadable: { server: string; id: string }[] };
+
+/** What a watcher offers the selection: its threads as it last saw them, and how to read one thread's last message. */
+export type IdleThreadSource = {
+	server: string;
+	connected: boolean;
+	threads: Iterable<ThreadState>;
+	/** Running children of a thread (their completion wakes it, so it is not idle). */
+	liveChildren(threadId: string): number;
+	/** Absent: this adapter's threads cannot be read, so none is selected. */
+	lastAssistant?: (threadId: string) => Promise<LastAssistant | undefined>;
+	/** Called once for a thread whose read threw. */
+	readFailed?: (threadId: string, error: unknown) => void;
+};
+
+/** What the selection found: the idle threads, and those it could not read (kept as they were, never read as cleared). */
+export type IdleSelection = { threads: IdleThread[]; unreadable: { server: string; threadId: string }[] };
 
 /** Pure: the identity of one last message, stable for the same message and different for the next one. */
 export const messageHash = (last: Pick<LastAssistant, "id" | "text">): string =>
 	createHash("sha256").update(`${last.id}\0${last.text}`).digest("hex").slice(0, 12);
+
+/** Pure: asks first, then the longest idle, then by server and thread, so the order is the same on every run. */
+export const byAskThenIdle = (a: IdleThread, b: IdleThread): number =>
+	Number(b.looksLikeAsk) - Number(a.looksLikeAsk) ||
+	b.idleMinutes - a.idleMinutes ||
+	(`${a.server}\0${a.threadId}` < `${b.server}\0${b.threadId}` ? -1 : 1);
+
+/**
+ * THE idle-thread selection. From each source's threads: the candidates (`idleParentCandidate`) whose last finished assistant message
+ * ended more than `thresholdMinutes` before `now`, as plain records, asks first and then the longest idle. A disconnected source, or a
+ * thread whose read throws, is `unreadable` (its earlier report stays as it was). No model is called: `looksLikeAsk` is a regular
+ * expression. Reads go a few at a time, one projection each.
+ */
+export async function selectIdleThreads(
+	sources: readonly IdleThreadSource[],
+	now: number,
+	o: { thresholdMinutes: number; skip?: ReadonlySet<string> },
+): Promise<IdleSelection> {
+	const skip = o.skip ?? new Set<string>();
+	const out: IdleSelection = { threads: [], unreadable: [] };
+	for (const src of sources) {
+		const read = src.lastAssistant;
+		if (!read) continue;
+		const candidates = [...src.threads].filter((th) => idleParentCandidate(th, skip, src.liveChildren(th.id)));
+		if (!src.connected) {
+			for (const th of candidates) out.unreadable.push({ server: src.server, threadId: th.id });
+			continue;
+		}
+		const one = async (th: ThreadState) => {
+			try {
+				const last = await read(th.id);
+				const at = last ? Date.parse(last.at) : Number.NaN;
+				if (!last || !Number.isFinite(at)) return;
+				const idleMs = now - at;
+				if (idleMs <= o.thresholdMinutes * 60_000) return;
+				out.threads.push({
+					server: src.server,
+					threadId: th.id,
+					title: th.title,
+					idleMinutes: Math.floor(idleMs / 60_000),
+					lastMessage: last.text,
+					lastMessageHash: messageHash(last),
+					looksLikeAsk: looksLikeAsk(last.text),
+				});
+			} catch (e) {
+				src.readFailed?.(th.id, e);
+				out.unreadable.push({ server: src.server, threadId: th.id });
+			}
+		};
+		for (let i = 0; i < candidates.length; i += 8) await Promise.all(candidates.slice(i, i + 8).map(one));
+	}
+	out.threads.sort(byAskThenIdle);
+	return out;
+}
 
 /** Pure: the last of a message, whitespace collapsed, cut at the start so the end (where an ask is) stays. */
 export function excerptOf(text: string, max = EXCERPT_CHARS): string {
@@ -90,58 +175,51 @@ export function excerptOf(text: string, max = EXCERPT_CHARS): string {
 	return flat.length > max ? `…${flat.slice(-max)}` : flat;
 }
 
-const keyOf = (f: Pick<IdleParentFact, "server" | "id" | "last">) => `${f.server}:${f.id}:${messageHash(f.last)}`;
 const clipTitle = (s: string) => (s.length > 80 ? `${s.slice(0, 79)}…` : s);
+/** Pure: the item key of one thread at one last message. */
+export const idleKey = (t: Pick<IdleThread, "server" | "threadId" | "lastMessageHash">) =>
+	`${t.server}:${t.threadId}:${t.lastMessageHash}`;
+/** Pure: how one idle thread reads in the wake. */
+export const idleText = (t: IdleThread) =>
+	`${t.looksLikeAsk ? "[ASKING] " : ""}thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`;
 
 /** What the check already holds as open items: a key and the text it last carried. */
 export type PriorFinding = { dedupKey: string; text: string };
 
 /**
- * Pure: the findings for what a gather read. A fact qualifies when its last message finished more than the threshold ago.
- * Order: asks first, then the longest idle, then by key, so the order is the same on every run. The cap limits the NEW threads
- * only, in that order: a thread already open (`prior`) is always returned, or the item system would resolve it and report it
- * again when it came back. A thread the gather could not read keeps what it had.
+ * Pure: the findings for a selection. The cap limits the NEW threads only, in the selection's order: a thread already open (`prior`)
+ * is always returned, or the item system would resolve it and report it again when it came back. A thread the selection could not
+ * read keeps what it had.
  */
 export function idleParentFindings(
-	read: IdleParentsRead,
-	now: number,
-	cfg: IdleParentsConfig,
+	sel: IdleSelection,
+	cfg: Pick<IdleParentsConfig, "maxThreads">,
 	prior: readonly PriorFinding[] = [],
 ): Finding[] {
-	const open = new Map(prior.map((p) => [p.dedupKey, p]));
-	const rows = read.facts
-		.filter((f) => now - f.at > cfg.thresholdMinutes * 60_000)
-		.map((f) => {
-			const asking = looksLikeAsk(f.last.text);
-			const minutes = Math.floor((now - f.at) / 60_000);
-			const dedupKey = keyOf(f);
-			const text = `${asking ? "[ASKING] " : ""}thread "${clipTitle(f.title)}" on ${f.server} (threadId ${f.id}), idle ${minutes} min. Last message: ${excerptOf(f.last.text)}`;
-			return { dedupKey, text, asking, at: f.at };
-		})
-		.sort((a, b) => Number(b.asking) - Number(a.asking) || a.at - b.at || (a.dedupKey < b.dedupKey ? -1 : 1));
+	const open = new Set(prior.map((p) => p.dedupKey));
 	let fresh = 0;
 	const out: Finding[] = [];
-	for (const r of rows) {
-		if (!open.has(r.dedupKey) && ++fresh > cfg.maxThreads) continue;
-		out.push({ dedupKey: r.dedupKey, text: r.text });
+	for (const t of sel.threads) {
+		const dedupKey = idleKey(t);
+		if (!open.has(dedupKey) && ++fresh > cfg.maxThreads) continue;
+		out.push({ dedupKey, text: idleText(t) });
 	}
 	const have = new Set(out.map((f) => f.dedupKey));
-	for (const u of read.unreadable) {
-		const stem = `${u.server}:${u.id}:`;
+	for (const u of sel.unreadable) {
+		const stem = `${u.server}:${u.threadId}:`;
 		for (const p of prior) if (p.dedupKey.startsWith(stem) && !have.has(p.dedupKey)) out.push({ ...p });
 	}
 	return out;
 }
 
-/** The check as an item source. `gather` reads the idle parents (the watchers do it); `prior` lists the source's open items. */
+/** The check as an item source. `select` is `selectIdleThreads` over the watchers; `prior` lists the source's open items. */
 export function idleParentsSource(o: {
-	cfg: IdleParentsConfig;
-	gather: () => Promise<IdleParentsRead>;
+	cfg: Pick<IdleParentsConfig, "maxThreads">;
+	select: () => Promise<IdleSelection>;
 	prior: () => PriorFinding[];
-	now?: () => number;
 }): ItemSource {
 	return {
 		name: IDLE_PARENTS_SOURCE,
-		run: async () => idleParentFindings(await o.gather(), (o.now ?? Date.now)(), o.cfg, o.prior()),
+		run: async () => idleParentFindings(await o.select(), o.cfg, o.prior()),
 	};
 }

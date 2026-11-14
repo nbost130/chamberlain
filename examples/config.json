@@ -45,7 +45,8 @@
   "sweep": {
     "idleParents": {
       "enabled": true,
-      "thresholdMinutes": 60,
+      "intervalMinutes": 15,
+      "thresholdMinutes": 30,
       "maxThreads": 10
     },
     "checks": [

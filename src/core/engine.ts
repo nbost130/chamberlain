@@ -51,7 +51,8 @@ import {
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
-import { idleParentCandidate, type IdleParentsRead } from "./idle-parents.ts";
+import { createIdleParents } from "./engine-idle.ts";
+import type { IdleThreadSource } from "./idle-parents.ts";
 import { createJudge, judgeOff, readJudgeConfig, type Judge } from "./judge.ts";
 import {
 	decide,
@@ -301,41 +302,22 @@ export function createEngine(d: EngineDeps) {
 			return busy.filter((_, i) => keep[i]);
 		}
 
-		/**
-		 * Top-level threads that finished and sat idle past the threshold, read for the idle-parents check. Only a connected watcher with
-		 * `inspect.lastAssistant` can say. A thread whose read fails is listed as unreadable, so it keeps what it had and is never read as cleared.
-		 */
-		async idleParents(now: number, thresholdMs: number, skip: ReadonlySet<string>): Promise<IdleParentsRead> {
-			const read: IdleParentsRead = { facts: [], unreadable: [] };
-			const lastAssistant = this.inspect?.lastAssistant;
-			if (!lastAssistant || !this.inspect) return read;
-			const server = this.srv.name;
-			const candidates = [...this.states.values()].filter((th) =>
-				idleParentCandidate(th, skip, this.liveChildren(th.id)),
-			);
-			if (!this.connected) {
-				for (const th of candidates) read.unreadable.push({ server, id: th.id });
-				return read;
-			}
-			const one = async (th: ThreadState) => {
-				try {
-					const last = await lastAssistant.call(this.inspect, th.id);
-					const at = last ? Date.parse(last.at) : Number.NaN;
-					if (last && Number.isFinite(at) && now - at > thresholdMs)
-						read.facts.push({ server, id: th.id, title: th.title, last, at });
-				} catch (e) {
+		/** This server as a source of threads for the idle-parents selection (src/core/idle-parents.ts). */
+		idleSource(): IdleThreadSource {
+			return {
+				server: this.srv.name,
+				connected: this.connected,
+				threads: this.states.values(),
+				liveChildren: (id) => this.liveChildren(id),
+				...(this.inspect?.lastAssistant ? { lastAssistant: (id) => this.inspect!.lastAssistant!(id) } : {}),
+				readFailed: (threadId, e) =>
 					log("read-failed", {
-						server,
-						threadId: th.id,
+						server: this.srv.name,
+						threadId,
 						what: "last assistant message",
 						error: String(e).slice(0, 200),
-					});
-					read.unreadable.push({ server, id: th.id });
-				}
+					}),
 			};
-			// A few at a time: each read is one projection of the thread.
-			for (let i = 0; i < candidates.length; i += 8) await Promise.all(candidates.slice(i, i + 8).map(one));
-			return read;
 		}
 
 		/** A thread running away keeps taking turns of its own. Counted at the turn's end, when who started it can be read. A machine's turn isn't one. */
@@ -961,21 +943,21 @@ export function createEngine(d: EngineDeps) {
 		},
 	}).check;
 
-	const sweep = createSweep({
+	const sweep = createSweep({ store, log, outbox, conf, privateFile, sweepPromptFile: d.sweepPromptFile, watchers });
+	// Its own timer, apart from the routine sweep's. Threads that are Chamberlain's own, or the operator's exclude list, are never idle parents.
+	const idleParents = createIdleParents({
 		store,
 		log,
 		outbox,
 		conf,
-		privateFile,
-		sweepPromptFile: d.sweepPromptFile,
-		watchers,
-		// Threads that are Chamberlain's own, or the operator's exclude list, are never idle parents.
-		idleSkip: () =>
+		sources: () => watchers.map((w) => w.idleSource()),
+		skip: () =>
 			new Set(
 				[...EXCLUDE, privateFile("steward-thread"), privateFile("decisions-thread"), privateFile("desk-thread")].filter(
 					(x): x is string => Boolean(x),
 				),
 			),
+		...(d.relay?.now ? { now: d.relay.now } : {}),
 	});
 
 	const heartbeat = createHeartbeat({
@@ -1155,6 +1137,7 @@ export function createEngine(d: EngineDeps) {
 				}
 			}
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
+			checks.push(idleParents.tick().catch((e) => log("idle-parents-error", { error: String(e).slice(0, 200) })));
 			checks.push(
 				sweep.tick().catch((e) => {
 					log("sweep-error", { error: String(e) });
