@@ -956,6 +956,8 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 				await r.until("the idle wake", () => r.fake.wakes.length === 1);
 				const msg = r.fake.wakes[0]!.message;
 				expect(msg).toContain("A classifier sorted them");
+				// Two threads are reported; the digest line is not counted as one.
+				expect(msg).toContain("[chamberlain] idle threads: 2 top-level threads finished");
 				expect(msg).toContain(
 					'[ESCALATE asks_decision 0.98] thread "Thread ask" on fake (threadId ask), idle 540 min.',
 				);

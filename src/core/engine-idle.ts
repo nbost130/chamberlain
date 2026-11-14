@@ -7,7 +7,13 @@
  */
 import { type ClassifyDeps, classifyIdle } from "./classifier/classify.ts";
 import type { Outbox } from "./deliver.ts";
-import { idleParentsSource, idlePrior, selectIdleThreads, type IdleThreadSource } from "./idle-parents.ts";
+import {
+	DIGEST_PREFIX,
+	idleParentsSource,
+	idlePrior,
+	selectIdleThreads,
+	type IdleThreadSource,
+} from "./idle-parents.ts";
 import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
 import { evaluateSource, recordEvaluation } from "./source.ts";
@@ -88,7 +94,7 @@ export function createIdleParents({
 				const block = outcome.notified.map((i) => `- ${fenced(String(i.payload.text ?? i.dedupKey))}`).join("\n");
 				return {
 					message: idleThreadsWake(
-						outcome.notified.length,
+						outcome.notified.filter((i) => !i.dedupKey.startsWith(DIGEST_PREFIX)).length,
 						block,
 						cfg.classifier.provider !== "none" && cfg.classifier.mode === "live",
 					),

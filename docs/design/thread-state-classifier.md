@@ -149,7 +149,7 @@ Under `sweep.idleParents.classifier` in `config.json`. Unknown keys throw, as el
 - `questions`: `default` or a path to a bank file.
 - `thresholds`: `default` plus per-question overrides.
 - `budget.maxPerRun`: the most classifications one tick makes. Threads past it stay `unknown` this tick (reported as today) and
-  are classified on a later tick. `maxCallsPerDay` and `maxUsdPerDay` are summed from `thread_dispositions`; when either is
+  are classified on a later tick. `maxCallsPerDay` and `maxUsdPerDay` count every attempt (as built: a per-day counter in the database, never less than the sum over `thread_dispositions`, so retries of a failed call count); when either is
   spent, every unclassified thread is `unknown` until the next UTC day, with one log line.
 - `jev.keyFile`: read from the config directory like the server token files, owner-only. Never the environment of the web
   process, never logged.

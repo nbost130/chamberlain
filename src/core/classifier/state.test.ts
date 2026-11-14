@@ -3,6 +3,7 @@ import {
 	buildState,
 	type HookRunner,
 	parseHookOutput,
+	redactTail,
 	redactText,
 	runRedactHook,
 	type SentState,
@@ -129,4 +130,28 @@ describe("the redaction hook fails closed", () => {
 		expect(await runRedactHook(["/bin/cat"], given)).toEqual(given));
 	test("the real spawn: a hook that hangs is cut off at the timeout", async () =>
 		expect(runRedactHook(["/bin/sleep", "5"], given, undefined, 200)).rejects.toThrow("timed out"));
+});
+
+describe("redaction looks at the whole message, and keeps the tail the tail (review findings)", () => {
+	test("a long JWT that starts well before the cut is still replaced", () => {
+		const jwt = ["eyJ", "a".repeat(2000), ".", "b".repeat(10), ".", "c".repeat(10)].join("");
+		const b = buildState(thread({ lastMessage: `token ${jwt} done` }), SEND, true);
+		expect(b.state.last_message).toBe("<jwt> done");
+		expect(b.redactions).toBe(1);
+		expect(b.state.last_message).not.toContain("aaaa");
+	});
+	test("a replacement never pulls earlier text into the tail", () => {
+		const secret = ["sk", "-", "k".repeat(40)].join("");
+		const r = redactTail(`HIDDEN ${secret}`, 20);
+		expect(r).toEqual({ text: "<secret>", hits: 1 });
+		// A match wholly before the tail is not counted and not sent.
+		expect(redactTail(`mail ${["a", "@", "b.co"].join("")} ${"z".repeat(30)}`, 10)).toEqual({
+			text: "z".repeat(10),
+			hits: 0,
+		});
+		// Never longer than asked: a placeholder at the edge is cut, not the budget.
+		expect(redactTail(`x ${secret}`, 3).text.length).toBeLessThanOrEqual(3);
+	});
+	test("overlapping rules replace once", () =>
+		expect(redactText(`at /Users/${["ann", "@", "x.io"].join("")}`).hits).toBe(1));
 });

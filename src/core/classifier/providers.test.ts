@@ -8,6 +8,8 @@ import {
 	JEV_URL,
 	jevBody,
 	jevProvider,
+	MODEL_ID,
+	ProviderError,
 	rulesProvider,
 	validAnswers,
 } from "./providers.ts";
@@ -213,5 +215,74 @@ describe("rules: nothing leaves the machine", () => {
 			...Object.fromEntries(IDS.map((id) => [id, 0])),
 			work_finished: 1,
 		});
+	});
+});
+
+describe("what a provider reports about itself is checked before it is kept (review finding)", () => {
+	const jevReply = (over: object) => async () =>
+		new Response(
+			JSON.stringify({
+				model: "jev-1.14.0",
+				answers: Object.fromEntries(IDS.map((id) => [id, { noul: 0.2 }])),
+				usage: { input_tokens: 2000 },
+				...over,
+			}),
+		);
+	const jev = (over: object) =>
+		jevProvider({ model: "jev-1.14.0", timeoutMs: 1000, key: () => KEY, fetch: jevReply(over) });
+	const failure = (p: Promise<unknown>) =>
+		p.then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+
+	test("a model id that is not a short token (an echo of the message, an emoji cut in half) is refused with a fixed message", async () => {
+		for (const model of [STATE.last_message, `${"x".repeat(79)}🙂`, "a".repeat(81), 7, ["jev"]]) {
+			const e = (await failure(jev({ model }).classify(STATE, DEFAULT_BANK))) as ProviderError;
+			expect(e).toBeInstanceOf(ProviderError);
+			expect(e.message).toBe("Jev reported a model id that is not one");
+			// It was billed, so it still says what it cost.
+			expect(e.usage).toEqual({ inputTokens: 2000, costUsd: 2000 * 0.042e-6 });
+		}
+		for (const model of ["jev-1.14.0", "jev-latest", "org/jev:1.14"])
+			expect((await jev({ model }).classify(STATE, DEFAULT_BANK)).model).toBe(model);
+		expect((await jev({ model: undefined }).classify(STATE, DEFAULT_BANK)).model).toBe("jev-1.14.0");
+		expect(MODEL_ID.test(`${"x".repeat(79)}🙂`)).toBe(false);
+	});
+	test("a billed Jev reply with malformed answers throws with its usage", async () => {
+		const e = (await failure(
+			jev({ answers: { asks_decision: { noul: 2 } } }).classify(STATE, DEFAULT_BANK),
+		)) as ProviderError;
+		expect(e).toBeInstanceOf(ProviderError);
+		expect(e.usage.inputTokens).toBe(2000);
+		const none = (await failure(jev({ answers: null }).classify(STATE, DEFAULT_BANK))) as ProviderError;
+		expect(none.message).toBe("Jev's answer has no answers");
+		expect(none.usage.inputTokens).toBe(2000);
+	});
+	test("haiku: an echoed modelUsage key is refused; a malformed reply keeps its cost", async () => {
+		const cli =
+			(stdout: string): CliRunner =>
+			async () => ({ code: 0, stdout });
+		const haiku = (stdout: string) =>
+			haikuProvider({ command: "claude", model: "haiku", timeoutMs: 1000, run: cli(stdout) });
+		const out = (result: string, modelUsage: object) =>
+			JSON.stringify({ result, total_cost_usd: 0.001, usage: { input_tokens: 900 }, modelUsage });
+		const echoed = (await failure(
+			haiku(out(JSON.stringify(half), { [STATE.last_message]: {} })).classify(STATE, DEFAULT_BANK),
+		)) as ProviderError;
+		expect(echoed.message).toBe("claude reported a model id that is not one");
+		expect(echoed.usage).toEqual({ inputTokens: 900, costUsd: 0.001 });
+		const bad = (await failure(
+			haiku(out("no answers here", { "claude-haiku-5-5": {} })).classify(STATE, DEFAULT_BANK),
+		)) as ProviderError;
+		expect(bad.usage.costUsd).toBe(0.001);
+		expect(
+			(
+				await haiku(out(JSON.stringify(half), { "claude-haiku-5-5": {}, "claude-sonnet-5-5": {} })).classify(
+					STATE,
+					DEFAULT_BANK,
+				)
+			).model,
+		).toBe("claude-haiku-5-5");
 	});
 });

@@ -107,7 +107,7 @@ export const routineSweepAsk = () =>
 /** The wake that lists idle top-level threads (src/core/engine-idle.ts). `block` is the findings' lines, already fenced. */
 export const idleThreadsWake = (count: number, block: string, classified = false) =>
 	[
-		`[chamberlain] idle threads: ${count} top-level thread${count === 1 ? "" : "s"} finished and went quiet, and ${count === 1 ? "has" : "have"} not been reported with its last message before. ${
+		`[chamberlain] idle threads: ${count} top-level thread${count === 1 ? "" : "s"} finished and went quiet, and ${count === 1 ? "has" : "have"} not been reported with its last message before${count ? "" : " (only the day's line of finished threads is new)"}. ${
 			classified
 				? `A classifier sorted them: [ESCALATE] lines wait on a decision or a task only a person can do, [NUDGE] lines owe work they have no way to resume, each with the questions that fired and their probabilities; they come first. A line with neither tag could not be classified. Threads it judged finished are not listed one by one: at most one line a day counts them.`
 				: `Those marked [ASKING] ended on a question or a request for ${principalPoss()} word and come first.`

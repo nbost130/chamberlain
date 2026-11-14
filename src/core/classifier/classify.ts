@@ -21,7 +21,7 @@ import type { Log } from "../log.ts";
 import type { DispositionAction, DispositionKey, Store } from "../store.ts";
 import { type Bank, combine, type Decision } from "./bank.ts";
 import { type ClassifierConfig, loadBank, SENDS_TEXT } from "./config.ts";
-import { haikuProvider, jevProvider, type Provider, rulesProvider } from "./providers.ts";
+import { haikuProvider, jevProvider, type Provider, ProviderError, rulesProvider } from "./providers.ts";
 import { buildState, type HookRunner, runRedactHook, type SentState, sentChars, type ThreadText } from "./state.ts";
 
 /** One idle thread as the classifier needs it: where it is, which message, how long idle, and the text it may read. */
@@ -44,6 +44,10 @@ export type ClassifyDeps = {
 	/** Test seam: how the redaction hook runs. */
 	hook?: HookRunner;
 };
+
+/** The state-table key of the day's attempt count: every call to a provider that sends text, and what they cost. */
+export const USAGE_KEY = "classifier-usage";
+export type DailyUsage = { day: string; calls: number; usd: number };
 
 /** How many classification calls run at once. */
 export const CONCURRENCY = 4;
@@ -150,14 +154,33 @@ export async function classifyIdle(
 		misses.push(t);
 	}
 
-	// The budget: this run's calls, and (for a provider that sends text) the UTC day's calls and spend, summed from thread_dispositions.
+	// The budget: this run's calls, and (for a provider that sends text) the UTC day's calls and spend. Every attempt is counted in the
+	// state table as it is made (a retry of a failed call counts again, though it replaces its one disposition row), and the count is never
+	// taken as less than the dispositions' own sum for the day.
+	const day = new Date(utcDayStart(d.now)).toISOString().slice(0, 10);
 	let used = { calls: 0, usd: 0 };
 	try {
-		if (sends) used = d.store.dispositions.usage(utcDayStart(d.now), SENDS_TEXT);
+		if (sends) {
+			const rows = d.store.dispositions.usage(utcDayStart(d.now), SENDS_TEXT);
+			const counted = d.store.state.get<DailyUsage>(USAGE_KEY);
+			const today = counted?.day === day ? counted : { calls: 0, usd: 0 };
+			used = { calls: Math.max(rows.calls, today.calls), usd: Math.max(rows.usd, today.usd) };
+		}
 	} catch (e) {
 		used = { calls: Number.POSITIVE_INFINITY, usd: 0 };
 		d.log("classifier-error", { error: `the day's usage could not be read: ${short(e)}` });
 	}
+	const count = (calls: number, usd: number) => {
+		if (!sends || (!calls && !usd)) return;
+		try {
+			d.store.state.update<DailyUsage>(USAGE_KEY, (prior) => {
+				const p = prior?.day === day ? prior : { day, calls: 0, usd: 0 };
+				return { day, calls: p.calls + calls, usd: p.usd + usd };
+			});
+		} catch (e) {
+			d.log("classifier-error", { error: `the day's usage could not be counted: ${short(e)}` });
+		}
+	};
 	let started = 0;
 	let spent = 0;
 	let dailySpent = false;
@@ -189,8 +212,12 @@ export async function classifyIdle(
 				if (c.redact.command) state = await runRedactHook(c.redact.command, state, d.hook);
 				sent = sentChars(state);
 			} else state = buildState(t, c.send, false).state;
+			count(1, 0);
 			const r = await provider.classify(state, bank);
-			if (r.costUsd) spent += r.costUsd;
+			if (r.costUsd) {
+				spent += r.costUsd;
+				count(0, r.costUsd);
+			}
 			const decision = decide(t, r.answers);
 			d.store.dispositions.put({
 				...base,
@@ -209,6 +236,12 @@ export async function classifyIdle(
 		} catch (e) {
 			const error = short(e);
 			out.set(keyOf(t), unknownOf(error));
+			// A call that failed after it was billed still reports its cost.
+			const usage = e instanceof ProviderError ? e.usage : {};
+			if (usage.costUsd) {
+				spent += usage.costUsd;
+				count(0, usage.costUsd);
+			}
 			try {
 				d.store.dispositions.put({
 					...base,
@@ -218,8 +251,8 @@ export async function classifyIdle(
 					answers: {},
 					sentChars: sent,
 					redactions,
-					inputTokens: null,
-					costUsd: null,
+					inputTokens: usage.inputTokens ?? null,
+					costUsd: usage.costUsd ?? null,
 					latencyMs: null,
 					error,
 				});

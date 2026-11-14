@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { memStore } from "../../testing/store.ts";
 import type { Store } from "../store.ts";
 import { type Bank, DEFAULT_BANK } from "./bank.ts";
-import { bankVersion, buildProvider, type ClassifyThread, classifyIdle, utcDayStart } from "./classify.ts";
+import { bankVersion, buildProvider, type ClassifyThread, classifyIdle, USAGE_KEY, utcDayStart } from "./classify.ts";
 import { CLASSIFIER_DEFAULTS, type ClassifierConfig } from "./config.ts";
-import type { Provider, ProviderResult } from "./providers.ts";
+import { type FetchLike, jevProvider, type Provider, ProviderError, type ProviderResult } from "./providers.ts";
 import type { SentState } from "./state.ts";
 
 const NOW = Date.parse("2026-11-14T12:00:00Z");
@@ -130,7 +130,19 @@ describe("classifyIdle", () => {
 		])
 			await classifyIdle([thread("a")], cfg(over), d);
 		expect(sent).toHaveLength(5);
-		await classifyIdle([thread("a")], c, deps(s, fakeProvider(undefined, { model: "jev-1.15.0" }).provider).d);
+		// A new pinned model is a new bank version: one call to it, and a row under the new version.
+		const moved = fakeProvider(undefined, { model: "jev-1.15.0" });
+		await classifyIdle([thread("a")], c, deps(s, moved.provider).d);
+		expect(moved.sent).toHaveLength(1);
+		expect(
+			s.dispositions.get({
+				server: "main",
+				threadId: "a",
+				messageHash: "h-a",
+				bankVersion: bankVersion(DEFAULT_BANK, c, "jev-1.15.0"),
+			}),
+		).toBeDefined();
+		expect(bankVersion(DEFAULT_BANK, c, "jev-1.15.0")).not.toBe(bankVersion(DEFAULT_BANK, c, "jev-1.14.0"));
 		// Mode and armedGraceMinutes only change how answers combine: no new call.
 		await classifyIdle([thread("a")], cfg({ mode: "live", armedGraceMinutes: 10 }), d);
 		expect(sent).toHaveLength(5);
@@ -381,6 +393,101 @@ describe("classifyIdle", () => {
 		} as Store;
 		const out = await classifyIdle([thread("a")], cfg(), deps(broken, fakeProvider().provider).d);
 		expect(out.get("main:a:h-a")).toMatchObject({ action: "unknown" });
+	});
+});
+
+describe("the budget counts every attempt, not rows (review finding)", () => {
+	test("a thread that keeps failing is retried each run, and each retry counts: maxCallsPerDay holds", async () => {
+		const s = memStore();
+		const { provider, sent } = fakeProvider(() => Error("Jev answered HTTP 503"));
+		const c = cfg({ budget: { maxPerRun: 20, maxCallsPerDay: 2, maxUsdPerDay: 0.25 } });
+		for (let run = 0; run < 6; run++)
+			await classifyIdle([thread("a")], c, deps(s, provider, { now: NOW + run * 900_000 }).d);
+		expect(sent).toHaveLength(2);
+		// The table has one row (the latest attempt); the day's count has both.
+		expect(s.dispositions.usage(0, ["jev"]).calls).toBe(1);
+		expect(s.state.get(USAGE_KEY)).toEqual({ day: "2026-11-14", calls: 2, usd: 0 });
+		const last = await classifyIdle([thread("a")], c, deps(s, provider).d);
+		expect(last.get("main:a:h-a")!.error).toContain("maxCallsPerDay");
+	});
+	test("a failure then a success is two calls; the next UTC day starts the count again", async () => {
+		const s = memStore();
+		let fail = true;
+		const { provider } = fakeProvider(() => (fail ? Error("Jev answered HTTP 503") : { ...no, work_finished: 0.9 }));
+		const c = cfg();
+		await classifyIdle([thread("a")], c, deps(s, provider).d);
+		fail = false;
+		await classifyIdle([thread("a")], c, deps(s, provider).d);
+		expect(s.state.get(USAGE_KEY)).toMatchObject({ day: "2026-11-14", calls: 2 });
+		await classifyIdle([thread("b")], c, deps(s, provider, { now: NOW + 86_400_000 }).d);
+		expect(s.state.get(USAGE_KEY)).toMatchObject({ day: "2026-11-15", calls: 1 });
+	});
+	test("a call that was billed and then refused keeps its cost, in the row and in the dollar budget", async () => {
+		const s = memStore();
+		const billed: Provider = {
+			name: "jev",
+			model: "jev-1.14.0",
+			classify: async () => {
+				throw new ProviderError("the answer for asks_decision is missing or not a probability", {
+					inputTokens: 5000,
+					costUsd: 0.2,
+				});
+			},
+		};
+		const c = cfg({ budget: { maxPerRun: 20, maxCallsPerDay: 500, maxUsdPerDay: 0.25 } });
+		await classifyIdle([thread("a")], c, deps(s, billed).d);
+		const row = s.dispositions.get({
+			server: "main",
+			threadId: "a",
+			messageHash: "h-a",
+			bankVersion: bankVersion(DEFAULT_BANK, c, "jev-1.14.0"),
+		})!;
+		expect(row).toMatchObject({ action: "unknown", inputTokens: 5000, costUsd: 0.2 });
+		await classifyIdle([thread("a")], c, deps(s, billed).d);
+		expect(s.state.get(USAGE_KEY)).toMatchObject({ calls: 2, usd: 0.4 });
+		// 0.4 spent of 0.25: the next thread makes no call.
+		const p = fakeProvider();
+		const out = await classifyIdle([thread("b")], c, deps(s, p.provider).d);
+		expect(out.get("main:b:h-b")!.error).toContain("maxUsdPerDay");
+		expect(p.sent).toEqual([]);
+	});
+	test("rules makes no count: nothing was sent and nothing was spent", async () => {
+		const s = memStore();
+		const { provider } = fakeProvider(() => ({ ...no, work_finished: 1 }), { name: "rules", model: "rules" });
+		await classifyIdle([thread("a")], cfg({ provider: "rules", allowTextToLeaveMachine: false }), deps(s, provider).d);
+		expect(s.state.get(USAGE_KEY)).toBeUndefined();
+	});
+});
+
+describe("text a provider echoes back is never stored (review finding)", () => {
+	test("a Jev reply whose model field is the message is refused, and the row holds no text", async () => {
+		const s = memStore();
+		const echo: FetchLike = async (_u, init) => {
+			const body = JSON.parse(String(init.body));
+			return new Response(
+				JSON.stringify({
+					model: body.state.last_message,
+					answers: Object.fromEntries(IDS.map((id) => [id, { noul: 0.9 }])),
+					usage: { input_tokens: 100 },
+				}),
+			);
+		};
+		const jev = jevProvider({ model: "jev-1.14.0", timeoutMs: 1000, key: () => "k", fetch: echo });
+		const c = cfg();
+		const out = await classifyIdle([thread("a")], c, deps(s, jev).d);
+		expect(out.get("main:a:h-a")).toEqual({
+			action: "unknown",
+			reasons: [],
+			error: "Jev reported a model id that is not one",
+		});
+		const row = s.dispositions.get({
+			server: "main",
+			threadId: "a",
+			messageHash: "h-a",
+			bankVersion: bankVersion(DEFAULT_BANK, c, "jev-1.14.0"),
+		})!;
+		expect(JSON.stringify(row)).not.toContain(CANARY);
+		expect(row.costUsd).toBeCloseTo(100 * 0.042e-6, 12);
 	});
 });
 

@@ -6,7 +6,7 @@
  * `human`, `agent` or `none`. Never thread ids, server names, file contents, tool output or the rest of the transcript.
  *
  * Every cut is followed by `.toWellFormed()`: a tail that splits an emoji leaves a lone surrogate, and Jev answers HTTP 400 "Request
- * contains invalid Unicode text". Redaction runs on a margin wider than the cut, so a secret straddling the cut is still replaced.
+ * contains invalid Unicode text". Redaction finds secrets in the whole text, so one that straddles the cut is still replaced.
  *
  * The redaction hook (`redact.command`) gets the state as JSON on stdin and must print the same shape on stdout within five seconds.
  * Anything else (a failure, a timeout, a different shape) throws, and the caller sends nothing: the thread is `unknown`.
@@ -37,20 +37,52 @@ const RULES: [RegExp, string][] = [
 	[/(\/home|\/Users)\/[A-Za-z0-9._-]+/g, "~"],
 ];
 
-/** Pure: the built-in redaction (emails, common API-key and token shapes, JWTs, phone numbers, home-directory user names) and its hit count. */
-export function redactText(s: string): { text: string; hits: number } {
-	let hits = 0;
-	let text = s;
+type Span = { a: number; b: number; sub: string };
+/** Pure: every match of every rule in the WHOLE text, earliest first (the longest where two start together), none overlapping. */
+function spans(src: string): Span[] {
+	const all: Span[] = [];
 	for (const [re, sub] of RULES)
-		text = text.replace(re, () => {
-			hits++;
-			return sub;
-		});
-	return { text, hits };
+		for (const m of src.matchAll(re)) all.push({ a: m.index, b: m.index + m[0].length, sub });
+	all.sort((x, y) => x.a - y.a || y.b - y.a - (x.b - x.a));
+	const keep: Span[] = [];
+	let end = -1;
+	for (const sp of all)
+		if (sp.a >= end) {
+			keep.push(sp);
+			end = sp.b;
+		}
+	return keep;
 }
 
-/** How much wider than the cut redaction looks, so a token cut in half at the edge is still recognised whole. */
-const MARGIN = 256;
+/**
+ * Pure: the last `n` characters of `s` (trimmed), with the built-in redaction (emails, common API-key and token shapes, JWTs, phone
+ * numbers, home-directory user names), and how many redactions it carries. Secrets are found in the WHOLE text, so a long token that
+ * begins before the cut is still recognised; only matches that reach into the tail are replaced, and the tail is the source's own last
+ * `n` characters (a replacement never pulls earlier text in). A match cut by the start of the tail is replaced whole. At most `n`
+ * characters, well formed.
+ */
+export function redactTail(s: string, n: number): { text: string; hits: number } {
+	if (n <= 0) return { text: "", hits: 0 };
+	const src = s.trim();
+	const start = Math.max(0, src.length - n);
+	let out = "";
+	let pos = start;
+	let hits = 0;
+	for (const sp of spans(src)) {
+		if (sp.b <= start) continue;
+		if (sp.a > pos) out += src.slice(pos, sp.a);
+		out += sp.sub;
+		hits++;
+		pos = Math.max(pos, sp.b);
+	}
+	out += src.slice(pos);
+	if (out.length > n) out = out.slice(-n);
+	return { text: out.toWellFormed(), hits };
+}
+
+/** Pure: the built-in redaction over a whole text, and its hit count. */
+export const redactText = (s: string) => redactTail(s, Math.max(1, s.trim().length));
+
 /** Pure: the last `n` characters of `s`, trimmed, never ending in a lone surrogate. */
 export const tail = (s: string, n: number): string => (n <= 0 ? "" : s.trim().slice(-n).toWellFormed());
 
@@ -65,15 +97,10 @@ export function buildState(
 ): { state: SentState; redactions: number; sentChars: number } {
 	let redactions = 0;
 	const clean = (s: string, n: number) => {
-		if (n <= 0) return "";
-		const wide = s
-			.trim()
-			.slice(-(n + MARGIN))
-			.toWellFormed();
-		if (!builtin) return tail(wide, n);
-		const r = redactText(wide);
+		if (!builtin) return tail(s, n);
+		const r = redactTail(s, n);
 		redactions += r.hits;
-		return tail(r.text, n);
+		return r.text;
 	};
 	const state: SentState = {
 		...(send.title ? { thread_title: clean(t.title, 200) } : {}),

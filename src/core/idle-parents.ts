@@ -213,7 +213,8 @@ export const classifiedText = (t: IdleThread, c: Classified | undefined) =>
 		: idleText(t);
 
 /** The item key of the day's settled digest line: one per UTC day. */
-export const digestKey = (day: string) => `settled-digest:${day}`;
+export const DIGEST_PREFIX = "settled-digest:";
+export const digestKey = (day: string) => `${DIGEST_PREFIX}${day}`;
 const DIGEST_TITLES = 12;
 /** Pure: the digest line for the threads a live classifier called settled. */
 export const digestText = (settled: readonly IdleThread[]) => {

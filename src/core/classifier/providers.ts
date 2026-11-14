@@ -34,6 +34,28 @@ export type Provider = {
 	classify(state: SentState, bank: Bank): Promise<ProviderResult>;
 };
 
+/** What a call cost, when the provider said. A failed call that was billed still reports it, so the budget counts it. */
+export type Usage = { inputTokens?: number; costUsd?: number };
+/** A provider failure that may carry what the call cost. Its message is a fixed phrase: never a body, model output or the key. */
+export class ProviderError extends Error {
+	constructor(
+		message: string,
+		readonly usage: Usage = {},
+	) {
+		super(message);
+		this.name = "ProviderError";
+	}
+}
+/** A model id as a provider may report it: a short token of letters, digits and `._:/-`. Anything else is refused, never stored. */
+export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
+/** Pure: the reported model, checked; absent means the configured one. Throws (with the call's usage) for anything else. */
+export function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
+	if (reported === undefined || reported === null || reported === "") return configured;
+	if (typeof reported !== "string" || !MODEL_ID.test(reported))
+		throw new ProviderError(`${who} reported a model id that is not one`, usage);
+	return reported;
+}
+
 /** Pure: the answers, checked: one finite probability in [0, 1] for every question in the bank. Extra keys are dropped. */
 export function validAnswers(bank: Bank, raw: unknown): Record<string, number> {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("the answers are not an object");
@@ -136,18 +158,24 @@ export function jevProvider(o: JevOptions): Provider {
 			} catch {
 				throw Error("Jev's answer is not JSON");
 			}
-			if (!j || typeof j !== "object" || !j.answers || typeof j.answers !== "object")
-				throw Error("Jev's answer has no answers");
-			const answers = validAnswers(
-				bank,
-				Object.fromEntries(bank.map((q) => [q.id, (j.answers as Record<string, { noul?: unknown }>)[q.id]?.noul])),
-			);
+			if (!j || typeof j !== "object") throw Error("Jev's answer is not an object");
+			// Usage first: a billed call whose answers are then refused still counts against the budget.
 			const tokens = j.usage?.input_tokens;
 			const inputTokens = typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0 ? tokens : undefined;
+			const usage: Usage =
+				inputTokens !== undefined ? { inputTokens, costUsd: (inputTokens * JEV_USD_PER_MTOK) / 1e6 } : {};
+			if (!j.answers || typeof j.answers !== "object") throw new ProviderError("Jev's answer has no answers", usage);
+			const heads = j.answers as Record<string, { noul?: unknown }>;
+			let answers: Record<string, number>;
+			try {
+				answers = validAnswers(bank, Object.fromEntries(bank.map((q) => [q.id, heads[q.id]?.noul])));
+			} catch (e) {
+				throw new ProviderError((e as Error).message, usage);
+			}
 			return {
 				answers,
-				model: typeof j.model === "string" && j.model ? j.model.slice(0, 80) : o.model,
-				...(inputTokens !== undefined ? { inputTokens, costUsd: (inputTokens * JEV_USD_PER_MTOK) / 1e6 } : {}),
+				model: modelOf(j.model, o.model, usage, "Jev"),
+				...usage,
 				latencyMs: Math.round(performance.now() - t0),
 			};
 		},
@@ -226,26 +254,38 @@ export function haikuProvider(o: HaikuOptions): Provider {
 			} catch {
 				throw Error(`${o.command} printed something that is not JSON`);
 			}
-			const m = typeof j?.result === "string" ? j.result.match(/\{[^{}]*\}/) : null;
+			if (!j || typeof j !== "object") throw Error(`${o.command} printed JSON that is not an object`);
+			// Usage first: a call whose reply is then refused was still spent.
+			const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+			const u = j.usage && typeof j.usage === "object" ? j.usage : {};
+			const tokens = n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
+			const usage: Usage = {
+				...(tokens ? { inputTokens: tokens } : {}),
+				...(typeof j.total_cost_usd === "number" && Number.isFinite(j.total_cost_usd) && j.total_cost_usd >= 0
+					? { costUsd: j.total_cost_usd }
+					: {}),
+			};
+			const m = typeof j.result === "string" ? j.result.match(/\{[^{}]*\}/) : null;
 			let parsed: unknown;
 			try {
 				parsed = m ? JSON.parse(m[0]) : undefined;
 			} catch {
 				parsed = undefined;
 			}
-			if (parsed === undefined) throw Error("the model's reply holds no JSON object of answers");
-			const answers = validAnswers(bank, parsed);
-			const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
-			const u = j.usage ?? {};
-			const tokens = n(u.input_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
-			const reported = Object.keys(j.modelUsage ?? {})[0];
+			if (parsed === undefined) throw new ProviderError("the model's reply holds no JSON object of answers", usage);
+			let answers: Record<string, number>;
+			try {
+				answers = validAnswers(bank, parsed);
+			} catch (e) {
+				throw new ProviderError((e as Error).message, usage);
+			}
+			const reported = j.modelUsage && typeof j.modelUsage === "object" ? Object.keys(j.modelUsage) : [];
+			// Every reported model is checked; the first is recorded.
+			const models = reported.map((id) => modelOf(id, o.model, usage, o.command));
 			return {
 				answers,
-				model: reported ? reported.slice(0, 80) : o.model,
-				...(tokens ? { inputTokens: tokens } : {}),
-				...(typeof j.total_cost_usd === "number" && Number.isFinite(j.total_cost_usd)
-					? { costUsd: j.total_cost_usd }
-					: {}),
+				model: models[0] ?? o.model,
+				...usage,
 				latencyMs: Math.round(performance.now() - t0),
 			};
 		},
