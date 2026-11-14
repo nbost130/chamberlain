@@ -192,7 +192,7 @@ turns of their own (a runaway), with no configuration, and one built-in check on
 the check keeps its own clock in the database, so the schedule survives a restart. Each run lists the top-level threads on every
 configured server that are not a child or subagent thread, not settled, snoozed or archived, have nothing running or open (no card,
 background task or running child), and are `idle` or `completed` with their last message finished more than `thresholdMinutes` ago
-(default 30). The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
+(default 30), whoever started its last turn: a thread that answered the principal's own question and then sat on a half-answer is listed like any other. The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
 Steward gets one wake with a compact list: server, thread id, title, idle minutes and the last message cut to about 300 characters,
 with the threads whose last message asks something (`looksLikeAsk`, so "say go and I'll start it" counts) marked `[ASKING]` and
 first. It is the net under a turn-end wake that missed a thread. A thread is reported once per last message, however many runs pass

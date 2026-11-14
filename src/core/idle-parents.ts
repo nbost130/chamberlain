@@ -6,6 +6,8 @@
  * It runs on its own timer (`intervalMinutes`, default 15), not on the two-hourly routine sweep (src/core/engine-idle.ts), and it
  * calls no model: selection and ordering are plain code. `selectIdleThreads` is the one place that decides which threads are idle,
  * and it returns plain records, so anything that later wants to classify or record a thread's disposition starts from them.
+ * Who started the thread's last turn does not matter: a thread the principal asked a question of and that then sat on a half-answer
+ * is reported like any other. (The turn-ended wake skips such turns on purpose; this check is what catches the ones that stall.)
  *
  * It is an item source (src/core/source.ts), named `check:idle-parents`, so the item system alone decides what notifies:
  * one finding per thread and last message, keyed by a hash of that message. A thread already reported with the same last

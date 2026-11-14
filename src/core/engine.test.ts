@@ -812,6 +812,51 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 			expect(r.store.state.get("idle-parents-clock")).toMatchObject({ lastAt: r.clock.t });
 		});
 
+		test("a thread the principal started the last turn on is reported too: selection never looks at who instructed it", async () => {
+			const { r, ago } = idleRig();
+			const principalSaid = (minAgo: number) => ({
+				type: "user_message",
+				id: "u1",
+				text: "what is the state of the migration?",
+				createdBy: "user",
+				creationSource: "web",
+				updatedAt: new Date(r.clock.t - minAgo * 60_000).toISOString(),
+			});
+			// The answer to the principal's own question, ended on a half-answer, and then nothing for hours.
+			r.fake.threads.set("chat", {
+				instruction: { items: [principalSaid(200)], state: "complete", byMachine: false },
+				lastAssistant: ago(190, "Part of it is done; the rest needs a look at the logs."),
+			});
+			r.fake.emit({ kind: "state", thread: thread("chat", "idle") });
+			// The same thread, answered just over the threshold ago, is reported at 31 minutes and not at 29.
+			r.fake.threads.set("recent", {
+				instruction: { items: [principalSaid(45)], state: "complete", byMachine: false },
+				lastAssistant: ago(31, "Here is the answer."),
+			});
+			r.fake.emit({ kind: "state", thread: thread("recent", "completed") });
+			r.fake.threads.set("justnow", {
+				instruction: { items: [principalSaid(35)], state: "complete", byMachine: false },
+				lastAssistant: ago(29, "Here is the answer."),
+			});
+			r.fake.emit({ kind: "state", thread: thread("justnow", "completed") });
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the idle wake", () => r.fake.wakes.length === 1);
+			const msg = r.fake.wakes[0]!.message;
+			expect(msg).toContain('thread "Thread chat" on fake (threadId chat), idle 190 min.');
+			expect(msg).toContain("(threadId recent), idle 31 min.");
+			expect(msg).not.toContain("threadId justnow)");
+			// The turn-ended skip for such a thread is untouched: a live chat turn still wakes nobody.
+			r.fake.emit({ kind: "state", thread: thread("live", "running") });
+			r.fake.threads.set("live", {
+				instruction: { items: [principalSaid(1)], state: "complete", byMachine: false },
+				lastMessage: "Answered.",
+			});
+			r.fake.emit({ kind: "state", thread: thread("live", "completed") });
+			await r.until("the skip", () => r.events.some((e) => e.event === "skip-turn-ended"));
+			expect(r.fake.wakes).toHaveLength(1);
+		});
+
 		test("the interval and the threshold are configurable", async () => {
 			const { r, ago, seen, runs, pass } = idleRig({ idleParents: { intervalMinutes: 5, thresholdMinutes: 100 } });
 			seen("old", "idle", {}, ago(130, "Old news."));
