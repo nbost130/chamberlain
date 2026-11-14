@@ -12,7 +12,13 @@ import { has } from "./core/adapter.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { setting } from "./core/layout.ts";
 import { HEALTH_CONFIG, liveHealth } from "./core/steward-health.ts";
-import { backfill, findStewardTranscripts, transcriptDir, usageReport } from "./core/steward-tokens.ts";
+import {
+	backfill,
+	findStewardTranscripts,
+	parseBackfillArgs,
+	transcriptDir,
+	usageReport,
+} from "./core/steward-tokens.ts";
 import { homeAdapter } from "./adapters/index.ts";
 
 const OFF =
@@ -26,12 +32,10 @@ async function tokens(argv: string[]) {
 	const store = defaultStore();
 	try {
 		if (argv[0] === "backfill") {
-			const rest = argv.slice(1);
-			const at = rest.indexOf("--dir");
-			const files = rest.filter((a, i) => a !== "--dir" && i !== at + 1 && a.endsWith(".jsonl"));
-			let paths = files;
+			const args = parseBackfillArgs(argv.slice(1));
+			let paths = args.files;
 			if (!paths.length) {
-				let dir = at >= 0 ? rest[at + 1] : undefined;
+				let dir = args.dir;
 				if (!dir) {
 					const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 					if (!has(adapter, "transcriptPath"))

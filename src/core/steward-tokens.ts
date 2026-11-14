@@ -19,8 +19,29 @@ import type { Store, WakeUsage } from "./store.ts";
 
 export type { WakeUsage } from "./store.ts";
 
-/** The wake header every Chamberlain wake starts with; `t3-wake` is the name it had before. */
-const WAKE_HEADER = /\[(?:chamberlain|t3-wake)\] ([a-z][a-z0-9_-]*):/;
+/**
+ * The wake header every Chamberlain wake starts with (`t3-wake` is the name it had before), recognised only where a wake puts it: at the
+ * very start of the prompt, or at the start of T3's webhook envelope (`<webhook-data-<id>>`). A header quoted in a message is not a wake.
+ */
+const WAKE_HEADER = /(?:^|<webhook-data-[0-9a-f]+>)\[(?:chamberlain|t3-wake)\] ([a-z][a-z0-9_-]*):/;
+/**
+ * The wake kinds Chamberlain (and t3-wake before it) has sent. A header naming any other word is stored as `wake`: the kind is a fixed
+ * vocabulary, so no word of a transcript ever reaches the database or a report.
+ */
+export const WAKE_KINDS = [
+	"turn_ended",
+	"needs_input",
+	"failed",
+	"answer",
+	"digest",
+	"sweep",
+	"rights",
+	"steward-handoff",
+	"handoff",
+	"idle-parents",
+	"fresh",
+	"alert_desk",
+] as const;
 /** The delivery id line deliver.ts appends as a wake's last line. */
 const DELIVERY_ID = /delivery id: (\S+) \(the same id again is a repeat/;
 /** How far into a prompt the wake header may sit: after the slash command's own preamble, before any quoted thread text. */
@@ -52,7 +73,7 @@ export function classifyPrompt(text: string): Prompt | undefined {
 		return { kind: "compact" };
 	const head = t.slice(0, HEADER_WITHIN).match(WAKE_HEADER);
 	if (head) {
-		const kind = head[1]!;
+		const kind = (WAKE_KINDS as readonly string[]).includes(head[1]!) ? head[1]! : "wake";
 		const id = text.match(DELIVERY_ID)?.[1];
 		const variant =
 			kind === "sweep"
@@ -107,7 +128,17 @@ export async function segmentTranscript(
 	const out: Open[] = [];
 	const seenKeys = new Map<string, number>();
 	const owner = new Map<string, Open>();
+	/**
+	 * The segment each row belongs to, by its uuid. A row belongs to its parent row's segment (Claude Code links every row to the one before
+	 * it in the conversation), so a prompt written while an earlier request is still running takes none of that request's rows. A row whose
+	 * parent is unknown falls back to the latest prompt.
+	 */
+	const rowSeg = new Map<string, Open>();
 	let cur: Open | undefined;
+	const parentSeg = (r: any): Open | undefined => (r.parentUuid ? rowSeg.get(String(r.parentUuid)) : undefined) ?? cur;
+	const mark = (r: any, seg: Open | undefined) => {
+		if (seg && r.uuid) rowSeg.set(String(r.uuid), seg);
+	};
 	const open = (key: string, p: Prompt, at: number | undefined): Open => {
 		const n = (seenKeys.get(key) ?? 0) + 1;
 		seenKeys.set(key, n);
@@ -138,20 +169,31 @@ export async function segmentTranscript(
 		if (r.type === "user") {
 			const text = promptText(r);
 			const p = text === undefined ? undefined : classifyPrompt(text);
-			if (p) cur = open(p.deliveryId ?? `uuid:${r.uuid ?? out.length}`, p, at);
+			if (p) {
+				cur = open(p.deliveryId ?? `uuid:${r.uuid ?? out.length}`, p, at);
+				mark(r, cur);
+			} else mark(r, parentSeg(r));
 			continue;
 		}
 		if (r.type === "system" && r.subtype === "compact_boundary") {
-			if (cur) cur.compactions++;
+			const seg = parentSeg(r);
+			if (seg) seg.compactions++;
+			mark(r, seg);
 			continue;
 		}
-		if (r.type !== "assistant") continue;
+		if (r.type !== "assistant") {
+			mark(r, parentSeg(r));
+			continue;
+		}
 		const u = r.message?.usage;
-		if (!u || r.message?.model === "<synthetic>") continue;
 		const id = String(r.message?.id ?? r.requestId ?? r.uuid ?? "");
-		if (!id) continue;
-		// A request continued across rows stays with the segment it started in.
-		const seg = owner.get(id) ?? cur ?? (cur = open("preamble", { kind: "preamble" }, at));
+		// A request continued across rows stays with the segment it started in; a new one goes to its parent row's segment.
+		const counted = Boolean(u && id && r.message?.model !== "<synthetic>");
+		const found = (id ? owner.get(id) : undefined) ?? parentSeg(r);
+		mark(r, found);
+		if (!counted) continue;
+		const seg = found ?? (cur = open("preamble", { kind: "preamble" }, at));
+		mark(r, seg);
 		owner.set(id, seg);
 		const call: Call = {
 			input: num(u.input_tokens),
@@ -161,7 +203,7 @@ export async function segmentTranscript(
 			context: 0,
 		};
 		call.context = call.input + call.cacheRead + call.cacheCreation;
-		seg.calls.delete(id); // re-insert, so the map's order is the order each request last wrote
+		// A later row of the same request replaces its usage but keeps its place: the map's order is the order the requests started.
 		seg.calls.set(id, call);
 		if (at !== undefined) {
 			if (!seg.startedAt) seg.startedAt = at;
@@ -226,6 +268,16 @@ export async function findStewardTranscripts(dir: string): Promise<string[]> {
 	return found;
 }
 
+/** The backfill's arguments: `--dir <folder>` and any transcript files named. */
+export function parseBackfillArgs(argv: string[]): { dir?: string; files: string[] } {
+	const at = argv.indexOf("--dir");
+	if (at >= 0 && !argv[at + 1]) throw Error("--dir needs a folder");
+	const files = argv.filter((a, i) => i !== at && !(at >= 0 && i === at + 1));
+	const bad = files.find((f) => !f.endsWith(".jsonl"));
+	if (bad) throw Error(`not a transcript (.jsonl): ${bad}`);
+	return { ...(at >= 0 ? { dir: argv[at + 1]! } : {}), files };
+}
+
 export type BackfillResult = { files: number; sessions: string[]; rows: number; wakes: number };
 
 /** Reads every given transcript and upserts its rows. Idempotent: a row's key is (session, wake key), and a rerun writes the same values. */
@@ -248,7 +300,8 @@ export async function backfill(store: Store, paths: string[]): Promise<BackfillR
 
 export const USAGE_KEY = "steward-usage";
 export const USAGE_INTERVAL_MS = 60 * 60_000;
-type UsageState = { at: string; path?: string };
+/** `retry`: transcripts of earlier Stewards whose last read failed, read again on the next run until one succeeds or the file is gone. */
+type UsageState = { at: string; path?: string; retry?: string[] };
 
 /**
  * The daemon's hourly collector, on only when `stewardTokens` is on. It re-reads the Steward's current transcript and upserts its rows; when
@@ -263,12 +316,25 @@ export function usageTicker(deps: { store: Store; find: () => Promise<Transcript
 		busy = true;
 		try {
 			const t = await deps.find();
-			const paths = prior?.path && prior.path !== t.path ? [prior.path, t.path] : [t.path];
-			for (const p of paths) {
-				const segs = await readTranscript(p, p === t.path ? t.session : undefined).catch(() => []);
-				if (segs.length) deps.store.usage.upsert(segs);
+			const earlier = [...(prior?.retry ?? []), ...(prior?.path ? [prior.path] : [])].filter((p) => p !== t.path);
+			const retry: string[] = [],
+				failed: string[] = [];
+			for (const p of [...new Set(earlier), t.path]) {
+				try {
+					const segs = await readTranscript(p, p === t.path ? t.session : undefined);
+					if (segs.length) deps.store.usage.upsert(segs);
+				} catch (e) {
+					failed.push(`${basename(p)}: ${String(e).slice(0, 120)}`);
+					// The current transcript is read again every run anyway; an earlier one is kept for the next run unless it is gone.
+					if (p !== t.path && (e as NodeJS.ErrnoException).code !== "ENOENT") retry.push(p);
+				}
 			}
-			deps.store.state.set(USAGE_KEY, { at: new Date(now).toISOString(), path: t.path } satisfies UsageState);
+			deps.store.state.set(USAGE_KEY, {
+				at: new Date(now).toISOString(),
+				path: t.path,
+				...(retry.length ? { retry } : {}),
+			} satisfies UsageState);
+			if (failed.length) throw Error(`could not read ${failed.join("; ")}`);
 		} finally {
 			busy = false;
 		}

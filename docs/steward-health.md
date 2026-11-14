@@ -66,14 +66,15 @@ carries the API's `usage` object.
 
 | Kind | The prompt that starts it |
 | --- | --- |
-| a wake kind (`turn_ended`, `needs_input`, `answer`, `digest`, `sweep`, `failed`, `steward-handoff`, `rights`, ...) | a wake, by its `[chamberlain] <kind>:` header (`[t3-wake] <kind>:` in transcripts from before the rename). A sweep is `full` (time for a full supervision sweep) or `findings`. |
+| a wake kind (`turn_ended`, `needs_input`, `answer`, `digest`, `sweep`, `failed`, `steward-handoff`, `rights`, ...) | a wake, by its `[chamberlain] <kind>:` header (`[t3-wake] <kind>:` in transcripts from before the rename), recognised only at the start of the prompt or of T3's webhook envelope. The kind is a fixed list (`WAKE_KINDS`); a header naming any other word is stored as `wake`, so no transcript word reaches the database or a report. A sweep is `full` (time for a full supervision sweep) or `findings`. |
 | `start` | the start prompt a new Steward gets (`docs/steward-start.md`) |
 | `compact` | a `/compact` |
 | `notice` | a turn T3 starts itself: a watched pull request's update, a delegated task's result |
 | `message` | any other prompt: the principal's own message, or a report another thread sent. The transcript does not say which. |
 
 Background-task notifications, Stop hook feedback, the skill body a slash command expands to, and compaction summaries continue the
-segment in progress. A segment sums `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and `output_tokens` over its
+segment in progress. Each row belongs to its parent row's segment (Claude Code links every row to the one before it), so a prompt written
+while an earlier request is still running takes none of that request's rows. A segment sums `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and `output_tokens` over its
 distinct model requests (a request written as several rows, one per content block, counts once), and records the context (input plus cache
 read plus cache write) at its first and last request. Sidechains (subagents) and API request snapshots are not counted, so a wake's figure is
 the Steward's own thread, not the agents it spawned. A compaction's own summarising request is not in the transcript and is not counted.
@@ -83,7 +84,9 @@ that is not a wake, is keyed by its row's uuid. No text is stored. Rows are upse
 open segment of a live transcript is rewritten in place as it grows.
 
 **Collection.** With `stewardTokens` on, the daemon re-reads the current Steward's transcript hourly. When the Steward has changed since the
-last run it reads the previous transcript once more, so a hand-off loses none of the old session's last hour.
+last run it reads the previous transcript once more, so a hand-off loses none of the old session's last hour. A previous transcript that
+cannot be read is kept and tried again on the next run until a read succeeds or the file is gone, and each failure is logged as
+`steward-usage-error`.
 
 **History.** Chamberlain keeps no list of past Steward sessions: `switch-steward` overwrites `threads.steward`. Every Steward of an install runs
 in the same Claude Code project folder, so `chamberlain steward-health tokens backfill` reads every transcript there that received a wake
