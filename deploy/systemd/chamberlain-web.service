@@ -14,6 +14,8 @@ StartLimitBurst=5
 [Service]
 WorkingDirectory=%h/chamberlain
 ExecStart=%h/.bun/bin/bun src/web/server.ts
+# The standalone binary needs no checkout (README, "Install"): delete the two lines above and use
+#   ExecStart=%h/.local/bin/chamberlain web
 Environment=HOME=%h
 EnvironmentFile=-%h/.config/chamberlain/daemon.env
 Restart=always

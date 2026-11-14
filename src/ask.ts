@@ -166,9 +166,9 @@ export async function queueUp(base: string, timeoutMs = 3000): Promise<boolean> 
 	}
 }
 
-async function main() {
+export async function main(argv: string[] = process.argv.slice(2)) {
 	startup();
-	const arg = process.argv[2];
+	const arg = argv[0];
 	if (!arg) { console.error("usage: ask.ts '<json>' | ask.ts - < item.json"); process.exit(2); }
 	const raw = JSON.parse(arg === "-" ? await Bun.stdin.text() : arg);
 	const parsed = parseAsk(raw, newItemId());

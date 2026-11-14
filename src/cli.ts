@@ -1,0 +1,83 @@
+/**
+ * The one command: `chamberlain <subcommand> [args]`. Each subcommand is a tool that also runs on its own from a checkout
+ * (`bun src/ask.ts ...`); this dispatcher is what the standalone binary (scripts/build.ts) runs, and `bun src/cli.ts <subcommand>` works too.
+ * The tools and the source file each one lives in are listed once, in COMMANDS (src/core/config.ts). A subcommand is loaded only when it
+ * runs, so `--version` and `help` start without opening anything.
+ */
+import pkg from "../package.json" with { type: "json" };
+import { COMMANDS, type CommandName } from "./core/config.ts";
+
+type Tool = { main: (argv: string[]) => unknown };
+
+/** How each subcommand is loaded. Typed against COMMANDS, so a tool added there without a loader here does not compile. */
+const LOAD: Record<CommandName, () => Promise<Tool>> = {
+	daemon: () => import("./daemon.ts"),
+	web: () => import("./web/server.ts"),
+	ask: () => import("./ask.ts"),
+	afk: () => import("./core/afk.ts"),
+	decided: () => import("./core/decided.ts"),
+	ruling: () => import("./core/ruling.ts"),
+	butler: () => import("./core/butler.ts"),
+	migrate: () => import("./core/migrate.ts"),
+	import: () => import("./cli/import.ts"),
+	brief: () => import("./brief.ts"),
+	wakes: () => import("./wakes.ts"),
+	"steward-health": () => import("./steward-health.ts"),
+	"desk-allowlist": () => import("./desk-allowlist.ts"),
+	peek: () => import("./adapters/t3/peek.ts"),
+	t3x: () => import("./adapters/t3/t3x.ts"),
+	compat: () => import("./adapters/t3/compat.ts"),
+	"queue-waits": () => import("./adapters/t3/queue-waits.ts"),
+	"switch-steward": () => import("./adapters/t3/switch-steward.ts"),
+	"synthetic-wake": () => import("./adapters/t3/synthetic-wake.ts"),
+};
+
+/** One line for each subcommand, as `chamberlain help` lists them. */
+const ABOUT: Record<CommandName, string> = {
+	daemon: "run the daemon: watch T3 and wake the Steward",
+	web: "serve the decision-queue page (--test: fixture data, loopback only)",
+	ask: "put one question on the decision queue ('<json>' or - for stdin)",
+	afk: "away mode and the held ledger: enter|status|hold|held|note|close|close-card|brief|exit",
+	decided: "log a self-answer, or list the last ones",
+	ruling: "propose a ruling, record one stated in chat, or list them",
+	butler: "start, stop or list butler threads",
+	migrate: "check every config and state file, and upgrade the old ones",
+	import: "one-time import of the old file layout into the database",
+	brief: "print the Steward's hand-off (steward) or the Alert Desk's prompt (desk)",
+	wakes: "wakes that stopped sending: list|retry|cancel",
+	"steward-health": "print the Steward's health",
+	"desk-allowlist": "the Alert Desk's command allowlist: hook|check '<command>'",
+	peek: "the end of a thread in plain lines",
+	t3x: "act on a T3 thread by hand: threads|read|respond|send",
+	compat: "print what a T3 server reports and whether it is in the tested range",
+	"queue-waits": "how long wakes waited, from the database and T3's state",
+	"switch-steward": "make a thread the wake target: the last step of a hand-off",
+	"synthetic-wake": "queue one test wake for the Steward",
+};
+
+export const VERSION: string = pkg.version;
+
+export const usage = (): string => [
+	`chamberlain ${VERSION}: watches your T3 Code threads and wakes the Steward only when something needs it.`,
+	"",
+	"usage: chamberlain <command> [args]    chamberlain --version",
+	"",
+	...(Object.keys(COMMANDS) as CommandName[]).map((c) => `  ${c.padEnd(15)}${ABOUT[c]}`),
+].join("\n");
+
+/** Runs `chamberlain <argv>`; returns the process exit code to use when the tool does not set one itself. */
+export async function run(argv: string[]): Promise<number> {
+	const [cmd, ...rest] = argv;
+	if (cmd === "--version" || cmd === "-v" || cmd === "version") { console.log(VERSION); return 0; }
+	if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") { console.log(usage()); return cmd === undefined ? 2 : 0; }
+	if (!Object.hasOwn(LOAD, cmd)) { console.error(`chamberlain: unknown command "${cmd}"\n\n${usage()}`); return 2; }
+	try { await (await LOAD[cmd as CommandName]()).main(rest); } catch (e) {
+		// The tools that run as scripts print an error as one line and exit 1; the two that stay up keep Bun's stack trace for the crash report.
+		if (cmd === "daemon" || cmd === "web") throw e;
+		console.error(String(e instanceof Error ? e.message : e));
+		return 1;
+	}
+	return 0;
+}
+
+if (import.meta.main) process.exitCode ||= await run(process.argv.slice(2));

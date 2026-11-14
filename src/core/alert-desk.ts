@@ -27,7 +27,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { REPO } from "./config.ts";
+import { selfCommand } from "./config.ts";
 import type { Outbox, WakeDraft } from "./deliver.ts";
 import { NOTIFY_ONCE, repeatEvery } from "./notification.ts";
 import { authorityProblem } from "./private.ts";
@@ -160,15 +160,16 @@ export function morningPattern(command: string): RegExp {
 	return new RegExp(`^${out}${esc(command.slice(at))}$`);
 }
 
-/** What the desk's standing prompt is filled with: who it works for, the server it runs on, the Chamberlain checkout, the ask.ts path, the morning sources. */
-export type DeskPromptVars = { principalName: string; serverName: string; repo: string; askPath: string; morning: MorningSources };
+/** What the desk's standing prompt is filled with: who it works for, the server it runs on, the allowlist hook command, the ask command, the morning sources. */
+export type DeskPromptVars = { principalName: string; serverName: string; allowlistHook: string; askCommand: string; morning: MorningSources };
 
 /**
- * The one absolute path of ask.ts the desk may run: DESK_ASK_PATH, else this checkout's src/ask.ts (the checkout the desk hook runs from,
- * `bun <checkout>/src/desk-allowlist.ts hook`). The allowlist accepts `bun <this path> '<json>'` and nothing else for filing a decision, and
- * the standing prompt is filled with the same path (`{{askPath}}`), so the command the prompt teaches is the command the hook allows.
+ * The one command the desk may run to file a decision: `bun $DESK_ASK_PATH` when that is set, else `chamberlain ask` from the compiled binary or
+ * `bun <this checkout>/src/ask.ts` from source (the checkout the desk hook runs from). The allowlist accepts `<this command> '<json>'` and nothing
+ * else for filing a decision, and the standing prompt is filled with the same command (`{{askCommand}}`), so the command the prompt teaches is the
+ * command the hook allows.
  */
-export const deskAskPath = (env: Record<string, string | undefined> = process.env, repo = REPO) => env.DESK_ASK_PATH || `${repo}/src/ask.ts`;
+export const deskAskCommand = (env: Record<string, string | undefined> = process.env, o: { compiled?: boolean; repo?: string } = {}) => (env.DESK_ASK_PATH ? `bun ${env.DESK_ASK_PATH}` : selfCommand("ask", o));
 
 /** Pure: the morning sources as the prompt lists them. */
 export function morningSourcesText(m: MorningSources): string {
@@ -179,14 +180,14 @@ export function morningSourcesText(m: MorningSources): string {
 
 /**
  * Pure: the desk's standing prompt from its template (docs/alert-desk-prompt.md): `<!-- -->` comments dropped, and `{{principalName}}`,
- * `{{serverName}}`, `{{repo}}`, `{{askPath}}` and `{{morningSources}}` filled in, the way the sweep prompt is (sweep.ts `renderSweepPrompt`).
+ * `{{serverName}}`, `{{allowlistHook}}`, `{{askCommand}}` and `{{morningSources}}` filled in, the way the sweep prompt is (sweep.ts `renderSweepPrompt`).
  */
 export function renderDeskPrompt(template: string, v: DeskPromptVars): string {
 	return template.replace(/<!--[\s\S]*?-->\s*/g, "").trim()
 		.replaceAll("{{principalName}}", v.principalName)
 		.replaceAll("{{serverName}}", v.serverName)
-		.replaceAll("{{repo}}", v.repo)
-		.replaceAll("{{askPath}}", v.askPath)
+		.replaceAll("{{allowlistHook}}", v.allowlistHook)
+		.replaceAll("{{askCommand}}", v.askCommand)
 		.replaceAll("{{morningSources}}", morningSourcesText(v.morning));
 }
 

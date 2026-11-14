@@ -40,11 +40,13 @@ export async function readEnvironment(origin: string, doFetch: typeof fetch = fe
 	}
 }
 
-if (import.meta.main) {
-	const origin = process.argv[2] ?? process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773";
+export async function main(argv: string[] = process.argv.slice(2)) {
+	const origin = argv[0] ?? process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773";
 	const env = await readEnvironment(origin);
 	console.log(`${origin}: T3 ${String(env?.serverVersion ?? "unknown")}, protocol ${String(env?.orchestrationProtocolVersion ?? "unknown")}; tested ${T3_TESTED.min} to ${T3_TESTED.max}, protocol ${T3_TESTED.orchestrationProtocol}`);
 	const w = compatWarning(env);
 	console.log(w ? `WARNING: ${w}` : "inside the tested range");
 	process.exit(w ? 1 : 0);
 }
+
+if (import.meta.main) await main();

@@ -12,7 +12,7 @@ import { cardWaitOf, holdCard, reconcileCardHolds, trackUnverified, unverifiedAl
 import type { Question } from "./questions.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem, type WaitingRead, isWaitingRead } from "./adapter.ts";
-import { alertCommand, compactTokens, PrincipalPoss, principal, REPO } from "./config.ts";
+import { alertCommand, compactTokens, PrincipalPoss, principal, selfCommand } from "./config.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
@@ -700,7 +700,7 @@ export function createEngine(d: EngineDeps) {
 	let cardsAgain = false;
 	/** Servers whose card reads are failing now, with the first reason: one log line per episode. */
 	const cardReadFailing = new Map<string, string>();
-	const closeCardCommand = (server: string, requestId: string) => `bun ${REPO}/src/core/afk.ts close-card ${shellWord(server)} ${shellWord(requestId)} "<how it closed>"`;
+	const closeCardCommand = (server: string, requestId: string) => `${selfCommand("afk")} close-card ${shellWord(server)} ${shellWord(requestId)} "<how it closed>"`;
 	function cardReconcileTick(): Promise<void> {
 		if (reconcilingCards) { cardsAgain = true; return reconcilingCards; }
 		reconcilingCards = (async () => {

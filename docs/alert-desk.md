@@ -76,8 +76,11 @@ The matcher must cover every tool, or the default deny never sees the tool it is
 { "hooks": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "bun <the Chamberlain checkout>/src/desk-allowlist.ts hook" } ] } ] } }
 ```
 
-Filing a decision is allowed in one spelling only, `bun <ask path> '<json>'`, matched as the whole string. The ask path is `DESK_ASK_PATH` from the
-hook's environment, else that checkout's `src/ask.ts`; `bun src/brief.ts desk` fills the standing prompt with the same path (`{{askPath}}`), so set
+With the standalone binary the hook command is `chamberlain desk-allowlist hook`.
+
+Filing a decision is allowed in one spelling only, `<ask command> '<json>'`, matched as the whole string. The ask command is `bun $DESK_ASK_PATH` when
+`DESK_ASK_PATH` is set in the hook's environment, else this build's own: `chamberlain ask` from the standalone binary, `bun <that checkout>/src/ask.ts` from source.
+`bun src/brief.ts desk` (`chamberlain brief desk`) fills the standing prompt with the same command (`{{askCommand}}`), so set
 `DESK_ASK_PATH` for both or for neither. Each configured morning command is matched exactly as written (a `<N>` slot is a number), with nothing
 trimmed: a leading or trailing space, tab, newline, no-break space or byte-order mark is refused.
 

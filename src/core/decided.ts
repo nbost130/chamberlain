@@ -18,9 +18,9 @@ export function decisionRecord(thread: string, decision: string, ruling: string,
 	return { t, thread, decision, ruling, ...(ids.length ? { rulingIds: ids } : {}), ref: ref ?? null };
 }
 
-if (import.meta.main) {
+export function main(argv: string[] = process.argv.slice(2)) {
 	startup();
-	const [thread, decision, ruling, ref] = process.argv.slice(2);
+	const [thread, decision, ruling, ref] = argv;
 	if (thread === "list") {
 		const n = Math.max(1, Number(decision ?? 15) || 15);
 		for (const d of defaultStore().decisions.list().slice(-n)) console.log(`${d.t}\t${d.thread}\t${d.decision}\t${d.ruling}`);
@@ -34,3 +34,5 @@ if (import.meta.main) {
 	defaultStore().decisions.append(rec);
 	console.log(rec.rulingIds ? `logged, citing ${rec.rulingIds.join(", ")}` : "logged");
 }
+
+if (import.meta.main) main();

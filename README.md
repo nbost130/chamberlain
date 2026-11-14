@@ -68,9 +68,40 @@ flowchart LR
 Approvals, secrets and machine links never take the route above: the daemon records them (or the page lists them,
 answerable only with an exact fingerprint) and wakes nobody.
 
+## Install
+
+Three ways; they run the same code.
+
+**Homebrew** (macOS and Linux), which also runs the daemon as a service:
+
+```sh
+brew install nbost130/tap/chamberlain
+brew services start chamberlain      # runs `chamberlain daemon`; its log is $(brew --prefix)/var/log/chamberlain.log
+```
+
+**A standalone binary** from the [latest release](https://github.com/nbost130/chamberlain/releases/latest): no Bun and no checkout needed.
+Pick `chamberlain-<version>-<os>-<arch>.tar.gz` for `linux-x64`, `linux-arm64`, `darwin-arm64` or `darwin-x64`, check it against
+`SHA256SUMS` from the same release, and put the `chamberlain` inside on your `PATH`:
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS      # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+tar -xzf chamberlain-<version>-<os>-<arch>.tar.gz && install chamberlain ~/.local/bin/
+chamberlain --version
+```
+
+The macOS binaries are not signed or notarized. If Gatekeeper stops one that a browser downloaded (`curl` and `brew` do not
+set the flag), clear it with `xattr -d com.apple.quarantine chamberlain`.
+
+**From source**: the Quickstart below, with [Bun](https://bun.sh).
+
+The binary is one command with a subcommand for each tool: where this README says `bun src/ask.ts '<json>'` the binary runs
+`chamberlain ask '<json>'`, `bun src/core/afk.ts hold ...` is `chamberlain afk hold ...`, `bun src/daemon.ts` is `chamberlain daemon`, and so on.
+`chamberlain help` lists them all. The Steward's hand-off and wakes name whichever spelling the running build uses, so an agent is
+never told to run a path that does not exist.
+
 ## Requirements
 
-- [Bun](https://bun.sh) 1.4 or newer (developed on 1.4.4). Chamberlain uses `bun:sqlite` (its state is one SQLite database), `Bun.serve` and `Bun.spawn`.
+- [Bun](https://bun.sh) 1.4 or newer (developed on 1.4.4), only to run from source; the standalone binary and the Homebrew package bundle it. Chamberlain uses `bun:sqlite` (its state is one SQLite database), `Bun.serve` and `Bun.spawn`.
 - A backend with an adapter. The T3 adapter needs a T3 Code server (see [Compatibility](#compatibility)) and its `t3` command line.
 - Linux or macOS. The page and daemon are ordinary processes; example systemd and launchd units are in `deploy/`.
 
@@ -83,7 +114,7 @@ The commands below use `~/.config/chamberlain` (the config directory) and `~/.lo
 see [Where state lives](#state-directory-localstatechamberlain-chamberlain_state)). Create them with `umask 077` as shown so
 they are private; set `CHAMBERLAIN_CONF` and `CHAMBERLAIN_STATE` to put them elsewhere.
 
-**1. Get the code.**
+**1. Get the code.** (With the binary or Homebrew, skip the clone: use `chamberlain <command>` where a step says `bun src/...`.)
 
 ```sh
 git clone <your fork or copy of this repository> chamberlain
@@ -366,6 +397,8 @@ already in the state directory is never replaced.
 
 ### Command-line tools
 
+The binary runs each as `chamberlain <name>`, named by its source file: `daemon`, `web`, `ask`, `afk`, `decided`, `ruling`, `butler`, `migrate`, `import`, `brief`, `wakes`, `steward-health`, `desk-allowlist`, `peek`, `t3x`, `compat`, `queue-waits`, `switch-steward`, `synthetic-wake` (`chamberlain help`).
+
 | Command | Used by | Does |
 | --- | --- | --- |
 | `bun src/daemon.ts` | you | The watcher, and the one process that sends wakes. One per state directory: a second exits 5. |
@@ -513,6 +546,17 @@ bun install
 bun test              # unit, route, view, boundary, concurrency and crash tests; runs in a few seconds
 bunx tsc --noEmit
 ```
+
+The standalone binaries are built, smoke-tested and packaged by scripts (the release workflow runs them when release-please makes a release):
+
+```sh
+bun scripts/build.ts --targets linux-x64         # dist/chamberlain-<version>-linux-x64.tar.gz, .sha256 and SHA256SUMS; no --targets builds all four
+bun scripts/smoke.ts dist/chamberlain-*-linux-x64.tar.gz   # runs it from an empty directory: --version, the page, ask, the hand-off, the daemon
+bun scripts/render-formula.ts --sums dist/SHA256SUMS       # the Homebrew formula, from packaging/homebrew/chamberlain.rb.tmpl
+```
+
+A tool added to `COMMANDS` in `src/core/config.ts` needs a loader in `src/cli.ts` and an exported `main(argv)` (`src/cli.test.ts` checks both). Any command a
+prompt or an alarm teaches is built with `selfCommand("<name>")`, never by hand, so it is `chamberlain <name>` in the binary and `bun <checkout>/src/...` from source.
 
 The source is in layers (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
 

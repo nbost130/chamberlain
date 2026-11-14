@@ -16,45 +16,46 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { STATE } from "../core/config.ts";
+import { STATE, selfCommand } from "../core/config.ts";
 import { formatReport, importLegacy } from "../core/legacy-import.ts";
 import { SchemaTooNewError } from "../core/schema.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
 
-const argv = process.argv.slice(2);
-const all = (flag: string) => argv.flatMap((a, i) => (a === flag && argv[i + 1] ? [argv[i + 1]!] : []));
-const one = (flag: string) => all(flag)[0];
-const HOME = process.env.HOME!;
+export function main(argv: string[] = process.argv.slice(2)) {
+	const all = (flag: string) => argv.flatMap((a, i) => (a === flag && argv[i + 1] ? [argv[i + 1]!] : []));
+	const one = (flag: string) => all(flag)[0];
+	const HOME = process.env.HOME!;
 
-function fail(msg: string, code = 2): never { console.error(msg); process.exit(code); }
+	function fail(msg: string, code = 2): never { console.error(msg); process.exit(code); }
 
-let from = all("--from");
-if (argv.includes("--from-env")) {
-	const env = process.env;
-	// An empty variable counts as unset.
-	from = [env.CHAMBERLAIN_CONF || env.LEGACY_WAKE_CONF || `${HOME}/.config/chamberlain`, env.CHAMBERLAIN_CACHE || env.LEGACY_WAKE_CACHE || `${HOME}/.cache/chamberlain`];
-}
-if (!from.length) fail("usage: bun src/cli/import.ts --from <dir> [--from <dir>] [--to <state dir>] [--dry-run] [--report <file>]\n       bun src/cli/import.ts --from-env");
-for (const d of from) if (!existsSync(d)) fail(`import: no such directory: ${d}`);
-const to = one("--to") ?? STATE;
-const dry = argv.includes("--dry-run");
+	let from = all("--from");
+	if (argv.includes("--from-env")) {
+		const env = process.env;
+		// An empty variable counts as unset.
+		from = [env.CHAMBERLAIN_CONF || env.LEGACY_WAKE_CONF || `${HOME}/.config/chamberlain`, env.CHAMBERLAIN_CACHE || env.LEGACY_WAKE_CACHE || `${HOME}/.cache/chamberlain`];
+	}
+	if (!from.length) fail(`usage: ${selfCommand("import")} --from <dir> [--from <dir>] [--to <state dir>] [--dry-run] [--report <file>]\n       ${selfCommand("import")} --from-env`);
+	for (const d of from) if (!existsSync(d)) fail(`import: no such directory: ${d}`);
+	const to = one("--to") ?? STATE;
+	const dry = argv.includes("--dry-run");
 
-try {
-	const store = openStore(dryRunPath(to));
+	/** A dry run opens the real database only if it exists; it never creates one. */
+	const dryRunPath = (state: string): string => (dry && !existsSync(dbPath(state)) ? ":memory:" : dbPath(state));
+
 	try {
-		const report = importLegacy(store, from, { dryRun: dry });
-		const text = formatReport(report);
-		console.log(text);
-		const file = one("--report");
-		if (file) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 }); console.log(`\nreport written to ${file}`); }
-	} finally { store.close(); }
-} catch (e) {
-	if (e instanceof SchemaTooNewError) fail(`chamberlain: ${e.message}\nNothing was imported.`, 3);
-	throw e;
+		const store = openStore(dryRunPath(to));
+		try {
+			const report = importLegacy(store, from, { dryRun: dry });
+			const text = formatReport(report);
+			console.log(text);
+			const file = one("--report");
+			if (file) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(report, null, 2) + "\n", { mode: 0o600 }); console.log(`\nreport written to ${file}`); }
+		} finally { store.close(); }
+	} catch (e) {
+		if (e instanceof SchemaTooNewError) fail(`chamberlain: ${e.message}\nNothing was imported.`, 3);
+		throw e;
+	}
 }
 
-/** A dry run opens the real database only if it exists; it never creates one. */
-function dryRunPath(state: string): string {
-	return dry && !existsSync(dbPath(state)) ? ":memory:" : dbPath(state);
-}
+if (import.meta.main) main();

@@ -489,24 +489,25 @@ describe("a drain pass", () => {
 
 describe("the standing prompt is a template, filled from config", () => {
 	const template = readFileSync(new URL("../../docs/alert-desk-prompt.md", import.meta.url), "utf8");
-	const vars = { principalName: "Ada", serverName: "box-1", repo: "/opt/chamberlain", askPath: "/opt/chamberlain/src/ask.ts", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
+	const vars = { principalName: "Ada", serverName: "box-1", allowlistHook: "bun /opt/chamberlain/src/desk-allowlist.ts hook", askCommand: "bun /opt/chamberlain/src/ask.ts", morning: { commands: ["bun /opt/monitor/report.ts list --limit <N> --json"], notes: "Skip source monitor." } };
 	test("the bundled prompt names nobody and no host: who it works for and where are placeholders", () => {
-		for (const v of ["{{principalName}}", "{{serverName}}", "{{repo}}", "{{askPath}}", "{{morningSources}}"]) expect(template).toContain(v);
+		for (const v of ["{{principalName}}", "{{serverName}}", "{{allowlistHook}}", "{{askCommand}}", "{{morningSources}}"]) expect(template).toContain(v);
 		expect(template).not.toMatch(/\.claude\//);
 	});
 	test("the desk is told not to re-ask what is settled, when a question can wait, and when notSettled is allowed", () => {
 		const out = renderDeskPrompt(template, vars);
 		expect(out).toContain('Add `"urgent": false` when it can wait');
-		expect(out).toContain("If ask.ts refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask.");
+		expect(out).toContain("If ask refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask.");
 		expect(out).toContain('Use `"notSettled": "<what is new>"` only when something materially new happened');
 	});
 	test("rendered, every placeholder is filled from the config, and the morning sources are listed", () => {
 		const out = renderDeskPrompt(template, vars);
-		expect(out).not.toMatch(/\{\{(principalName|serverName|repo|askPath|morningSources)\}\}/);
+		expect(out).not.toMatch(/\{\{(principalName|serverName|allowlistHook|askCommand|morningSources)\}\}/);
 		expect(out).not.toContain("<!--");
 		expect(out).toContain("every alert Ada's systems raise");
 		expect(out).toContain('"server":"box-1"');
 		expect(out).toContain("bun /opt/chamberlain/src/ask.ts '{");
+		expect(out).toContain("`bun /opt/chamberlain/src/desk-allowlist.ts hook` (Chamberlain's desk allowlist)");
 		expect(out).toContain("   - `bun /opt/monitor/report.ts list --limit <N> --json`");
 		expect(out).toContain("   Skip source monitor.");
 		// docker's own {{.Field}} templates are left alone.

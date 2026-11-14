@@ -200,8 +200,8 @@ export function startup(o: { migrate?: boolean; log?: (event: string, data?: Rec
 	}
 }
 
-if (import.meta.main) {
-	const check = process.argv.includes("--check");
+export function main(argv: string[] = process.argv.slice(2)) {
+	const check = argv.includes("--check");
 	try {
 		const status = assertSupported();
 		for (const s of status) console.log(`${s.what}\tschemaVersion ${s.version}${s.old ? `\t${s.old} older record${s.old === 1 ? "" : "s"}` : ""}`);
@@ -214,3 +214,5 @@ if (import.meta.main) {
 		throw e;
 	}
 }
+
+if (import.meta.main) main();

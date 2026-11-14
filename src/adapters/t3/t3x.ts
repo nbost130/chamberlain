@@ -24,17 +24,16 @@ function priv(name: string): string {
 	if (!isPrivateFile(statSync(p))) throw Error(`${name} must be a regular file with mode exactly 0600`);
 	return readFileSync(p, "utf8").trim();
 }
-startup();
-const servers: Server[] = (readServers(CONF) ?? []).map(t3Server);
+export async function main(argv: string[] = process.argv.slice(2)) {
+	startup();
+	const servers: Server[] = (readServers(CONF) ?? []).map(t3Server);
 
-const [cmd, serverName, threadId, ...rest] = process.argv.slice(2);
-const srv = servers.find((s) => s.name === serverName);
-if (!cmd || !srv) { console.error(`usage: t3x <threads|read|respond|send> <${servers.map((s) => s.name).join("|")}> ...`); process.exit(2); }
+	const [cmd, serverName, threadId, ...rest] = argv;
+	const srv = servers.find((s) => s.name === serverName);
+	if (!cmd || !srv) { console.error(`usage: t3x <threads|read|respond|send> <${servers.map((s) => s.name).join("|")}> ...`); process.exit(2); }
 
-const projection = async (rpc: Rpc) => (await rpc.request("orchestration.getThreadProjection", { threadId })) as any;
-const waitingRequests = (p: any): any[] => (p.turnItems ?? []).filter((i: any) => i.type === "user_input_request" && i.status === "waiting");
-
-async function main() {
+	const projection = async (rpc: Rpc) => (await rpc.request("orchestration.getThreadProjection", { threadId })) as any;
+	const waitingRequests = (p: any): any[] => (p.turnItems ?? []).filter((i: any) => i.type === "user_input_request" && i.status === "waiting");
 	if (cmd === "threads") {
 		const rpc = await connect(srv!.origin, priv(srv!.tokenFile));
 		await new Promise<void>((resolve) => {
@@ -100,4 +99,4 @@ async function main() {
 	rpc.ws.close();
 }
 
-main().then(() => process.exit(0), (e) => { console.error(String(e instanceof Error ? e.message : e)); process.exit(1); });
+if (import.meta.main) main().then(() => process.exit(0), (e) => { console.error(String(e instanceof Error ? e.message : e)); process.exit(1); });
