@@ -77,11 +77,11 @@ const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 /** Pure: the exact refs a text names. Fields (a run, a PR, a branch) are added by the caller. */
 export function refsIn(text: string): Refs {
 	const prs: PrRef[] = [];
-	for (const m of text.matchAll(new RegExp(`(${SLUG})#(\\d{1,9})\\b`, "g")))
-		prs.push({ repo: m[1]!.toLowerCase(), n: Number(m[2]) });
+	for (const [, repo = "", n = ""] of text.matchAll(new RegExp(`(${SLUG})#(\\d{1,9})\\b`, "g")))
+		prs.push({ repo: repo.toLowerCase(), n: Number(n) });
 	// "app#962": a repo's name alone, which matches that repo under any owner.
-	for (const m of text.matchAll(/(?<![\w/.-])([A-Za-z][A-Za-z0-9_.-]*)#(\d{1,9})\b/g))
-		prs.push({ repo: m[1]!.toLowerCase(), n: Number(m[2]) });
+	for (const [, repo = "", n = ""] of text.matchAll(/(?<![\w/.-])([A-Za-z][A-Za-z0-9_.-]*)#(\d{1,9})\b/g))
+		prs.push({ repo: repo.toLowerCase(), n: Number(n) });
 	for (const m of text.matchAll(/(?<![\w/&#])#(\d{1,9})\b/g)) prs.push({ n: Number(m[1]) });
 	for (const m of text.matchAll(/\b(?:PRs?|pull(?: request)?s?|issues?)\s+#?(\d{1,6})\b/gi))
 		prs.push({ n: Number(m[1]) });
@@ -90,9 +90,9 @@ export function refsIn(text: string): Refs {
 	const shas = [...text.matchAll(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g)]
 		.map((m) => m[0])
 		.filter((s) => /\d/.test(s) && /[a-f]/.test(s));
-	const items = [...text.matchAll(/(?<![A-Za-z0-9-])(Q-[a-z0-9]{4,16})(?![A-Za-z0-9-])/g)].map((m) => m[1]!);
+	const items = [...text.matchAll(/(?<![A-Za-z0-9-])(Q-[a-z0-9]{4,16})(?![A-Za-z0-9-])/g)].map(([, item = ""]) => item);
 	const branches = [...text.matchAll(new RegExp(`(${SLUG}):([A-Za-z0-9_./-]{1,200})`, "g"))].map(
-		(m) => `${m[1]!.toLowerCase()}:${m[2]}`,
+		([, repo = "", ref = ""]) => `${repo.toLowerCase()}:${ref}`,
 	);
 	return { prs: uniq, shas, items, runs: [], branches };
 }
@@ -108,15 +108,17 @@ const prMatch = (a: PrRef, b: PrRef) =>
 
 /** Pure: the refs both sides share, split into strong (one thing) and weak (a subject; needs the same topic too). */
 export function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { strong: string[]; weak: string[] } {
-	const strong: string[] = [],
-		weak: string[] = [];
-	for (const p of a.prs) if (b.prs.some((q) => prMatch(p, q))) weak.push(`PR/issue ${refLabel(p)}`);
-	for (const s of a.shas) if (b.shas.some((t) => t.startsWith(s) || s.startsWith(t))) strong.push(`commit ${s}`);
-	for (const i of a.items) if (b.items.includes(i)) strong.push(`item ${i}`);
-	for (const x of a.branches) if (b.branches.includes(x)) weak.push(`branch ${x}`);
-	// A run ID comes from a field on one side and is found verbatim in the other's field or text.
-	for (const r of a.runs) if (b.runs.includes(r) || bText.includes(r)) strong.push(`run ${r}`);
-	for (const r of b.runs) if (!a.runs.includes(r) && aText.includes(r)) strong.push(`run ${r}`);
+	const weak = [
+		...a.prs.filter((p) => b.prs.some((q) => prMatch(p, q))).map((p) => `PR/issue ${refLabel(p)}`),
+		...a.branches.filter((x) => b.branches.includes(x)).map((x) => `branch ${x}`),
+	];
+	const strong = [
+		...a.shas.filter((s) => b.shas.some((t) => t.startsWith(s) || s.startsWith(t))).map((s) => `commit ${s}`),
+		...a.items.filter((i) => b.items.includes(i)).map((i) => `item ${i}`),
+		// A run ID comes from a field on one side and is found verbatim in the other's field or text.
+		...a.runs.filter((r) => b.runs.includes(r) || bText.includes(r)).map((r) => `run ${r}`),
+		...b.runs.filter((r) => !a.runs.includes(r) && aText.includes(r)).map((r) => `run ${r}`),
+	];
 	return { strong: [...new Set(strong)], weak: [...new Set(weak)] };
 }
 
@@ -151,36 +153,52 @@ export function tokens(text: string): string[] {
  * dropped from both titles before any count, so "Acme deployment" and "Acme deployment database rollback?" share one word.
  */
 export function titlesOverlap(x: string, y: string, ignore: ReadonlySet<string> = new Set()): string[] | undefined {
-	const drop = (t: string[]) => t.filter((w) => !ignore.has(w)).filter((w, i, kept) => i === 0 || kept[i - 1] !== w);
-	const tx = drop(tokens(x)),
-		ty = drop(tokens(y));
+	const tx = dropIgnored(tokens(x), ignore),
+		ty = dropIgnored(tokens(y), ignore);
 	const [a, b] = new Set(tx).size <= new Set(ty).size ? [tx, ty] : [ty, tx];
 	const aSet = new Set(a),
 		bSet = new Set(b);
 	if (aSet.size < 2) return undefined;
 	const shared = [...aSet].filter((w) => bSet.has(w));
 	const distinctive = shared.filter((w) => !GENERIC.has(w));
-	if (aSet.size === 2) {
-		if (shared.length !== 2 || !distinctive.length) return undefined;
-		if (bSet.size === 2) return shared;
-		// In order, with at most one word between: "Rename the project to Atlas" is "Rename to Atlas".
-		for (let i = 0; i < b.length; i++) if (b[i] === a[0] && (b[i + 1] === a[1] || b[i + 2] === a[1])) return shared;
-		return undefined;
-	}
+	if (aSet.size === 2) return pairOverlap(a, b, bSet.size, shared, distinctive);
 	if (shared.length < 3 || shared.length / aSet.size < 0.75 || distinctive.length < 2) return undefined;
 	if (bSet.size <= 2 * aSet.size) return shared;
 	// Against a long text every shared word must sit close together, or any long ruling would "contain" a short title.
 	if (shared.length !== aSet.size) return undefined;
-	const need = new Set(shared);
-	const width = 2 * aSet.size + 2;
+	return sitTogether(b, new Set(shared), 2 * aSet.size + 2) ? shared : undefined;
+}
+
+/** Pure: a title's words without the ignored ones and without a word repeated right after itself. */
+const dropIgnored = (t: string[], ignore: ReadonlySet<string>) =>
+	t.filter((w) => !ignore.has(w)).filter((w, i, kept) => i === 0 || kept[i - 1] !== w);
+
+/** Pure: a two-word title's overlap with `b`: both words shared, one of them distinctive, and in order with at most one word between. */
+function pairOverlap(
+	a: string[],
+	b: string[],
+	bSize: number,
+	shared: string[],
+	distinctive: string[],
+): string[] | undefined {
+	if (shared.length !== 2 || !distinctive.length) return undefined;
+	if (bSize === 2) return shared;
+	// In order, with at most one word between: "Rename the project to Atlas" is "Rename to Atlas".
+	for (let i = 0; i < b.length; i++) if (b[i] === a[0] && (b[i + 1] === a[1] || b[i + 2] === a[1])) return shared;
+	return undefined;
+}
+
+/** Pure: whether some window of `width` words of `b` holds every word of `need`. */
+function sitTogether(b: string[], need: ReadonlySet<string>, width: number): boolean {
 	for (let i = 0; i < b.length; i++) {
 		const seen = new Set<string>();
 		for (let j = i; j < b.length && j - i < width; j++) {
-			if (need.has(b[j]!)) seen.add(b[j]!);
-			if (seen.size === need.size) return shared;
+			const w = b[j];
+			if (w !== undefined && need.has(w)) seen.add(w);
+			if (seen.size === need.size) return true;
 		}
 	}
-	return undefined;
+	return false;
 }
 
 /**
