@@ -61,18 +61,18 @@ export class Rpc {
 	}
 	receive(data: string) {
 		this.last = Date.now();
-		for (const m of ([] as RpcMessage[]).concat(JSON.parse(data))) {
-			const p = this.pending.get(String(m.requestId));
-			if (m._tag === "Chunk" && p) {
-				for (const v of m.values ?? []) p.onChunk?.(v);
-				this.ws.send(JSON.stringify({ _tag: "Ack", requestId: m.requestId }));
-			} else if (m._tag === "Exit" && p) {
-				this.pending.delete(String(m.requestId));
-				m.exit?._tag === "Success"
-					? p.resolve(m.exit.value)
-					: p.reject(Error(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
-			} else if (m._tag === "Defect" || m._tag === "ClientProtocolError") this.ws.close();
-		}
+		for (const m of ([] as RpcMessage[]).concat(JSON.parse(data))) this.handle(m);
+	}
+	private handle(m: RpcMessage) {
+		const p = this.pending.get(String(m.requestId));
+		if (m._tag === "Chunk" && p) {
+			for (const v of m.values ?? []) p.onChunk?.(v);
+			this.ws.send(JSON.stringify({ _tag: "Ack", requestId: m.requestId }));
+		} else if (m._tag === "Exit" && p) {
+			this.pending.delete(String(m.requestId));
+			if (m.exit?._tag === "Success") p.resolve(m.exit.value);
+			else p.reject(Error(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
+		} else if (m._tag === "Defect" || m._tag === "ClientProtocolError") this.ws.close();
 	}
 	call(tag: string, payload: unknown, onChunk?: (v: StreamValue) => void) {
 		const id = String(this.next++);
