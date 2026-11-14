@@ -11,6 +11,10 @@
 //               the files it changes against origin/main, knip, jscpd, and the full tests under the one heavy-work lock
 //               all worktrees of this clone share
 //
+// Every check and the test run is started with an explicit environment that has no GIT_* variable (scripts/git-env.ts): git exports
+// GIT_DIR and others to a hook, and a child that inherits them points the git commands of a test at the real repository. The test run
+// also gets a scratch HOME and global git config under TMPDIR and no system config.
+//
 // Each hook is one lefthook job that runs its steps here in order and stops at the first failure, so a failed check never
 // reaches the step that marks a tree verified, and never starts the 100-second test run.
 //
@@ -33,6 +37,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { scratchGitHome, sealedGitEnv, testRunEnv } from "./git-env.ts";
 
 const DROPPING_VARS = ["LEFTHOOK_EXCLUDE", "LEFTHOOK_ONLY"];
 const LOCK_TIMEOUT_MS = 600_000;
@@ -41,8 +46,16 @@ const NO_SHA = /^0+$/;
 /** Reflog actions whose commits git makes without running pre-commit: not a bypass. */
 const REPLAY_ACTIONS = ["cherry-pick", "revert", "rebase", "merge", "pull", "am"];
 
-function git(args: string[], cwd?: string): { ok: boolean; out: string } {
-	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", ...(cwd ? { cwd } : {}) });
+/**
+ * Runs git. The hook's own git calls keep the environment git gave the hook (GIT_DIR, GIT_INDEX_FILE: they name the repository
+ * being pushed or committed to); a caller that works on some other repository, as the tests do, passes a sealed `env`.
+ */
+function git(
+	args: string[],
+	cwd?: string,
+	env: Record<string, string | undefined> = process.env,
+): { ok: boolean; out: string } {
+	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", env, ...(cwd ? { cwd } : {}) });
 	return { ok: proc.exitCode === 0, out: proc.stdout.toString().trim() };
 }
 
@@ -111,15 +124,29 @@ function audit(): number {
 // ---- snapshots: the checks run on the bytes that will be committed or pushed ----------------------------------------
 
 /** Writes every file of the index (what the next commit will contain) under `dir`. */
-export function snapshotIndex(root: string, dir: string): boolean {
-	return git(["checkout-index", "--all", `--prefix=${dir}/`], root).ok;
+export function snapshotIndex(
+	root: string,
+	dir: string,
+	env: Record<string, string | undefined> = process.env,
+): boolean {
+	return git(["checkout-index", "--all", `--prefix=${dir}/`], root, env).ok;
 }
 
 /** Writes the tree of commit `sha` under `dir`. */
-export function snapshotCommit(root: string, sha: string, dir: string): boolean {
-	const archive = Bun.spawnSync(["git", "archive", "--format=tar", sha], { cwd: root, stdout: "pipe", stderr: "pipe" });
+export function snapshotCommit(
+	root: string,
+	sha: string,
+	dir: string,
+	env: Record<string, string | undefined> = process.env,
+): boolean {
+	const archive = Bun.spawnSync(["git", "archive", "--format=tar", sha], {
+		cwd: root,
+		env,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	if (archive.exitCode !== 0) return false;
-	return Bun.spawnSync(["tar", "-x", "-C", dir], { stdin: archive.stdout }).exitCode === 0;
+	return Bun.spawnSync(["tar", "-x", "-C", dir], { env: sealedGitEnv(env), stdin: archive.stdout }).exitCode === 0;
 }
 
 /** Fills a fresh temporary directory, links the clone's node_modules into it, runs `body` there, and removes it. */
@@ -147,8 +174,39 @@ function listed(args: string[], root: string): string[] | undefined {
 	return out.ok ? out.out.split("\n").filter((file) => LINTED.test(file)) : undefined;
 }
 
-async function run(cmd: string[], cwd: string): Promise<number> {
-	return await Bun.spawn(cmd, { cwd, stdio: ["inherit", "inherit", "inherit"] }).exited;
+/**
+ * Starts one check or test run and waits for it. The child gets an explicit environment with every GIT_* variable removed
+ * (scripts/git-env.ts): git exports GIT_DIR and others to a hook, and a child that inherits them points every git command it
+ * runs, a test's `git init` and `git config` included, at the real repository. No shell is involved, so nothing re-reads them.
+ */
+async function run(
+	cmd: string[],
+	cwd: string,
+	env: Record<string, string | undefined> = sealedGitEnv(process.env),
+): Promise<number> {
+	return await Bun.spawn(cmd, { cwd, env, stdio: ["inherit", "inherit", "inherit"] }).exited;
+}
+
+/**
+ * The test run: `cmd` in `cwd` with the sealed environment of every other step, plus a scratch HOME and global git config under
+ * TMPDIR and no system config, so a test that runs git can neither read nor write the developer's real git configuration.
+ * `base` is the environment to seal (the hook's own, unless a test of this function says otherwise).
+ */
+export async function runTests(
+	cmd: string[],
+	cwd: string,
+	base: Record<string, string | undefined> = process.env,
+): Promise<number> {
+	const scratch = scratchGitHome();
+	const remove = () => rmSync(scratch.root, { recursive: true, force: true });
+	// process.exit() (the lock's ^C handler) does not unwind this function, but it does run 'exit' listeners.
+	process.on("exit", remove);
+	try {
+		return await run(cmd, cwd, testRunEnv(base, scratch));
+	} finally {
+		process.off("exit", remove);
+		remove();
+	}
 }
 
 /** Biome on `files` (every file when undefined); nothing to check is a pass. */
@@ -230,7 +288,7 @@ const checksOf = (root: string, sha: string): Promise<number> =>
 				["biome on the changed files", () => lint(changedBy(root, sha), dir)],
 				["knip", () => run(["bun", "run", "knip"], dir)],
 				["jscpd", () => run(["bun", "run", "jscpd"], dir)],
-				["tests", () => withLock(["bun", "test"], dir)],
+				["tests", () => withLock(() => runTests(["bun", "test"], dir))],
 			]),
 	);
 
@@ -306,7 +364,7 @@ export function releaseLock(path: string): void {
 	if (ownerOf(path) === process.pid) rmSync(path, { force: true });
 }
 
-async function withLock(cmd: string[], cwd: string): Promise<number> {
+async function withLock(job: () => Promise<number>): Promise<number> {
 	const path = join(stateDir(), "heavy.lock");
 	const deadline = Date.now() + LOCK_TIMEOUT_MS;
 	while (!takeLock(path)) {
@@ -321,7 +379,7 @@ async function withLock(cmd: string[], cwd: string): Promise<number> {
 		process.exit(130);
 	});
 	try {
-		return await run(cmd, cwd);
+		return await job();
 	} finally {
 		releaseLock(path);
 	}
@@ -330,7 +388,7 @@ async function withLock(cmd: string[], cwd: string): Promise<number> {
 async function install(): Promise<number> {
 	if (process.env.CI) return 0;
 	if (!git(["rev-parse", "--git-dir"]).ok) return 0;
-	return await run(["bunx", "lefthook", "install"], process.cwd());
+	return await run(["bunx", "lefthook", "install"], process.cwd(), process.env);
 }
 
 if (import.meta.main) {
