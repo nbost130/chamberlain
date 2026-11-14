@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../package.json" with { type: "json" };
@@ -14,6 +14,8 @@ import { stewardBrief, type BriefInput } from "./core/brief.ts";
 import { COMMANDS, REPO, selfArgv, selfCommand, setCompiled, type CommandName } from "./core/config.ts";
 import { sweepMessage, type SweepAction } from "./core/sweep.ts";
 import { t3Brief } from "./adapters/t3/brief.ts";
+import { createApp } from "./web/app.ts";
+import { memStore } from "./testing/store.ts";
 import { run, usage, VERSION } from "./cli.ts";
 
 afterEach(() => setCompiled());
@@ -42,7 +44,7 @@ describe("selfCommand: one helper renders every command string", () => {
 		const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
 		const offenders = walk(join(REPO, "src"))
 			.filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith("/core/config.ts"))
-			.filter((f) => /bun \$\{[^}]*\}\/src\//.test(readFileSync(f, "utf8")) || /new URL\("[^"]*\.ts", import\.meta\.url\)\.pathname\}/.test(readFileSync(f, "utf8")));
+			.filter((f) => /bun \$\{[^}]*\}\/src\//.test(readFileSync(f, "utf8")) || /new URL\("[^"]*\.ts", import\.meta\.url\)\.pathname\}/.test(readFileSync(f, "utf8")) || /process\.execPath,\s*new URL\(/.test(readFileSync(f, "utf8")));
 		expect(offenders).toEqual([]);
 	});
 });
@@ -71,6 +73,23 @@ describe("every prompt-embedded command, rendered both ways", () => {
 		expect(out.match(/\bbun \S*\/src\/\S*/g)).toBeNull();
 		expect(out.includes("/opt/chamberlain")).toBe(false);
 		expect(out.includes(REPO)).toBe(false);
+	});
+});
+
+describe("the page serves its embedded files", () => {
+	test("staticFiles, not a directory, is where the page reads index.html, app.css, app.js and inline.js", async () => {
+		const dir = mkdtempSync(`${tmpdir()}/chamberlain-static-`);
+		const files: Record<string, [string, string]> = { "/index.html": ["<html>idx</html>", "text/html"], "/app.css": ["body{}", "text/css"], "/app.js": ["//app", "text/javascript"], "/inline.js": ["//inline", "text/javascript"] };
+		const paths = Object.fromEntries(Object.entries(files).map(([url, [body]]) => { const p = `${dir}${url.replace("/", "/embedded-")}`; writeFileSync(p, body); return [url, p]; }));
+		const host = "127.0.0.1:3790";
+		const app = createApp({ store: memStore(), state: dir, log: () => {}, hosts: [host], staticFiles: paths });
+		for (const [url, [body, type]] of Object.entries(files).filter(([u]) => u !== "/index.html")) {
+			const r = await app.fetch(new Request(`http://${host}${url}`, { headers: { host } }));
+			expect(r.status).toBe(200);
+			expect(r.headers.get("content-type")).toStartWith(type);
+			expect(await r.text()).toBe(body);
+		}
+		for (const url of ["/", "/rulings"]) expect(await (await app.fetch(new Request(`http://${host}${url}`, { headers: { host } }))).text()).toBe("<html>idx</html>");
 	});
 });
 
@@ -118,5 +137,9 @@ describe("the dispatcher", () => {
 		expect(bad.status).toBe(2);
 		expect(bad.stderr).toContain("usage: ruling.ts");
 		expect(at("nope").status).toBe(2);
+		// A tool's error is one line and exit 1, as when it runs on its own.
+		const notJson = at("ask", "not json");
+		expect(notJson.status).toBe(1);
+		expect(notJson.stderr.trim().split("\n")).toHaveLength(1);
 	});
 });

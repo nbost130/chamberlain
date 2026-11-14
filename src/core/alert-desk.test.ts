@@ -497,7 +497,7 @@ describe("the standing prompt is a template, filled from config", () => {
 	test("the desk is told not to re-ask what is settled, when a question can wait, and when notSettled is allowed", () => {
 		const out = renderDeskPrompt(template, vars);
 		expect(out).toContain('Add `"urgent": false` when it can wait');
-		expect(out).toContain("If ask.ts refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask.");
+		expect(out).toContain("If ask refuses because the matter is already settled (exit 2, with the earlier answer and what it matched on printed), do not re-ask.");
 		expect(out).toContain('Use `"notSettled": "<what is new>"` only when something materially new happened');
 	});
 	test("rendered, every placeholder is filled from the config, and the morning sources are listed", () => {

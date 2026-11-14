@@ -71,7 +71,12 @@ export async function run(argv: string[]): Promise<number> {
 	if (cmd === "--version" || cmd === "-v" || cmd === "version") { console.log(VERSION); return 0; }
 	if (cmd === undefined || cmd === "help" || cmd === "--help" || cmd === "-h") { console.log(usage()); return cmd === undefined ? 2 : 0; }
 	if (!Object.hasOwn(LOAD, cmd)) { console.error(`chamberlain: unknown command "${cmd}"\n\n${usage()}`); return 2; }
-	await (await LOAD[cmd as CommandName]()).main(rest);
+	try { await (await LOAD[cmd as CommandName]()).main(rest); } catch (e) {
+		// The tools that run as scripts print an error as one line and exit 1; the two that stay up keep Bun's stack trace for the crash report.
+		if (cmd === "daemon" || cmd === "web") throw e;
+		console.error(String(e instanceof Error ? e.message : e));
+		return 1;
+	}
 	return 0;
 }
 

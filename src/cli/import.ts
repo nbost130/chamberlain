@@ -16,7 +16,7 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { STATE } from "../core/config.ts";
+import { STATE, selfCommand } from "../core/config.ts";
 import { formatReport, importLegacy } from "../core/legacy-import.ts";
 import { SchemaTooNewError } from "../core/schema.ts";
 import { openStore } from "../core/sqlite-store.ts";
@@ -35,7 +35,7 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		// An empty variable counts as unset.
 		from = [env.CHAMBERLAIN_CONF || env.LEGACY_WAKE_CONF || `${HOME}/.config/chamberlain`, env.CHAMBERLAIN_CACHE || env.LEGACY_WAKE_CACHE || `${HOME}/.cache/chamberlain`];
 	}
-	if (!from.length) fail("usage: bun src/cli/import.ts --from <dir> [--from <dir>] [--to <state dir>] [--dry-run] [--report <file>]\n       bun src/cli/import.ts --from-env");
+	if (!from.length) fail(`usage: ${selfCommand("import")} --from <dir> [--from <dir>] [--to <state dir>] [--dry-run] [--report <file>]\n       ${selfCommand("import")} --from-env`);
 	for (const d of from) if (!existsSync(d)) fail(`import: no such directory: ${d}`);
 	const to = one("--to") ?? STATE;
 	const dry = argv.includes("--dry-run");

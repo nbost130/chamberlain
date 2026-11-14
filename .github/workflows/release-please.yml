@@ -44,11 +44,11 @@ jobs:
         run: bun scripts/smoke.ts dist/chamberlain-*-linux-x64.tar.gz
       - name: Check the checksums
         run: cd dist && sha256sum -c SHA256SUMS
-      - name: Attach the binaries to the release
-        run: gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
-      # Always rendered, so a broken template fails here and not on the day the tap is first used.
+      # Rendered before anything is attached, so a broken template fails the job while the release still has no binaries.
       - name: Render the Homebrew formula
         run: bun scripts/render-formula.ts --sums dist/SHA256SUMS --out dist/chamberlain.rb
+      - name: Attach the binaries to the release
+        run: gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS --clobber
       - name: Is the tap token set?
         id: tap
         env:
