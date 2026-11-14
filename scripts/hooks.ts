@@ -2,11 +2,14 @@
 // Git hook helpers. lefthook.yml calls these; nothing here is needed to build or run Chamberlain.
 //
 //   install     lefthook install (skipped in CI and outside a git checkout)
-//   pre-commit  refuse an environment that drops hook jobs (LEFTHOOK_EXCLUDE, LEFTHOOK_ONLY); Biome on the staged files;
-//               the typecheck; then record the staged tree as verified
+//   pre-commit  refuse an environment that drops hook jobs (LEFTHOOK_EXCLUDE, LEFTHOOK_ONLY); on a snapshot of the INDEX
+//               (what the commit will contain, not the working tree): Biome on the staged files and the typecheck; then
+//               record the staged tree as verified
 //   audit       post-commit: log a commit whose tree no pre-commit run verified (git commit --no-verify)
-//   pre-push    the same refusal; the typecheck; Biome on every file changed against origin/main; knip; jscpd; then the full
-//               tests, under the one heavy-work lock all worktrees of this clone share
+//   pre-push    the same refusal; then, for each commit being pushed (git hands them on stdin, so a push of another branch
+//               or a dirty working tree is not what gets checked), on a snapshot of that commit: the typecheck, Biome on
+//               the files it changes against origin/main, knip, jscpd, and the full tests under the one heavy-work lock
+//               all worktrees of this clone share
 //
 // Each hook is one lefthook job that runs its steps here in order and stops at the first failure, so a failed check never
 // reaches the step that marks a tree verified, and never starts the 100-second test run.
@@ -16,17 +19,30 @@
 // LEFTHOOK=0 or excluding every job stops lefthook before any code of ours runs; CI runs the same
 // checks on every PR and is what catches those.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	linkSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const DROPPING_VARS = ["LEFTHOOK_EXCLUDE", "LEFTHOOK_ONLY"];
 const LOCK_TIMEOUT_MS = 600_000;
 const MAX_VERIFIED = 500;
+const NO_SHA = /^0+$/;
 /** Reflog actions whose commits git makes without running pre-commit: not a bypass. */
 const REPLAY_ACTIONS = ["cherry-pick", "revert", "rebase", "merge", "pull", "am"];
 
-function git(args: string[]): { ok: boolean; out: string } {
-	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe" });
+function git(args: string[], cwd?: string): { ok: boolean; out: string } {
+	const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe", ...(cwd ? { cwd } : {}) });
 	return { ok: proc.exitCode === 0, out: proc.stdout.toString().trim() };
 }
 
@@ -92,28 +108,53 @@ function audit(): number {
 	return 0;
 }
 
+// ---- snapshots: the checks run on the bytes that will be committed or pushed ----------------------------------------
+
+/** Writes every file of the index (what the next commit will contain) under `dir`. */
+export function snapshotIndex(root: string, dir: string): boolean {
+	return git(["checkout-index", "--all", `--prefix=${dir}/`], root).ok;
+}
+
+/** Writes the tree of commit `sha` under `dir`. */
+export function snapshotCommit(root: string, sha: string, dir: string): boolean {
+	const archive = Bun.spawnSync(["git", "archive", "--format=tar", sha], { cwd: root, stdout: "pipe", stderr: "pipe" });
+	if (archive.exitCode !== 0) return false;
+	return Bun.spawnSync(["tar", "-x", "-C", dir], { stdin: archive.stdout }).exitCode === 0;
+}
+
+/** Fills a fresh temporary directory, links the clone's node_modules into it, runs `body` there, and removes it. */
+async function inSnapshot(root: string, fill: (dir: string) => boolean, body: (dir: string) => Promise<number>) {
+	const dir = mkdtempSync(join(tmpdir(), "chamberlain-hook-"));
+	try {
+		if (!fill(dir)) {
+			console.error("hooks: could not take a snapshot to check");
+			return 1;
+		}
+		symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
+		return await body(dir);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
 const LINTED = /^(src|scripts)\/.*\.ts$/;
-const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-unmatched"];
+/** The snapshot has no .git, so Biome must not look for one. */
+const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-unmatched", "--vcs-enabled=false"];
 
 /** The linted files a git command lists, or undefined when the command fails. */
-function listed(args: string[]): string[] | undefined {
-	const out = git(args);
+function listed(args: string[], root: string): string[] | undefined {
+	const out = git(args, root);
 	return out.ok ? out.out.split("\n").filter((file) => LINTED.test(file)) : undefined;
 }
 
-function changedFiles(): string[] | undefined {
-	const base = git(["merge-base", "origin/main", "HEAD"]);
-	return base.ok ? listed(["diff", "--name-only", "--diff-filter=ACMR", `${base.out}...HEAD`]) : undefined;
-}
-
-async function run(cmd: string[]): Promise<number> {
-	return await Bun.spawn(cmd, { stdio: ["inherit", "inherit", "inherit"] }).exited;
+async function run(cmd: string[], cwd: string): Promise<number> {
+	return await Bun.spawn(cmd, { cwd, stdio: ["inherit", "inherit", "inherit"] }).exited;
 }
 
 /** Biome on `files` (every file when undefined); nothing to check is a pass. */
-async function lint(files: string[] | undefined): Promise<number> {
-	if (files === undefined) return await run([...BIOME, "."]);
-	return files.length === 0 ? 0 : await run([...BIOME, ...files]);
+async function lint(files: string[] | undefined, dir: string): Promise<number> {
+	if (files === undefined) return await run([...BIOME, "."], dir);
+	return files.length === 0 ? 0 : await run([...BIOME, ...files], dir);
 }
 
 type Step = [name: string, run: () => number | Promise<number>];
@@ -130,30 +171,83 @@ async function sequence(steps: Step[]): Promise<number> {
 	return 0;
 }
 
-const preCommit = () =>
-	sequence([
-		["guard", guard],
-		["biome on the staged files", () => lint(listed(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]))],
-		["typecheck", () => run(["bun", "run", "typecheck"])],
-		["mark", mark],
-	]);
-
-function changedLint(): Promise<number> {
-	const files = changedFiles();
-	if (files === undefined)
-		console.error("hooks: origin/main is not fetched here; running Biome on the whole repo instead.");
-	return lint(files);
+function repoRoot(): string {
+	const top = git(["rev-parse", "--show-toplevel"]);
+	if (!top.ok) throw new Error("not a git repository");
+	return top.out;
 }
 
-const prePush = () =>
-	sequence([
+const preCommit = () => {
+	const root = repoRoot();
+	const staged = listed(["diff", "--cached", "--name-only", "--diff-filter=ACMR"], root);
+	return sequence([
 		["guard", guard],
-		["typecheck", () => run(["bun", "run", "typecheck"])],
-		["biome on the changed files", changedLint],
-		["knip", () => run(["bun", "run", "knip"])],
-		["jscpd", () => run(["bun", "run", "jscpd"])],
-		["tests", () => withLock(["bun", "test"])],
+		[
+			"checks on the staged files",
+			() =>
+				inSnapshot(
+					root,
+					(dir) => snapshotIndex(root, dir),
+					(dir) =>
+						sequence([
+							["biome", () => lint(staged, dir)],
+							["typecheck", () => run(["bun", "run", "typecheck"], dir)],
+						]),
+				),
+		],
+		["mark", mark],
 	]);
+};
+
+// ---- pre-push ---------------------------------------------------------------------------------------------------------
+
+/** The distinct commits git says it is pushing: the local sha of each `<ref> <sha> <remote ref> <remote sha>` line, deletions left out. */
+export function pushedShas(stdin: string): string[] {
+	const shas = stdin
+		.split("\n")
+		.map((line) => line.trim().split(/\s+/)[1])
+		.filter((sha): sha is string => sha !== undefined && sha !== "" && !NO_SHA.test(sha));
+	return [...new Set(shas)];
+}
+
+/** The linted files commit `sha` changes against origin/main, or undefined when origin/main is not known here. */
+function changedBy(root: string, sha: string): string[] | undefined {
+	const base = git(["merge-base", "origin/main", sha], root);
+	if (!base.ok) {
+		console.error("hooks: origin/main is not fetched here; running Biome on the whole repo instead.");
+		return undefined;
+	}
+	return listed(["diff", "--name-only", "--diff-filter=ACMR", `${base.out}...${sha}`], root);
+}
+
+const checksOf = (root: string, sha: string): Promise<number> =>
+	inSnapshot(
+		root,
+		(dir) => snapshotCommit(root, sha, dir),
+		(dir) =>
+			sequence([
+				["typecheck", () => run(["bun", "run", "typecheck"], dir)],
+				["biome on the changed files", () => lint(changedBy(root, sha), dir)],
+				["knip", () => run(["bun", "run", "knip"], dir)],
+				["jscpd", () => run(["bun", "run", "jscpd"], dir)],
+				["tests", () => withLock(["bun", "test"], dir)],
+			]),
+	);
+
+async function prePush(): Promise<number> {
+	const guarded = await sequence([["guard", guard]]);
+	if (guarded !== 0) return guarded;
+	const root = repoRoot();
+	const stdin = await Bun.stdin.text();
+	const pushed = stdin.trim() === "" ? [git(["rev-parse", "HEAD"], root).out] : pushedShas(stdin);
+	for (const sha of pushed) {
+		const code = await sequence([[`checks on ${sha.slice(0, 9)}`, () => checksOf(root, sha)]]);
+		if (code !== 0) return code;
+	}
+	return 0;
+}
+
+// ---- the heavy-work lock ------------------------------------------------------------------------------------------------
 
 function alive(pid: number): boolean {
 	try {
@@ -164,45 +258,79 @@ function alive(pid: number): boolean {
 	}
 }
 
-/** Take the lock by creating its directory; clear it when its owner is gone. */
-function takeLock(dir: string): boolean {
-	try {
-		mkdirSync(dir);
-	} catch {
-		const owner = Number(readLines(join(dir, "pid"))[0]);
-		if (!owner || !alive(owner)) rmSync(dir, { recursive: true, force: true });
-		return false;
-	}
-	writeFileSync(join(dir, "pid"), String(process.pid));
-	return true;
+function ownerOf(path: string): number {
+	return Number(readLines(path)[0]) || 0;
 }
 
-async function withLock(cmd: string[]): Promise<number> {
-	const dir = join(stateDir(), "heavy.lock");
+/**
+ * Takes the lock: a file holding our pid, put in place with link(2), which fails if it exists and leaves no moment when
+ * the file exists empty. A lock whose owner is gone is moved aside (rename is atomic, so one waiter wins it) and the
+ * attempt is made again by the caller's loop.
+ */
+export function takeLock(path: string): boolean {
+	const mine = `${path}.${process.pid}.${Date.now()}`;
+	writeFileSync(mine, String(process.pid));
+	try {
+		linkSync(mine, path);
+		return true;
+	} catch {
+		reclaimIfDead(path);
+		return false;
+	} finally {
+		rmSync(mine, { force: true });
+	}
+}
+
+function reclaimIfDead(path: string): void {
+	const owner = ownerOf(path);
+	if (owner && alive(owner)) return;
+	const aside = `${path}.stale.${process.pid}.${Date.now()}`;
+	try {
+		renameSync(path, aside);
+	} catch {
+		return; // another waiter moved it first
+	}
+	// If a live lock was swapped in between our read and the rename, put it back.
+	if (ownerOf(aside) !== owner) {
+		try {
+			linkSync(aside, path);
+		} catch {
+			// a newer lock is already in place: nothing to restore
+		}
+	}
+	rmSync(aside, { force: true });
+}
+
+/** Removes the lock only when it is ours. */
+export function releaseLock(path: string): void {
+	if (ownerOf(path) === process.pid) rmSync(path, { force: true });
+}
+
+async function withLock(cmd: string[], cwd: string): Promise<number> {
+	const path = join(stateDir(), "heavy.lock");
 	const deadline = Date.now() + LOCK_TIMEOUT_MS;
-	while (!takeLock(dir)) {
+	while (!takeLock(path)) {
 		if (Date.now() > deadline) {
-			console.error(`hooks: timed out waiting for ${dir}. Another worktree is running the checks; wait for it.`);
+			console.error(`hooks: timed out waiting for ${path}. Another worktree is running the checks; wait for it.`);
 			return 1;
 		}
 		await Bun.sleep(1000);
 	}
-	const release = () => rmSync(dir, { recursive: true, force: true });
 	process.on("SIGINT", () => {
-		release();
+		releaseLock(path);
 		process.exit(130);
 	});
 	try {
-		return await run(cmd);
+		return await run(cmd, cwd);
 	} finally {
-		release();
+		releaseLock(path);
 	}
 }
 
 async function install(): Promise<number> {
 	if (process.env.CI) return 0;
 	if (!git(["rev-parse", "--git-dir"]).ok) return 0;
-	return await run(["bunx", "lefthook", "install"]);
+	return await run(["bunx", "lefthook", "install"], process.cwd());
 }
 
 if (import.meta.main) {
