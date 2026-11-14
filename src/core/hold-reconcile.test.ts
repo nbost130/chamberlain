@@ -505,6 +505,22 @@ describe("pass 2: refs", () => {
 		expect(whats(store)).toEqual(["on-second", "unnamed"]);
 	});
 
+	test("an issue closed without a closing time, an unreadable repository identity and a renamed repository leave the hold open", async () => {
+		const store = memStore();
+		hold(store, { thread: "no-time", ref: { issue: "o/r#20" } });
+		hold(store, { thread: "bad-id", ref: { branch: "p/q:feat/a" } });
+		hold(store, { thread: "renamed", ref: { branch: "s/t:feat/b" } });
+		const g = fakeGh({
+			"repos/o/r/issues/20": { state: "closed", closed_at: null, pr: false },
+			"repos/p/q": { id: "7", full_name: "p/q" },
+			"repos/s/t": { id: 8, full_name: "other/name" },
+		});
+		const out = await run(store, g.gh);
+		expect(out).toMatchObject({ ran: true, closed: 0, lookups: 3, errors: 0 });
+		expect(g.calls).toEqual(["repos/o/r/issues/20", "repos/p/q", "repos/s/t"]);
+		expect(whats(store)).toEqual(["bad-id", "no-time", "renamed"]);
+	});
+
 	// Fix 2. Must fail on 2845f33: the slug alone answered "branch absent" for a recreated repository, and the hold closed.
 	test("fix 2: a branch is deleted only on the same repository id it was seen on", async () => {
 		const path = "repos/o/r/git/matching-refs/heads/feat/x?per_page=100";
@@ -513,7 +529,11 @@ describe("pass 2: refs", () => {
 		const store = memStore();
 		hold(store, { thread: "b", ref: { branch: "o/r:feat/x" } });
 		let t = NOW;
-		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, (t += REF_PASS_MS));
+		const nextPassAt = () => {
+			t += REF_PASS_MS;
+			return t;
+		};
+		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, nextPassAt());
 		await pass(at(77, 1));
 		await pass(at(99, 0));
 		await pass(at(77, 0, "new-owner/r"));
@@ -529,7 +549,11 @@ describe("pass 2: refs", () => {
 		const store = memStore();
 		hold(store, { thread: "b", ref: { branch: "o/r:feat/x" } });
 		let t = NOW;
-		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, (t += REF_PASS_MS));
+		const nextPassAt = () => {
+			t += REF_PASS_MS;
+			return t;
+		};
+		const pass = (g: ReturnType<typeof at>) => run(store, g.gh, undefined, nextPassAt());
 		await pass(at(77, 1));
 		await pass(at(99, 1));
 		expect((await pass(at(99, 0))).closed).toBe(0);
