@@ -1,10 +1,12 @@
 # Email triage: clean up, dig deeper, or ask
 
-Design only. Nothing here is built. Written 2026-11-14 for issue #30, where Nathan asked for an **optional** module that triages his
+Design; only B1 (the module seam, section 10) is built. Written 2026-11-14 for issue #30, where Nathan asked for an **optional** module that triages his
 mail: clean up what needs no attention, dig into what does, ask him about the rest, and pull the interesting items out of newsletters
 he never gets to. It must be generic enough for another operator and hold none of his secrets. Every guarantee below names the code that
 enforces it; a guarantee that only a prompt keeps is not claimed. Commands quoted for `gog` were read from `gog --help` (v0.47.1)
-on 2026-11-14; no mailbox was read or changed to write this.
+on 2026-11-14; no mailbox was read or changed to write this. Nathan's answers to the three questions in section 9 (2026-11-14) are folded
+in: highlight cards offer routes and take a teaching note (sections 5 and 6), and an unattended-archive mode exists but is off until a
+measured shadow fortnight and the Steward's confirmation (sections 5 and 8).
 
 ## 1. The shape in one table
 
@@ -14,7 +16,7 @@ on 2026-11-14; no mailbox was read or changed to write this.
 | Header and sender rules | code: triage rules in force, built-in header facts | no model | yes, only a rule Nathan confirmed, only in `live` mode |
 | Driver | Haiku, no tools, reads headers and sanitized text | small, bounded per run | no: it only labels |
 | Escalation | Sonnet, then Opus, on stated triggers only | bounded per run, Opus off by default | no: it only labels |
-| Outcome | code maps the label to one of three outcomes | none | auto-clean only through a rule or Nathan's tap |
+| Outcome | code maps the label to one of three outcomes | none | auto-clean only through a rule, Nathan's tap, or the unattended-archive mode once it has been switched on (off by default, section 8) |
 | Cards | the decision queue, through the same core function `ask.ts` uses | none | the answer, carried out by code |
 | Report | a file plus one line; the Steward is woken only when something needs it | none | no |
 
@@ -51,16 +53,29 @@ Model calls go through one shared runner, factored out of `src/core/classifier/p
   "schedule": { "times": ["07:30", "16:30"], "days": "mon-fri", "tz": "America/New_York", "maxRunsPerDay": 4 },
   "labels": { "prefix": "Chamberlain" },
   "models": { "command": "claude", "driver": "haiku", "escalate": "sonnet", "top": "opus" },
-  "budget": { "driverCallsPerRun": 10, "escalateCallsPerRun": 8, "topCallsPerRun": 0, "inputTokensPerDay": 600000 },
+  "budget": { "driverCallsPerRun": 10, "escalateCallsPerRun": 8, "newsletterCallsPerRun": 3, "topCallsPerRun": 0, "inputTokensPerDay": 600000 },
   "important": { "senders": ["@school.example"], "words": ["invoice", "due", "contract", "tax", "court", "overdue"] },
   "newsletters": [ { "name": "Unsupervised Learning", "match": { "listId": "<the newsletter's List-Id>" }, "maxHighlights": 5 } ],
   "interests": ["AI security", "agents", "personal knowledge tools"],
-  "save": { "file": "~/notes/Reading list.md" }
+  "routes": [
+    { "id": "steward", "label": "Task for the Steward", "kind": "steward" },
+    { "id": "reader", "label": "Readwise Reader", "kind": "command", "command": ["/path/to/save-to-reader"] },
+    { "id": "obsidian", "label": "Obsidian Reading list", "kind": "file", "file": "~/notes/Reading list.md" }
+  ],
+  "defaultRoute": "obsidian",
+  "cleanup": { "unattended": { "minApproval": 0.95, "shadowDays": 14, "minBatches": 10, "sampleRate": 0.25, "sampleWindow": 8 } }
 }
 ```
 
 `mode` follows the roadmap's rule that authority features ship in audit: `shadow` (the default) runs everything, files the cards, and
 changes nothing in the mailbox, recording what each rule *would* have done; `live` lets confirmed rules and tapped cards act.
+
+`routes` are where a picked highlight goes (section 6). A route is data, so another one is added by writing it into `config.json`, with
+no code: a `file` (Markdown appended to it), a `command` (the operator's own program, given the highlight as JSON on stdin) or `steward`
+(a task for the Steward). `defaultRoute` is the route offered first until a route has been learned for that kind of item (section 5).
+
+`cleanup.unattended` holds only the numbers of the unattended-archive mode (section 5). It has no switch: the mode is off on every
+install, and `config.json` cannot turn it on. `parseMail` refuses a `minApproval` below 0.95, a `shadowDays` below 14 and a `minBatches` below 10.
 
 ## 3. The mail provider
 
@@ -139,7 +154,7 @@ literature it is an *LLM cascade* ([FrugalGPT, Chen, Zaharia and Zou, 2023](http
    the whole thread (`read(as: "thread")`), sanitized, up to 12,000 characters, and answers in the same shape plus a summary of at most 400 characters.
 5. **Top tier (Opus), only when** Sonnet says `ask` with confidence under 0.6 about an `important` sender. Off by default
    (`topCallsPerRun: 0`); at most one call a run when on.
-6. **Outcome (code).** `clean` → the cleanup batch (never an action on its own; section 9 asks about that); `deeper` → Sonnet's summary becomes an ask card or a note in the report;
+6. **Outcome (code).** `clean` → the cleanup batch (an action on its own only in the unattended-archive mode, which is off by default; section 5); `deeper` → Sonnet's summary becomes an ask card or a note in the report;
    `ask` → an ask card; `newsletter` from an unknown sender → a one-tap "Digest this sender?" card; `keep` → left alone.
 
 **Budgets.** Every limit is an acceptance test. The driver and escalation calls go through the `claude` CLI on the operator's own
@@ -172,11 +187,17 @@ answer to a mail card is carried out by the module's code and wakes the Steward 
 | Outcome | What Nathan sees | Kind, urgency | Options (recommended first) |
 | --- | --- | --- | --- |
 | **Auto-clean, by rule** | nothing; counted in the report | none | - |
-| **Auto-clean, by model** (the cleanup batch) | one card per run: "18 messages look like cleanup", grouped by sender, each line sender and subject | `only-you`, `urgent: false` | Archive all; Archive all but the ones I note; Leave them |
+| **Auto-clean, by model** (the cleanup batch) | one card per run: "18 messages look like cleanup", grouped by sender, each line sender and subject. With the unattended mode on (below), a card only for a sampled share of batches | `only-you`, `urgent: false` | Archive all; Archive all but the ones I note; Leave them |
 | **Dig deeper** | the summary and facts (due date, amount, who waits) on an ask card, or a line in the report when nothing is owed | as below | as below |
 | **Ask Nathan** | sender, subject, the summary, the facts, the model's recommendation and why | `only-you`; urgent only for an `important` sender or a due date within 48 hours | Keep in inbox (I'll handle it); Archive; Label Follow-up; plus "Always archive mail like this" when a rule could express it |
-| **Newsletter digest** | section 6 | `idea`, `urgent: false` | Save all; Skip this issue; Fewer like this |
-| **Triage rule proposal** | the rule in words, its match, its action, and its backtest | `ruling`, `urgent: false` | Confirm; Not now; No |
+| **Newsletter digest** | section 6 | `idea`, `urgent: false` | One per configured route, the default route first until a route is learned (a route applies to every highlight on the card); Skip this issue; Fewer like this |
+| **Triage rule proposal** (cleanup or routing) | the rule in words, its match, its action, and its backtest | `ruling`, `urgent: false` | Confirm; Not now; No |
+
+**Every card takes an optional note, and a note teaches.** A card's answer may carry a note (the Direction pattern of #29; until it
+lands, the answer note the queue has today). The module stores each answer with its note as a **labelled example** in `mail_examples`:
+the sender or newsletter, the kind of item, the option chosen (for a highlight, the route), and the note, capped in length. Examples are
+what proposals read (below) and what the Steward can list; a note is never used as an instruction. The existing rule stands: an answer
+with a note also reaches the Steward as an answer wake, which is how a note such as "tools like this are tasks for you" is seen.
 
 How it uses the existing pieces:
 
@@ -187,15 +208,16 @@ How it uses the existing pieces:
   a second card for a message it already asked about.
 - **No Steward wake per tap.** Today an answer goes to the Steward unless its option has `route: "thread"`. B5 adds `route: "record"`:
   the claim is written as now, and no wake row is queued. The module reads answered mail cards by item id on every run and on a one-minute
-  timer, carries out the choice (archive, label, save), and records the item id as done in `mail.db`, so a crash repeats an archive, which
+  timer, carries out the choice (archive, label, route), and records the item id as done in `mail.db`, so a crash repeats an archive, which
   is harmless, and never skips one. The existing rule stands: an answer with a note always reaches the Steward as an answer wake.
   Record-only claims need two more changes in B5. Today `recoverClaims` (`src/core/questions.ts`) walks the page's unresolved claims and
   enqueues the stored wake of any whose delivery id is neither delivered nor known to the outbox; a record-only claim's id never reaches
   the outbox, so recovery would send it. B5 marks the claim record-only, and recovery treats it as done once the module has recorded the
   item done (and resolves the item then), never enqueueing it. Every action is idempotent, so a crash at any point repeats it safely:
-  archive, label and mark-read are idempotent at the mailbox, and an append to the save file first looks for the card's own marker line
+  archive, label and mark-read are idempotent at the mailbox, and an append to a `file` route's file first looks for the card's own marker line
   (`<!-- chamberlain:Q-… -->`) and skips if it is there. Tests crash the module after the claim, after the mailbox call and after the
-  append, and assert one archive state, one appended block and no wake.
+  append, and assert one archive state, one appended block and no wake. (The `steward` route is the one answer that does reach the
+  Steward: its task is the wake.)
 - **Rulings stay the Steward's.** A triage rule is not written to `rulings`, because every wake repeats the rulings in force, and dozens of
   sender rules would ride in every wake for nothing. Triage rules live in `mail.db` (`mail_rules`) with the ruling lifecycle and its
   words: `proposed`, `in-force`, `retired`; recording is idempotent on the normalized match and action; `supersedes` and `expires` work as
@@ -214,6 +236,25 @@ How it uses the existing pieces:
    code path updates `mail_rules.status` to `in-force`.
 4. *Retired the same way, or by `chamberlain mail rules retire <id>`.* Retiring is safe in either direction, so the Steward may do it.
 
+**Routing rules are learned the same way.** When the same newsletter and kind of item has been sent to the same route three times in 30
+days (read from the labelled examples), code proposes a routing rule, such as "Unsupervised Learning tool links → Readwise Reader". It is
+a proposal card like any other rule, with the same backtest, and it **acts only after Nathan confirms it**, by the same single writer.
+Until a routing rule is in force, each highlight asks, with the default route first. A routing rule moves where a confirmed Save goes; it
+never saves anything by itself.
+
+**Unattended archive: off, and earned.** Nathan's answer to the third question (section 9) allows one exception to "a model label alone
+changes nothing": after a shadow fortnight in which he approved enough of the cleanup batches, mail no confirmed rule covers may be
+archived without a tap. The mode is **off on every install** and `config.json` cannot turn it on. It is a state row in `mail.db`, written
+only by `chamberlain mail unattended enable --decision <id>` (B9), which is refused unless both hold: the measured shadow period
+covered at least `shadowDays` (14) days and `minBatches` (10) batches with approval of at least `minApproval` (0.95), where a batch
+counts as approved only when Nathan chose *Archive all* (a batch he cut down or left is not approved; the message-level rate is
+reported beside it), **and** `<id>` is the Steward's confirmation of that measurement in the decision log. While on, it is archive-only
+(there is no delete, trash or send in the provider, section 3), never touches a message an `important` rule flagged, records every
+message in `mail_actions` so `chamberlain mail undo <run-id>` restores it (section 8), and still files the batch card for a sampled
+share of batches (`sampleRate`). When approval across the last `sampleWindow` sampled batches falls below `minApproval`, the mode
+**switches itself back off** in the transaction that records the sample, queues one `mail` wake so the Steward hears of it (section 7),
+and the next batch waits for a tap again.
+
 ## 6. Newsletter digests: Unsupervised Learning as the worked example
 
 **Decision: one card per issue, at most five highlights, picked by code from what the model extracts, with links taken from the mail
@@ -228,15 +269,23 @@ by code and never written by the model.** The word *digest* already means a comp
 4. *Pick (code).* Each candidate scores by overlap of its topics with `interests`, plus what Nathan saved from this newsletter before
    (topics of saved highlights up, of skipped issues down, from `mail_highlights`). The top `maxHighlights` go on the card.
 5. *Card.* Title "Unsupervised Learning: 5 picks from <issue date>"; context is one bullet per highlight, `- <title>: <gist>`; options
-   Save all (recommended), Skip this issue, Fewer like this. "Fewer like this" lowers the issue's topics in the profile; it changes no rule.
-6. *Save.* "Save all" appends to `save.file`, a Markdown file in Nathan's notes: one heading per issue with each highlight as
-   `- [title](url): gist (Unsupervised Learning, <date>)`. Instead of a file, `save.command` names a command that receives the same lines
-   as JSON on stdin (for Readwise Reader or a to-do app). The newsletter mail is then archived and labelled `<prefix>/Digested`.
+   one per configured route (section 2), then Skip this issue and Fewer like this. The recommended option is the route a confirmed
+   routing rule names for this newsletter and kind of item (section 5), and otherwise `defaultRoute`, the Obsidian Reading list. The card
+   takes an optional note (section 5), stored as a labelled example with the route chosen. "Fewer like this" lowers the issue's topics in
+   the profile; it changes no rule.
+6. *Route.* A route tap sends the card's highlights to that route: a `file` route appends to a Markdown file in Nathan's notes, one
+   heading per issue with each highlight as `- [title](url): gist (Unsupervised Learning, <date>)`; a `command` route gives the same
+   highlights as JSON on stdin to the operator's own program (Readwise Reader, a to-do app); the `steward` route files one task for the
+   Steward, built by code from the capped title, gist and link, as a wake that fences them as untrusted data like any other mail-derived
+   text. Which routes exist is config, so a new one is added without code. The newsletter mail is then archived and labelled
+   `<prefix>/Digested`. Until a routing rule is confirmed, every issue asks; after one is, the card's recommended route changes and the
+   tap is still Nathan's.
 
 The link saved is the one in the mail, which may be a tracking redirect. Code unwraps a redirect only when the target sits in its own query
-string (such as `?url=`), without fetching anything; otherwise the link is saved as it is. With `save.file` it is followed only when
-Nathan opens it. A `save.command` is the operator's own program and may fetch what it is given (Readwise Reader does): it runs only on
-Nathan's "Save" tap, it is outside the module's no-fetch guarantee (section 8), and the config docs say so beside the key.
+string (such as `?url=`), without fetching anything; otherwise the link is saved as it is. With a `file` route it is followed only when
+Nathan opens it. A `command` route is the operator's own program and may fetch what it is given (Readwise Reader does): it runs only on
+Nathan's tap, it is outside the module's no-fetch guarantee (section 8), and the config docs say so beside the key. A `steward` task
+carries the link as text and fetches nothing.
 
 ## 7. Scheduling, and reporting without filling the Steward's context
 
@@ -252,8 +301,9 @@ changing the schedule; a normal run wakes nobody.**
   stage and outcome, card ids, rule ids, tokens per tier and any cap reached: never a subject, sender or summary, which live only on the
   cards. One `mail.run` event with the same counts.
 - **How the Steward hears.** A run wakes the Steward only when it needs the Steward: it failed (the provider erred or a partial list came
-  back), hit a cap two runs in a row, or the Steward asked with `mail run --now --notify`. Those go as one wake of kind `mail`, at most three
-  lines composed by code, holdable and folded like any other:
+  back), hit a cap two runs in a row, the unattended-archive mode switched itself off (section 5), or the Steward asked with
+  `mail run --now --notify`. Those go as one wake of kind `mail`, at most three lines composed by code, holdable and folded like any
+  other:
 
   ```
   Mail run m-7f3c (scheduled 16:30): 64 seen, 41 by rule, 18 to the cleanup card Q-ab12cd, 2 asks (Q-…, Q-…), 1 newsletter card.
@@ -270,19 +320,24 @@ Mail is untrusted input written by anyone. The design follows the **dual LLM pat
 ([Simon Willison, 2023](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/)): the model that reads untrusted text has no tools and
 cannot cause an action, and the code that acts reads only that model's answer fields, validated. What the pattern does **not** give, and
 this design does not claim: a mail can still steer the model's *valid* answer (label a phishing message `clean`, or write an instruction
-into its summary). The design limits what such an answer can do: a model label alone never changes the mailbox (it only fills the cleanup
-card Nathan taps), a flagged message is never cleaned by a model label, and model text reaches only card text and the save target, as
-plain text.
+into its summary). The design limits what such an answer can do: a model label alone never changes the mailbox while the
+unattended-archive mode is off (it only fills the cleanup card Nathan taps), a flagged message is never cleaned by a model label, and
+model text reaches only card text and a route's target, as plain text. **The unattended-archive mode is the one place this changes, and
+it is stated plainly:** once Nathan has earned it (section 5), a hostile mail that persuades the driver to label it `clean`, and is not
+from a flagged sender, is archived without a tap. What bounds that: it is off by default, on only after a measured fortnight and the
+Steward's confirmation; it can only archive (never delete or send); every archive is recorded and undone by `chamberlain mail undo`; a
+sampled share of batches is still shown to Nathan, and falling approval switches it off.
 
 | Guarantee | How it is enforced (not by a prompt) | Test |
 | --- | --- | --- |
 | The reading model cannot act | Every call is `claude -p --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands --no-session-persistence --system-prompt <fixed> --output-format json`, mail on stdin, never in argv. The argv is built in one function. | Snapshot test of the argv; a test that the runner refuses any argv missing `--tools ""`. |
-| Instructions in mail gain no authority | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL; a `clean` label only adds the message to the cleanup card; card text is rendered as text, with any URL in it shown unlinked. | Fuzz test: malformed replies (extra fields, wrong slots, long text, tool-call shapes) become `ask`. Injection test: *valid* replies a hostile mail could produce (`clean` for a flagged message, a summary holding an instruction or a URL, a link reference not in the table) are run through every consumer (outcome mapping, cards, page, rule proposal, save). Before any tap they change nothing but card text. After a Save tap they reach the save target only as the capped title and gist, as plain text, with the one URL taken from the code's link table. |
+| Instructions in mail gain no authority | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL; a `clean` label only adds the message to the cleanup card (or, in the unattended mode and for an unflagged message, to the archive batch); card text is rendered as text, with any URL in it shown unlinked. | Fuzz test: malformed replies (extra fields, wrong slots, long text, tool-call shapes) become `ask`. Injection test: *valid* replies a hostile mail could produce (`clean` for a flagged message, a summary holding an instruction or a URL, a link reference not in the table) are run through every consumer (outcome mapping, cards, page, rule proposal, routes). With the unattended mode off, before any tap they change nothing but card text; with it on, a `clean` label for an unflagged message archives it, recorded and undoable, and a flagged one still changes nothing. After a route tap they reach the route's target only as the capped title and gist, as plain text, with the one URL taken from the code's link table. |
 | Never sends, replies or forwards | `MailProvider` has no such method; gog runs with `--gmail-no-send` and an exact allowlist that names no send command. Two layers, either enough. | B2 runs the real `gog` with the module's flags and an empty `--home` (no credentials, so nothing can reach a mailbox), and asserts that `send`, `reply`, `forward` and `drafts` fail with gog's command-policy refusal (its own message, matched exactly), while an allowed command with the same flags gets past the policy and fails only at authentication. The control proves the refusal is the allowlist, not a missing login. |
 | Never deletes | No delete or trash method; `trash`, `batch delete` and `labels delete` are outside gog's allowlist; `label()` refuses `TRASH`, `SPAM` and every other system label, except removing `INBOX` or `UNREAD` and, for undo only, adding them back; added labels must otherwise start with `labels.prefix/`. | Unit tests on `label()`; B2's refusal test includes `trash` and `batch delete`. |
+| Unattended archive stays off until earned, archive-only, and switches itself off | The mode is a `mail.db` state row that no config key writes; the only writer of `on` is the `unattended enable` command, which checks the measurement and the Steward's decision-log id (section 5). The code path it enables calls `archive` and `markRead` only, and skips flagged messages. A sampled batch below `minApproval` writes `off` in the same transaction that records the sample. | Tests: a fresh database and a config with every key set never archive a model-only `clean` before a tap; no other code path writes `on` (as for rules, section 5); the fake provider sees no `label` removal or other verb on the unattended path beyond `archive` and `markRead`; the 19 of 20 and 18 of 20 fixtures in B9; a failing sample turns it off and queues one `mail` wake. |
 | Cleanup is reversible | Archive keeps the message in All Mail; every module action also adds `<prefix>/Triaged`. Before acting, the module records each message's inbox and read state and the labels it will add (`mail_actions`, 90 days). `chamberlain mail undo <run-id>` restores exactly that: `INBOX` and `UNREAD` back where they were, its own added labels removed. It never removes a label it did not add. | Round-trip test against the fake provider comparing the full label set and read state before the action and after undo. |
-| Tracking links are never opened by the module | The module has no HTTP client: an architecture test fails if any file under `src/modules/mail/` calls `fetch(`, imports `node:http`, `node:https`, `node:net` or `undici`, or spawns anything but the provider, the model CLI and the configured `save.command` (the operator's own program, run only on a Save tap; section 6). Triage text comes from `--sanitize-content` (URLs removed); newsletter links are swapped for references before the model sees them. No mail HTML is rendered anywhere, so no tracking pixel loads; the page's CSP is already `img-src 'self'`. | The architecture test; a test that model input contains no `http` substring. |
-| Only metadata and bounded derived text are kept | Mail-derived text is written to exactly three places: `mail.db`'s capped columns (`CHECK(length(...) <= n)`), the card's question in `chamberlain.db`, and the save target on a Save tap. Bodies live in memory for one call and are written to no file, log, event or report; events carry numbers and enums only. A length cap bounds what is kept, it does not prove provenance: a mail shorter than 400 characters can be kept whole as its own summary, and this is accepted. | A schema test that no `mail.db` column is named or sized for a body; a run with a planted body sentence and a model reply that echoes it, then a search of the state directory, `mail.db`, `chamberlain.db` and the save file: the sentence appears only within the capped fields, never beyond the cap. |
+| Tracking links are never opened by the module | The module has no HTTP client: an architecture test fails if any file under `src/modules/mail/` calls `fetch(`, imports `node:http`, `node:https`, `node:net` or `undici`, or spawns anything but the provider, the model CLI and a configured `command` route (the operator's own program, run only on a route tap; section 6). Triage text comes from `--sanitize-content` (URLs removed); newsletter links are swapped for references before the model sees them. No mail HTML is rendered anywhere, so no tracking pixel loads; the page's CSP is already `img-src 'self'`. | The architecture test; a test that model input contains no `http` substring. |
+| Only metadata and bounded derived text are kept | Mail-derived text is written to exactly three places: `mail.db`'s capped columns (`CHECK(length(...) <= n)`), the card's question in `chamberlain.db`, and a route's target on a route tap. Each labelled example (`mail_examples`, section 5) is in the first place: its note is capped. Bodies live in memory for one call and are written to no file, log, event or report; events carry numbers and enums only. A length cap bounds what is kept, it does not prove provenance: a mail shorter than 400 characters can be kept whole as its own summary, and this is accepted. | A schema test that no `mail.db` column is named or sized for a body; a run with a planted body sentence and a model reply that echoes it, then a search of the state directory, `mail.db`, `chamberlain.db` and the route targets: the sentence appears only within the capped fields, never beyond the cap. |
 | No credential is held | The provider is the mail tool (gog keeps its own keyring); `mail` config has no key, token or password field and `parseMail` rejects unknown keys; the provider child's environment is an allowlist without `GOG_ACCESS_TOKEN`, and its stderr is never stored (section 3). | Config tests; a test that a planted `GOG_ACCESS_TOKEN` reaches neither the child nor any log. |
 | No pay-per-token lane | The model CLI's environment is an allowlist (section 4). | A test that plants each excluded variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`) and asserts none reaches the child. |
 
@@ -296,31 +351,32 @@ plain text.
 | Triage rules | `mail_rules` | for good (a ledger) |
 | Run report | `reports/mail/` | 30 days |
 | Mail bodies | memory, for one model call | never stored |
-| Saved highlights | Nathan's notes | outside Chamberlain |
+| Labelled examples (answer, route, note, capped) | `mail.db` `mail_examples` | 365 days |
+| Routed highlights | Nathan's notes, Reader, or a task for the Steward | outside Chamberlain |
 
-## 9. Questions for Nathan
+## 9. Questions for Nathan, and his answers
 
-Three, each one tap. Everything else above is decided and can be changed later.
+Three, each one tap, all answered by Nathan on 2026-11-14 (answers recorded on issue #30). Everything else above is decided and can be changed later.
 
-| Question | Options (recommended first) | Why the recommendation |
+| Question | Options (recommended first) | Answer |
 | --- | --- | --- |
-| When should triage run? | **Weekdays 07:30 and 16:30, plus whenever the Steward runs it** / only when the Steward runs it / every 3 hours, 07:00 to 19:00 | Two runs fit two reading moments and stay well inside the plan window; on-demand alone depends on the Steward remembering. |
-| Where do saved newsletter highlights go? | **A "Reading list" note in your notes (Markdown)** / Readwise Reader / both | A local file involves no third party and fetches nothing; Reader can be added later as `save.command`. |
-| May the model clean up mail with no rule yet, without a tap? | **No: model-only cleanup always waits for the one batch card** / yes, archive after a shadow fortnight in which you approved 95% of its batches | One tap a run is cheap, and confirmed rules take over the repeat cases quickly; it keeps every unattended action one you confirmed. |
+| When should triage run? | **Weekdays 07:30 and 16:30, plus whenever the Steward runs it** / only when the Steward runs it / every 3 hours, 07:00 to 19:00 | **Weekdays 07:30 and 16:30, plus whenever the Steward runs it.** The recommendation, so nothing changed; B1 sets this as the default `schedule` and B8 runs it. |
+| Where do saved newsletter highlights go? | **A "Reading list" note in your notes (Markdown)** / Readwise Reader / both | **The Obsidian Reading list, and not only that.** In his words: some items will be tasks for the Steward, some Reader, some Obsidian; "we'll define these paths as we work, for now I need a way to teach you". This changed the design: a highlight card offers routes (Task for the Steward, Readwise Reader, Obsidian Reading list), the Obsidian Reading list is the default until a route is learned, every card takes an optional teaching note stored as a labelled example, learned routing rules are proposed and act only after Nathan confirms them, and routes are config added without code (sections 2, 5 and 6; B7). |
+| May the model clean up mail with no rule yet, without a tap? | **No: model-only cleanup always waits for the one batch card** / yes, archive after a shadow fortnight in which you approved 95% of its batches | **Yes, after the trial.** After a two-week shadow trial in which he approved at least 95% of the batches, model-only cleanup may archive without a tap; until then it waits for its batch card. This changed the design: an unattended-archive mode that is off by default, switched on only by B9's measured fortnight plus the Steward's confirmation in the decision log, archive-only, undoable with `mail undo`, and switching itself back off if sampled approval falls below the threshold (sections 5 and 8; B5 and B9). |
 
 ## 10. Build pieces
 
 | Piece | Issue | Needs |
 | --- | --- | --- |
-| B1 module seam: `src/modules/` and its registry, architecture rules, `parseMail`, `mail.db` and migrations, `src/core/llm/cli.ts` shared with the classifier | new | |
-| B2 gog provider: the five verbs, the allowlist and flags, `label()` guards, partial-list errors; the `command` provider contract; a fake provider for tests; the real-binary refusal test | new | B1 |
-| B3 rules stage, header facts, `important` routing, cursor and history, shadow recording | new | B1, B2 |
-| B4 driver and escalation: batching, the reply schema, triggers, budgets and caps, env allowlist, `mail.attempt` events, rules-only mode | new | B1, B3; OBSERVABILITY B1 (registry) and B4 (`plan_usage`) when built, caps alone until then |
-| B5 cards: `fileQuestion` and `scrubQuestion` (question and claim) in core, `route: "record"` with claim recovery and resolution, the answer handler, cleanup batch and ask cards, `mail_actions` and `mail undo` | new | B3, B4 |
-| B6 learned rules: proposal from answers, backtest, confirm and retire, `mail rules list|retire` | new | B5 |
-| B7 newsletter digests: link table, extraction, interest scoring, the card, `save.file` and `save.command` | new | B4, B5 |
-| B8 scheduling and reporting: the timer, `mail run|pause|resume`, the lock, the report file, the `mail` wake kind and the sweep line | new | B3 |
-| B9 a shadow fortnight on Nathan's mailbox, then measured token use and agreement with his taps, before `live` | new | B1 to B8 |
+| B1 module seam: `src/modules/` and its registry, architecture rules, `parseMail`, `mail.db` and migrations, `src/core/llm/cli.ts` shared with the classifier | #34 | |
+| B2 gog provider: the five verbs, the allowlist and flags, `label()` guards, partial-list errors; the `command` provider contract; a fake provider for tests; the real-binary refusal test | #35 | B1 |
+| B3 rules stage, header facts, `important` routing, cursor and history, shadow recording | #36 | B1, B2 |
+| B4 driver and escalation: batching, the reply schema, triggers, budgets and caps, env allowlist, `mail.attempt` events, rules-only mode | #37 | B1, B3; OBSERVABILITY B1 (registry) and B4 (`plan_usage`) when built, caps alone until then |
+| B5 cards: `fileQuestion` and `scrubQuestion` (question and claim) in core, `route: "record"` with claim recovery and resolution, the answer handler, cleanup batch and ask cards, `mail_actions` and `mail undo`, and the unattended-archive mode (off by default, archive-only, sampled, switches itself off) | #38 | B3, B4 |
+| B6 learned rules: proposal from answers, backtest, confirm and retire, `mail rules list|retire` | #39 | B5 |
+| B7 newsletter digests: link table, extraction, interest scoring, the card, routes (`file`, `command`, `steward`) and the default route, teaching notes stored as labelled examples, learned routing rules proposed and confirmed by Nathan | #40 | B4, B5, B6 |
+| B8 scheduling and reporting: the timer, `mail run|pause|resume`, the lock, the report file, the `mail` wake kind and the sweep line | #41 | B3 |
+| B9 a shadow fortnight on Nathan's mailbox, then measured token use and agreement with his taps, before `live`; the unattended-archive gate: the approval measurement and the enabling step that needs the Steward's decision-log confirmation | #42 | B1 to B8 |
 
 ## 11. Review log (Sol, gpt-6.1-sol, reasoningEffort high)
 
@@ -331,3 +387,8 @@ recovery; undo restores read state and labels; the gog refusal test has a contro
 budget totals and dependencies fixed. Round 2 (delta check): 8 folded, 3 partly, and one new blocking finding (claims keep note text).
 All four were then folded without a third round: claims are scrubbed with their question, recovery is described as the code does it,
 every action is idempotent with crash tests, and the injection test separates effects before and after a Save tap. Not re-checked by Sol.
+
+Round 3, 2026-11-14: Nathan's three answers (section 9) were folded in by the builder of B1: routes, teaching notes and learned routing
+rules (sections 2, 5, 6; B7), and the unattended-archive mode with its gate (sections 5, 8; B5, B9). The one claim that this changed,
+"a model label alone never changes the mailbox", is now stated with its exception in section 8. Sol reviewed this change together with B1's
+code before the pull request was marked ready.
