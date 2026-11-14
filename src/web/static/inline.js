@@ -361,10 +361,14 @@ count.textContent = `${items.length} waiting`;
 		let lastHealth, lastHealthLimits;
 		let focused = false;
 		const bad = (pane, e) => pane.replaceChildren(el("div", "dq-msg dq-bad", `Could not reach the queue: ${e?.message ?? e}`));
-		// One card per snoozed question: when it returns, and the two one-press actions. Bring back now puts it on the waiting list at once; Dismiss closes it.
-		// Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again and the row follows.
+		// One card per snoozed question: when it returns, and the one-press actions its kind supports. Bring back now puts it on the waiting list at once; Dismiss
+		// closes it, except for a secret or a card pointer, which are settled in their own thread (the server refuses them): those get Bring back now and the thread link,
+		// as Waiting's panel gives them Snooze and the thread link. Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again.
+		// A card is made once per item and kept (snoozedCards), so a redraw never drops a press in flight: its lock lives with the card.
 		function snoozedCard(it) {
 			const c = el("div", "dq-card");
+			const title = el("div", "dq-title", it.title);
+			const meta = el("div", "dq-meta");
 			const msg = el("div", "dq-msg");
 			const row = el("div", "dq-actions");
 			const taps = [];
@@ -381,18 +385,27 @@ count.textContent = `${items.length} waiting`;
 				lock(false);
 			}
 			taps.push(btn("Bring back now", "rec", () => act("unsnooze", "Back on the waiting list.")));
-			taps.push(btn("Dismiss", "", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
+			if (!it.secret && !it.cardRequest) taps.push(btn("Dismiss", "", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
 			const own = threadLink(it);
 			row.append(...taps, ...(own ? [own] : []));
-			c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), el("div", "dq-title", it.title), el("div", "dq-meta", `${it.thread} · returns ${returnsAt(it.snooze.until)}`));
+			c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), title, meta);
 			if (it.context) c.append(context(it.context));
 			c.append(msg, row);
-			return c;
+			return { node: c, update: (x) => { title.textContent = x.title; meta.textContent = `${x.thread} · returns ${returnsAt(x.snooze.until)}`; } };
 		}
+		const snoozedCards = new Map(); // item ID -> its card
 		function paintSnoozed(rows) {
 			tabCount("Snoozed", rows.length);
 			const soonest = [...rows].sort((a, b) => String(a.snooze.until).localeCompare(String(b.snooze.until)));
-			panes.Snoozed.replaceChildren(...(soonest.length ? soonest.map(snoozedCard) : [el("div", "dq-empty", "Nothing snoozed.")]));
+			const ids = new Set(soonest.map((i) => i.id));
+			for (const id of [...snoozedCards.keys()]) if (!ids.has(id)) snoozedCards.delete(id);
+			const nodes = soonest.map((it) => {
+				let k = snoozedCards.get(it.id);
+				if (!k) { k = snoozedCard(it); snoozedCards.set(it.id, k); }
+				k.update(it);
+				return k.node;
+			});
+			panes.Snoozed.replaceChildren(...(nodes.length ? nodes : [el("div", "dq-empty", "Nothing snoozed.")]));
 		}
 		async function waiting() {
 			try {
@@ -409,7 +422,9 @@ count.textContent = `${items.length} waiting`;
 count.textContent = items.length ? `${items.length} waiting` : "clear";
 				tabCount("Waiting", items.length);
 				const ids = new Set(items.map((i) => i.id));
-				for (const [id, c] of cards) if (!ids.has(id) && !c.dataset.answered) { c.remove(); cards.delete(id); }
+				const put = new Set((q.snoozed || []).map((i) => i.id));
+				// A card he answered here stays as it is. One he snoozed is a note that it was put off: it stays while the question is snoozed, and goes when the question is in neither list (dismissed from the Snoozed tab, or settled elsewhere).
+				for (const [id, c] of cards) if (!ids.has(id) && (!c.dataset.answered || (c.dataset.answered === "snoozed" && !put.has(id)))) { c.remove(); cards.delete(id); }
 				for (const it of items) {
 					const old = cards.get(it.id);
 					// A mirrored card that changed under the same ID (a new command, reordered options) is redrawn, so he

@@ -117,6 +117,8 @@ export function run(
 		status?: number | (() => number);
 		/** The reply to a POST: its status and JSON body. Absent: a POST is answered like any call. */
 		post?: (path: string, body: any) => { status: number; body: unknown } | undefined;
+		/** Held back before a POST is answered: the request is already counted in `calls`, and its reply waits for this. */
+		hold?: () => Promise<void>;
 		/** The view's `window`. Absent: the script sees none, as no test before needed one (it reads as a frame). */
 		window?: unknown;
 		/** The shell has no `#dq` root: the view makes its own on the body (the returned element is that one). */
@@ -142,6 +144,7 @@ export function run(
 			path: new URL(url).pathname,
 			...(init?.body ? { body: JSON.parse(init.body) } : {}),
 		});
+		if (init?.method === "POST") await o.hold?.();
 		// A POST is answered by `post` when the test gives one (its status and body), else as every call is.
 		const posted =
 			init?.method === "POST" ? o.post?.(new URL(url).pathname, init.body ? JSON.parse(init.body) : {}) : undefined;
