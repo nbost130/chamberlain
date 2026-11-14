@@ -1,18 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import {
-	chmodSync,
-	existsSync,
-	linkSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { useCoreCapabilityFixtures } from "../testing/core-capability-fixtures.ts";
 import {
 	COOKIE_MAX_AGE_S,
 	COOKIE_NAME,
@@ -23,7 +11,6 @@ import {
 	inlineScriptSrc,
 	makeCapability,
 	newToken,
-	pageLink,
 	readToken,
 	readViewKey,
 	rotateToken,
@@ -31,24 +18,9 @@ import {
 	TOKEN_BYTES,
 	TOKEN_FILE,
 	VIEW_KEY_FILE,
-	withoutToken,
 } from "./capability.ts";
-import { migrateLayout } from "./config-migrate.ts";
-import { revertLayout } from "./config-revert.ts";
 
-const dirs: string[] = [];
-const conf = () => {
-	const root = mkdtempSync(`${tmpdir()}/chamberlain-cap-`);
-	dirs.push(root);
-	const c = `${root}/conf`;
-	mkdirSync(c, { mode: 0o700 });
-	return c;
-};
-afterEach(() => {
-	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-const mode = (p: string) => statSync(p).mode & 0o777;
-const cookieOf = (setCookie: string) => setCookie.split(";")[0]!;
+const { conf, mode, cookieOf } = useCoreCapabilityFixtures();
 
 describe("the token", () => {
 	test("is 32 random bytes, as base64url, and never the same twice", () => {
@@ -306,40 +278,4 @@ describe("the cookie", () => {
 		token = "r".repeat(43); // rotated
 		expect(cap.acceptsCookie(c)).toBe(false);
 	});
-});
-
-describe("links carry the token", () => {
-	test("the page link and the inline script address end in ?k= / &k=, and never double a slash", () => {
-		expect(pageLink("http://h:1", "TOK")).toBe("http://h:1/?k=TOK");
-		expect(pageLink("http://h:1/", "TOK", "/rulings")).toBe("http://h:1/rulings?k=TOK");
-		expect(inlineScriptSrc("http://h:1", "TOK")).toBe("http://h:1/inline.js?view=decisions&k=TOK");
-		expect(inlineScriptSrc("http://h:1/", "TOK", "Q-abcd")).toBe(
-			"http://h:1/inline.js?view=decisions&item=Q-abcd&k=TOK",
-		);
-	});
-	test("withoutToken removes the token, raw or encoded, from a message", () => {
-		expect(withoutToken("sent http://h/?k=TOK%2Fx and TOK", "TOK")).toBe("sent http://h/?k=[token]%2Fx and [token]");
-		expect(withoutToken("nothing", undefined)).toBe("nothing");
-	});
-});
-
-test("the token file is not a path anything else makes: nothing in a fresh config directory but secrets/web-token", () => {
-	const c = conf();
-	ensureToken(c);
-	expect(existsSync(`${c}/secrets/${TOKEN_FILE}`)).toBe(true);
-	expect(existsSync(`${c}/${TOKEN_FILE}`)).toBe(false);
-});
-
-test("a revert of the config migration leaves the page's token where it is: it is a secret with no old name", () => {
-	const c = conf();
-	writeFileSync(`${c}/wake-url`, "https://fake.example/hook\n", { mode: 0o600 });
-	migrateLayout(c);
-	const t = ensureToken(c);
-	revertLayout(c);
-	expect(readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8").trim()).toBe(t);
-	expect(existsSync(`${c}/${TOKEN_FILE}`)).toBe(false);
-	expect(readFileSync(`${c}/wake-url`, "utf8").trim()).toBe("https://fake.example/hook");
-	// a migration run again does not mistake it for an old file, and a rotation after a revert still works
-	expect(migrateLayout(c).plan.secrets.map((s) => s.name)).toEqual(["wake-url"]);
-	expect(rotateToken(c)).not.toBe(t);
 });

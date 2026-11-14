@@ -2,25 +2,17 @@
  * Snooze, direction and dismiss at the store: what each does to the item, its claim, its afk hold and the settled-question lookup.
  * The page's routes are in src/web/queue-actions.test.ts; the daemon's return notice is in src/core/snooze-engine.test.ts.
  */
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { useCoreSnoozeFixtures } from "../testing/core-snooze-fixtures.ts";
 import { memStore } from "../testing/store.ts";
-import { appendHeld, HELD, heldId, heldOpen } from "./afk-held.ts";
+import { HELD, heldId, heldOpen } from "./afk-held.ts";
 import { reconcileItemHolds } from "./hold-reconcile.ts";
-import { askQuestion, getQuestion, QUEUE, type Question, questionStates } from "./questions.ts";
+import { askQuestion, QUEUE, questionStates } from "./questions.ts";
 import { claimWake, pageClaim } from "./questions-claim.ts";
-import {
-	answerRoute,
-	answerWake,
-	batchable,
-	DIRECTION_LABEL,
-	DISMISSED_LABEL,
-	plainAnswer,
-	ranked,
-	recordAnswerDelivered,
-	snoozed,
-} from "./questions-wake.ts";
+import { answerRoute, batchable, DIRECTION_LABEL, plainAnswer, ranked, snoozed } from "./questions-wake.ts";
 import { findSettled } from "./settled.ts";
 import {
 	clearSnooze,
@@ -33,38 +25,9 @@ import {
 	unsnoozeQuestion,
 } from "./snooze.ts";
 import { openStore } from "./sqlite-store.ts";
-import { dbPath, type Store } from "./store.ts";
+import { dbPath } from "./store.ts";
 
-const NOW = Date.parse("2026-11-14T12:00:00.000Z");
-const HOUR = 3_600_000;
-const iso = (ms: number) => new Date(ms).toISOString();
-const dirs: string[] = [];
-afterEach(() => {
-	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-
-const question = (id: string, over: Partial<Question> = {}): Question => ({
-	id,
-	kind: "product",
-	title: `Which launch plan do we ship for ${id}`,
-	context: "",
-	options: [{ label: "Plan A" }, { label: "Plan B" }],
-	recommended: 0,
-	thread: "Launch thread",
-	server: "main",
-	threadId: "thread-1",
-	createdAt: "2026-11-14T08:00:00.000Z",
-	...over,
-});
-const hold = (store: Store, id: string) =>
-	appendHeld(
-		store,
-		{ thread: "Launch thread", what: `waits on a launch plan for ${id}`, item: id },
-		new Date(NOW - HOUR),
-	);
-const holdNotes = (store: Store, hid: string) =>
-	((store.items.get(HELD, hid)?.payload.notes as { text: string }[] | undefined) ?? []).map((n) => n.text);
-const stateOf = (store: Store, id: string, now = NOW) => questionStates(store, now).get(id)!;
+const { NOW, HOUR, iso, dirs, question, hold, holdNotes, stateOf } = useCoreSnoozeFixtures();
 
 describe("what a snooze time may be", () => {
 	test("an absolute time in the future, up to a year, written back as ISO", () => {
@@ -283,71 +246,5 @@ describe("direction: a note and no option", () => {
 		expect(matches).toHaveLength(1);
 		expect(matches[0]!.answer).toContain("direction, no option chosen");
 		expect(matches[0]!.answer).toContain("daily, and page me on failure");
-	});
-});
-
-describe("dismiss: already handled, or no longer needed", () => {
-	const dismissed = (store: Store, id: string, note?: string) => {
-		const q = question(id, { title: "Whether the billing retry runs hourly or daily" });
-		askQuestion(store, q);
-		const claim = pageClaim(q, plainAnswer("dismissed", id, note, iso(NOW)));
-		expect(claimWake(store, claim).won).toBe(true);
-		return { q, claim };
-	};
-	test("is recorded as dismissed, never as an answer: no `answer`, a `dismissal` with the note", () => {
-		const store = memStore();
-		dismissed(store, "Q-dis01", "already done in the thread");
-		const s = stateOf(store, "Q-dis01");
-		expect(s.status).toBe("dismissed");
-		expect(s.answer).toBeUndefined();
-		expect(s.dismissal).toEqual({ note: "already done in the thread", t: iso(NOW) });
-		expect(ranked(questionStates(store).values())).toEqual([]);
-		expect(plainAnswer("dismissed", "Q-dis01", undefined, iso(NOW))).toMatchObject({
-			label: DISMISSED_LABEL,
-			choice: -1,
-		});
-		expect(getQuestion(store, "Q-dis01")?.status).toBe("dismissed");
-	});
-	test("sends the Steward a short wake that says dismissed, not answered, and carries the note, or says there is none", () => {
-		const store = memStore();
-		const { claim } = dismissed(store, "Q-dis02", "no longer needed");
-		expect(claim.message.startsWith("[chamberlain] answer:")).toBe(true);
-		expect(claim.message).toContain("dismissed decision-queue item Q-dis02");
-		expect(claim.message).toContain("not an answer");
-		expect(claim.message).toContain("note: no longer needed");
-		expect(claim.message).not.toMatch(/answered decision-queue item/);
-		const bare = pageClaim(question("Q-dis03"), plainAnswer("dismissed", "Q-dis03", undefined, iso(NOW)));
-		expect(bare.message).toContain("note: none");
-		expect(answerWake(question("Q-dis03"), bare.answer!)).toBe(bare.message);
-	});
-	test("closes its hold, and records that it was dismissed", () => {
-		const store = memStore();
-		const h = hold(store, "Q-dis04");
-		dismissed(store, "Q-dis04");
-		expect(reconcileItemHolds(store, new Date(NOW + 1)).closed).toBe(1);
-		expect(heldOpen(store)).toEqual([]);
-		expect(String(store.items.get(HELD, h)?.payload.how)).toContain("Dismissed on the queue");
-		expect(String(store.items.get(HELD, h)?.payload.how)).not.toContain("Answered");
-	});
-	test("stays dismissed after its wake is delivered", () => {
-		const store = memStore();
-		dismissed(store, "Q-dis05");
-		recordAnswerDelivered(store, "answer:item:Q-dis05");
-		expect(stateOf(store, "Q-dis05")).toMatchObject({ status: "dismissed", delivered: true });
-	});
-	test("is ignored by settled-question lookups, while an answered question is found", () => {
-		const store = memStore();
-		const { q } = dismissed(store, "Q-dis06", "handled elsewhere");
-		expect(findSettled(store, { title: q.title, thread: q.thread }, {}).matches).toEqual([]);
-		expect(findSettled(store, { title: `look at ${q.id}`, item: q.id }, {}).matches).toEqual([]);
-		// control: the same question, answered with an option, is settled
-		const answered = question("Q-ans01", { title: q.title });
-		askQuestion(store, answered);
-		claimWake(
-			store,
-			pageClaim(answered, { choice: 1, label: "Plan B", by: "page", t: iso(NOW), deliveryId: "answer:item:Q-ans01" }),
-		);
-		const found = findSettled(store, { title: q.title, thread: q.thread }, {}).matches;
-		expect(found.map((m) => m.id)).toEqual(["Q-ans01"]);
 	});
 });

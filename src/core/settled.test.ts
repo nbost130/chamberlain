@@ -2,41 +2,13 @@
  * (b) The settled check: what matches, what it says it matched on, and the false-positive and false-negative boundaries
  * of each rule. Every case runs on a real Store (in memory), through findSettled, as ask.ts and `afk.ts hold` call it.
  */
+
 import { describe, expect, test } from "bun:test";
+import { answered, find } from "../testing/core-settled-fixtures.ts";
 import { memStore } from "../testing/store.ts";
-import { parseSettings, type SettledMatch } from "./config.ts";
-import { askQuestion, QUEUE, type Question } from "./questions.ts";
-import { claimWake, pageClaim } from "./questions-claim.ts";
-import { addInForce, propose } from "./rulings.ts";
-import { retireRuling } from "./rulings-change.ts";
-import { findSettled, matchSettings, refusalLines } from "./settled.ts";
+import { matchSettings } from "./settled.ts";
 import { sameTopic, titlesOverlap, tokens } from "./settled-title.ts";
 import type { Store } from "./store.ts";
-
-const DEFAULT: SettledMatch = {};
-const q = (id: string, title: string, over: Partial<Question> = {}): Question => ({
-	id,
-	kind: "product",
-	title,
-	context: "",
-	options: [{ label: "Yes" }, { label: "No" }],
-	thread: "Thread",
-	server: "main",
-	createdAt: "2026-11-10T10:00:00.000Z",
-	...over,
-});
-/** An answered question, as the page leaves it: the item and its claim. */
-function answered(store: Store, id: string, title: string, over: Partial<Question> & { label?: string } = {}) {
-	const { label = "No", ...question } = over;
-	const item = q(id, title, question);
-	askQuestion(store, item);
-	claimWake(
-		store,
-		pageClaim(item, { choice: 1, label, by: "page", t: "2026-11-11T09:00:00.000Z", deliveryId: `answer:item:${id}` }),
-	);
-}
-const find = (store: Store, s: Parameters<typeof findSettled>[1], m: SettledMatch = DEFAULT) =>
-	findSettled(store, s, m);
 
 describe("strong refs: one shared is a match", () => {
 	test("a shared commit SHA, a run ID or the item ID in the title matches, and says which", () => {
@@ -236,131 +208,5 @@ describe("title overlap (rule 3)", () => {
 		expect(r.matches.map((m) => [m.id, m.why])).toEqual([
 			["Q-ign02", "title overlap: billing, invoice, retry, policy"],
 		]);
-	});
-});
-
-describe("the three sources", () => {
-	test("only rulings in force now are settled: a proposal, a retired, a superseded or an expired ruling is not", () => {
-		const store = memStore();
-		const NOW = () => Date.parse("2026-11-13T12:00:00Z");
-		propose(store, { words: "keep the nightly export", decides: "Keep the nightly export running on weekends" });
-		expect(find(store, { title: "Nightly export on weekends: keep running?" }).matches).toEqual([]);
-		const ruling = addInForce(store, {
-			words: "no Friday deploys",
-			decides: "Freeze production deploys every Friday afternoon",
-			source: "chat",
-			how: "stated in chat",
-		});
-		retireRuling(store, ruling.id, { how: "retired" });
-		expect(find(store, { title: "Production deploys Friday afternoon freeze?" }).matches).toEqual([]);
-		addInForce(store, {
-			words: "the cache stays",
-			decides: "Keep the image cache warm across restarts",
-			source: "chat",
-			how: "stated in chat",
-		});
-		expect(find(store, { title: "Keep image cache warm?" }).matches.map((m) => m.answer)).toEqual([
-			"in force: Keep the image cache warm across restarts",
-		]);
-		// Superseded: the old one settles nothing, the one that replaced it does.
-		const old = addInForce(store, {
-			words: "staging resets",
-			decides: "Reset the staging database every Monday morning",
-			source: "chat",
-			how: "stated in chat",
-		});
-		addInForce(store, {
-			words: "staging resets weekly",
-			decides: "Reset staging on Sundays instead",
-			source: "chat",
-			how: "stated in chat",
-			opts: { supersedes: [old.id] },
-		});
-		expect(find(store, { title: "Staging database Monday morning reset?" }).matches).toEqual([]);
-		// Expired: in force until its day ends, settled nothing after.
-		addInForce(
-			store,
-			{
-				words: "the banner stays",
-				decides: "Keep the maintenance banner on the login page",
-				source: "chat",
-				how: "stated in chat",
-				opts: { expires: "2026-11-20" },
-			},
-			NOW,
-		);
-		const banner = { title: "Maintenance banner on the login page: keep it?" };
-		expect(
-			findSettled(store, banner, DEFAULT, () => Date.parse("2026-11-20T23:00:00Z")).matches.map((m) => m.id),
-		).toEqual(["R6"]);
-		expect(findSettled(store, banner, DEFAULT, () => Date.parse("2026-11-21T00:00:00Z")).matches).toEqual([]);
-	});
-	test("the decision log is settled; an open question never is", () => {
-		const store = memStore();
-		store.decisions.append({
-			t: "2026-11-05T12:00:00.000Z",
-			thread: "x",
-			decision: "Pinned the queue worker to two replicas",
-			ruling: "R3",
-			ref: null,
-		});
-		askQuestion(store, q("Q-open1", "Upgrade the search cluster to version nine"));
-		expect(find(store, { title: "Queue worker replicas pinned to two?" }).matches.map((m) => [m.source, m.id])).toEqual(
-			[["decision", "D@2026-11-05T12:00"]],
-		);
-		expect(find(store, { title: "Upgrade the search cluster to version nine" }).matches).toEqual([]);
-	});
-	test("a malformed record is skipped and counted, and the valid ones still match", () => {
-		const store = memStore();
-		store.decisions.append({
-			t: "2026-11-05T12:00:00.000Z",
-			thread: "x",
-			decision: "Rename to Atlas is off",
-			ruling: "R1",
-			ref: null,
-		});
-		store.items.observe({
-			source: QUEUE,
-			kind: "question",
-			dedupKey: "Q-bad01",
-			mode: "silenced",
-			payload: { ...q("Q-bad01", "x"), title: 42 },
-			now: Date.now(),
-		});
-		store.items.resolve(QUEUE, "Q-bad01", Date.now(), { answeredOnCard: true });
-		const r = find(store, { title: "Rename to Atlas?" });
-		expect(r.matches.map((m) => m.answer)).toEqual(["decided: Rename to Atlas is off (R1)"]);
-		expect(r.skipped).toEqual(["1 malformed record"]);
-	});
-	test("the refusal lists each match with what it matched on, and how to override", () => {
-		const out = refusalLines(
-			"ask.ts",
-			[
-				{
-					source: "queue",
-					date: "2026-11-11",
-					id: "Q-x0001",
-					answer: 'answered "No"',
-					why: "title overlap: rename, atlas",
-				},
-			],
-			'add "notSettled"',
-		);
-		expect(out[0]).toContain("refused, this looks already settled");
-		expect(out[1]).toBe('  queue | 2026-11-11 | Q-x0001 | answered "No" [matched on title overlap: rename, atlas]');
-		expect(out.at(-1)).toContain('add "notSettled"');
-	});
-});
-
-describe("settings.json settledMatch", () => {
-	test("accepts the two keys and refuses anything else", () => {
-		expect(parseSettings({ settledMatch: { titleOverlap: false, ignoreWords: [" acme "] } }).settledMatch).toEqual({
-			titleOverlap: false,
-			ignoreWords: ["acme"],
-		});
-		expect(() => parseSettings({ settledMatch: { titleOverlap: "no" } })).toThrow("titleOverlap");
-		expect(() => parseSettings({ settledMatch: { ignoreWords: [1] } })).toThrow("ignoreWords");
-		expect(() => parseSettings({ settledMatch: { fuzzy: true } })).toThrow("unknown keys");
-		expect(() => parseSettings({ settledMatch: [] })).toThrow("must be an object");
 	});
 });

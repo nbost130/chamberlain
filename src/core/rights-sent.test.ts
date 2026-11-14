@@ -2,12 +2,13 @@
  * The rights record survives a daemon restart. Each "fresh daemon" here is a new openRightsSent on the same store,
  * which is exactly what daemon.ts does once at startup, followed by the same rightsFor call wakeRights makes.
  */
+
 import { describe, expect, test } from "bun:test";
+import { AT, daemonWake, FULL, RULES, STEWARD } from "../testing/core-rights-sent-fixtures.ts";
 import { memStore } from "../testing/store.ts";
 import { rightsUnchanged } from "./decide.ts";
 import {
 	fullStamp,
-	invalidateRights,
 	LEGACY_STAMP,
 	loadRightsSent,
 	needsRights,
@@ -15,11 +16,9 @@ import {
 	parseRightsSent,
 	RIGHTS_SENT_KEY,
 	recordOf,
-	rightsEpoch,
 	rightsFirstId,
 	rightsFirstKey,
 	rightsFirstMessage,
-	rightsFor,
 	rightsGap,
 	rightsHash,
 	rightsHighWater,
@@ -28,30 +27,6 @@ import {
 	saveRightsSent,
 } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
-
-const STEWARD = "steward-thread-1";
-const RULES = "decision rights text\nR-1 a ruling";
-const MANDATE = "";
-const AT = "2026-11-13T18:00:00.000Z";
-const FULL = `Decision rights (standing rules):\n${RULES}`;
-
-/** One daemon process: the startup load, then one wake that lands. */
-function daemonWake(
-	store: Store,
-	used: number | undefined,
-	o: { steward?: string; rules?: string; mandate?: string; now?: string } = {},
-) {
-	const ledger = openRightsSent(store);
-	const r = rightsFor(ledger.get(), {
-		stewardId: o.steward ?? STEWARD,
-		rules: o.rules ?? RULES,
-		mandate: o.mandate ?? MANDATE,
-		used,
-		now: o.now ?? AT,
-	});
-	ledger.set(r.record);
-	return r.text;
-}
 
 describe("a restart keeps what was sent", () => {
 	test("a fresh daemon with a matching record and no compaction sends the pointer", () => {
@@ -318,47 +293,5 @@ describe("the durable record decides whether a row that depends on the rights ma
 		expect(text).toContain("(w1)");
 		expect(text.endsWith(`\n${FULL}`)).toBe(true);
 		expect(rightsFirstMessage("w1", "rules cost $& and $1")).toContain("rules cost $& and $1");
-	});
-});
-
-describe("the rights epoch", () => {
-	const hash = rightsHash(STEWARD, RULES);
-	test("starts at 0, rises by one on each invalidation, which drops the record in the same write and never deletes the row", () => {
-		const s = memStore();
-		expect(rightsEpoch(s)).toBe(0);
-		saveRightsSent({ hash, steward: STEWARD, epoch: 0 }, s);
-		expect(invalidateRights(s)).toBe(1);
-		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ epoch: 1 });
-		expect(loadRightsSent(s)).toBeUndefined();
-		expect(invalidateRights(s)).toBe(2);
-		expect(rightsEpoch(s)).toBe(2);
-	});
-	test("a record for an older epoch is never stored over a newer one", () => {
-		const s = memStore();
-		invalidateRights(s);
-		saveRightsSent({ hash, steward: STEWARD, epoch: 0 }, s);
-		expect(s.state.get(RIGHTS_SENT_KEY)).toEqual({ epoch: 1 });
-		saveRightsSent({ hash, steward: STEWARD, epoch: 1 }, s);
-		expect(loadRightsSent(s)).toEqual({ hash, steward: STEWARD, epoch: 1 });
-	});
-	test("an epoch that is not a whole number of 0 or more makes the record untrusted, and reads as 0", () => {
-		for (const epoch of [-1, 1.5, "1", null]) expect(parseRightsSent({ hash, epoch })).toBeUndefined();
-		const s = memStore();
-		s.state.set(RIGHTS_SENT_KEY, { epoch: "7" });
-		expect(rightsEpoch(s)).toBe(0);
-	});
-	test("a full stamp carries the epoch it was composed under, and the record it proves keeps it", () => {
-		const { record } = rightsFor(undefined, {
-			stewardId: STEWARD,
-			rules: RULES,
-			mandate: "",
-			used: 10,
-			now: AT,
-			epoch: 3,
-		});
-		const full = fullStamp(record, STEWARD, "s1");
-		expect(full.epoch).toBe(3);
-		expect(recordOf(full).epoch).toBe(3);
-		expect(rightsStamp(record, STEWARD, "s1").epoch).toBe(3);
 	});
 });

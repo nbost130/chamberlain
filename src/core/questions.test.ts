@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { stageEvidence } from "../ask.ts";
 import { parseAsk } from "../ask-parse.ts";
-import { memStore } from "../testing/store.ts";
-import { type Answer, askQuestion, getQuestion, notNow, QUEUE, type Question, questionStates } from "./questions.ts";
+import { answerOf, item, queue } from "../testing/core-questions-fixtures.ts";
+import { askQuestion, getQuestion, QUEUE, questionStates } from "./questions.ts";
 import {
 	type Claim,
 	claimWake,
@@ -17,38 +17,6 @@ import {
 } from "./questions-claim.ts";
 import { answerWake, batchable, ranked, recordAnswerDelivered } from "./questions-wake.ts";
 import type { Store } from "./store.ts";
-
-export const item = (id: string, over: Partial<Question> = {}): Question => ({
-	id,
-	kind: "product",
-	title: `Question ${id}`,
-	context: "",
-	options: [{ label: "A · One" }, { label: "B · Two" }],
-	recommended: 0,
-	thread: "Mobile app",
-	server: "main",
-	threadId: "thread-1",
-	createdAt: "2026-11-09T10:00:00.000Z",
-	...over,
-});
-const answerOf = (id: string, choice = 0): Answer => ({
-	choice,
-	label: String(choice),
-	by: "page",
-	t: "2026-11-09T13:00:00.000Z",
-	deliveryId: `answer:item:${id}`,
-});
-/** Asks each question and answers or sets aside the ones that say so, through the same functions the page uses. */
-function queue(...qs: (Question | [Question, "answer" | "not-now"])[]): Store {
-	const store = memStore();
-	for (const q of qs) {
-		const [i, what] = Array.isArray(q) ? q : [q, undefined];
-		askQuestion(store, i);
-		if (what === "answer") claimWake(store, pageClaim(i, answerOf(i.id)));
-		if (what === "not-now") notNow(store, i.id, "2026-11-09T12:00:00.000Z");
-	}
-	return store;
-}
 
 describe("a question is an item of the one item system", () => {
 	test("asking creates an open item of source queue and kind question, keyed by its id, with its static content as payload and no alert", () => {

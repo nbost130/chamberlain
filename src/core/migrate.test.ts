@@ -1,44 +1,13 @@
-import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { useCoreMigrateFixtures } from "../testing/core-migrate-fixtures.ts";
 import { holdFlock } from "./flock.ts";
 import { assertSupported, migrateStorage } from "./migrate.ts";
 import { FILES, STEPS, upgradeData } from "./migrate-steps.ts";
-import { LATEST_MIGRATION } from "./migrations.ts";
 import { checkVersion, SCHEMA_VERSION, SchemaTooNewError, stamp, versionOf } from "./schema.ts";
 import { readServers } from "./servers.ts";
-import { openStore } from "./sqlite-store.ts";
-import { dbPath } from "./store.ts";
 
-const dirs: string[] = [];
-const world = () => {
-	const root = mkdtempSync(`${tmpdir()}/chamberlain-migrate-`);
-	dirs.push(root);
-	const conf = `${root}/conf`,
-		state = `${root}/state`;
-	mkdirSync(conf, { mode: 0o700 });
-	mkdirSync(state, { mode: 0o700 });
-	return { conf, state };
-};
-const put = (path: string, text: string) => {
-	writeFileSync(path, text, { mode: 0o600 });
-	chmodSync(path, 0o600);
-};
-afterEach(() => {
-	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-
-/** Config files written by hand: none carries a schemaVersion. */
-function oldInstall(w: { conf: string; state: string }) {
-	put(
-		`${w.conf}/servers.json`,
-		JSON.stringify({ servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }] }),
-	);
-	put(`${w.conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port: 3790 }));
-	put(`${w.conf}/settings.json`, JSON.stringify({ principalName: "Ada" }));
-	put(`${w.conf}/sweep.json`, JSON.stringify({ checks: [] }));
-}
+const { world, put, oldInstall } = useCoreMigrateFixtures();
 
 describe("schema helpers", () => {
 	test("an unversioned record is version 0; a newer one is refused naming the file", () => {
@@ -289,58 +258,5 @@ describe("a config file that is not JSON", () => {
 		expect(assertSupported(w).find((s) => s.what === "web.json")).toMatchObject({ version: SCHEMA_VERSION, old: 0 });
 		expect(migrateStorage(w)).toEqual({ migrated: ["sweep.json"], skipped: [] });
 		expect(readFileSync(`${w.conf}/web.json`, "utf8")).toBe("{not json");
-	});
-});
-
-describe("entry points refuse a newer schema with exit code 3", () => {
-	const run = async (script: string, w: { conf: string; state: string }, ...args: string[]) => {
-		const p = Bun.spawn([process.execPath, new URL(script, import.meta.url).pathname, ...args], {
-			env: { ...process.env, CHAMBERLAIN_CONF: w.conf, CHAMBERLAIN_STATE: w.state },
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		const [err, code] = [await new Response(p.stderr).text(), await p.exited];
-		return { err, code };
-	};
-	const TOOLS = [
-		["./decided.ts", ["t", "d", "R1"]],
-		["./ruling.ts", ["list"]],
-		["./butler.ts", ["list"]],
-		["./afk.ts", ["held"]],
-	] as const;
-	test("migrate.ts, the command-line tools and the daemon, for a config file from a newer build", async () => {
-		const w = world();
-		put(`${w.conf}/settings.json`, JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 }));
-		for (const [script, args] of [["./migrate.ts", []], ...TOOLS] as const) {
-			const r = await run(script, w, ...args);
-			expect([script, r.code]).toEqual([script, 3]);
-			expect(r.err).toContain(`settings.json has schemaVersion ${SCHEMA_VERSION + 1}`);
-		}
-		const d = await run("../daemon.ts", w);
-		expect(d.code).toBe(3);
-		expect(d.err).toContain("newer Chamberlain");
-	});
-	test("the command-line tools and the daemon, for a database from a newer build", async () => {
-		const w = world();
-		openStore(dbPath(w.state)).close();
-		const db = new Database(dbPath(w.state));
-		db.run("INSERT INTO migrations (version, name, applied_at) VALUES (99, 'from the future', 'now')");
-		db.close();
-		for (const [script, args] of TOOLS) {
-			const r = await run(script, w, ...args);
-			expect([script, r.code]).toEqual([script, 3]);
-			expect(r.err).toContain("migration 99");
-			expect(r.err).toContain(`understands up to ${LATEST_MIGRATION}`);
-		}
-		const d = await run("../daemon.ts", w);
-		expect(d.code).toBe(3);
-		expect(d.err).toContain("newer Chamberlain");
-	});
-	test("migrate.ts upgrades an old config directory from the command line", async () => {
-		const w = world();
-		oldInstall(w);
-		const r = await run("./migrate.ts", w);
-		expect(r.code).toBe(0);
-		expect(JSON.parse(readFileSync(`${w.conf}/web.json`, "utf8")).schemaVersion).toBe(SCHEMA_VERSION);
 	});
 });

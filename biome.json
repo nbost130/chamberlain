@@ -26,7 +26,7 @@
 			"linter": {
 				"rules": {
 					"complexity": { "noExcessiveCognitiveComplexity": "off", "noExcessiveLinesPerFunction": "off" },
-					"style": { "noNonNullAssertion": "off", "noExcessiveLinesPerFile": "off" },
+					"style": { "noNonNullAssertion": "off" },
 					"suspicious": { "noExplicitAny": "off" }
 				}
 			}
