@@ -33,6 +33,7 @@ import { fetchWake } from "../testing/wake.ts";
 import { createApp, type AppDeps } from "./app.ts";
 import { canonicalIp, checkBind, loadConfig, parseConfig } from "./config.ts";
 import { resolveEvidence } from "./evidence.ts";
+import { openCapability } from "../testing/capability.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];
@@ -86,6 +87,7 @@ function setup(opts: { status?: (n: number) => number; root?: string; relay?: bo
 		}) as unknown as typeof fetch),
 	);
 	const page = createApp({
+		capability: openCapability(),
 		store,
 		state,
 		log: () => {},

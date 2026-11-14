@@ -195,6 +195,8 @@ export type Inspector = {
 export type PostOptions = {
 	/** The decision-queue page's base URL, when the page answers right now. Absent: post a plain notice. */
 	queueUrl?: string;
+	/** The page's capability token (src/core/capability.ts), put in every link the post carries. A view needs it with `queueUrl`; without it the post is a notice. */
+	capability?: string;
 };
 export type PostResult = { ok: boolean; detail: string; where: "view" | "notice" };
 

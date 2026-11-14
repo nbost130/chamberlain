@@ -1,5 +1,9 @@
 /**
- * The decision-queue page: bun src/web/server.ts [--test]
+ * The decision-queue page: bun src/web/server.ts [--test | link | rotate-token]
+ *
+ *   (no argument)   serve the page. Every request must prove it holds the install's capability token (src/core/capability.ts).
+ *   link            print the page's links with the token on them: the one to open on a phone or laptop, and the inline view's script address
+ *   rotate-token    make a new token; every old link, cookie and rendered view stops working at once, and the new links are printed
  *
  * Binds only to the address in ~/.config/chamberlain/web.json (loopback or a Tailscale IP) and refuses a wildcard or a
  * missing one. An answer's wake is an outbox row written in the answer's own transaction; the daemon's relay sends it (src/core/relay.ts).
@@ -8,6 +12,7 @@
  * address must be loopback, no wake is sent and no card is touched.
  */
 import { CONF, STATE } from "../core/config.ts";
+import { ensureToken, fileCapability, inlineScriptSrc, pageLink, rotateToken } from "../core/capability.ts";
 import { STATIC_FILES } from "../embedded.ts";
 import { has } from "../core/adapter.ts";
 import { configDir, stateDir } from "../core/state-dir.ts";
@@ -24,8 +29,55 @@ import { loadConfig } from "./config.ts";
 import { titleKeeper } from "./title.ts";
 import { createWaiting, threadSender, withAnswerRights, type ServerAdapter } from "./waiting.ts";
 
-/** Serves the page until stopped. `argv` is the arguments after the command: `--test` is the only one. */
+/** The addresses the page answers on, as links: the one `publicBase` names (an https address from `tailscale serve`), the bind address, and every allowed host name. */
+export function pageBases(cfg: { host: string; port: number; allowedHosts?: string[]; publicBase?: string }): string[] {
+	const hostPort = cfg.host.includes(":") ? `[${cfg.host}]:${cfg.port}` : `${cfg.host}:${cfg.port}`;
+	return [
+		...new Set([
+			...(cfg.publicBase && /^https:\/\/[^/\s]+$/.test(cfg.publicBase) ? [cfg.publicBase] : []),
+			`http://${hostPort}`,
+			...(cfg.allowedHosts ?? []).map((h) => `http://${h}:${cfg.port}`),
+		]),
+	];
+}
+
+/** Pure: what `chamberlain web link` prints. The token is in it, on purpose: it is the link. */
+export function linkLines(bases: string[], token: string): string[] {
+	return [
+		"Open one of these on any device that can reach the page. It signs the browser in (a long-lived cookie) and then drops the key from the address:",
+		...bases.map((b) => `  ${pageLink(b, token)}`),
+		"",
+		"For the Decisions thread's setup message (docs/decisions-thread-setup.md), the script tag of the inline view, ready to paste into its html:",
+		...bases.map((b) => `  <script src="${inlineScriptSrc(b, token).replaceAll("&", "&amp;")}"></script>`),
+		"",
+		"Treat these like a password: anyone who holds one can read the queue and answer for you. `chamberlain web rotate-token` ends them all.",
+	];
+}
+
+/** `chamberlain web link` and `chamberlain web rotate-token`. */
+function tokenCommand(sub: "link" | "rotate-token") {
+	startup();
+	let cfg;
+	try {
+		cfg = loadConfig(CONF);
+	} catch (e) {
+		console.error(String((e as Error).message));
+		process.exit(2);
+	}
+	if (sub === "rotate-token") {
+		const token = rotateToken(CONF);
+		console.log(
+			"rotated: every old link, browser cookie and already-rendered view stops working now. The new links:\n",
+		);
+		for (const l of linkLines(pageBases(cfg), token)) console.log(l);
+		return;
+	}
+	for (const l of linkLines(pageBases(cfg), ensureToken(CONF))) console.log(l);
+}
+
+/** Serves the page until stopped. `argv` is the arguments after the command: `--test`, or `link` or `rotate-token`. */
 export async function main(argv: string[] = process.argv.slice(2)) {
+	if (argv[0] === "link" || argv[0] === "rotate-token") return tokenCommand(argv[0]);
 	const HOME = process.env.HOME!;
 	const TEST = argv.includes("--test");
 	if (TEST) {
@@ -59,6 +111,8 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	// The daemon raises alarms; the page only logs them, so a page problem never alerts the principal twice.
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
 	startup({ migrate: true, log });
+	// The page's capability: made on the first start, kept in secrets/web-token, followed if `chamberlain web rotate-token` replaces it.
+	ensureToken(CONF);
 	maintain(store);
 	const alarm = (key: string, title: string) => log("alarm", { key, title });
 	const qs = cfg.decisionsServer;
@@ -101,6 +155,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 			});
 	const hostPort = cfg.host.includes(":") ? `[${cfg.host}]:${cfg.port}` : `${cfg.host}:${cfg.port}`;
 	const app = createApp({
+		capability: fileCapability(CONF),
 		store,
 		state: STATE,
 		log,
@@ -123,7 +178,10 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 			? titleKeeper(app.openCount, (title) => titled.adapter.setTitle!(title), log)
 			: undefined;
 	log("web-start", { host: cfg.host, port: server.port, test: TEST, title: keepTitle ? "live" : "fixed" });
-	console.log(`Chamberlain decision queue on http://${hostPort}${TEST ? " (test mode: no wakes)" : ""}`);
+	// The address only: the links with the key on them are `chamberlain web link`, never this log.
+	console.log(
+		`Chamberlain decision queue on http://${hostPort}${TEST ? " (test mode: no wakes)" : ""}. Every request needs the page's key: run \`chamberlain web link\` for the links.`,
+	);
 
 	const tick = async () => {
 		try {

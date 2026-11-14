@@ -107,7 +107,15 @@ class El {
 
 function run(
 	queue: () => unknown,
-	o: { src?: string; recent?: () => unknown; calls?: { method: string; path: string; body?: unknown }[] } = {},
+	o: {
+		src?: string;
+		recent?: () => unknown;
+		calls?: { method: string; path: string; body?: unknown }[];
+		/** Collects the headers each call sent. */
+		headers?: Record<string, string>[];
+		/** The status every reply has (default 200). */
+		status?: number;
+	} = {},
 ) {
 	const body = new El("body");
 	const dq = new El("div");
@@ -120,15 +128,16 @@ function run(
 		createElement: (t: string) => new El(t),
 		getElementById: (id: string) => (id === "dq" ? dq : null),
 	};
-	const fetch = async (url: string, init?: { method?: string; body?: string }) => {
+	const fetch = async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+		o.headers?.push(init?.headers ?? {});
 		o.calls?.push({
 			method: init?.method ?? "GET",
 			path: new URL(url).pathname,
 			...(init?.body ? { body: JSON.parse(init.body) } : {}),
 		});
 		return {
-			ok: true,
-			status: 200,
+			ok: (o.status ?? 200) < 400,
+			status: o.status ?? 200,
 			json: async () =>
 				url.endsWith("/api/queue")
 					? queue()
@@ -410,4 +419,44 @@ test("(a) a non-urgent question's card says NOT URGENT; an urgent one does not",
 	const kinds = dq.all((e) => e.className.split(" ").includes("dq-kind")).map((e) => e.textContent);
 	expect(kinds.filter((k) => k.endsWith(" · NOT URGENT"))).toHaveLength(1);
 	expect(kinds.some((k) => !k.includes("NOT URGENT"))).toBe(true);
+});
+
+test("the view sends the page's key from its own script address on every call, and carries it on the links it makes", async () => {
+	const headers: Record<string, string>[] = [];
+	const calls: { method: string; path: string }[] = [];
+	const KEY = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
+	const it = {
+		...item("x"),
+		evidence: [{ type: "image", path: "shot.png", caption: "a shot" }],
+	};
+	const dq = run(() => ({ items: [it] }), {
+		src: `http://queue.test/inline.js?view=decisions&k=${KEY}`,
+		calls,
+		headers,
+	});
+	await settle();
+	expect(calls.length).toBeGreaterThan(0);
+	expect(headers).toHaveLength(calls.length);
+	expect(headers.every((h) => h["x-decision-token"] === KEY)).toBe(true);
+	// an <img> cannot send a header, so its address carries the key; "Open the queue page" does too, and opens signed in
+	const imgs = dq.all((e) => e.tag === "img");
+	expect(imgs.length).toBeGreaterThan(0);
+	expect(imgs.every((i) => i.src.endsWith(`/shot.png?k=${KEY}`))).toBe(true);
+});
+
+test("a mirrored card's 'Open the queue page' link opens signed in, with the key from the script address", async () => {
+	const KEY = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
+	const dq = run(() => ({ items: [], cards: [card("rm -rf build", "sig-1")] }), {
+		src: `http://queue.test/inline.js?view=decisions&k=${KEY}`,
+	});
+	await settle();
+	expect(dq.all((e) => e.tag === "a" && e.href === `http://queue.test/?k=${KEY}`)).toHaveLength(1);
+});
+
+test("a view whose key was rotated says so, instead of showing an empty queue", async () => {
+	const dq = run(() => ({ items: [] }), { src: "http://queue.test/inline.js?view=decisions&k=old", status: 401 });
+	await settle();
+	expect(dq.textContent).toContain("key no longer works");
+	expect(dq.textContent).toContain("chamberlain web link");
+	expect(dq.textContent).not.toContain("Nothing waiting");
 });

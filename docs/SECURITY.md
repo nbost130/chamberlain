@@ -20,19 +20,28 @@ it is deliberately conservative.
 - **The page binds to one address, never a wildcard.** The address must be loopback (`127.0.0.1`, `::1`) or a Tailscale
   address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). It is canonicalised first, so IPv4-mapped, zero-padded, compressed
   and upper-case spellings cannot sneak past, and host names (which could resolve to anything) are refused outright.
-- **The page has no login.** Anyone who can reach its address can read and answer the queue; its protection is the
-  network (loopback or your tailnet). A request must also carry a known `Host` header (against DNS rebinding), and a
-  `POST` must carry an `x-decision-queue: 1` header and a JSON body, which a cross-site form cannot set.
-  A strict Content-Security-Policy is sent on every response.
-- **Accepted risk: T3's inline frames, and exactly what they can do.** T3 renders inline pages in a sandboxed frame whose
-  origin is `null` and which cannot hold a key, so any page running code in such a frame on a device that can reach the page's
-  address can send the same requests, if it knows an item id. The **server** limits them, by route and by field (not the page's
-  own script, which an attacker would not run): a `null`-origin request may `GET /api/queue`, `/api/recent` and `/api/rulings`, and
-  `POST /api/items/<id>/answer` with a `choice` and an optional `note` and **no other field**. It **cannot** save or edit a
-  ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes nothing), answer a mirrored card or an approval
-  (refused, however exact the fingerprint), read one item on its own (`GET /api/items/<id>` is refused), batch-accept, or
-  change anything else. Cards, approvals and rulings are done on the full page. What an inline frame *can* still do is answer a
-  decision-queue question with one of its options, once: that is the accepted risk.
+- **The page needs its key.** Every request to the API, to an item's evidence and to the page itself must prove it holds the install's
+  **capability token**: 32 random bytes, made on first start and kept in `secrets/web-token` (mode 0600). A request without it, or with a
+  wrong one, gets `401` and reads nothing; the page's own static code (`app.js`, `app.css`, `inline.js`) carries no data and is served
+  to any request that reached the right `Host`. The token is compared in constant time, and never logged, never written to the events
+  table and never echoed in a reply or an error. It travels three ways: as the `x-decision-token` header (T3's inline frames, tools), as a
+  `?k=` link that sets a long-lived, HMAC-signed, HttpOnly cookie in a browser and then drops the key from the address (a `303`), and as `?k=`
+  on an evidence image. The cookie holds no token, so `chamberlain web rotate-token` ends every old link, cookie and rendered view at
+  once. Every link Chamberlain makes carries the key (the Decisions thread's view, `chamberlain web link`); the page itself is gated as
+  well as its API because the network alone (loopback, or everything on your tailnet) is not a reason to hand the queue to any local
+  process or tailnet peer that can `curl` it. How an existing install gets back in: [web-access.md](web-access.md).
+  Beyond the key, a request must carry a known `Host` header (against DNS rebinding), a request from a page on **any other origin** is refused
+  outright, and a `POST` must carry an `x-decision-queue: 1` header and a JSON body, which a cross-site form cannot set. A strict
+  Content-Security-Policy is sent on every response.
+- **T3's inline frames, and exactly what they can do.** T3 renders inline pages in a sandboxed frame whose origin is `null` and which holds
+  no cookie of ours, so such a frame is let in **only with the token in the header**, which the Decisions thread's view reads from its own
+  script address (`inline.js?...&k=<token>`); a `null`-origin request without a valid token is refused (`401`), and a cookie or a `?k=` on
+  an API call does not stand in for it. The token is a capability: anyone who can read that thread can use it, as you can. Even with it
+  the **server** limits a frame, by route and by field (not the page's own script, which an attacker would not run): a `null`-origin
+  request may `GET /api/queue`, `/api/recent` and `/api/rulings`, and `POST /api/items/<id>/answer` with a `choice` and an optional `note`
+  and **no other field**. It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
+  nothing), answer a mirrored card or an approval (refused, however exact the fingerprint), read one item on its own
+  (`GET /api/items/<id>` is refused), batch-accept, or change anything else. Cards, approvals and rulings are done on the full page.
 - **What the page will and won't answer.** Question cards and one-time approvals ("approve once" or "decline", never
   "always") are answered **on the full page only**, after re-reading the card from its thread, and only if its fingerprint is
   unchanged since you saw it. An approval (or a goal proposal) takes **two requests, and the server enforces both**: the first

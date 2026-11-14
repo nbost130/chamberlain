@@ -24,6 +24,7 @@ import { createFakeAdapter, type FakeAdapter } from "./testing/fake-adapter.ts";
 import { noAlert } from "./testing/alert.ts";
 import { testRelayLock } from "./testing/lock.ts";
 import type { Store } from "./core/store.ts";
+import { openCapability } from "./testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const dirs: string[] = [];
@@ -164,6 +165,7 @@ const question: Question = {
 
 function pageApp(dir: string) {
 	return createApp({
+		capability: openCapability(),
 		store: connect(dir),
 		state: `${dir}/state`,
 		log: () => {},

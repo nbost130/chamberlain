@@ -7,7 +7,7 @@
  * hand-offs rendering `chamberlain <sub>` for every command they teach, and the sweep prompt embedded in the binary.
  * Exits 1 at the first thing that is wrong. Needs a binary built for the machine it runs on.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
@@ -115,6 +115,41 @@ try {
 			out || (await new Response(page.stderr).text()),
 		);
 		const base = `http://127.0.0.1:${port}`;
+		// The page's capability token: made at its first start, in secrets/. Without it nothing but the static code is served.
+		const tokenFile = join(conf, "secrets", "web-token");
+		const token = existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : "";
+		check(
+			"the page made its capability token (43 characters, mode 0600)",
+			token.length === 43 && (statSync(tokenFile).mode & 0o777) === 0o600,
+		);
+		const key = { "x-decision-token": token };
+		const nokey = await fetch(`${base}/api/queue`);
+		check("GET /api/queue with no key is 401", nokey.status === 401, `status ${nokey.status}`);
+		const nullNoKey = await fetch(`${base}/api/queue`, { headers: { origin: "null" } });
+		check("a null-origin GET /api/queue with no key is 401", nullNoKey.status === 401, `status ${nullNoKey.status}`);
+		const wrong = await fetch(`${base}/api/queue`, { headers: { "x-decision-token": `${token.slice(0, -1)}x` } });
+		check("a wrong key is 401", wrong.status === 401, `status ${wrong.status}`);
+		const locked = await fetch(`${base}/`);
+		check(
+			"GET / with no key is the 401 'needs its link' page",
+			locked.status === 401 && (await locked.text()).includes("chamberlain web link"),
+		);
+		const linked = await fetch(`${base}/?k=${token}`, { redirect: "manual" });
+		check(
+			"GET /?k=<key> is a 303 to / that sets the cookie",
+			linked.status === 303 &&
+				linked.headers.get("location") === "/" &&
+				(linked.headers.get("set-cookie") ?? "").startsWith("dq_cap="),
+			`status ${linked.status}`,
+		);
+		const link = exec("web", "link");
+		check(
+			"`chamberlain web link` prints the page link and the inline script address with the key",
+			link.exitCode === 0 &&
+				link.stdout.toString().includes(`/?k=${token}`) &&
+				link.stdout.toString().includes(`inline.js?view=decisions&amp;k=${token}`),
+			`exit ${link.exitCode}: ${link.stderr}`,
+		);
 		const files: [string, string, string][] = [
 			["/", "index.html", "text/html"],
 			["/app.css", "app.css", "text/css"],
@@ -122,7 +157,7 @@ try {
 			["/inline.js", "inline.js", "text/javascript"],
 		];
 		for (const [url, file, type] of files) {
-			const r = await fetch(base + url);
+			const r = await fetch(base + url, { headers: key });
 			const body = new Uint8Array(await r.arrayBuffer());
 			const want = new Uint8Array(readFileSync(join(ROOT, "src/web/static", file)));
 			check(
@@ -148,7 +183,7 @@ try {
 			`exit ${a.exitCode}: ${a.stdout}${a.stderr}`,
 		);
 		check("ask wrote the database under the scratch state dir", existsSync(join(state, "chamberlain.db")));
-		const queue = await (await fetch(`${base}/api/queue`)).text();
+		const queue = await (await fetch(`${base}/api/queue`, { headers: key })).text();
 		check(
 			"the page (another process) reads that question back from the database",
 			id !== undefined && queue.includes(id) && queue.includes("Smoke: which colour?"),

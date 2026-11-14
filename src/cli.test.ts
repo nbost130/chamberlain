@@ -17,6 +17,7 @@ import { t3Brief } from "./adapters/t3/brief.ts";
 import { createApp } from "./web/app.ts";
 import { memStore } from "./testing/store.ts";
 import { debugUsage, run, usage, VERSION } from "./cli.ts";
+import { openCapability } from "./testing/capability.ts";
 
 afterEach(() => setCompiled());
 
@@ -161,7 +162,14 @@ describe("the page serves its embedded files", () => {
 			}),
 		);
 		const host = "127.0.0.1:3790";
-		const app = createApp({ store: memStore(), state: dir, log: () => {}, hosts: [host], staticFiles: paths });
+		const app = createApp({
+			capability: openCapability(),
+			store: memStore(),
+			state: dir,
+			log: () => {},
+			hosts: [host],
+			staticFiles: paths,
+		});
 		for (const [url, [body, type]] of Object.entries(files).filter(([u]) => u !== "/index.html")) {
 			const r = await app.fetch(new Request(`http://${host}${url}`, { headers: { host } }));
 			expect(r.status).toBe(200);

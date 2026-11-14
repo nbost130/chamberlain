@@ -9,6 +9,15 @@
 	// Shells posted before the tag was added to them get it here.
 	try { if (document.head && !document.querySelector('meta[name="viewport"]')) { const m = document.createElement("meta"); m.name = "viewport"; m.content = "width=device-width, initial-scale=1"; document.head.append(m); } } catch { /* a page without a head keeps its layout */ }
 	const BASE = SRC.origin;
+	// The page's capability token rides on this script's own address (?k=). Every call proves it with a header, and an <img> or a link carries it as ?k=.
+	// A 401 means the key is missing, or it was rotated since this view was made: say so instead of showing an empty queue.
+	const KEY = SRC.searchParams.get("k") || "";
+	const kq = KEY ? `?k=${encodeURIComponent(KEY)}` : "";
+	const authFetch = async (url, init = {}) => {
+		const r = await fetch(url, { ...init, headers: { ...(init.headers || {}), ...(KEY ? { "x-decision-token": KEY } : {}) } });
+		if (r.status === 401) throw new Error("this view's key no longer works (it was rotated, or its link is old). Ask for a fresh view: run `chamberlain web link`, then send the Decisions setup message again");
+		return r;
+	};
 	// ?item=Q-… shows that one question (a Questions-thread card); without it, the whole open queue.
 	const ITEM = /^Q-[a-z0-9]{4,16}$/.test(SRC.searchParams.get("item") ?? "") ? SRC.searchParams.get("item") : null;
 	// ?view=decisions is the pinned Decisions thread: Waiting, Rulings and Recent tabs that keep themselves current.
@@ -104,7 +113,7 @@
 		list.replaceChildren(el("div", "dq-empty", "Loading the queue…"));
 		if (ITEM) return loadOne();
 		try {
-			const q = await (await fetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
+			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 			const items = q.items || [];
 			count.textContent = `${items.length} waiting`;
 			if (!items.length) { list.replaceChildren(el("div", "dq-empty", "Nothing waiting. The queue is clear.")); return; }
@@ -121,10 +130,10 @@
 		head.firstChild.textContent = "Decision ";
 		try {
 			// An inline frame may not read one item on its own, so it finds this one in the open queue, then in the recent answers.
-			const open = (await (await fetch(`${BASE}/api/queue`, { cache: "no-store" })).json()).items || [];
+			const open = (await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json()).items || [];
 			const it = open.find((x) => x.id === ITEM);
 			if (it) { count.textContent = "open"; list.replaceChildren(card(it)); return; }
-			const done = (await (await fetch(`${BASE}/api/recent`, { cache: "no-store" })).json()).items || [];
+			const done = (await (await authFetch(`${BASE}/api/recent`, { cache: "no-store" })).json()).items || [];
 			const was = done.find((x) => x.id === ITEM);
 			if (!was) { count.textContent = "?"; list.replaceChildren(el("div", "dq-msg dq-bad", `No such question: ${ITEM}`)); return; }
 			count.textContent = "answered";
@@ -162,7 +171,7 @@
 		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
 		if (imgs.length) {
 			const ev = el("div", "dq-ev");
-			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}`; i.alt = x.caption || "evidence"; ev.append(i); }
+			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; ev.append(i); }
 			c.append(ev);
 		}
 		if (it.secret) { c.append(el("div", "dq-ctx", "A secret is entered in its own thread, never here.")); return c; }
@@ -175,7 +184,7 @@
 			if ((m.type === "approval" || m.type === "goal") && m.command) c.append(el("pre", "dq-cmd", m.command));
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
 			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
-			const full = el("a", "dq-meta", "Open the queue page"); full.href = `${BASE}/`; full.target = "_blank"; full.rel = "noopener"; c.append(full);
+			const full = el("a", "dq-meta", "Open the queue page"); full.href = `${BASE}/${kq}`; full.target = "_blank"; full.rel = "noopener"; c.append(full);
 			if (m.link) { const a = el("a", "dq-meta", "Open the thread"); a.href = m.link; a.target = "_blank"; a.rel = "noopener"; c.append(a); }
 			return c;
 		}
@@ -199,7 +208,7 @@
 			go.disabled = true; msg.className = "dq-msg"; msg.textContent = "Sending…";
 			try {
 				// A choice and a note, and nothing else: the server refuses any other field from a frame.
-				const r = await fetch(`${BASE}/api/items/${encodeURIComponent(it.id)}/answer`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice, note: note.value }) });
+				const r = await authFetch(`${BASE}/api/items/${encodeURIComponent(it.id)}/answer`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice, note: note.value }) });
 				let b = {};
 				// EMPTY_CATCH_OK: the body only adds detail; r.ok and r.status already say whether the answer delivered.
 				try { b = await r.json(); } catch { b = {}; }
@@ -236,7 +245,7 @@
 		const bad = (pane, e) => pane.replaceChildren(el("div", "dq-msg dq-bad", `Could not reach the queue: ${e?.message ?? e}`));
 		async function waiting() {
 			try {
-				const q = await (await fetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
+				const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 				const h = q.health;
 				lastHealth = h; lastHealthLimits = q.healthLimits;
 				paintHealth(health, h, q.healthLimits);
@@ -268,7 +277,7 @@
 		}
 		async function rulings() {
 			try {
-				const r = (await (await fetch(`${BASE}/api/rulings`, { cache: "no-store" })).json()).rulings || [];
+				const r = (await (await authFetch(`${BASE}/api/rulings`, { cache: "no-store" })).json()).rulings || [];
 				const live = r.filter((x) => x.status !== "retired");
 				live.sort((a, b) => (a.status === b.status ? 0 : a.status === "in-force" ? -1 : 1));
 				if (!live.length) { panes.Rulings.replaceChildren(el("div", "dq-empty", "No rulings in force.")); return; }
@@ -282,7 +291,7 @@
 		}
 		async function recent() {
 			try {
-				const items = (await (await fetch(`${BASE}/api/recent`, { cache: "no-store" })).json()).items || [];
+				const items = (await (await authFetch(`${BASE}/api/recent`, { cache: "no-store" })).json()).items || [];
 				if (!items.length) { panes.Recent.replaceChildren(el("div", "dq-empty", "Nothing answered yet.")); return; }
 				panes.Recent.replaceChildren(...items.map((it) => {
 					const row = el("div", "dq-row");

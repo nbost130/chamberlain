@@ -2,6 +2,7 @@
  * The decision-queue web app: the queue, an item's detail and the rulings page, over one JSON API. Everything that
  * touches the network or the clock comes in through deps, so the tests drive the real handler.
  */
+import { TOKEN_HEADER, TOKEN_PARAM, type Capability } from "../core/capability.ts";
 import { crashPoint } from "../core/crash.ts";
 import { readHealth, HEALTH_CONFIG } from "../core/steward-health.ts";
 import { closeHeldForItem } from "../core/afk.ts";
@@ -62,6 +63,11 @@ export type AppDeps = {
 	log: (event: string, data?: Record<string, unknown>) => void;
 	/** Host header values accepted, e.g. "<tailscale-ip>:3790". A request for any other host is refused (DNS rebinding). */
 	hosts: string[];
+	/**
+	 * The capability token every request to the API, an item's evidence and the page itself must prove it holds (src/core/capability.ts). There is
+	 * no way to leave it out: a page without one would answer anything that reaches its port.
+	 */
+	capability: Capability;
 	threadLinks?: Record<string, string>;
 	/** Cards waiting in other threads (src/web/waiting.ts). */
 	mirror?: Pick<import("./waiting.ts").Waiting, "list" | "answer"> &
@@ -124,7 +130,7 @@ export function inlineVerdict(
 const inlineCors = (r: Response) => {
 	r.headers.set("access-control-allow-origin", "null");
 	r.headers.set("access-control-allow-methods", "GET, POST");
-	r.headers.set("access-control-allow-headers", "content-type, x-decision-queue");
+	r.headers.set("access-control-allow-headers", `content-type, x-decision-queue, ${TOKEN_HEADER}`);
 	r.headers.set("access-control-allow-private-network", "true");
 	r.headers.set("access-control-max-age", "600");
 	r.headers.set("vary", "origin");
@@ -632,18 +638,28 @@ export function createApp(d: AppDeps) {
 		"/inline.js": "text/javascript; charset=utf-8",
 	};
 
+	/** The page a browser without the key gets: static, and it says how to get one. */
+	const LOCKED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Decisions</title></head><body style="font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px"><h1 style="font-size:1.2rem">This page needs its link</h1><p>Open the link Chamberlain gave you. To get a fresh one, run <code>chamberlain web link</code> on the machine that runs Chamberlain.</p></body></html>`;
+	const locked = (inlineReply: boolean) => {
+		const r = withSecurity(
+			fail(401, "locked: this request carries no valid key. Run `chamberlain web link` for a fresh link."),
+		);
+		r.headers.set("www-authenticate", "Bearer");
+		return inlineReply ? inlineCors(r) : r;
+	};
+	const isShell = (p: string) => p === "/" || p === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(p);
+
 	async function fetch(req: Request): Promise<Response> {
 		const url = new URL(req.url);
 		// The page binds to one address. A Host it doesn't know is a rebinding attempt or a mistake.
 		if (!d.hosts.includes(req.headers.get("host") ?? "")) return withSecurity(fail(421, "unknown host"));
 		const origin = req.headers.get("origin");
-		// T3 shows inline pages in a sandboxed frame whose origin is "null", and they carry no key. ACCEPTED RISK (see docs/SECURITY.md, "Security
-		// model"): any page open on one of the principal's own devices that runs code in a sandboxed (null-origin) frame can read the
-		// queue and post a plain answer, if it knows this page's address and an item ID. That is ALL it can do, and the server says so
-		// (inlineVerdict): three reads, and an answer that is a choice and a note. It cannot save a ruling, answer a card or an approval,
-		// read one item, or change anything else. Every other check still holds: the loopback/Tailscale-only bind and Host check, the
-		// queue header and JSON body, a valid item ID, and one answer per item.
+		const sameOrigin = origin !== null && d.hosts.some((h) => origin === `http://${h}` || origin === `https://${h}`);
+		// T3 shows inline pages in a sandboxed frame whose origin is "null". It is let in only with the capability token (below), and then only
+		// for what inlineVerdict allows: three reads, and an answer that is a choice and a note. It cannot save a ruling, answer a card or an
+		// approval, read one item, or change anything else. A page on any other origin is refused outright, whatever it sends.
 		const inline = origin === "null";
+		if (origin !== null && !inline && !sameOrigin) return withSecurity(fail(403, "refused: cross-origin request"));
 		const verdict = inline ? inlineVerdict(req.method, url.pathname) : undefined;
 		// A null-origin request outside the list is refused whatever it is. (Static files carry no Origin when a frame loads them.)
 		if (inline && verdict === "refuse" && (url.pathname.startsWith("/api/") || req.method !== "GET"))
@@ -651,13 +667,58 @@ export function createApp(d: AppDeps) {
 				fail(403, "refused: an inline frame may read the queue, recent answers and rulings, and answer a question"),
 			);
 		const allowed = inline && verdict !== "refuse";
+		// A preflight cannot carry the token, so it is answered; it grants nothing, and the request it clears is checked below.
 		if (allowed && req.method === "OPTIONS") return withSecurity(inlineCors(new Response(null, { status: 204 })));
+		// Static files are the page's own code and carry no data: served to any request that reached the right Host.
+		if (req.method === "GET" && STATIC[url.pathname])
+			return withSecurity(
+				new Response(Bun.file(staticPath(url.pathname)), {
+					headers: { "content-type": STATIC[url.pathname]!, "cache-control": "no-cache" },
+				}),
+			);
+		// The capability. Three ways to show it, none of them from a frame that is not ours:
+		//   the header (an inline frame, or a tool);
+		//   the cookie (a browser that opened a link; never for a null origin, which holds no cookie of ours);
+		//   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address).
+		const byHeader = d.capability.accepts(req.headers.get(TOKEN_HEADER));
+		const byCookie = !inline && d.capability.acceptsCookie(req.headers.get("cookie"));
+		const linkable =
+			req.method === "GET" && !inline && (isShell(url.pathname) || url.pathname.startsWith("/evidence/"));
+		const linkKey = url.searchParams.get(TOKEN_PARAM);
+		const byLink = linkable && linkKey !== null && d.capability.accepts(linkKey);
+		if (!byHeader && !byCookie && !byLink) {
+			// A page load without the key gets the static "needs its link" page, not the app; everything else a plain 401.
+			if (req.method === "GET" && isShell(url.pathname))
+				return withSecurity(
+					new Response(LOCKED_PAGE, {
+						status: 401,
+						headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+					}),
+				);
+			return locked(allowed);
+		}
+		if (byLink && isShell(url.pathname)) {
+			// A link: set the long-lived cookie and go to the same page without the key, so it is not left in the address bar or history.
+			const clean = new URL(url);
+			clean.searchParams.delete(TOKEN_PARAM);
+			const secure = url.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
+			return withSecurity(
+				new Response(null, {
+					status: 303,
+					headers: {
+						location: `${clean.pathname}${clean.search}`,
+						"set-cookie": d.capability.grant(secure),
+						"cache-control": "no-store",
+					},
+				}),
+			);
+		}
 		if (req.method === "POST") {
 			// A cross-site form can't set this header or this content type, so a page elsewhere can't answer for the principal.
 			if (
 				req.headers.get("x-decision-queue") !== "1" ||
 				!isJsonContentType(req.headers.get("content-type")) ||
-				(origin && !allowed && !d.hosts.some((h) => origin === `http://${h}` || origin === `https://${h}`))
+				(origin && !allowed && !sameOrigin)
 			)
 				return withSecurity(fail(403, "refused"));
 		}
@@ -667,13 +728,7 @@ export function createApp(d: AppDeps) {
 		}
 		if (req.method !== "GET") return withSecurity(fail(404, "not found"));
 		if (url.pathname.startsWith("/evidence/")) return withSecurity(evidence(url));
-		if (STATIC[url.pathname])
-			return withSecurity(
-				new Response(Bun.file(staticPath(url.pathname)), {
-					headers: { "content-type": STATIC[url.pathname]!, "cache-control": "no-cache" },
-				}),
-			);
-		if (url.pathname === "/" || url.pathname === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(url.pathname))
+		if (isShell(url.pathname))
 			return withSecurity(
 				new Response(Bun.file(staticPath("/index.html")), {
 					headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },

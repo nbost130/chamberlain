@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
 import { askQuestion, readClaim } from "../core/questions.ts";
 import { createApp, isJsonContentType } from "./app.ts";
+import { openCapability } from "../testing/capability.ts";
 
 const HOST = "127.0.0.1:3790";
 
@@ -44,7 +45,14 @@ describe("the answer route", () => {
 			server: "main",
 			createdAt: "2026-11-12T10:00:00.000Z",
 		});
-		const app = createApp({ store, state: "/nonexistent", log: () => {}, hosts: [HOST], staticDir: "/nonexistent" });
+		const app = createApp({
+			capability: openCapability(),
+			store,
+			state: "/nonexistent",
+			log: () => {},
+			hosts: [HOST],
+			staticDir: "/nonexistent",
+		});
 		const r = await app.fetch(
 			new Request(`http://${HOST}/api/items/Q-abcd/answer`, {
 				method: "POST",
