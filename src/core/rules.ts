@@ -77,17 +77,21 @@ const SEPARATOR = /^\s*\|(\s*:?-+:?\s*\|)+\s*$/;
 const tableLines = (lines: string[], name: string): { header: string[]; body: string[] } => {
 	const runs: string[][] = [];
 	let prev = false;
+	let run: string[] | undefined;
 	for (const l of lines) {
 		const row = TABLE_ROW.test(l);
-		if (row && !prev) runs.push([]);
-		if (row) runs[runs.length - 1]!.push(l);
+		if (row && !prev) {
+			run = [];
+			runs.push(run);
+		}
+		if (row) run?.push(l);
 		prev = row;
 	}
 	if (runs.length === 0) throw Error(`operating rules: section "${name}" no longer holds a table`);
 	if (runs.length > 1)
 		throw Error(`operating rules: section "${name}" now holds ${runs.length} tables, so which one is meant is unclear`);
 	const [table] = runs as [string[]];
-	if (table.length < 2 || !SEPARATOR.test(table[1]!))
+	if (table.length < 2 || !SEPARATOR.test(table[1] ?? ""))
 		throw Error(`operating rules: the table in "${name}" no longer starts with its header`);
 	return { header: table.slice(0, 2), body: table.slice(2) };
 };
@@ -153,32 +157,28 @@ export function excerptEach(source: string, sections: Selector[], where: string,
 const WANTED = (x: unknown): x is string[] | "whole" =>
 	x === "whole" || (Array.isArray(x) && x.length > 0 && x.every((y) => typeof y === "string" && y.length > 0));
 
-function parseSelector(raw: unknown, where: string, i: number): Selector {
-	if (Array.isArray(raw)) {
-		const [name, wanted] = raw as [unknown, unknown];
-		if (typeof name !== "string" || !name)
-			throw Error(`operating-rules.json: ${where} section ${i + 1} needs a heading`);
-		if (!WANTED(wanted))
-			throw Error(`operating-rules.json: ${where} section "${name}" needs "whole" or a list of line prefixes`);
-		return [name, wanted];
-	}
-	if (!raw || typeof raw !== "object")
-		throw Error(
-			`operating-rules.json: ${where} section ${i + 1} must be [heading, "whole" | [line prefixes]] or an object with "section" or "table"`,
-		);
-	const o = raw as { section?: unknown; lines?: unknown; table?: unknown; rows?: unknown; as?: unknown };
-	if (o.as !== undefined && (typeof o.as !== "string" || !o.as.trim()))
-		throw Error(`operating-rules.json: ${where} section ${i + 1}: "as" must be a heading`);
-	const as = typeof o.as === "string" ? { as: o.as.trim() } : {};
-	if ((o.section === undefined) === (o.table === undefined))
-		throw Error(`operating-rules.json: ${where} section ${i + 1} needs exactly one of "section" and "table"`);
-	if (o.table !== undefined) {
-		if (typeof o.table !== "string" || !o.table)
-			throw Error(`operating-rules.json: ${where} section ${i + 1}: "table" must be the heading the table sits under`);
-		if (!WANTED(o.rows))
-			throw Error(`operating-rules.json: ${where} table "${o.table}" needs "rows": "whole" or a list of row prefixes`);
-		return { table: o.table, rows: o.rows, ...as };
-	}
+type SelectorObject = { section?: unknown; lines?: unknown; table?: unknown; rows?: unknown; as?: unknown };
+
+/** The `[heading, "whole" | [line prefixes]]` form of a selector. */
+function parseTupleSelector(raw: unknown[], where: string, i: number): Selector {
+	const [name, wanted] = raw as [unknown, unknown];
+	if (typeof name !== "string" || !name) throw Error(`operating-rules.json: ${where} section ${i + 1} needs a heading`);
+	if (!WANTED(wanted))
+		throw Error(`operating-rules.json: ${where} section "${name}" needs "whole" or a list of line prefixes`);
+	return [name, wanted];
+}
+
+/** The `{table, rows}` form of a selector. */
+function parseTableSelector(o: SelectorObject, where: string, i: number, as: { as?: string }): Selector {
+	if (typeof o.table !== "string" || !o.table)
+		throw Error(`operating-rules.json: ${where} section ${i + 1}: "table" must be the heading the table sits under`);
+	if (!WANTED(o.rows))
+		throw Error(`operating-rules.json: ${where} table "${o.table}" needs "rows": "whole" or a list of row prefixes`);
+	return { table: o.table, rows: o.rows, ...as };
+}
+
+/** The `{section, lines}` form of a selector. */
+function parseSectionSelector(o: SelectorObject, where: string, i: number, as: { as?: string }): Selector {
 	if (typeof o.section !== "string" || !o.section)
 		throw Error(`operating-rules.json: ${where} section ${i + 1}: "section" must be a heading`);
 	if (!WANTED(o.lines))
@@ -186,6 +186,24 @@ function parseSelector(raw: unknown, where: string, i: number): Selector {
 			`operating-rules.json: ${where} section "${o.section}" needs "lines": "whole" or a list of line prefixes`,
 		);
 	return { section: o.section, lines: o.lines, ...as };
+}
+
+function parseObjectSelector(o: SelectorObject, where: string, i: number): Selector {
+	if (o.as !== undefined && (typeof o.as !== "string" || !o.as.trim()))
+		throw Error(`operating-rules.json: ${where} section ${i + 1}: "as" must be a heading`);
+	const as = typeof o.as === "string" ? { as: o.as.trim() } : {};
+	if ((o.section === undefined) === (o.table === undefined))
+		throw Error(`operating-rules.json: ${where} section ${i + 1} needs exactly one of "section" and "table"`);
+	return o.table !== undefined ? parseTableSelector(o, where, i, as) : parseSectionSelector(o, where, i, as);
+}
+
+function parseSelector(raw: unknown, where: string, i: number): Selector {
+	if (Array.isArray(raw)) return parseTupleSelector(raw, where, i);
+	if (!raw || typeof raw !== "object")
+		throw Error(
+			`operating-rules.json: ${where} section ${i + 1} must be [heading, "whole" | [line prefixes]] or an object with "section" or "table"`,
+		);
+	return parseObjectSelector(raw as SelectorObject, where, i);
 }
 
 function parseSource(path: unknown, sections: unknown, where: string): RulesSource {
