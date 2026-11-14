@@ -76,20 +76,40 @@ export const usage = (): string =>
 export const debugUsage = (): string =>
 	["usage: chamberlain debug <command> [args]", "", ...DEBUG_COMMANDS.map(line)].join("\n");
 
+/** `debug <sub> ...` is the command `sub`; the help forms and an unknown `sub` are answered here, with the exit code to use. */
+function routeDebug(rest: string[]): { cmd: string; rest: string[] } | number {
+	const [sub, ...more] = rest;
+	if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
+		console.log(debugUsage());
+		return sub === undefined ? 2 : 0;
+	}
+	if (!isDebugCommand(sub)) {
+		console.error(`chamberlain: unknown debug command "${sub}"\n\n${debugUsage()}`);
+		return 2;
+	}
+	return { cmd: sub, rest: more };
+}
+
+/** Loads one command and runs it. A failing tool prints one line and gives exit 1; the two that stay up keep their stack trace. */
+async function runCommand(cmd: CommandName, rest: string[]): Promise<number> {
+	try {
+		await (await LOAD[cmd]()).main(rest);
+	} catch (e) {
+		// The tools that run as scripts print an error as one line and exit 1; the two that stay up keep Bun's stack trace for the crash report.
+		if (cmd === "daemon" || cmd === "web") throw e;
+		console.error(String(e instanceof Error ? e.message : e));
+		return 1;
+	}
+	return 0;
+}
+
 /** Runs `chamberlain <argv>`; returns the process exit code to use when the tool does not set one itself. */
 export async function run(argv: string[]): Promise<number> {
 	let [cmd, ...rest] = argv;
 	if (cmd === "debug") {
-		const [sub, ...more] = rest;
-		if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") {
-			console.log(debugUsage());
-			return sub === undefined ? 2 : 0;
-		}
-		if (!isDebugCommand(sub)) {
-			console.error(`chamberlain: unknown debug command "${sub}"\n\n${debugUsage()}`);
-			return 2;
-		}
-		[cmd, rest] = [sub, more];
+		const routed = routeDebug(rest);
+		if (typeof routed === "number") return routed;
+		({ cmd, rest } = routed);
 	}
 	if (cmd === "--version" || cmd === "-v" || cmd === "version") {
 		console.log(VERSION);
@@ -103,15 +123,7 @@ export async function run(argv: string[]): Promise<number> {
 		console.error(`chamberlain: unknown command "${cmd}"\n\n${usage()}`);
 		return 2;
 	}
-	try {
-		await (await LOAD[cmd as CommandName]()).main(rest);
-	} catch (e) {
-		// The tools that run as scripts print an error as one line and exit 1; the two that stay up keep Bun's stack trace for the crash report.
-		if (cmd === "daemon" || cmd === "web") throw e;
-		console.error(String(e instanceof Error ? e.message : e));
-		return 1;
-	}
-	return 0;
+	return runCommand(cmd as CommandName, rest);
 }
 
 if (import.meta.main) {
