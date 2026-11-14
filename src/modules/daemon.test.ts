@@ -102,7 +102,7 @@ const childrenOf = async (pid: number): Promise<string[]> => {
 	return out.split("\n").filter(Boolean);
 };
 
-/** Every child the process has over `ms`, sampled often, so a short-lived one is seen too. */
+/** Every child the process has over `ms`, sampled often, so a short-lived one is seen too. Whatever it is called: the list is not filtered. */
 async function childrenOver(pid: number, ms: number): Promise<string[]> {
 	const seen = new Set<string>();
 	for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(20))
@@ -110,16 +110,35 @@ async function childrenOver(pid: number, ms: number): Promise<string[]> {
 	return [...seen];
 }
 
+/**
+ * The kernel's own account of the children a process has had since it started, from /proc/<pid>/stat: the minor and major page faults of
+ * every child it has waited for, rolled up into the parent when the child is reaped. Any child that exec'd, however short its life and
+ * whatever it is called, took at least one fault, so a non-zero total is a child that existed, including one that began and ended between
+ * two samples of the list above. Zero is what a daemon that never started a process has. (Linux, like `ps --ppid` above.)
+ */
+async function reapedChildFaults(pid: number): Promise<number> {
+	const stat = await Bun.file(`/proc/${pid}/stat`).text();
+	// After the command name (which may hold spaces and parentheses) the fields run from the state, field 3: cminflt is 11 and cmajflt 13.
+	const f = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+	return Number(f[8]) + Number(f[10]);
+}
+
+/** The whole lifetime of the daemon so far, in the two ways: the children it has now or had in the window, and the children it ever reaped. */
+async function everChildren(pid: number, ms: number): Promise<{ seen: string[]; reapedFaults: number }> {
+	const seen = await childrenOver(pid, ms);
+	return { seen, reapedFaults: await reapedChildFaults(pid) };
+}
+
 describe("the real daemon", () => {
 	test("with no mail section: no mail.db, no mail.* event and no child process", async () => {
 		const w = world();
 		const p = w.daemon();
 		await w.until("the daemon's first pass", () => w.events(["startup-recovered"]).length > 0);
-		// Every child over the next 1.5 seconds, not a snapshot: a mail tool, a model CLI or anything else the daemon starts for the module.
-		const children = await childrenOver(p.pid, 1500);
+		// Every child, by any name and of any lifetime: the list sampled over 1.5 seconds and the kernel's account of every child since the start.
+		const children = await everChildren(p.pid, 1500);
 		expect(existsSync(mailDbPath(w.state))).toBe(false);
 		expect(w.mailEvents()).toEqual([]);
-		expect(children.filter((c) => /mail|claude|gog|sh -c/.test(c))).toEqual([]);
+		expect(children).toEqual({ seen: [], reapedFaults: 0 });
 		expect(existsSync(w.spawned)).toBe(false);
 		expect(readdirSync(w.state).filter((f) => f.startsWith("mail"))).toEqual([]);
 	}, 30_000);
@@ -128,10 +147,10 @@ describe("the real daemon", () => {
 		const w = world({ provider: "none", mode: "live", allowMailToLeaveMachine: true });
 		const p = w.daemon();
 		await w.until("the daemon's first pass", () => w.events(["startup-recovered"]).length > 0);
-		const children = await childrenOver(p.pid, 1500);
+		const children = await everChildren(p.pid, 1500);
 		expect(existsSync(mailDbPath(w.state))).toBe(false);
 		expect(w.mailEvents()).toEqual([]);
-		expect(children.filter((c) => /mail|claude|gog/.test(c))).toEqual([]);
+		expect(children).toEqual({ seen: [], reapedFaults: 0 });
 		expect(existsSync(w.spawned)).toBe(false);
 	}, 30_000);
 
@@ -140,11 +159,28 @@ describe("the real daemon", () => {
 		const p = w.daemon();
 		await w.until("mail.start", () => w.mailEvents().length > 0);
 		expect(existsSync(mailDbPath(w.state))).toBe(true);
-		const children = await childrenOver(p.pid, 1500);
+		const children = await everChildren(p.pid, 1500);
 		expect(w.mailEvents()).toEqual(["mail.start"]);
-		// B1 reads no mailbox and calls no model: neither tool was ever run.
-		expect(children.filter((c) => /mail|claude|gog/.test(c))).toEqual([]);
+		// B1 reads no mailbox and calls no model: no process of any name was ever started, and neither tool was ever run.
+		expect(children).toEqual({ seen: [], reapedFaults: 0 });
 		expect(existsSync(w.spawned)).toBe(false);
+	}, 30_000);
+
+	test("the account sees what the sampled list cannot: a child that began and ended before the first sample", async () => {
+		// The mutation this guards against: a process started and finished at once, by name nothing here knows, before any sample is taken.
+		const parent = Bun.spawn(["bun", "-e", 'Bun.spawnSync(["/usr/bin/true"]); await Bun.sleep(60_000)'], {
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+		procs.push(parent);
+		const end = Date.now() + 20_000;
+		let faults = await reapedChildFaults(parent.pid);
+		while (faults === 0 && Date.now() < end) {
+			await Bun.sleep(25);
+			faults = await reapedChildFaults(parent.pid);
+		}
+		expect(faults).toBeGreaterThan(0);
+		expect(await childrenOf(parent.pid)).toEqual([]);
 	}, 30_000);
 
 	test("a section the module cannot parse stops the daemon before it serves anything, naming the key", async () => {

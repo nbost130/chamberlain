@@ -178,15 +178,27 @@ export function moduleViolations(file: string, code: string): string[] {
 /**
  * The module's reach (docs/EMAIL-TRIAGE.md, section 8, "Tracking links are never opened by the module"): a module has no HTTP client and
  * starts no process of its own. A non-test file under src/modules/ may not call `fetch(`, open a socket or server, name an HTTP, socket or
- * DNS package, or spawn; the model CLI is spawned by src/core/llm/cli.ts, which is core. A provider or a route that must run the operator's
- * own program is listed in MAY_SPAWN with the reason, and nothing else is: B2 (#35) lists the provider's file, B7 (#40) the route's.
+ * DNS package, or start a process; the model CLI is spawned by src/core/llm/cli.ts, which is core. A provider or a route that must run the
+ * operator's own program is listed in MAY_SPAWN with the reason, and nothing else is: B2 (#35) lists the provider's file, B7 (#40) the route's.
+ *
+ * What the scan enforces, in source text (it reads names, so a name built at run time is outside it; the behavioural proof is the real daemon
+ * test in src/modules/daemon.test.ts, which counts every child the kernel saw):
+ *   - the process APIs: `node:child_process` and `node:cluster`; the package `bun` itself, whose named exports `$`, `spawn` and `spawnSync`
+ *     (and `serve`, `connect`) are the same capabilities as the global's; `bun:ffi`; and the process libraries execa, cross-spawn, zx,
+ *     shelljs and node-pty;
+ *   - the `Bun` global: a module may name only the members in SAFE_BUN. `Bun.$`, `Bun.spawn`, a destructured or aliased `Bun`, `Bun?.x`,
+ *     `globalThis.Bun` and `Bun["x"]` are all a reference to `Bun` that is not one of those members, so each is refused;
+ *   - the network: `fetch(`, WebSocket, XMLHttpRequest and the HTTP, socket and DNS packages.
  */
 export const MAY_SPAWN: Record<string, string> = {};
+/** The members of the `Bun` global a module may use: files, time and hashing, none of which starts a process or opens a socket. */
+const SAFE_BUN = "file|write|sleep|sleepSync|hash|nanoseconds|env";
 const NETWORK_PACKAGES =
 	/^(node:)?(http|https|http2|net|tls|dgram|dns|dns\/promises)$|^(undici|ws|node-fetch|axios|got)$/;
-const NETWORK_CALLS =
-	/\bfetch\s*\(|\bnew\s+WebSocket\b|\bXMLHttpRequest\b|\bBun\.(connect|listen|serve|udpSocket|dns)\b/;
-const SPAWNS = /\bBun\.(?:spawn|spawnSync)\b|\bBun\.\$|\b(execa|spawnSync|execSync|execFile|execFileSync)\s*\(/;
+const SPAWN_PACKAGES = /^(node:)?(child_process|cluster)$|^(bun|bun:ffi|execa|cross-spawn|zx|shelljs|node-pty)$/;
+const NETWORK_CALLS = /\bfetch\s*\(|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/;
+const BUN_GLOBAL_OUTSIDE_SAFE = new RegExp(`\\bBun\\b(?!\\s*\\.\\s*(?:${SAFE_BUN})\\b)`);
+const SPAWN_CALLS = /\b(execa|spawnSync|execSync|execFile|execFileSync)\s*\(/;
 
 /** Pure: the violations of the reach rule in one non-test file under src/modules/. `file` is src/-relative. */
 export function moduleReachViolations(file: string, code: string): string[] {
@@ -195,13 +207,17 @@ export function moduleReachViolations(file: string, code: string): string[] {
 	const bad: string[] = [];
 	for (const spec of specifiers(code)) {
 		if (NETWORK_PACKAGES.test(spec)) bad.push(`${file} imports ${spec}: a module has no HTTP, socket or DNS client`);
-		if (/^(node:)?child_process$/.test(spec) && !(file in MAY_SPAWN))
-			bad.push(`${file} imports ${spec}: a module spawns nothing unless MAY_SPAWN lists the file`);
+		if (SPAWN_PACKAGES.test(spec) && !(file in MAY_SPAWN))
+			bad.push(`${file} imports ${spec}: a module starts no process unless MAY_SPAWN lists the file`);
 	}
 	if (NETWORK_CALLS.test(bare))
 		bad.push(`${file} calls fetch or opens a socket or server: a module has no network client`);
-	if (SPAWNS.test(bare) && !(file in MAY_SPAWN))
-		bad.push(`${file} spawns a process: a module spawns nothing unless MAY_SPAWN lists the file`);
+	if (BUN_GLOBAL_OUTSIDE_SAFE.test(bare))
+		bad.push(
+			`${file} names Bun outside Bun.{${SAFE_BUN.replaceAll("|", ",")}}: that is where a process, socket or server starts`,
+		);
+	if (SPAWN_CALLS.test(bare) && !(file in MAY_SPAWN))
+		bad.push(`${file} starts a process: a module starts none unless MAY_SPAWN lists the file`);
 	return bad;
 }
 
@@ -252,6 +268,24 @@ describe("optional modules", () => {
 			"const p = Bun.spawn(['ls']);",
 			"const p = Bun.spawnSync(['ls']);",
 			"const p = Bun.$`ls`;",
+			// Bun's own exports and every way to hold the global: none is a literal `Bun.spawn` or `Bun.$`.
+			'import { $ } from "bun";\nexport const child = () => $`/usr/bin/true`;',
+			'import { $ as sh } from "bun";\nexport const child = () => sh`/usr/bin/true`;',
+			'import { spawn } from "bun";\nspawn(["ls"]);',
+			'import * as bun from "bun";\nbun.spawnSync(["ls"]);',
+			'import bun from "bun";\nbun.$`ls`;',
+			'const { $ } = await import("bun");',
+			'const { spawn } = require("bun");',
+			"const { spawn } = Bun;",
+			"const B = Bun;\nB.spawn(['ls']);",
+			"Bun?.spawn(['ls']);",
+			'Bun["spawn"](["ls"]);',
+			"globalThis.Bun.spawn(['ls']);",
+			'import { dlopen } from "bun:ffi";',
+			'import { execa } from "execa";',
+			'import cp from "cross-spawn";',
+			'import { fork } from "node:cluster";',
+			'import { exec } from "child_process";',
 			'import { exec } from "node:child_process";',
 			'const m = require("node:http");',
 			'const m = await import("node:dns", {});',
@@ -262,6 +296,10 @@ describe("optional modules", () => {
 		expect(moduleReachViolations("modules/mail/x.test.ts", "Bun.spawn(['bun']); await fetch(u);")).toEqual([]);
 		expect(moduleReachViolations("core/x.ts", "Bun.spawn(['ls']);")).toEqual([]);
 		expect(moduleReachViolations(f, 'import { join } from "node:path";\nconst s = "fetched";')).toEqual([]);
+		// The Bun members that are files, time and hashing are not process or network capabilities.
+		expect(
+			moduleReachViolations(f, "await Bun.write(p, await Bun.file(q).text()); await Bun.sleep(1); Bun.hash(s);"),
+		).toEqual([]);
 	});
 
 	test("the scanner catches each kind of violation (so a pass means something)", () => {

@@ -119,6 +119,31 @@ describe("off means absent", () => {
 		expect(timers).toEqual([]);
 	});
 
+	test("starting and stopping the modules, off or on, starts no process, whatever it is called or however short it lives", () => {
+		// The spies stand at the call, before anything runs, so a process that began and ended inside it (and a name no test knows) still shows.
+		const started: string[] = [];
+		const real = { spawn: Bun.spawn, spawnSync: Bun.spawnSync };
+		Bun.spawn = ((...a: unknown[]) => {
+			started.push(`Bun.spawn ${JSON.stringify(a[0])}`);
+			return (real.spawn as (...x: unknown[]) => unknown)(...a);
+		}) as typeof Bun.spawn;
+		Bun.spawnSync = ((...a: unknown[]) => {
+			started.push(`Bun.spawnSync ${JSON.stringify(a[0])}`);
+			return (real.spawnSync as (...x: unknown[]) => unknown)(...a);
+		}) as typeof Bun.spawnSync;
+		try {
+			const off = dirs();
+			startModules({ conf: off.conf, state: off.state, log: () => {} }).stop();
+			const on = dirs();
+			configure(on.conf, { mail: ON });
+			startModules({ conf: on.conf, state: on.state, log: () => {} }).stop();
+		} finally {
+			Bun.spawn = real.spawn;
+			Bun.spawnSync = real.spawnSync;
+		}
+		expect(started).toEqual([]);
+	});
+
 	test("with the module on, the first start makes mail.db and says so once; stopping closes it", () => {
 		const a = dirs();
 		configure(a.conf, { mail: ON });
