@@ -1,31 +1,39 @@
 {
-  "name": "chamberlain",
-  "version": "0.3.0",
-  "description": "Watches your T3 Code threads and wakes the Steward, an agent thread, only when something needs it. Zero model calls.",
-  "type": "module",
-  "license": "MIT",
-  "keywords": [
-    "t3-code",
-    "agents",
-    "orchestration",
-    "daemon",
-    "decision-queue"
-  ],
-  "engines": {
-    "bun": ">=1.4.0"
-  },
-  "scripts": {
-    "start": "bun src/daemon.ts",
-    "web": "bun src/web/server.ts",
-    "test": "bun test",
-    "typecheck": "bunx tsc --noEmit",
-    "migrate": "bun src/core/migrate.ts",
-    "check": "biome format .",
-    "format": "biome format --write ."
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.6.7",
-    "bun-types": "^1.4.4",
-    "typescript": "^7.0.2"
-  }
+	"name": "chamberlain",
+	"version": "0.3.0",
+	"description": "Watches your T3 Code threads and wakes the Steward, an agent thread, only when something needs it. Zero model calls.",
+	"type": "module",
+	"license": "MIT",
+	"keywords": [
+		"t3-code",
+		"agents",
+		"orchestration",
+		"daemon",
+		"decision-queue"
+	],
+	"engines": {
+		"bun": ">=1.4.0"
+	},
+	"scripts": {
+		"start": "bun src/daemon.ts",
+		"web": "bun src/web/server.ts",
+		"test": "bun test",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check --error-on-warnings .",
+		"lint:fix": "biome check --write .",
+		"knip": "knip --no-progress",
+		"jscpd": "jscpd src scripts --silent",
+		"checks": "bun run lint && bun run typecheck && bun run knip && bun run jscpd && bun test",
+		"migrate": "bun src/core/migrate.ts",
+		"format": "biome format --write .",
+		"prepare": "bun scripts/hooks.ts install"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.6.7",
+		"bun-types": "^1.4.4",
+		"jscpd": "5.4.2",
+		"knip": "6.44.2",
+		"lefthook": "2.2.2",
+		"typescript": "^7.0.2"
+	}
 }

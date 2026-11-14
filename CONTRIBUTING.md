@@ -9,13 +9,22 @@ You need [Bun](https://bun.sh) 1.4 or newer (developed on 1.4.4); Chamberlain us
 supported.
 
 ```sh
-bun install
-bun test
-bunx tsc --noEmit
-bun run check         # the formatter (Biome, 120 columns); `bun run format` fixes it
+bun install           # also installs the git hooks (lefthook)
+bun run checks        # everything CI runs: lint, typecheck, knip, jscpd, tests
+bun run lint:fix      # Biome's format and import-order fixes
 ```
 
-All of them must pass before a change is merged (CI runs them). `bun test` seals itself off from your machine (`src/test-setup.ts`): it
+`bun run checks` is exactly what CI runs, and the tree has zero findings: no baseline, no warnings. It runs
+
+- `biome check --error-on-warnings`: format, the recommended lint rules, import order, and two size limits, cognitive complexity 15 and 50 lines per function (`biome.json`; test files are exempt from the size limits and from `noNonNullAssertion` and `noExplicitAny`);
+- `tsc --noEmit`;
+- `knip`: unused files, exports and dependencies (tests count as entry points);
+- `jscpd`: any copy-pasted block of 50 or more tokens fails (`.jscpd.json`);
+- `bun test`.
+
+The hooks run the same checks on less: pre-commit is Biome on the staged files plus the typecheck; pre-push is the typecheck, Biome on everything changed against `origin/main`, knip, jscpd and the full tests, under one lock so pushes from several worktrees queue. The hooks cannot be skipped by setting `LEFTHOOK_EXCLUDE` or `LEFTHOOK_ONLY`; a `git commit --no-verify` is logged to `<git-common-dir>/chamberlain-hooks/bypass.log` by the post-commit hook, and CI runs everything again. (`scripts/hooks.ts` says what git cannot see.)
+
+`bun test` seals itself off from your machine (`src/test-setup.ts`): it
 runs with a scratch `HOME`, `CHAMBERLAIN_CONF` and `CHAMBERLAIN_STATE`, drops every `CHAMBERLAIN_*` variable your shell has, and points the
 alert command at a recorder, so it can never read your settings or run your alert command. A test that raises an alarm through a real
 engine passes `alert: noAlert` (`src/testing/alert.ts`); the run fails at the end if anything called the recorder. Anything that talks to a

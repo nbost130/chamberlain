@@ -8,8 +8,11 @@ on:
 permissions: {}
 
 jobs:
-  test:
+  # Every check, the same as `bun run checks` on a laptop: Biome (format, lint, imports, complexity limits),
+  # typecheck, knip (dead code), jscpd (duplication) and the tests. About 75 s on a GitHub-hosted runner.
+  checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -19,15 +22,26 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
-      - run: bunx tsc --noEmit
-      - run: bun run check
-      # Includes src/architecture.test.ts, which fails if src/core/ imports from src/adapters/.
-      - run: bun test
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      # A slow registry (the 2026-11-09 Cloudflare incident: a 1.4 s install took 36 minutes) fails fast and
+      # gets one longer retry, instead of holding the runner until the job limit.
+      - id: install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 4
+        continue-on-error: true
+      - if: steps.install.outcome == 'failure'
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
+      - run: bun run checks
 
   # The same four binaries the release builds, all from one runner. The macOS job below runs the Apple Silicon one.
   binaries:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -37,7 +51,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - id: install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 4
+        continue-on-error: true
+      - if: steps.install.outcome == 'failure'
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
       - run: bun scripts/build.ts
       - name: Smoke-test the linux-x64 binary from an empty directory
         run: bun scripts/smoke.ts dist/chamberlain-*-linux-x64.tar.gz
@@ -51,6 +76,7 @@ jobs:
   macos:
     needs: binaries
     runs-on: macos-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
