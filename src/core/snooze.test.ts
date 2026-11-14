@@ -6,26 +6,21 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import { appendHeld, HELD, heldId, heldOpen } from "./afk.ts";
+import { appendHeld, HELD, heldId, heldOpen } from "./afk-held.ts";
 import { reconcileItemHolds } from "./hold-reconcile.ts";
+import { askQuestion, getQuestion, QUEUE, type Question, questionStates } from "./questions.ts";
+import { claimWake, pageClaim } from "./questions-claim.ts";
 import {
 	answerRoute,
 	answerWake,
-	askQuestion,
 	batchable,
-	claimWake,
 	DIRECTION_LABEL,
 	DISMISSED_LABEL,
-	getQuestion,
-	pageClaim,
 	plainAnswer,
-	QUEUE,
-	type Question,
-	questionStates,
 	ranked,
 	recordAnswerDelivered,
 	snoozed,
-} from "./questions.ts";
+} from "./questions-wake.ts";
 import { findSettled } from "./settled.ts";
 import {
 	clearSnooze,

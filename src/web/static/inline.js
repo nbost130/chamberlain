@@ -1,7 +1,7 @@
 // The decision queue for T3's inline chat frames. The Steward renders only a two-line shell that loads this file, so
 // showing the queue costs it almost nothing; questions come live from /api/queue. Theme comes from T3's CSS variables.
 // This view holds only the VIEW key, and the SERVER enforces what that may do (src/web/view-key.ts): it may GET /api/queue, /api/recent and
-// /api/rulings, and POST an item's answer (a choice and a note), snooze, direction and dismiss, and nothing else. The buttons along each card's
+// /api/rulings, and POST an item's answer (a choice, never a note), snooze, direction and dismiss, and nothing else. The buttons along each card's
 // bottom edge do those four in place: one tap is one request, no confirmation, no page change. It never answers a card or an approval, never
 // saves a ruling, never un-snoozes and never reads one item on its own: those are done on the full queue page, which the links open.
 (() => {

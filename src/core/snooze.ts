@@ -10,7 +10,7 @@
  * un-snoozes, an answer, direction or dismissal settles the item (the page clears it), or the card behind a pointer resolves.
  */
 import type { Adapter, PostResult } from "./adapter.ts";
-import { heldForItem, heldId, heldOpen, noteHeld } from "./afk.ts";
+import { heldForItem, heldId, heldOpen, noteHeld } from "./afk-held.ts";
 import {
 	isUrgent,
 	type KeyUsed,
@@ -52,9 +52,10 @@ function noteHolds(store: Store, id: string, text: string, now: Date) {
 
 /**
  * Snoozes an open item until `until` (an ISO time, already checked), replacing any earlier snooze. Its holds stay open and are told when it returns.
- * `key` is the key the snooze was made with, recorded with it (the page's, or the Decisions view's).
+ * `how` is when it was made and the key it was made with, recorded with it (the page's, or the Decisions view's).
  */
-export function snoozeQuestion(store: Store, id: string, until: string, now = Date.now(), key: KeyUsed = "page") {
+export function snoozeQuestionAs(store: Store, id: string, until: string, how: { now: number; key: KeyUsed }) {
+	const { now, key } = how;
 	store.tx(() => {
 		store.items.patch(QUEUE, id, {
 			snoozedUntil: until,
@@ -62,14 +63,19 @@ export function snoozeQuestion(store: Store, id: string, until: string, now = Da
 			snoozedKey: key,
 			snoozeReturned: undefined,
 		});
+		const from = key === "view" ? " (from the Decisions view)" : "";
 		noteHolds(
 			store,
 			id,
-			`Snoozed on the queue${key === "view" ? " (from the Decisions view)" : ""} until ${until.slice(0, 16)}Z. This hold stays open: the item is not answered.`,
+			`Snoozed on the queue${from} until ${until.slice(0, 16)}Z. This hold stays open: the item is not answered.`,
 			new Date(now),
 		);
 	});
 }
+
+/** A snooze made with the page's own key: `snoozeQuestionAs`. */
+export const snoozeQuestion = (store: Store, id: string, until: string, now = Date.now()) =>
+	snoozeQuestionAs(store, id, until, { now, key: "page" });
 
 /** Clears an item's snooze and says nothing: the answer, direction and dismissal paths use it, because settling an item ends its snooze. */
 export const clearSnooze = (store: Store, id: string) =>

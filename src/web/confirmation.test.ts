@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "../core/adapter.ts";
+import type { WaitingCard } from "../core/adapter-waiting.ts";
 import { CHALLENGE_TTL_MS } from "../core/challenge.ts";
 import { openCapability } from "../testing/capability.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";

@@ -42,9 +42,10 @@ it is deliberately conservative.
   cookie, a page load, a `?k=` link, evidence, a card or a ruling. `chamberlain ask` refuses to send a post whose text holds the page's token.
   **The view key's list is one explicit allowlist in code (`src/web/view-key.ts`): seven routes and no more.** Three reads: `GET /api/queue`,
   `/api/recent` and `/api/rulings`. Four writes, each on one queue item, so the pinned Decisions view acts in place: `POST /api/items/<id>/answer`
-  (a `choice` and an optional `note` and **no other field**), `/snooze`, `/direction` and `/dismiss`. Each is recorded as the same write from the page is,
+  (a `choice` and **no other field**: a note, even an empty one, is refused with 403 and nothing written; a note is a Direction, or written on the full page), `/snooze`, `/direction` and `/dismiss`. Each is recorded as the same write from the page is,
   plus **which key made it** (`key: "view"` or `key: "page"` on the claim's answer, on the snooze, on the logged event and on the ledger row of an answer;
-  a record from before this reads as the page). Every other route refuses the view key (`403`, nothing written), from any `Origin` or none:
+  a record from before this reads as the page). Every write the full page makes carries `key: "page"` too, not only these: option answers, batch accepts,
+  snooze, un-snooze, direction, dismiss, not-now, each ruling action, a card's confirmation (issued or refused) and a card's answer. Every other route refuses the view key (`403`, nothing written), from any `Origin` or none:
   **un-snooze**, not-now, batch-accept, every ruling route (save, confirm, edit, once, retire, and a `saveRuling` or `rulingWording` field on an answer),
   the question-card and approval routes and their confirmation step, one item's own read, evidence, every page load and a cookie. The web API has no
   settings or key-management route for it to reach (key rotation is `chamberlain web rotate-token`, on the machine). Three locks hold the list: the origin

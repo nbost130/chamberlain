@@ -1,5 +1,6 @@
 /** Telemetry-database helpers for tests: an `Obs` on an in-memory (or scratch-directory) `obs.db`, and plain reads of what it holds. */
-import { Obs, type ObsOptions } from "../core/obs/obs.ts";
+import { Obs } from "../core/obs/obs.ts";
+import type { ObsOptions } from "../core/obs/obs-spec.ts";
 
 export const HOST = "test-host";
 export const THREAD = "0b6c1a52-5a1e-4c0f-9d31-7a2f2b3c4d5e";

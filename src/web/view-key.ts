@@ -8,6 +8,7 @@
  *   - `viewKeyVerdict`: the request's route and method against the list (the origin gate and the key gate in ./app.ts);
  *   - `authorityOf`: who a request is, as the second lock inside each write route sees it;
  *   - `mayDo`: whether that authority may do one of the write actions (the lock inside the route).
+ * The answer is held to its field list too (`VIEW_KEY_ANSWER_FIELDS`, checked in ./app-answer.ts): the view key's answer is a choice and nothing else.
  * `inlineVerdict` (./app.ts) is the OLD list, three reads and a plain answer, and still holds for the page key from a frame or with no Origin.
  */
 
@@ -18,6 +19,9 @@ export const VIEW_KEY_READS: ReadonlySet<string> = new Set(["/api/queue", "/api/
 /** The writes the view key may make, each on one queue item: `POST /api/items/<id>/<action>`. */
 export const VIEW_KEY_WRITES = ["answer", "snooze", "direction", "dismiss"] as const;
 export type ViewKeyWrite = (typeof VIEW_KEY_WRITES)[number];
+
+/** The one field a view-key answer may carry: the option chosen. Not a note (a note is a Direction, or written on the full page), not a ruling field. */
+export const VIEW_KEY_ANSWER_FIELDS: ReadonlySet<string> = new Set(["choice"]);
 
 const ITEM_WRITE = new RegExp(`^/api/items/Q-[a-z0-9]{4,16}/(${VIEW_KEY_WRITES.join("|")})$`);
 

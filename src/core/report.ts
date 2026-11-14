@@ -49,9 +49,7 @@ async function waitLeft(w: ReportWatch): Promise<number> {
 function outcomeAt(
 	w: ReportWatch,
 	read: InstructionRead,
-	wakeKey: string | undefined,
-	work: string | undefined,
-	after: ThreadState | undefined,
+	{ wakeKey, work, after }: { wakeKey: string | undefined; work: string | undefined; after: ThreadState | undefined },
 ): ReportOutcome {
 	if (!wakeKey || !after || !reportStillDue(after, w.oldCards()))
 		return { wake: false, event: skipEvent(read, "skip-report-superseded") };
@@ -83,6 +81,6 @@ export async function settleReport(w: ReportWatch): Promise<ReportOutcome> {
 		if ((await left()) > 0) continue;
 		// State last, with no await before the return: a new turn or card must count.
 		const after = w.state();
-		return outcomeAt(w, read, key ?? idle?.key, idle?.work, after);
+		return outcomeAt(w, read, { wakeKey: key ?? idle?.key, work: idle?.work, after });
 	}
 }

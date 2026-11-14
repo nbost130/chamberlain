@@ -4,7 +4,7 @@
  * failure rejects, and the reconciler leaves the hold open on a rejection.
  */
 import { execFile } from "node:child_process";
-import type { GhRead } from "./hold-reconcile.ts";
+import type { GhRead } from "./hold-lookup.ts";
 import { setting } from "./layout.ts";
 
 export const ghRead: GhRead = (path, jq) =>

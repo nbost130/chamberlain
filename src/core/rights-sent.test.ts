@@ -42,7 +42,13 @@ function daemonWake(
 	o: { steward?: string; rules?: string; mandate?: string; now?: string } = {},
 ) {
 	const ledger = openRightsSent(store);
-	const r = rightsFor(ledger.get(), o.steward ?? STEWARD, o.rules ?? RULES, o.mandate ?? MANDATE, used, o.now ?? AT);
+	const r = rightsFor(ledger.get(), {
+		stewardId: o.steward ?? STEWARD,
+		rules: o.rules ?? RULES,
+		mandate: o.mandate ?? MANDATE,
+		used,
+		now: o.now ?? AT,
+	});
 	ledger.set(r.record);
 	return r.text;
 }
@@ -342,7 +348,14 @@ describe("the rights epoch", () => {
 		expect(rightsEpoch(s)).toBe(0);
 	});
 	test("a full stamp carries the epoch it was composed under, and the record it proves keeps it", () => {
-		const { record } = rightsFor(undefined, STEWARD, RULES, "", 10, AT, 3);
+		const { record } = rightsFor(undefined, {
+			stewardId: STEWARD,
+			rules: RULES,
+			mandate: "",
+			used: 10,
+			now: AT,
+			epoch: 3,
+		});
 		const full = fullStamp(record, STEWARD, "s1");
 		expect(full.epoch).toBe(3);
 		expect(recordOf(full).epoch).toBe(3);

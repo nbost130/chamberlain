@@ -13,14 +13,14 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { adapterEntry, loadServers } from "./adapters/index.ts";
-import { readAfk } from "./core/afk.ts";
-import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/alert-desk.ts";
+import { readAfk } from "./core/afk-held.ts";
+import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/alert-desk-prompt.ts";
 import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
 import { CONF, principal, REPO, selfCommand } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
 import { startup } from "./core/migrate.ts";
 import { loadOperatingRules } from "./core/rules.ts";
-import { rulingsBriefText } from "./core/rulings.ts";
+import { rulingsBriefText } from "./core/rulings-read.ts";
 import { homeServer } from "./core/servers.ts";
 import { renderStartPrompt } from "./core/sweep.ts";
 import { DESK_PROMPT_FILE, START_PROMPT_FILE, WAKE_PROMPT_FILE } from "./embedded.ts";

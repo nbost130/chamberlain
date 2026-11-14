@@ -4,7 +4,7 @@
  * Steward has such a transcript: any other provider is reported as unavailable, never as healthy.
  */
 import { Database } from "bun:sqlite";
-import type { Transcript } from "../../core/adapter.ts";
+import type { Transcript } from "../../core/adapter-inspect.ts";
 import { thread as stewardThread } from "../../core/layout.ts";
 
 export function resolveSteward(dbPath: string, conf: string): { thread: string; session: string; project: string } {

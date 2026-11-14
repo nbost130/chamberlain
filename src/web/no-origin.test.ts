@@ -9,7 +9,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { newToken, TOKEN_HEADER } from "../core/capability.ts";
-import { askQuestion, getQuestion, type Question, readClaim } from "../core/questions.ts";
+import { askQuestion, getQuestion, QUEUE, type Question } from "../core/questions.ts";
+import { readClaim } from "../core/questions-claim.ts";
 import { readRulings } from "../core/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
@@ -162,7 +163,13 @@ for (const [who, headers, how] of [
 				const r = await s.send("GET", path, h);
 				expect([path, r.status]).toEqual([path, 200]);
 			}
-			const a = await s.send("POST", "/api/items/Q-efgh/answer", h, { choice: 1, note: "make it bigger" });
+			// The page key's plain answer takes an optional note; the view key's is a choice and nothing else (view-key.test.ts).
+			const a = await s.send(
+				"POST",
+				"/api/items/Q-efgh/answer",
+				h,
+				how === "page" ? { choice: 1, note: "make it bigger" } : { choice: 1 },
+			);
 			expect(a.status).toBe(200);
 			expect(getQuestion(s.store, "Q-efgh")!.status).not.toBe("open");
 			expect(readRulings(s.store)).toEqual([]);
@@ -195,6 +202,7 @@ for (const [who, headers, how] of [
 				expect(readRulings(s.store)).toEqual([]);
 				expect(getQuestion(s.store, "Q-abcd")!.status).toBe("open");
 				expect(readClaim(s.store, "Q-abcd")).toBeUndefined();
+				expect(s.store.items.get(QUEUE, "Q-abcd")?.payload.snoozedUntil).toBeUndefined();
 				expect(s.cardAnswers).toEqual([]);
 				await s.app.idle();
 				expect(s.store.wakes.rows("all")).toEqual([]);

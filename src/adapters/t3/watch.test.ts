@@ -7,9 +7,11 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { AdapterEnv, WaitingItem } from "../../core/adapter.ts";
-import { heldOpen } from "../../core/afk.ts";
-import { type CardThreadRead, cardWaitOf, holdCard, reconcileCardHolds } from "../../core/card-hold.ts";
+import type { AdapterEnv } from "../../core/adapter.ts";
+import type { WaitingItem } from "../../core/adapter-waiting.ts";
+import { heldOpen } from "../../core/afk-held.ts";
+import { cardWaitOf, holdCard } from "../../core/card-hold.ts";
+import { type CardThreadRead, reconcileCardHolds } from "../../core/card-reconcile.ts";
 import { questionStates } from "../../core/questions.ts";
 import { memStore } from "../../testing/store.ts";
 import { OPEN_CARD_STATUSES, readCards, TERMINAL_CARD_STATUSES } from "./projection.ts";

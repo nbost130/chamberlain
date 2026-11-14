@@ -23,102 +23,21 @@ import {
 	str,
 } from "../../core/config-fields.ts";
 import { MODEL_ID } from "../../core/llm/cli.ts";
+import { KEYS, MAIL_DEFAULTS, type MailConfig, type Newsletter, PROVIDERS, UNATTENDED_FLOORS, W } from "./defaults.ts";
 import { parseRoutes, type Route } from "./routes.ts";
-import { parseSchedule, type Schedule } from "./schedule.ts";
-
-const PROVIDERS = ["none", "gog", "command"] as const;
-type MailProviderName = (typeof PROVIDERS)[number];
-
-type NewsletterMatch = { listId: string } | { sender: string };
-type Newsletter = { name: string; match: NewsletterMatch; maxHighlights: number };
-
-export type MailConfig = {
-	provider: MailProviderName;
-	mode: "shadow" | "live";
-	allowMailToLeaveMachine: boolean;
-	gog: { command: string; account: string | null; timeoutMs: number; env: string[] };
-	command: { argv: string[] | null; timeoutMs: number };
-	scope: { query: string; lookbackDays: number; maxMessagesPerRun: number };
-	schedule: Schedule;
-	labels: { prefix: string };
-	models: { command: string; driver: string; escalate: string; top: string };
-	budget: {
-		driverCallsPerRun: number;
-		escalateCallsPerRun: number;
-		newsletterCallsPerRun: number;
-		topCallsPerRun: number;
-		inputTokensPerDay: number;
-	};
-	important: { senders: string[]; words: string[] };
-	newsletters: Newsletter[];
-	interests: string[];
-	routes: Route[];
-	defaultRoute: string;
-	cleanup: {
-		unattended: {
-			minApproval: number;
-			shadowDays: number;
-			minBatches: number;
-			sampleRate: number;
-			sampleWindow: number;
-		};
-	};
-};
-
-/** The floors of the unattended-archive mode: Nathan's answer to design question 3 (95% over a two-week shadow trial), and a batch count so a handful of lucky batches cannot pass. */
-export const UNATTENDED_FLOORS = { minApproval: 0.95, shadowDays: 14, minBatches: 10 } as const;
-
-export const MAIL_DEFAULTS: MailConfig = {
-	provider: "none",
-	mode: "shadow",
-	allowMailToLeaveMachine: false,
-	gog: { command: "gog", account: null, timeoutMs: 60_000, env: [] },
-	command: { argv: null, timeoutMs: 60_000 },
-	scope: { query: "in:inbox", lookbackDays: 7, maxMessagesPerRun: 200 },
-	schedule: { times: ["07:30", "16:30"], days: "mon-fri", tz: "local", maxRunsPerDay: 4 },
-	labels: { prefix: "Chamberlain" },
-	models: { command: "claude", driver: "haiku", escalate: "sonnet", top: "opus" },
-	budget: {
-		driverCallsPerRun: 10,
-		escalateCallsPerRun: 8,
-		newsletterCallsPerRun: 3,
-		topCallsPerRun: 0,
-		inputTokensPerDay: 600_000,
-	},
-	important: { senders: [], words: ["invoice", "due", "contract", "tax", "court", "overdue"] },
-	newsletters: [],
-	interests: [],
-	routes: [{ id: "steward", label: "Task for the Steward", kind: "steward" }],
-	defaultRoute: "steward",
-	cleanup: { unattended: { ...UNATTENDED_FLOORS, sampleRate: 0.25, sampleWindow: 8 } },
-};
-
-const W = "mail";
-const KEYS = [
-	"provider",
-	"mode",
-	"allowMailToLeaveMachine",
-	"gog",
-	"command",
-	"scope",
-	"schedule",
-	"labels",
-	"models",
-	"budget",
-	"important",
-	"newsletters",
-	"interests",
-	"routes",
-	"defaultRoute",
-	"cleanup",
-];
+import { parseSchedule } from "./schedule.ts";
 
 /** A section that may be left out whole: its object, or an empty one. */
 const section = (o: Obj, k: string, keys: readonly string[]): Obj =>
 	o[k] === undefined ? {} : object(o[k], `${W}.${k}`, keys);
 
 /** A list of non-empty strings, each at most `max` characters, at most `limit` of them. */
-function strings(v: unknown, where: string, d: string[], max = 120, limit = 100): string[] {
+function strings(
+	v: unknown,
+	where: string,
+	d: string[],
+	{ max = 120, limit = 100 }: { max?: number; limit?: number } = {},
+): string[] {
 	if (v === undefined) return [...d];
 	if (!Array.isArray(v) || v.length > limit) throw Error(`${where}: expected a list of at most ${limit} strings`);
 	for (const x of v)
@@ -129,7 +48,7 @@ function strings(v: unknown, where: string, d: string[], max = 120, limit = 100)
 
 function parseGate(o: Obj, d: MailConfig) {
 	return {
-		provider: oneOf(o, "provider", W, PROVIDERS, d.provider),
+		provider: oneOf(o, "provider", W, { allowed: PROVIDERS, d: d.provider }),
 		mode: modeOf(o, W, d.mode),
 		allow: bool(o, "allowMailToLeaveMachine", W, d.allowMailToLeaveMachine),
 	};
@@ -139,14 +58,14 @@ function parseGog(o: Obj, d: MailConfig): MailConfig["gog"] {
 	const where = `${W}.gog`;
 	const g = section(o, "gog", ["command", "account", "timeoutMs", "env"]);
 	const account = g.account === undefined ? d.gog.account : str(g, "account", where, "");
-	const env = strings(g.env, `${where}.env`, d.gog.env, 64);
+	const env = strings(g.env, `${where}.env`, d.gog.env, { max: 64 });
 	for (const name of env)
 		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name === "GOG_ACCESS_TOKEN")
 			throw Error(`${where}.env: "${name}" is not a variable name this module may pass to gog`);
 	return {
 		command: str(g, "command", where, d.gog.command),
 		account,
-		timeoutMs: num(g, "timeoutMs", where, d.gog.timeoutMs, true),
+		timeoutMs: num(g, "timeoutMs", where, { d: d.gog.timeoutMs, whole: true }),
 		env,
 	};
 }
@@ -159,21 +78,21 @@ function parseCommand(o: Obj, d: MailConfig): MailConfig["command"] {
 		if (!isArgv(c.argv)) throw Error(`${where}: argv must be ["program", "arg", ...]`);
 		argv = c.argv;
 	}
-	return { argv, timeoutMs: num(c, "timeoutMs", where, d.command.timeoutMs, true) };
+	return { argv, timeoutMs: num(c, "timeoutMs", where, { d: d.command.timeoutMs, whole: true }) };
 }
 
 function parseScope(o: Obj, d: MailConfig): MailConfig["scope"] {
 	const where = `${W}.scope`;
 	const s = section(o, "scope", ["query", "lookbackDays", "maxMessagesPerRun"]);
 	return {
-		query: cappedStr(s, "query", where, d.scope.query, 500),
-		lookbackDays: num(s, "lookbackDays", where, d.scope.lookbackDays, true),
-		maxMessagesPerRun: num(s, "maxMessagesPerRun", where, d.scope.maxMessagesPerRun, true),
+		query: cappedStr(s, "query", where, { d: d.scope.query, max: 500 }),
+		lookbackDays: num(s, "lookbackDays", where, { d: d.scope.lookbackDays, whole: true }),
+		maxMessagesPerRun: num(s, "maxMessagesPerRun", where, { d: d.scope.maxMessagesPerRun, whole: true }),
 	};
 }
 
 /** A non-empty string of at most `max` characters. */
-function cappedStr(o: Obj, k: string, where: string, d: string, max: number): string {
+function cappedStr(o: Obj, k: string, where: string, { d, max }: { d: string; max: number }): string {
 	const v = str(o, k, where, d);
 	if (v.length > max) throw Error(`${where}: ${k} must be at most ${max} characters`);
 	return v;
@@ -211,14 +130,22 @@ function parseBudget(o: Obj, d: MailConfig): MailConfig["budget"] {
 		"topCallsPerRun",
 		"inputTokensPerDay",
 	]);
-	const top = num(b, "topCallsPerRun", where, d.budget.topCallsPerRun, true, true);
+	const top = num(b, "topCallsPerRun", where, { d: d.budget.topCallsPerRun, whole: true, zeroOk: true });
 	if (top > 1) throw Error(`${where}: topCallsPerRun must be 0 or 1`);
 	return {
-		driverCallsPerRun: num(b, "driverCallsPerRun", where, d.budget.driverCallsPerRun, true, true),
-		escalateCallsPerRun: num(b, "escalateCallsPerRun", where, d.budget.escalateCallsPerRun, true, true),
-		newsletterCallsPerRun: num(b, "newsletterCallsPerRun", where, d.budget.newsletterCallsPerRun, true, true),
+		driverCallsPerRun: num(b, "driverCallsPerRun", where, { d: d.budget.driverCallsPerRun, whole: true, zeroOk: true }),
+		escalateCallsPerRun: num(b, "escalateCallsPerRun", where, {
+			d: d.budget.escalateCallsPerRun,
+			whole: true,
+			zeroOk: true,
+		}),
+		newsletterCallsPerRun: num(b, "newsletterCallsPerRun", where, {
+			d: d.budget.newsletterCallsPerRun,
+			whole: true,
+			zeroOk: true,
+		}),
 		topCallsPerRun: top,
-		inputTokensPerDay: num(b, "inputTokensPerDay", where, d.budget.inputTokensPerDay, true),
+		inputTokensPerDay: num(b, "inputTokensPerDay", where, { d: d.budget.inputTokensPerDay, whole: true }),
 	};
 }
 
@@ -226,8 +153,8 @@ function parseImportant(o: Obj, d: MailConfig): MailConfig["important"] {
 	const where = `${W}.important`;
 	const i = section(o, "important", ["senders", "words"]);
 	return {
-		senders: strings(i.senders, `${where}.senders`, d.important.senders, 254),
-		words: strings(i.words, `${where}.words`, d.important.words, 60),
+		senders: strings(i.senders, `${where}.senders`, d.important.senders, { max: 254 }),
+		words: strings(i.words, `${where}.words`, d.important.words, { max: 60 }),
 	};
 }
 
@@ -237,7 +164,7 @@ function parseNewsletter(raw: unknown, at: string): Newsletter {
 	const [key, ...more] = Object.keys(m);
 	if (key === undefined || more.length) throw Error(`${at}.match: give exactly one of listId or sender`);
 	const value = required(m, key, `${at}.match`);
-	const maxHighlights = num(n, "maxHighlights", at, 5, true);
+	const maxHighlights = num(n, "maxHighlights", at, { d: 5, whole: true });
 	if (maxHighlights > 5) throw Error(`${at}: maxHighlights must be at most 5`);
 	return {
 		name: required(n, "name", at),
@@ -265,10 +192,10 @@ function parseUnattended(o: Obj, d: MailConfig): MailConfig["cleanup"]["unattend
 	const was = d.cleanup.unattended;
 	const out = {
 		minApproval: u.minApproval === undefined ? was.minApproval : probability(u.minApproval, `${where}.minApproval`),
-		shadowDays: num(u, "shadowDays", where, was.shadowDays, true),
-		minBatches: num(u, "minBatches", where, was.minBatches, true),
-		sampleRate: num(u, "sampleRate", where, was.sampleRate, false),
-		sampleWindow: num(u, "sampleWindow", where, was.sampleWindow, true),
+		shadowDays: num(u, "shadowDays", where, { d: was.shadowDays, whole: true }),
+		minBatches: num(u, "minBatches", where, { d: was.minBatches, whole: true }),
+		sampleRate: num(u, "sampleRate", where, { d: was.sampleRate, whole: false }),
+		sampleWindow: num(u, "sampleWindow", where, { d: was.sampleWindow, whole: true }),
 	};
 	for (const k of ["minApproval", "shadowDays", "minBatches"] as const)
 		if (out[k] < UNATTENDED_FLOORS[k])
@@ -321,7 +248,7 @@ export function parseMail(raw: unknown): MailConfig {
 		budget: parseBudget(o, d),
 		important: parseImportant(o, d),
 		newsletters: parseNewsletters(o),
-		interests: strings(o.interests, `${W}.interests`, d.interests, 60, 50),
+		interests: strings(o.interests, `${W}.interests`, d.interests, { max: 60, limit: 50 }),
 		routes,
 		defaultRoute,
 		cleanup: { unattended: parseUnattended(o, d) },

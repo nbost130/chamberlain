@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import type { AdapterEnv } from "../../core/adapter.ts";
 import { migrateLayout } from "../../core/config-migrate.ts";
-import { resetLayout } from "../../core/layout.ts";
+import { resetLayout } from "../../core/layout-legacy.ts";
 import { T3Link } from "./watch.ts";
 
 const dirs: string[] = [];

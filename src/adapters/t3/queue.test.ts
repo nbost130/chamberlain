@@ -96,13 +96,13 @@ describe("readStewardQueue", () => {
 			"create table orchestration_v2_projection_runtime_requests (thread_id text, created_at text, resolved_at text)",
 		);
 		db.run("create table orchestration_v2_projection_turn_items (thread_id text, type text, updated_at text)");
-		const run = (t: string, n: number, status: string, at: string, started: string | null, msg: string) =>
+		const run = (r: { t: string; n: number; status: string; at: string; started: string | null; msg: string }) =>
 			db.run("insert into orchestration_v2_projection_runs values (?,?,?,?,?)", [
-				t,
-				n,
-				status,
-				at,
-				JSON.stringify({ startedAt: started, userMessageId: msg }),
+				r.t,
+				r.n,
+				r.status,
+				r.at,
+				JSON.stringify({ startedAt: r.started, userMessageId: r.msg }),
 			]);
 		const msg = (id: string, text: string) =>
 			db.run("insert into orchestration_v2_projection_messages values (?,?)", [id, JSON.stringify({ text })]);
@@ -112,12 +112,12 @@ describe("readStewardQueue", () => {
 		const { path, db, run, msg } = seed();
 		msg("m1", "/steward-wake\n\nsomething");
 		msg("m2", "/compact");
-		run("s", 1, "completed", "2026-11-07T01:00:00Z", "2026-11-07T01:00:01Z", "m1");
-		run("s", 2, "running", "2026-11-07T02:00:00Z", "2026-11-07T02:00:01Z", "m1");
-		run("s", 3, "queued", "2026-11-07T02:10:00Z", null, "m1");
-		run("s", 4, "queued", "2026-11-07T02:20:00Z", null, "m2");
-		run("s", 5, "cancelled", "2026-11-07T02:30:00Z", null, "m2");
-		run("other", 1, "queued", "2026-11-07T00:00:00Z", null, "m1");
+		run({ t: "s", n: 1, status: "completed", at: "2026-11-07T01:00:00Z", started: "2026-11-07T01:00:01Z", msg: "m1" });
+		run({ t: "s", n: 2, status: "running", at: "2026-11-07T02:00:00Z", started: "2026-11-07T02:00:01Z", msg: "m1" });
+		run({ t: "s", n: 3, status: "queued", at: "2026-11-07T02:10:00Z", started: null, msg: "m1" });
+		run({ t: "s", n: 4, status: "queued", at: "2026-11-07T02:20:00Z", started: null, msg: "m2" });
+		run({ t: "s", n: 5, status: "cancelled", at: "2026-11-07T02:30:00Z", started: null, msg: "m2" });
+		run({ t: "other", n: 1, status: "queued", at: "2026-11-07T00:00:00Z", started: null, msg: "m1" });
 		db.run("insert into orchestration_v2_projection_runtime_requests values ('s','2026-11-07T02:05:00Z',null)");
 		db.run(
 			"insert into orchestration_v2_projection_runtime_requests values ('s','2026-11-07T01:05:00Z','2026-11-07T01:06:00Z')",
@@ -135,7 +135,7 @@ describe("readStewardQueue", () => {
 	test("a working turn counts as activity, and a wake arriving does not", () => {
 		const { path, db, run, msg } = seed();
 		msg("m1", "/steward-wake");
-		run("s", 1, "running", "2026-11-07T02:00:00Z", "2026-11-07T02:00:01Z", "m1");
+		run({ t: "s", n: 1, status: "running", at: "2026-11-07T02:00:00Z", started: "2026-11-07T02:00:01Z", msg: "m1" });
 		db.run(
 			"insert into orchestration_v2_projection_turn_items values ('s','command_execution','2026-11-07T02:25:00Z')",
 		);
@@ -147,8 +147,15 @@ describe("readStewardQueue", () => {
 		const gate = (status: string) => {
 			const { path, db, run, msg } = seed();
 			msg("m1", "/steward-wake");
-			run("s", 1, "completed", "2026-11-07T01:00:00Z", "2026-11-07T01:00:01Z", "m1");
-			run("s", 2, status, "2026-11-07T02:00:00Z", null, "m1");
+			run({
+				t: "s",
+				n: 1,
+				status: "completed",
+				at: "2026-11-07T01:00:00Z",
+				started: "2026-11-07T01:00:01Z",
+				msg: "m1",
+			});
+			run({ t: "s", n: 2, status, at: "2026-11-07T02:00:00Z", started: null, msg: "m1" });
 			db.close();
 			return queueGate(readStewardQueue(path, "s"));
 		};
@@ -158,7 +165,7 @@ describe("readStewardQueue", () => {
 	test("a running compact counts, so a second is not sent while it works", () => {
 		const { path, db, run, msg } = seed();
 		msg("m2", "/compact");
-		run("s", 1, "running", "2026-11-07T02:00:00Z", "2026-11-07T02:00:01Z", "m2");
+		run({ t: "s", n: 1, status: "running", at: "2026-11-07T02:00:00Z", started: "2026-11-07T02:00:01Z", msg: "m2" });
 		db.close();
 		const q = readStewardQueue(path, "s");
 		expect(q?.compactPending).toBe(true);
@@ -167,7 +174,7 @@ describe("readStewardQueue", () => {
 	test("an orphaned request from before the latest turn is not an open card, so compaction can't starve", () => {
 		const { path, db, run, msg } = seed();
 		msg("m1", "/steward-wake");
-		run("s", 1, "running", "2026-11-07T02:00:00Z", "2026-11-07T02:00:01Z", "m1");
+		run({ t: "s", n: 1, status: "running", at: "2026-11-07T02:00:00Z", started: "2026-11-07T02:00:01Z", msg: "m1" });
 		db.run("insert into orchestration_v2_projection_runtime_requests values ('s','2026-11-06T01:00:00Z',null)");
 		db.close();
 		expect(readStewardQueue(path, "s")?.openCardSince).toBeUndefined();
@@ -175,7 +182,7 @@ describe("readStewardQueue", () => {
 	test("a wake that only mentions /compact is not a compact", () => {
 		const { path, db, run, msg } = seed();
 		msg("m1", "/steward-wake\n\nthe thread said /compact");
-		run("s", 1, "queued", "2026-11-07T02:10:00Z", null, "m1");
+		run({ t: "s", n: 1, status: "queued", at: "2026-11-07T02:10:00Z", started: null, msg: "m1" });
 		db.close();
 		expect(readStewardQueue(path, "s")?.compactPending).toBe(false);
 	});

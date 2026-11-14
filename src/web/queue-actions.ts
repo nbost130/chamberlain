@@ -1,23 +1,15 @@
 /**
  * What the principal can do to an open question besides answer it with an option: snooze it until later, un-snooze it, give a
  * direction (a note, no option) or dismiss it. Kept out of the app's closure so each step is small enough to read and test on its own;
- * the app wires it to its serial queue and clock (./app.ts), and the routes are the full page's, and the Decisions view's with the view key for snooze, direction and dismiss (`mayDo` in ./view-key.ts).
+ * the app wires it to its serial queue and clock (./app.ts). The full page does all four; the Decisions view's key does snooze, direction and dismiss
+ * (`mayDo` in ./view-key.ts). Each change is recorded with the key it was made with.
  */
-import { closeHeldForItem } from "../core/afk.ts";
+import { closeHeldForItem } from "../core/afk-held.ts";
 import { crashPoint } from "../core/crash.ts";
-import {
-	type AnswerKind,
-	claimWake,
-	enqueueClaim,
-	type KeyUsed,
-	PAGE,
-	pageClaim,
-	plainAnswer,
-	type QuestionState,
-	questionStates,
-	wokenBy,
-} from "../core/questions.ts";
-import { clearSnooze, parseSnoozeUntil, snoozeQuestion, unsnoozeQuestion } from "../core/snooze.ts";
+import { type Answer, type AnswerKind, type KeyUsed, type QuestionState, questionStates } from "../core/questions.ts";
+import { claimWake, enqueueClaim, PAGE, pageClaim, wokenBy } from "../core/questions-claim.ts";
+import { plainAnswer } from "../core/questions-wake.ts";
+import { clearSnooze, parseSnoozeUntil, snoozeQuestionAs, unsnoozeQuestion } from "../core/snooze.ts";
 import type { Store } from "../core/store.ts";
 
 /** A reply the page's API sends: its status and JSON body. */
@@ -62,6 +54,9 @@ function cleanNote(raw: unknown): { ok: true; note?: string } | { ok: false } {
 	return note ? { ok: true, note } : { ok: true };
 }
 
+/** The item an action is on and the key the request proved. */
+type Act = { id: string; key: KeyUsed };
+
 export type ItemActionDeps = {
 	store: Store;
 	clock: () => number;
@@ -87,14 +82,9 @@ function closeHolds(d: ItemActionDeps, id: string, kind: AnswerKind) {
 }
 
 /** Takes the item's one wake for a direction or a dismissal, in one transaction with its outbox row and the end of its snooze. */
-function claimSettled(
-	d: ItemActionDeps,
-	i: QuestionState,
-	kind: AnswerKind,
-	note: string | undefined,
-	key: KeyUsed,
-): Reply {
-	const claim = pageClaim(i, plainAnswer(kind, i.id, note, new Date().toISOString(), key));
+function claimSettled(d: ItemActionDeps, i: QuestionState, answer: Answer): Reply {
+	const claim = pageClaim(i, answer);
+	const kind = answer.kind ?? "dismissed";
 	const lost = d.store.tx(() => {
 		const r = claimWake(d.store, claim);
 		if (!r.won) return r.claim;
@@ -105,7 +95,7 @@ function claimSettled(
 	});
 	if (lost) return takenReply(lost.owner);
 	crashPoint("committed");
-	d.log(kind === "direction" ? "directed" : "dismissed", { id: i.id, key });
+	d.log(kind === "direction" ? "directed" : "dismissed", { id: i.id, key: answer.key });
 	closeHolds(d, i.id, kind);
 	return { status: 200, body: { ok: true, id: i.id, kind, recorded: true, to: "steward", wake: "queued" } };
 }
@@ -115,7 +105,8 @@ function claimSettled(
  * snooze, in one transaction. Direction is an answer, so the Steward reads it; a dismissal is recorded as dismissed and is never an
  * answer, a ruling or a settled-question match. Neither goes straight to the thread: the Steward has to read the note, or stop tracking.
  */
-function settle(d: ItemActionDeps, id: string, kind: AnswerKind, raw: unknown, key: KeyUsed): Promise<Reply> {
+function settle(d: ItemActionDeps, act: Act, kind: AnswerKind, raw: unknown): Promise<Reply> {
+	const { id, key } = act;
 	return d.serial((): Reply => {
 		const given = cleanNote(raw);
 		if (!given.ok) return refuse(400, "note must be text");
@@ -125,23 +116,26 @@ function settle(d: ItemActionDeps, id: string, kind: AnswerKind, raw: unknown, k
 		if (!i) return refuse(404, "no such item");
 		const held = wokenBy(d.store, i.id);
 		const refused = unsettleable(i) ?? (held === undefined ? undefined : takenReply(held));
-		return refused ?? claimSettled(d, i, kind, given.note, key);
+		const answer = { ...plainAnswer(kind, i.id, given.note, new Date().toISOString()), key };
+		return refused ?? claimSettled(d, i, answer);
 	});
 }
 
 /** Snooze: the item stays open and unanswered, so its hold and its claim are untouched (src/core/snooze.ts). */
-function snooze(d: ItemActionDeps, id: string, until: unknown, key: KeyUsed): Promise<Reply> {
+function snooze(d: ItemActionDeps, act: Act, until: unknown): Promise<Reply> {
+	const { id, key } = act;
 	return d.serial((): Reply => {
 		if (stateOf(d, id)?.status !== "open") return refuse(404, "no open item");
 		const at = parseSnoozeUntil(until, d.clock());
 		if (!at.ok) return refuse(400, at.error);
-		snoozeQuestion(d.store, id, at.until, d.clock(), key);
+		snoozeQuestionAs(d.store, id, at.until, { now: d.clock(), key });
 		d.log("snoozed", { id, until: at.until, key });
 		return { status: 200, body: { ok: true, id, until: at.until } };
 	});
 }
 
-function unsnooze(d: ItemActionDeps, id: string, key: KeyUsed): Promise<Reply> {
+function unsnooze(d: ItemActionDeps, act: Act): Promise<Reply> {
+	const { id, key } = act;
 	return d.serial((): Reply => {
 		const i = stateOf(d, id);
 		if (i?.status !== "open") return refuse(404, "no open item");
@@ -155,9 +149,10 @@ function unsnooze(d: ItemActionDeps, id: string, key: KeyUsed): Promise<Reply> {
 export function createItemActions(d: ItemActionDeps) {
 	/** One of `ITEM_ACTIONS` on one item, with the request's JSON body and the key the request proved (recorded with the change). */
 	function run(id: string, action: string, body: Record<string, unknown>, key: KeyUsed = "page"): Promise<Reply> {
-		if (action === "snooze") return snooze(d, id, body.until, key);
-		if (action === "unsnooze") return unsnooze(d, id, key);
-		return settle(d, id, action === "direction" ? "direction" : "dismissed", body.note, key);
+		const act = { id, key };
+		if (action === "snooze") return snooze(d, act, body.until);
+		if (action === "unsnooze") return unsnooze(d, act);
+		return settle(d, act, action === "direction" ? "direction" : "dismissed", body.note);
 	}
 	return { run };
 }

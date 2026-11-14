@@ -5,8 +5,9 @@
  * src/architecture.test.ts fails if production code imports anything from src/testing/.
  */
 import type { WakeTransport } from "../core/deliver.ts";
-import { recordAnswerDelivered } from "../core/questions.ts";
-import { createRelay, type RelayDeps } from "../core/relay.ts";
+import { recordAnswerDelivered } from "../core/questions-wake.ts";
+import { createRelay } from "../core/relay.ts";
+import type { RelayDeps } from "../core/relay-ctx.ts";
 import type { Store } from "../core/store.ts";
 import { requireTestEnv } from "../core/test-env.ts";
 import { testRelayLock } from "./lock.ts";

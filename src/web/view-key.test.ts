@@ -7,7 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { newToken, TOKEN_HEADER } from "../core/capability.ts";
 import { obsFor } from "../core/log.ts";
-import { askQuestion, getQuestion, type Question, readClaim } from "../core/questions.ts";
+import { askQuestion, getQuestion, type Question } from "../core/questions.ts";
+import { readClaim } from "../core/questions-claim.ts";
 import { readRulings } from "../core/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { dataOf } from "../testing/obs.ts";
@@ -143,7 +144,7 @@ const WRITES = (id: string): [string, string, unknown][] => [
 	["snooze", `/api/items/${id}/snooze`, { until: LATER }],
 	["direction", `/api/items/${id}/direction`, { note: "go with A" }],
 	["dismiss", `/api/items/${id}/dismiss`, { note: "done" }],
-	["answer", `/api/items/${id}/answer`, { choice: 1, note: "n" }],
+	["answer", `/api/items/${id}/answer`, { choice: 1 }],
 ];
 /** Every other write or read, each refused to the view key whatever its origin. */
 const REFUSED: [string, string, unknown?][] = [
@@ -194,6 +195,36 @@ for (const [label, origin] of [
 				expect(JSON.stringify([s.logs, q])).not.toContain(s.view);
 			});
 		}
+		// The view key's answer is a choice and nothing else: a note is a Direction, or written on the full page. Refused before anything is written.
+		for (const extra of [
+			{ note: "an unapproved note" },
+			{ note: "" },
+			{ note: null },
+			{ note: "  " },
+			{ note: "x", saveRuling: false },
+			{ rulingWording: "x" },
+			{ by: "batch" },
+			{ key: "page" },
+			{ id: "Q-other" },
+		]) {
+			test(`an answer with ${JSON.stringify(extra)} is refused (403) and writes nothing`, async () => {
+				const s = setup();
+				const r = await s.send("POST", "/api/items/Q-efgh/answer", h(s), { choice: 0, ...extra });
+				expect([JSON.stringify(extra), r.status]).toEqual([JSON.stringify(extra), 403]);
+				await s.app.idle();
+				expect(readClaim(s.store, "Q-efgh")).toBeUndefined();
+				expect(getQuestion(s.store, "Q-efgh")!.status).toBe("open");
+				expect(s.store.wakes.rows("all")).toEqual([]);
+				expect(readRulings(s.store)).toEqual([]);
+			});
+		}
+		test("a choice alone is answered, and the claim carries no note", async () => {
+			const s = setup();
+			expect((await s.send("POST", "/api/items/Q-efgh/answer", h(s), { choice: 1 })).status).toBe(200);
+			const answer = readClaim(s.store, "Q-efgh")?.answer;
+			expect(answer).toMatchObject({ choice: 1, key: "view" });
+			expect(answer).not.toHaveProperty("note");
+		});
 		test("the answer's ledger row says the view key too, and a ruling field is still refused", async () => {
 			const s = setup();
 			expect((await s.send("POST", "/api/items/Q-efgh/answer", h(s), { choice: 0, saveRuling: true })).status).toBe(

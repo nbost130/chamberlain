@@ -16,7 +16,8 @@ import { CRASH_STEPS } from "./core/crash.ts";
 import { withDeliveryId } from "./core/deliver.ts";
 import { obsFor } from "./core/log.ts";
 import { reconcileStore } from "./core/obs/ledger.ts";
-import { askQuestion, getQuestion, type Question, readClaim } from "./core/questions.ts";
+import { askQuestion, getQuestion, type Question } from "./core/questions.ts";
+import { readClaim } from "./core/questions-claim.ts";
 import { LEGACY_STAMP } from "./core/rights-sent.ts";
 import { readRulings } from "./core/rulings.ts";
 import { openStore } from "./core/sqlite-store.ts";
@@ -189,9 +190,11 @@ async function daemon(w: World, until: () => boolean = () => true, extra: Record
 
 describe("the crash steps are the ones the code names", () => {
 	test("every step in CRASH_STEPS is reached by a crashPoint call in the source, and every call names a listed step", () => {
-		const sources = ["web/app.ts", "core/deliver.ts", "core/relay.ts"]
-			.map((f) => readFileSync(`${SRC}${f}`, "utf8"))
-			.join("\n");
+		// The page's answer path and the relay each span a few modules (web/app*.ts, core/relay*.ts), and every one of them is read.
+		const files = ["web/app*.ts", "core/relay*.ts"]
+			.flatMap((glob) => [...new Bun.Glob(glob).scanSync({ cwd: SRC })])
+			.filter((f) => !f.endsWith(".test.ts"));
+		const sources = ["core/deliver.ts", ...files].map((f) => readFileSync(`${SRC}${f}`, "utf8")).join("\n");
 		const named = [...sources.matchAll(/crashPoint\("([^"]+)"\)/g)].map((m) => m[1]!);
 		expect(new Set(named)).toEqual(new Set(CRASH_STEPS));
 	});
