@@ -159,7 +159,9 @@ export class T3Link {
 
 	/** One thread's projection over the watcher's socket, checked against the shape the reads expect: anything else throws. */
 	private async projection(threadId: string): Promise<Projection> {
-		return checkProjection(await this.rpc!.request("orchestration.getThreadProjection", { threadId }));
+		const rpc = this.rpc;
+		if (!rpc) throw Error(`${this.srv.name} is not connected: a projection is read only over a live socket`);
+		return checkProjection(await rpc.request("orchestration.getThreadProjection", { threadId }));
 	}
 
 	readonly inspector: Inspector = {

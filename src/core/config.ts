@@ -17,7 +17,7 @@ export { parseSettings } from "./settings-parse.ts";
 
 import { configDir, stateDir } from "./state-dir.ts";
 
-const HOME = process.env.HOME!;
+const HOME = process.env.HOME ?? "";
 export const CONF = configDir(process.env, HOME);
 export const STATE = stateDir(process.env, HOME);
 /** This checkout: the Steward's wakes and hand-off name the CLI tools by this path. In a compiled binary it is a path inside the binary, so nothing may build a command from it: use `selfCommand`. */
@@ -131,7 +131,7 @@ export const principal = (): string =>
 /** The same, for the start of a sentence. */
 export const Principal = (): string => {
 	const p = principal();
-	return p[0]!.toUpperCase() + p.slice(1);
+	return p.charAt(0).toUpperCase() + p.slice(1);
 };
 /** The possessive: "Ada's", "the operator's". */
 export const principalPoss = (): string => `${principal()}'s`;

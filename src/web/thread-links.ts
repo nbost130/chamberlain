@@ -75,9 +75,10 @@ export function createLinker(d: LinkerDeps): Linker {
 	};
 }
 
+const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
 /** Pure: the page `/open` serves. It goes on to `target` by itself, and keeps a link to tap for a browser that waits to be asked. No script or style: the page's CSP allows neither inline. */
 export function openPage(target: string, label: string): string {
-	const esc = (s: string) =>
-		s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+	const esc = (s: string) => s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 	return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="0;url=${esc(target)}"><title>Open the thread</title></head><body><p><a href="${esc(target)}">Open ${esc(label)}</a></p><p>If nothing opened, the app that opens this thread is not on this device.</p></body></html>`;
 }

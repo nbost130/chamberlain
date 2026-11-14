@@ -247,7 +247,7 @@ describe("each widened argument is refused", () => {
 			"| journalctl",
 			"journalctl -u ~root",
 			"journalctl -u a\\ b",
-			"journalctl --since=${IFS}x",
+			`journalctl --since=\${IFS}x`,
 		])
 			refused(t);
 	});

@@ -20,8 +20,10 @@ const usable = (v: string | undefined): v is string => v !== undefined && v !== 
 
 /** Pure: the directory a Chamberlain override variable or an XDG base variable names, with the default under `home`. */
 function resolve(env: Env, override: string, xdg: string, fallback: string, home: string): string {
-	if (usable(env[override])) return env[override]!;
-	if (usable(env[xdg])) return `${env[xdg]!.replace(/\/+$/, "")}/chamberlain`;
+	const own = env[override];
+	if (usable(own)) return own;
+	const base = env[xdg];
+	if (usable(base)) return `${base.replace(/\/+$/, "")}/chamberlain`;
 	return `${home}/${fallback}/chamberlain`;
 }
 

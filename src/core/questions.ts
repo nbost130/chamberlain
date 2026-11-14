@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { principal } from "./config.ts";
 import { answerWakeText } from "./messages.ts";
 import type { Ruling } from "./rulings.ts";
-import type { Store } from "./store.ts";
+import type { ClaimRecord, EvidenceRow, Item, RelayRecord, Store } from "./store.ts";
 
 export type Kind = "only-you" | "product" | "ruling" | "idea";
 export const KINDS: Kind[] = ["only-you", "product", "ruling", "idea"];
@@ -131,45 +131,55 @@ export function askQuestion(store: Store, q: Question, now = Date.now()) {
 	});
 }
 
+/** `{}` unless `cond`, so an optional field is left off a state rather than set to undefined. */
+const when = <T extends object>(cond: unknown, fields: T): Partial<T> => (cond ? fields : {});
+
+/** Stored evidence rows as the evidence a question shows: the file's name is its path. */
+const evidenceOf = (rows: EvidenceRow[]): Evidence[] =>
+	rows.map(
+		(e): Evidence => ({
+			type: e.type,
+			...(e.name ? { path: e.name } : {}),
+			...(e.url ? { url: e.url } : {}),
+			...(e.caption ? { caption: e.caption } : {}),
+		}),
+	);
+
+/** One question's state, composed from its item, its claim, its direct send and its evidence rows. */
+function stateOf(
+	i: Item,
+	claim: ClaimRecord | undefined,
+	ev: EvidenceRow[] | undefined,
+	relay: RelayRecord | undefined,
+): QuestionState {
+	// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
+	const answered = claim !== undefined || i.status === "resolved";
+	const onCard = i.payload.answeredOnCard === true;
+	const setAside = i.payload.notNowAt;
+	const outcome = relay?.outcome;
+	const sent =
+		relay && outcome ? { outcome, t: relay.t ?? "", ...(relay.detail ? { detail: relay.detail } : {}) } : undefined;
+	const notNowAt = i.status === "acknowledged" && !answered && typeof setAside === "string" ? setAside : undefined;
+	return {
+		// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
+		...withUrgency(i.payload as unknown as Question),
+		...when(ev?.length, { evidence: evidenceOf(ev ?? []) }),
+		status: onCard ? "answered-on-card" : answered ? "answered" : "open",
+		...when(claim?.answer, { answer: claim?.answer as Answer }),
+		delivered: i.status === "resolved" && !onCard,
+		...when(notNowAt !== undefined, { notNowAt }),
+		...when(sent, { relay: sent }),
+	};
+}
+
 /** Every question and where it stands, composed from the item, its claim, its direct send and its evidence. */
 export function questionStates(store: Store): Map<string, QuestionState> {
 	const claims = new Map(store.claims.list(QUEUE).map((c) => [c.item, c]));
 	const relays = store.claims.listRelays(QUEUE);
 	const evidence = store.evidence.listAll(QUEUE);
 	const out = new Map<string, QuestionState>();
-	for (const i of store.items.list({ source: QUEUE, kind: "question" })) {
-		const q = i.payload as unknown as Question;
-		const claim = claims.get(i.dedupKey);
-		const ev = evidence.get(i.dedupKey);
-		const relay = relays.get(i.dedupKey);
-		// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
-		const answered = claim !== undefined || i.status === "resolved";
-		out.set(i.dedupKey, {
-			// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
-			...withUrgency(q),
-			...(ev?.length
-				? {
-						evidence: ev.map(
-							(e): Evidence => ({
-								type: e.type,
-								...(e.name ? { path: e.name } : {}),
-								...(e.url ? { url: e.url } : {}),
-								...(e.caption ? { caption: e.caption } : {}),
-							}),
-						),
-					}
-				: {}),
-			status: i.payload.answeredOnCard === true ? "answered-on-card" : answered ? "answered" : "open",
-			...(claim?.answer ? { answer: claim.answer as Answer } : {}),
-			delivered: i.status === "resolved" && i.payload.answeredOnCard !== true,
-			...(i.status === "acknowledged" && !answered && typeof i.payload.notNowAt === "string"
-				? { notNowAt: i.payload.notNowAt }
-				: {}),
-			...(relay?.outcome
-				? { relay: { outcome: relay.outcome, t: relay.t ?? "", ...(relay.detail ? { detail: relay.detail } : {}) } }
-				: {}),
-		});
-	}
+	for (const i of store.items.list({ source: QUEUE, kind: "question" }))
+		out.set(i.dedupKey, stateOf(i, claims.get(i.dedupKey), evidence.get(i.dedupKey), relays.get(i.dedupKey)));
 	return out;
 }
 export const getQuestion = (store: Store, id: string): QuestionState | undefined => questionStates(store).get(id);
@@ -390,23 +400,26 @@ export type RecoverOpts = {
 	/** Writes the wake. Default: the claim's message as an outbox row. */
 	send?: (c: Claim) => unknown;
 };
+/** Recovers one claim: true when its wake was written. A claim that is not owned, is resolved, is done or is already in the outbox is left; a failure is logged. */
+async function recoverOne(o: RecoverOpts, c: Claim): Promise<boolean> {
+	if (!o.owns(c.owner)) return false;
+	if (o.store.items.get(QUEUE, c.item)?.status === "resolved") return false;
+	try {
+		if (o.done ? o.done(c) : o.store.wakes.isDelivered(c.deliveryId)) {
+			o.delivered?.(c);
+			return false;
+		}
+		if (o.store.wakes.known(c.deliveryId)) return false;
+		o.log("claim-recovered", { item: c.item, owner: c.owner, deliveryId: c.deliveryId });
+		await (o.send ? o.send(c) : enqueueClaim(o.store, c));
+		return true;
+	} catch (e) {
+		o.log("claim-recover-error", { item: c.item, error: String(e).slice(0, 200) });
+		return false;
+	}
+}
 export async function recoverClaims(o: RecoverOpts): Promise<{ sent: string[] }> {
 	const sent: string[] = [];
-	for (const c of readClaims(o.store)) {
-		if (!o.owns(c.owner)) continue;
-		if (o.store.items.get(QUEUE, c.item)?.status === "resolved") continue;
-		try {
-			if (o.done ? o.done(c) : o.store.wakes.isDelivered(c.deliveryId)) {
-				o.delivered?.(c);
-				continue;
-			}
-			if (o.store.wakes.known(c.deliveryId)) continue;
-			o.log("claim-recovered", { item: c.item, owner: c.owner, deliveryId: c.deliveryId });
-			await (o.send ? o.send(c) : enqueueClaim(o.store, c));
-			sent.push(c.item);
-		} catch (e) {
-			o.log("claim-recover-error", { item: c.item, error: String(e).slice(0, 200) });
-		}
-	}
+	for (const c of readClaims(o.store)) if (await recoverOne(o, c)) sent.push(c.item);
 	return { sent };
 }
