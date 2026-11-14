@@ -39,6 +39,7 @@ import {
 	heldOpen,
 	isCardHold,
 } from "./afk.ts";
+import { ledgerEvents } from "./obs/ledger.ts";
 import { askQuestion, newItemId, QUEUE, type Question, type QuestionState, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
@@ -185,6 +186,7 @@ export function closeCardQuestions(store: Store, server: string, requestId: stri
 		for (const q of questionStates(store).values()) {
 			if (q.status !== "open" || q.cardRequest !== requestId || q.server !== server) continue;
 			store.items.resolve(QUEUE, q.id, now, { answeredOnCard: true });
+			ledgerEvents(store).answered(q.id);
 			n++;
 		}
 		return n;

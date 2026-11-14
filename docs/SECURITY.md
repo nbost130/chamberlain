@@ -58,6 +58,12 @@ it is deliberately conservative.
   (`428`), with a made-up, replayed (`403`) or expired (`410`) one, or with one issued for another card, decision, fingerprint or
   session, is refused and reaches nothing. Each approval is logged with its full command. Secret and machine-link requests are
   listed read-only and never answerable. A secret item's value is entered in its own thread, never on the page.
+- **The telemetry database stores no text.** `obs.db` (docs/OBSERVABILITY.md section 3) takes only the events and fields its registry lists, each typed as an
+  identifier of a fixed shape, a member of a fixed set, a number or a flag; there is no string type and no `note`. A thread title, a path, a URL, a prompt and
+  an error's message cannot be written (an error is stored as its class, `ECONNREFUSED` or `timeout`); a thread id is stored only when it is a UUID, and a wake's delivery id
+  only as a 12-hex digest. A scrubber backstop then drops any key named like a secret and any value shaped like `Bearer`, a JWT, `sk-`, `gh*_`, the page key or a URL, and counts
+  it as `log.redacted`, which must read zero. The older `events` table still holds the full lines (it did before) until it is dropped. A fuzz test feeds every event of the registry
+  credentials, a webhook URL, a path, a title and a prompt, and fails if a byte of them is in `obs.db` or its log; removing any scrubber rule fails a test.
 - **Evidence files are confined.** The page serves only files an item lists, from `<state>/evidence/<item>/`;
   `..`, absolute paths, encoded slashes and symlinks are refused.
 - **Outside text is data.** Thread titles, last messages, questions and check output reach the Steward fenced as

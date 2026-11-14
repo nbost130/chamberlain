@@ -440,10 +440,13 @@ describe("an adapter with only the four required capabilities", () => {
 		const r = rig({ capabilities: [], steward: "steward-1", housekeeping: true });
 		await r.until("connected", () => r.fake.connected);
 		await r.engine.tick();
-		const beat = r.store.state.get<{ servers: { name: string; connected: boolean; version: string | null }[] }>(
-			"heartbeat",
-		)!;
+		const beat = r.store.state.get<{
+			servers: { name: string; connected: boolean; version: string | null }[];
+			log: Record<string, number>;
+		}>("heartbeat")!;
 		expect(beat.servers).toEqual([expect.objectContaining({ name: "fake", connected: true, version: "fake-1" })]);
+		// The telemetry's own health rides the heartbeat: warn and error rows this process wrote, and the counters that must stay at zero.
+		expect(beat.log).toEqual({ warn: 0, error: 0, rejected: 0, redacted: 0, failed: 0, dropped: 0 });
 		expect(r.events.filter((e) => e.event.endsWith("-error"))).toEqual([]);
 	});
 });

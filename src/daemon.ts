@@ -12,9 +12,10 @@ import { defaultStore } from "./core/default-store.ts";
 import { createEngine } from "./core/engine.ts";
 import { ghRead } from "./core/gh.ts";
 import { setting } from "./core/layout.ts";
-import { makeLog } from "./core/log.ts";
+import { type Logger, logFor } from "./core/log.ts";
 import { maintain } from "./core/maintain.ts";
 import { startup } from "./core/migrate.ts";
+import { startReconciler } from "./core/obs/ledger.ts";
 import {
 	holdRelayLock,
 	networkFilesystem,
@@ -28,7 +29,7 @@ import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 /** Runs the daemon until it is stopped. It takes no arguments: its settings are the environment and the config directory. */
 export async function main(_argv: string[] = process.argv.slice(2)) {
 	const store = defaultStore();
-	const log = makeLog(store);
+	const log = logFor(store);
 	const lock = takeRelayLock(store, log);
 	const netfs = networkFilesystem(STATE);
 	if (netfs) {
@@ -40,6 +41,8 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
 	startup({ migrate: true, log });
 	maintain(store);
+	// The ledger's events: one pass soon after start (the backfill, the first time) and one an hour, from a read-only open of chamberlain.db.
+	startReconciler(store);
 	setInterval(() => {
 		try {
 			maintain(store);
@@ -62,7 +65,7 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 }
 
 /** The relay's flock on the state directory, held for this process's life: the operating system lets one process hold it, and frees it when this one dies. A refusal is logged and exits. */
-function takeRelayLock(store: ReturnType<typeof defaultStore>, log: ReturnType<typeof makeLog>): RelayLock {
+function takeRelayLock(store: ReturnType<typeof defaultStore>, log: Logger): RelayLock {
 	try {
 		return holdRelayLock(store.path);
 	} catch (e) {
@@ -86,7 +89,7 @@ function takeRelayLock(store: ReturnType<typeof defaultStore>, log: ReturnType<t
 /** What the engine is made of: the real config, the lock, the store and the servers, and the daemon's own settings and hooks. */
 function engineDeps(
 	store: ReturnType<typeof defaultStore>,
-	log: ReturnType<typeof makeLog>,
+	log: Logger,
 	lock: RelayLock,
 	servers: Parameters<typeof createEngine>[0]["servers"],
 ): Parameters<typeof createEngine>[0] {

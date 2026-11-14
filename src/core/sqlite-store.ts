@@ -15,6 +15,7 @@
 import { type Changes, Database } from "bun:sqlite";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
+import { applyMigrations } from "./apply-migrations.ts";
 import type { Butler } from "./butler.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { decideNotification, NOTIFY_ONCE } from "./notification.ts";
@@ -82,10 +83,12 @@ type Db = {
 	all(sql: string, ...p: unknown[]): Row[];
 	one(sql: string, ...p: unknown[]): Row | undefined;
 	run(sql: string, ...p: unknown[]): Changes;
+	/** Runs `fn` with the busy timeout at zero, so a held write lock is an error at once and not a wait of seconds. */
+	nowait<T>(fn: () => T): T;
 };
 
 /** The directory 0700 and the file 0600, each CHECKED after the chmod, and the file created before SQLite makes its own -wal and -shm files. */
-function preparePrivateFile(path: string, o: OpenOptions): void {
+export function preparePrivateFile(path: string, o: OpenOptions): void {
 	const dir = dirname(path);
 	mkdirSync(dir, { recursive: true, mode: DIR_MODE });
 	// Private before anything else: the directory 0700 and the file 0600, each CHECKED after the chmod. A mode that cannot be set
@@ -117,9 +120,23 @@ function openDatabase(path: string, o: OpenOptions): Database {
 
 // ---- transactions -------------------------------------------------------------------------------
 
-/** A transaction wrapper over `db`: BEGIN IMMEDIATE at the top level and a savepoint inside one. A callback that returns a promise is refused. */
-function makeTx(db: Database): Db["tx"] {
+/**
+ * A transaction wrapper over `db`: BEGIN IMMEDIATE at the top level and a savepoint inside one. A callback that returns a promise is refused.
+ * `after(fn)` runs `fn` once the outermost transaction has committed (at once when none is open), and never when it rolls back: the telemetry
+ * of a ledger write waits for the write to be real.
+ */
+function makeTx(db: Database): { tx: Db["tx"]; after: (fn: () => void) => void } {
 	let depth = 0;
+	let later: (() => void)[] = [];
+	function ran(fns: (() => void)[]) {
+		for (const fn of fns) {
+			try {
+				fn();
+			} catch {
+				/* a telemetry callback never fails a commit */
+			}
+		}
+	}
 	function outermost<T>(fn: () => T): T {
 		db.exec("BEGIN IMMEDIATE");
 		depth = 1;
@@ -128,8 +145,13 @@ function makeTx(db: Database): Db["tx"] {
 			if (out && typeof (out as { then?: unknown }).then === "function")
 				throw Error("a store transaction cannot await");
 			db.exec("COMMIT");
+			const done = later;
+			later = [];
+			depth = 0;
+			ran(done);
 			return out;
 		} catch (e) {
+			later = [];
 			try {
 				db.exec("ROLLBACK");
 			} catch {
@@ -142,6 +164,7 @@ function makeTx(db: Database): Db["tx"] {
 	}
 	function nested<T>(fn: () => T): T {
 		const name = `sp${depth}`;
+		const mark = later.length;
 		db.exec(`SAVEPOINT ${name}`);
 		depth++;
 		try {
@@ -149,6 +172,7 @@ function makeTx(db: Database): Db["tx"] {
 			db.exec(`RELEASE ${name}`);
 			return out;
 		} catch (e) {
+			later.length = mark;
 			db.exec(`ROLLBACK TO ${name}`);
 			db.exec(`RELEASE ${name}`);
 			throw e;
@@ -156,22 +180,43 @@ function makeTx(db: Database): Db["tx"] {
 			depth--;
 		}
 	}
-	return <T>(fn: () => T): T => (depth === 0 ? outermost(fn) : nested(fn));
+	return {
+		tx: <T>(fn: () => T): T => (depth === 0 ? outermost(fn) : nested(fn)),
+		after: (fn) => (depth === 0 ? ran([fn]) : later.push(fn)),
+	};
 }
 
 /** Opens (creating and migrating) the database at `path`, or `:memory:`. */
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o);
+	const busyMs = Math.max(1, Math.floor(o.busyMs ?? 10_000));
+	const { tx, after } = makeTx(db);
 	const c: Db = {
-		tx: makeTx(db),
+		tx,
 		all: (sql, ...p) => db.query(sql).all(...(p as never[])) as Row[],
 		one: (sql, ...p) => (db.query(sql).get(...(p as never[])) ?? undefined) as Row | undefined,
 		run: (sql, ...p) => db.query(sql).run(...(p as never[])),
+		nowait: (fn) => {
+			db.exec("PRAGMA busy_timeout = 0");
+			try {
+				return fn();
+			} finally {
+				db.exec(`PRAGMA busy_timeout = ${busyMs}`);
+			}
+		},
 	};
+	const closers: (() => void)[] = [];
 	return {
 		path,
 		tx: c.tx,
-		close: () => db.close(),
+		close: () => {
+			for (const fn of closers.splice(0)) fn();
+			db.close();
+		},
+		afterCommit: after,
+		onClose: (fn) => {
+			closers.push(fn);
+		},
 		items: makeItems(c),
 		claims: makeClaims(c),
 		evidence: makeEvidence(c),
@@ -649,17 +694,18 @@ const toDecision = (r: Row): DecisionRow => ({
 	ref: (r.ref as string | null) ?? null,
 });
 const makeDecisions = (c: Db): Store["decisions"] => ({
-	append: (d) => {
-		c.run(
-			"INSERT INTO decisions (t, thread, decision, ruling, ruling_ids, ref) VALUES (?, ?, ?, ?, ?, ?)",
-			d.t,
-			d.thread,
-			d.decision,
-			d.ruling,
-			json(d.rulingIds),
-			d.ref,
-		);
-	},
+	append: (d) =>
+		Number(
+			c.run(
+				"INSERT INTO decisions (t, thread, decision, ruling, ruling_ids, ref) VALUES (?, ?, ?, ?, ?, ?)",
+				d.t,
+				d.thread,
+				d.decision,
+				d.ruling,
+				json(d.rulingIds),
+				d.ref,
+			).lastInsertRowid,
+		),
 	list: () => c.all("SELECT * FROM decisions ORDER BY id").map(toDecision),
 });
 
@@ -1024,17 +1070,34 @@ const eventWhere = (q: EventQuery) => {
 	}
 	return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", p };
 };
+const BUSY = /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i;
+const appendEvent = (c: Db, e: LogEvent, importKey?: string) => {
+	const { t, event, src, ...data } = e;
+	c.run(
+		"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
+		t,
+		event,
+		src ?? null,
+		JSON.stringify(data),
+		importKey ?? null,
+	);
+};
 const makeEvents = (c: Db): Store["events"] => ({
-	append(e, importKey) {
-		const { t, event, src, ...data } = e;
-		c.run(
-			"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
-			t,
-			event,
-			src ?? null,
-			JSON.stringify(data),
-			importKey ?? null,
-		);
+	append: (e, importKey) => {
+		appendEvent(c, e, importKey);
+	},
+	tryAppendMany(lines) {
+		try {
+			c.nowait(() =>
+				c.tx(() => {
+					for (const [e, key] of lines) appendEvent(c, e, key);
+				}),
+			);
+			return true;
+		} catch (err) {
+			if (BUSY.test(String(err))) return false;
+			throw err;
+		}
 	},
 	query(q = {}) {
 		const w = eventWhere(q);
@@ -1257,33 +1320,5 @@ export function foldWal(path: string, busyMs = 5000): boolean {
 }
 
 function migrate(db: Database, path: string) {
-	db.exec(
-		"CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)",
-	);
-	const newest = () => (db.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number | null }).v ?? 0;
-	const found = newest();
-	if (found > LATEST_MIGRATION) throw new DatabaseTooNewError(path, found);
-	for (const m of MIGRATIONS) {
-		if (m.version <= found) continue;
-		db.exec("BEGIN IMMEDIATE");
-		try {
-			// Another process may have applied it while this one waited for the lock.
-			if (m.version > newest()) {
-				db.exec(m.sql);
-				db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, ?)").run(
-					m.version,
-					m.name,
-					new Date().toISOString(),
-				);
-			}
-			db.exec("COMMIT");
-		} catch (e) {
-			try {
-				db.exec("ROLLBACK");
-			} catch {
-				/* ended */
-			}
-			throw e;
-		}
-	}
+	applyMigrations(db, MIGRATIONS, (found) => new DatabaseTooNewError(path, found));
 }

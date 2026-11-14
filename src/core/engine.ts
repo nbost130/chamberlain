@@ -78,7 +78,7 @@ import type { Gate } from "./hold.ts";
 import type { IdleThreadSource } from "./idle-parents.ts";
 import { createJudge, type Judge, judgeOff, readJudgeConfig } from "./judge.ts";
 import { readNamed, setting } from "./layout.ts";
-import { type Log, makeLog } from "./log.ts";
+import { type Log, logFor, obsFor } from "./log.ts";
 import { recordAnswerDelivered } from "./questions.ts";
 import { type ReportOutcome, settleReport } from "./report.ts";
 import {
@@ -877,7 +877,13 @@ class Core {
 		this.DRY = d.dry === true;
 		this.t = { ...defaultTiming(), ...d.timing };
 		this.EXCLUDE = new Set(d.exclude ?? []);
-		this.log = d.log ?? makeLog(d.store);
+		this.log = d.log ?? logFor(d.store);
+		const obs = obsFor(d.store);
+		obs.allow(
+			"server",
+			d.servers.map((x) => x.server.name),
+		);
+		obs.allow("receiver", [DESK_RECEIVER]);
 		this.home = homeServer(d.servers.map((x) => x.server));
 		this.homeAdapter = adapterOf(d.servers, this.home);
 		this.decisionsThread = this.privateFile("decisions-thread");
@@ -1210,6 +1216,10 @@ class Core {
 			failures: () => this.relay.failures(),
 			mayBeOffline: (name) => this.d.servers.find((x) => x.server.name === name)?.server.mayBeOffline,
 			raiseAlarm: this.raiseAlarm,
+			logCounts: () => {
+				const obs = obsFor(this.store);
+				return { warn: obs.levels.warn, error: obs.levels.error, ...obs.counters };
+			},
 		}).beat;
 	}
 
