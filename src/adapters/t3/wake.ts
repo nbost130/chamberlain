@@ -18,5 +18,9 @@ export async function postWebhook(url: string, deliveryId: string, message: stri
 /** The wake transport for a webhook URL, read fresh on every call. Undefined means nowhere to deliver. */
 export const webhookWake = (url: () => string | undefined, doFetch: typeof fetch = fetch): WakeTransport => ({
 	ready: () => Boolean(url()),
-	send: (deliveryId, message) => postWebhook(url()!, deliveryId, message, doFetch),
+	send: async (deliveryId, message) => {
+		const target = url();
+		if (!target) throw Error("webhook wake: send called with no webhook URL (ready() was false)");
+		return postWebhook(target, deliveryId, message, doFetch);
+	},
 });

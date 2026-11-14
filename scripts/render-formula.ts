@@ -15,9 +15,9 @@ export function parseSums(text: string): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const line of text.split("\n")) {
 		if (!line.trim()) continue;
-		const m = line.match(/^([0-9a-f]{64}) [ *](\S+)$/);
-		if (!m) throw Error(`SHA256SUMS: cannot read the line "${line.slice(0, 80)}"`);
-		out[m[2]!] = m[1]!;
+		const [, sum, file] = line.match(/^([0-9a-f]{64}) [ *](\S+)$/) ?? [];
+		if (!sum || !file) throw Error(`SHA256SUMS: cannot read the line "${line.slice(0, 80)}"`);
+		out[file] = sum;
 	}
 	return out;
 }

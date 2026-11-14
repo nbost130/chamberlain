@@ -41,7 +41,7 @@ async function tokens(argv: string[]) {
 					const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 					if (!has(adapter, "transcriptPath"))
 						throw Error(`the ${adapter.id} adapter has no transcript; pass --dir or the transcript files`);
-					dir = transcriptDir(await adapter.transcriptPath!());
+					dir = transcriptDir(await adapter.transcriptPath());
 				}
 				paths = await findStewardTranscripts(dir);
 			}
@@ -74,7 +74,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	try {
 		const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 		if (!has(adapter, "transcriptPath")) throw Error(`the ${adapter.id} adapter has no transcript to measure`);
-		console.log((await liveHealth(() => adapter.transcriptPath!())).report);
+		console.log((await liveHealth(() => adapter.transcriptPath())).report);
 	} catch (e) {
 		console.error(`Steward health: WATCH — measurement unavailable (${String(e)})`);
 		process.exitCode = 1;

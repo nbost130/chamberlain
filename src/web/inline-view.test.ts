@@ -93,7 +93,9 @@ class El {
 		this.attrs[k] = v;
 	}
 	addEventListener(ev: string, fn: () => unknown) {
-		(this.listeners[ev] ??= []).push(fn);
+		const list = this.listeners[ev] ?? [];
+		this.listeners[ev] = list;
+		list.push(fn);
 	}
 	all(pred: (e: El) => boolean): El[] {
 		return [...(pred(this) ? [this] : []), ...this.children.flatMap((c) => c.all(pred))];

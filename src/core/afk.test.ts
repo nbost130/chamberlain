@@ -115,9 +115,8 @@ describe("the held list", () => {
 describe("closeHeldForCard", () => {
 	const seed = (entries: Partial<Held>[]) => {
 		const store = memStore();
-		entries.forEach((e, i) =>
-			appendHeld(store, { thread: "T", what: `w${i}`, ...e }, new Date(`2026-11-06T0${i}:00:00.000Z`)),
-		);
+		for (const [i, e] of entries.entries())
+			appendHeld(store, { thread: "T", what: `w${i}`, ...e }, new Date(`2026-11-06T0${i}:00:00.000Z`));
 		return store;
 	};
 	const open = (store: ReturnType<typeof memStore>) => heldOpen(store).map((h) => h.what);
