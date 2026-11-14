@@ -254,7 +254,7 @@ describe("a 24 hour repeat the cap held back is never dropped", () => {
 		expect(alertReasons(r)).toEqual(["new", "new"]);
 		const pending = r.store.items.get(ALERT_DESK, "A#pending");
 		expect(pending?.status).toBe("triggered");
-		expect((pending?.payload as { reason?: string }).reason).toBe("repeat");
+		expect((pending?.payload as { reason?: string } | undefined)?.reason).toBe("repeat");
 		return r;
 	}
 	test("a later pass with the cap still full leaves it pending", () => {

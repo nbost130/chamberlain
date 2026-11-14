@@ -74,7 +74,7 @@ export function decideNotification(s: NotificationState, policy: RepeatPolicy, n
 	const n = count + 1;
 	const step =
 		n < policy.maxNotifications && policy.intervalsMs.length
-			? policy.intervalsMs[Math.min(n - 1, policy.intervalsMs.length - 1)]!
+			? policy.intervalsMs[Math.min(n - 1, policy.intervalsMs.length - 1)]
 			: undefined;
 	return { notify: live, wouldNotify: !live, count: n, nextAt: step === undefined ? null : now + step };
 }
