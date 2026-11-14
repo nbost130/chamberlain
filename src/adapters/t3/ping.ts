@@ -48,7 +48,7 @@ export function sendFailure(error: unknown, dispatched: boolean, secrets: (strin
 /** Pure: a UUID-shaped ID fixed by its seed, so a retried send carries the same command and message IDs. */
 export const stableId = (seed: string) => {
 	const h = createHash("sha256").update(seed).digest("hex");
-	return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16]!, 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+	return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h.charAt(16), 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 };
 
 /** A call that hasn't answered by then fails, so one hung server can't stall the poll. */

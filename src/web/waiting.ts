@@ -26,10 +26,11 @@ export function withAnswerRights<S extends { name: string; origin?: unknown }>(
 	qs?: { origin: string; operateTokenFile: string },
 	answerTokens: Record<string, string> = {},
 ): (S & { operateTokenFile: string | null })[] {
-	const grant = (name: string) =>
-		!RESERVED_NAMES.has(name) && Object.hasOwn(answerTokens, name) && typeof answerTokens[name] === "string"
-			? answerTokens[name]!
-			: null;
+	const grant = (name: string): string | null => {
+		if (RESERVED_NAMES.has(name) || !Object.hasOwn(answerTokens, name)) return null;
+		const token = answerTokens[name];
+		return typeof token === "string" ? token : null;
+	};
 	return list.map((s) => ({
 		...s,
 		operateTokenFile: qs && s.origin === qs.origin ? qs.operateTokenFile : grant(s.name),
