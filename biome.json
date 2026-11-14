@@ -9,9 +9,13 @@
 			"preset": "recommended",
 			"complexity": {
 				"noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 15 } },
-				"noExcessiveLinesPerFunction": { "level": "error", "options": { "maxLines": 50 } }
+				"noExcessiveLinesPerFunction": { "level": "error", "options": { "maxLines": 50 } },
+				"useMaxParams": { "level": "error", "options": { "max": 4 } }
 			},
-			"style": { "useTemplate": "error" }
+			"style": {
+				"noExcessiveLinesPerFile": { "level": "error", "options": { "maxLines": 300 } },
+				"useTemplate": "error"
+			}
 		}
 	},
 	"assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
@@ -22,7 +26,7 @@
 			"linter": {
 				"rules": {
 					"complexity": { "noExcessiveCognitiveComplexity": "off", "noExcessiveLinesPerFunction": "off" },
-					"style": { "noNonNullAssertion": "off" },
+					"style": { "noNonNullAssertion": "off", "noExcessiveLinesPerFile": "off" },
 					"suspicious": { "noExplicitAny": "off" }
 				}
 			}

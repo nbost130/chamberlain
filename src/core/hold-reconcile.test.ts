@@ -1,21 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { appendHeld, HELD, type Held, heldId, heldOpen } from "./afk.ts";
+import { appendHeld, HELD, type Held, heldId, heldOpen } from "./afk-held.ts";
+import type { GhRead } from "./hold-lookup.ts";
 import {
 	BACKOFF_MS,
-	classifyThread,
-	type GhRead,
 	MAX_REQUESTS,
-	type MachineSnapshot,
 	REF_PASS_MS,
 	reconcileItemHolds,
 	reconcileRefHolds,
 	refsOf,
+} from "./hold-reconcile.ts";
+import {
+	classifyThread,
+	type MachineSnapshot,
 	type ThreadFacts,
 	takeSnapshots,
 	threadViewAcross,
-} from "./hold-reconcile.ts";
-import { type Answer, askQuestion, claimWake, notNow, pageClaim, QUEUE, type Question } from "./questions.ts";
+} from "./hold-threads.ts";
+import { type Answer, askQuestion, notNow, QUEUE, type Question } from "./questions.ts";
+import { claimWake, pageClaim } from "./questions-claim.ts";
 import type { Store } from "./store.ts";
 
 const T0 = new Date("2026-11-13T01:00:00.000Z");
@@ -62,7 +65,7 @@ describe("pass 1: every way a question gets answered closes its holds", () => {
 		};
 		claimWake(store, pageClaim(relayed, answerOf("Q-relay", "page")));
 		store.claims.startRelay(QUEUE, "Q-relay");
-		store.claims.finishRelay(QUEUE, "Q-relay", "delivered");
+		store.claims.finishRelay(QUEUE, "Q-relay", { outcome: "delivered" });
 		expect(reconcileItemHolds(store)).toEqual({ closed: 4 });
 		expect(whats(store)).toEqual(["Q-open1"]);
 	});

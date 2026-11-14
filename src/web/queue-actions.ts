@@ -3,19 +3,11 @@
  * direction (a note, no option) or dismiss it. Kept out of the app's closure so each step is small enough to read and test on its own;
  * the app wires it to its serial queue and clock (./app.ts), and the routes are the full page's alone (`inlineVerdict`).
  */
-import { closeHeldForItem } from "../core/afk.ts";
+import { closeHeldForItem } from "../core/afk-held.ts";
 import { crashPoint } from "../core/crash.ts";
-import {
-	type AnswerKind,
-	claimWake,
-	enqueueClaim,
-	PAGE,
-	pageClaim,
-	plainAnswer,
-	type QuestionState,
-	questionStates,
-	wokenBy,
-} from "../core/questions.ts";
+import { type AnswerKind, type QuestionState, questionStates } from "../core/questions.ts";
+import { claimWake, enqueueClaim, PAGE, pageClaim, wokenBy } from "../core/questions-claim.ts";
+import { plainAnswer } from "../core/questions-wake.ts";
 import { clearSnooze, parseSnoozeUntil, snoozeQuestion, unsnoozeQuestion } from "../core/snooze.ts";
 import type { Store } from "../core/store.ts";
 

@@ -3,7 +3,7 @@
  * unreadable-queue alarms, and compact it when its context has outgrown the limit. Split out of createEngine (src/core/engine.ts), which passes
  * it the few things it reads and writes.
  */
-import type { StewardProbe } from "./adapter.ts";
+import type { StewardProbe } from "./adapter-inspect.ts";
 import { needsCompact } from "./decide.ts";
 import type { Log } from "./log.ts";
 import { type AlarmText, alarms } from "./messages.ts";

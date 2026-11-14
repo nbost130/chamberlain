@@ -12,7 +12,8 @@
  * and session values are random (192 bits); the database keeps only their SHA-256 hashes.
  */
 import { createHash, randomBytes } from "node:crypto";
-import type { ChallengeVerdict, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { ChallengeVerdict } from "./store-wakes.ts";
 
 export const CHALLENGE_TTL_MS = 60_000;
 export const SESSION_COOKIE = "dq_session";

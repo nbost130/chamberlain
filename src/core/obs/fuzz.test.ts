@@ -10,7 +10,8 @@ import { eventRows, everything, memObs } from "../../testing/obs.ts";
 import { MARK, POISON, VECTORS } from "../../testing/secrets.ts";
 import { makeLogger } from "./logger.ts";
 import type { Obs } from "./obs.ts";
-import { EVENTS, type EventSpec } from "./registry.ts";
+import { EVENTS } from "./registry-events.ts";
+import type { EventSpec } from "./registry-spec.ts";
 import { RULES } from "./scrub.ts";
 
 const dirs: string[] = [];
@@ -59,7 +60,7 @@ function fuzz(obs: Obs) {
 			log.warn(name as never, typed);
 			const old = Object.fromEntries(legacyKeys(spec).map((k) => [k, poison]));
 			makeLogger(obs, { mod: poison as string })(spec.legacy ?? name, old);
-			obs.record("info", name, typed, { mod: "ledger" }, { sourceKey: `item:${poison}` as string });
+			obs.record("info", name, typed, { ctx: { mod: "ledger" }, opts: { sourceKey: `item:${poison}` as string } });
 		}
 	}
 }
@@ -129,15 +130,14 @@ describe("the scrubber backstop, with the registry's own checks out of the way",
 
 	test("a column that matches a rule drops the whole row, and a source key that is no ledger key is refused", () => {
 		const obs = memObs();
-		obs.record("info", "decision.logged", { cited: 1 }, { mod: "sk-zqxmark0123456" });
+		obs.record("info", "decision.logged", { cited: 1 }, { ctx: { mod: "sk-zqxmark0123456" } });
 		expect(eventRows(obs)).toEqual([]);
 		expect(obs.counters.redacted).toBe(1);
 		obs.record(
 			"info",
 			"decision.logged",
 			{ cited: 1 },
-			{ mod: "ledger" },
-			{ sourceKey: `decision:gh${"p"}_0123456789abcdefghij` },
+			{ ctx: { mod: "ledger" }, opts: { sourceKey: `decision:gh${"p"}_0123456789abcdefghij` } },
 		);
 		expect(eventRows(obs)).toEqual([]);
 		expect(obs.counters.rejected).toBe(1);
@@ -183,8 +183,7 @@ describe("every column, not only `data`", () => {
 				"info",
 				"decision.logged",
 				{ cited: 1 },
-				{ mod: "ledger" },
-				{ t: poison as string, sourceKey: poison as string },
+				{ ctx: { mod: "ledger" }, opts: { t: poison as string, sourceKey: poison as string } },
 			);
 		}
 		const rows = eventRows(obs);
@@ -210,8 +209,13 @@ describe("every column, not only `data`", () => {
 
 	test("a time the caller supplies is used only when it is a timestamp", () => {
 		const obs = memObs();
-		obs.record("info", "decision.logged", { cited: 1 }, { mod: "ledger" }, { t: "2026-11-01T00:00:00.000Z" });
-		obs.record("info", "decision.logged", { cited: 1 }, { mod: "ledger" }, { t: "Bearer abc" });
+		obs.record(
+			"info",
+			"decision.logged",
+			{ cited: 1 },
+			{ ctx: { mod: "ledger" }, opts: { t: "2026-11-01T00:00:00.000Z" } },
+		);
+		obs.record("info", "decision.logged", { cited: 1 }, { ctx: { mod: "ledger" }, opts: { t: "Bearer abc" } });
 		expect(eventRows(obs).map((r) => r.t)[0]).toBe("2026-11-01T00:00:00.000Z");
 		expect(eventRows(obs)[1]?.t).not.toContain("Bearer");
 		expect(obs.counters.rejected).toBe(1);

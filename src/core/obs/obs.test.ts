@@ -9,7 +9,8 @@ import { openStore } from "../sqlite-store.ts";
 import { OBS_MIGRATIONS } from "./db.ts";
 import { corrOf } from "./fields.ts";
 import { makeLogger } from "./logger.ts";
-import { hostName, Obs } from "./obs.ts";
+import { Obs } from "./obs.ts";
+import { hostName } from "./obs-spec.ts";
 
 const dirs: string[] = [];
 const scratch = () => {
@@ -419,8 +420,7 @@ describe("source_key and the dual write", () => {
 				"info",
 				"decision.logged",
 				{ cited: 2 },
-				{ mod: "ledger" },
-				{ sourceKey: "decision:7", t: "2026-11-01T00:00:00.000Z" },
+				{ ctx: { mod: "ledger" }, opts: { sourceKey: "decision:7", t: "2026-11-01T00:00:00.000Z" } },
 			);
 		expect(call()).toBe("stored");
 		expect(call()).toBe("ignored");

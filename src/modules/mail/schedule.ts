@@ -62,6 +62,6 @@ export function parseSchedule(raw: unknown, where: string, d: Schedule): Schedul
 		times: parseTimes(o.times, where, d.times),
 		days,
 		tz,
-		maxRunsPerDay: num(o, "maxRunsPerDay", where, d.maxRunsPerDay, true),
+		maxRunsPerDay: num(o, "maxRunsPerDay", where, { d: d.maxRunsPerDay, whole: true }),
 	};
 }

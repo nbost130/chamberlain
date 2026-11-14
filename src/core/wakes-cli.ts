@@ -11,7 +11,8 @@
  */
 import { selfCommand } from "./config.ts";
 import { maxAttemptsFromEnv } from "./deliver.ts";
-import type { OutboxRow, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { OutboxRow } from "./store-wakes.ts";
 
 export const wakesUsage = () =>
 	["list", "retry <delivery id>", "cancel <delivery id>"]
@@ -40,7 +41,11 @@ function listWakes(store: Store, max: number, out: Out): number {
 }
 
 /** `retry <id>` or `cancel <id>`: what the row was decides whether the command applied. */
-function retryOrCancel(store: Store, cmd: "retry" | "cancel", id: string, max: number, out: Out): number {
+function retryOrCancel(
+	store: Store,
+	{ cmd, id, max }: { cmd: "retry" | "cancel"; id: string; max: number },
+	out: Out,
+): number {
 	const was = cmd === "retry" ? store.wakes.retry(id) : store.wakes.cancel(id, Date.now());
 	if (!was) {
 		out(`${cmd}: no outbox row has the id ${id} ("list" shows what is waiting)`);
@@ -72,7 +77,8 @@ export function runWakesCli(
 	const [cmd, id] = argv;
 	const max = maxAttemptsFromEnv(env);
 	if (cmd === "list" && argv.length === 1) return listWakes(store, max, out);
-	if ((cmd === "retry" || cmd === "cancel") && id && argv.length === 2) return retryOrCancel(store, cmd, id, max, out);
+	if ((cmd === "retry" || cmd === "cancel") && id && argv.length === 2)
+		return retryOrCancel(store, { cmd, id, max }, out);
 	out(wakesUsage());
 	return 2;
 }

@@ -10,16 +10,10 @@ import type { Adapter } from "../../core/adapter.ts";
 import { memStore } from "../../testing/store.ts";
 import { createWaiting, threadSender, withAnswerRights } from "../../web/waiting.ts";
 import { t3Linker } from "./links.ts";
-import {
-	cardsFrom,
-	createT3Waiting,
-	goalProposal,
-	mirrorId,
-	redact,
-	type Server,
-	secretWaits,
-	type WaitingDeps,
-} from "./waiting.ts";
+import { redact } from "./ping.ts";
+import { cardsFrom, goalProposal, mirrorId, secretWaits } from "./wait-cards.ts";
+import type { Server, WaitingDeps } from "./wait-ctx.ts";
+import { createT3Waiting } from "./waiting.ts";
 
 /** The page's mirror over T3 servers: one T3 reader per server (kept between polls, as the adapter keeps its own), listed and answered through the aggregator. */
 type MirrorDeps = Pick<WaitingDeps, "conf" | "log" | "connect" | "timeoutMs" | "linker"> & {
@@ -109,7 +103,7 @@ test("question cards and approvals are answerable; secrets and links are listed 
 		question("r5", { status: "completed" }),
 		question("r6", { questions: [{ id: "Steward [Q-abcd]", question: "x [Q-abcd]", options: [{ label: "A" }] }] }),
 	];
-	const cards = cardsFrom("main", true, T, items, "t3-thread://v2/env/th-1");
+	const cards = cardsFrom({ server: "main", canAnswer: true, thread: T, link: "t3-thread://v2/env/th-1" }, items);
 	expect(cards.map((c) => [c.requestId, c.type, c.answerable])).toEqual([
 		["r1", "question", true],
 		["r2", "approval", true],
@@ -135,15 +129,17 @@ test("question cards and approvals are answerable; secrets and links are listed 
 });
 
 test("a card is read-only without the token, or when it asks several things, allows several picks, or wants text", () => {
-	expect(cardsFrom("laptop", false, T, [question("r1")])[0]!.why).toBe("answer it in its thread on laptop");
+	expect(cardsFrom({ server: "laptop", canAnswer: false, thread: T }, [question("r1")])[0]!.why).toBe(
+		"answer it in its thread on laptop",
+	);
 	const two = question("r1", {
 		questions: [question("x").questions[0], { id: "1", question: "and?", options: [{ label: "A" }] }],
 	});
-	expect(cardsFrom("main", true, T, [two])[0]!.answerable).toBe(false);
+	expect(cardsFrom({ server: "main", canAnswer: true, thread: T }, [two])[0]!.answerable).toBe(false);
 	const multi = question("r1", { questions: [{ ...question("x").questions[0], multiSelect: true }] });
-	expect(cardsFrom("main", true, T, [multi])[0]!.answerable).toBe(false);
+	expect(cardsFrom({ server: "main", canAnswer: true, thread: T }, [multi])[0]!.answerable).toBe(false);
 	const text = question("r1", { questions: [{ id: "0", question: "Why?", options: [] }] });
-	expect(cardsFrom("main", true, T, [text])[0]!.answerable).toBe(false);
+	expect(cardsFrom({ server: "main", canAnswer: true, thread: T }, [text])[0]!.answerable).toBe(false);
 });
 
 function rig(
@@ -455,12 +451,16 @@ const approval = (requestId: string, over: Record<string, unknown> = {}) => ({
 
 test("an approval keeps its command byte for byte, and is read-only without the token or without a command", () => {
 	const multi = "printf 'a  b'\n  && true";
-	const c = cardsFrom("main", true, T, [approval("a1", { prompt: multi })])[0]!;
+	const c = cardsFrom({ server: "main", canAnswer: true, thread: T }, [approval("a1", { prompt: multi })])[0]!;
 	expect(c.command).toBe(multi);
-	expect(cardsFrom("laptop", false, T, [approval("a1")])[0]!.answerable).toBe(false);
-	expect(cardsFrom("laptop", false, T, [approval("a1")])[0]!.options).toEqual([]);
-	expect(cardsFrom("main", true, T, [approval("a1", { prompt: "  " })])[0]!.answerable).toBe(false);
-	expect(cardsFrom("main", true, T, [approval("a1", { prompt: "true " })])[0]!.sig).not.toBe(c.sig);
+	expect(cardsFrom({ server: "laptop", canAnswer: false, thread: T }, [approval("a1")])[0]!.answerable).toBe(false);
+	expect(cardsFrom({ server: "laptop", canAnswer: false, thread: T }, [approval("a1")])[0]!.options).toEqual([]);
+	expect(
+		cardsFrom({ server: "main", canAnswer: true, thread: T }, [approval("a1", { prompt: "  " })])[0]!.answerable,
+	).toBe(false);
+	expect(
+		cardsFrom({ server: "main", canAnswer: true, thread: T }, [approval("a1", { prompt: "true " })])[0]!.sig,
+	).not.toBe(c.sig);
 });
 
 test("approve once sends accept, decline sends decline, never anything wider, and the log has the full command", async () => {
@@ -1047,30 +1047,37 @@ describe("a secret box that has ended is not listed as waiting, as T3 counts it"
 			[],
 			[{ id: "run-2", status: "completed" }],
 		])
-			expect([runs, cardsFrom("main", true, T, [secret()], undefined, runs).map((c) => c.type)]).toEqual([
+			expect([
 				runs,
-				["secret"],
-			]);
+				cardsFrom({ server: "main", canAnswer: true, thread: T }, [secret()], runs).map((c) => c.type),
+			]).toEqual([runs, ["secret"]]);
 		expect(
-			cardsFrom("main", true, T, [secret({ secretStatus: undefined, runId: undefined })]).map((c) => c.type),
+			cardsFrom({ server: "main", canAnswer: true, thread: T }, [
+				secret({ secretStatus: undefined, runId: undefined }),
+			]).map((c) => c.type),
 		).toEqual(["secret"]);
 	});
 	test("its outcome is not pending (saved, declined, cancelled, or anything else): not listed, even if the item still says waiting", () => {
 		for (const secretStatus of ["saved", "declined", "cancelled", "expired", "", null])
-			expect([secretStatus, cardsFrom("main", true, T, [secret({ secretStatus })])]).toEqual([secretStatus, []]);
+			expect([
+				secretStatus,
+				cardsFrom({ server: "main", canAnswer: true, thread: T }, [secret({ secretStatus })]),
+			]).toEqual([secretStatus, []]);
 	});
 	test("its run has ended (the agent's wait timed out or died with it): not listed", () => {
 		for (const status of ["completed", "failed", "cancelled", "interrupted", "rolled_back"])
-			expect([status, cardsFrom("main", true, T, [secret()], undefined, [{ id: "run-1", status }])]).toEqual([
+			expect([
 				status,
-				[],
-			]);
+				cardsFrom({ server: "main", canAnswer: true, thread: T }, [secret()], [{ id: "run-1", status }]),
+			]).toEqual([status, []]);
 	});
 	test("secretWaits is the same rule, alone; other kinds are untouched by it", () => {
 		expect(secretWaits({ secretStatus: "pending", runId: "r" }, [{ id: "r", status: "running" }])).toBe(true);
 		expect(secretWaits({ secretStatus: "pending", runId: "r" }, [{ id: "r", status: "completed" }])).toBe(false);
 		expect(secretWaits({ secretStatus: "cancelled" })).toBe(false);
 		const approval = { type: "approval_request", status: "waiting", requestId: "a1", prompt: "ls", runId: "run-1" };
-		expect(cardsFrom("main", true, T, [approval], undefined, [{ id: "run-1", status: "completed" }])).toHaveLength(1);
+		expect(
+			cardsFrom({ server: "main", canAnswer: true, thread: T }, [approval], [{ id: "run-1", status: "completed" }]),
+		).toHaveLength(1);
 	});
 });

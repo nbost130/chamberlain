@@ -32,31 +32,20 @@ import {
 const TOKENS = tokensFor();
 
 import { loadConfig } from "../web/config.ts";
-import { readConfig, readOperator } from "./alert-desk.ts";
+import { readConfig } from "./alert-desk-config.ts";
+import { readOperator } from "./alert-desk-prompt.ts";
 import { readSettings } from "./config.ts";
 import { planLines, showLines } from "./config-cmd.ts";
-import {
-	envValue,
-	migrateLayout,
-	parseEnvFile,
-	planMigration,
-	revertLayout,
-	setThread,
-	startupLayout,
-} from "./config-migrate.ts";
-import {
-	attachDeprecationLog,
-	cfg,
-	ENV_KEYS,
-	readConfigFile,
-	readNamed,
-	readSecret,
-	resetLayout,
-	setting,
-	thread,
-} from "./layout.ts";
+import { envValue, parseEnvFile } from "./config-fold.ts";
+import { migrateLayout, setThread, startupLayout } from "./config-migrate.ts";
+import { planMigration } from "./config-plan.ts";
+import { revertLayout } from "./config-revert.ts";
+import { holdFlock } from "./flock.ts";
+import { cfg, readNamed, readSecret, setting, thread } from "./layout.ts";
+import { attachDeprecationLog, resetLayout } from "./layout-legacy.ts";
+import { readConfigFile } from "./layout-read.ts";
+import { ENV_KEYS } from "./layout-schema.ts";
 import { readServers } from "./servers.ts";
-import { holdFlock } from "./singleton.ts";
 import { readSweepConfig } from "./sweep.ts";
 
 const dirs: string[] = [];

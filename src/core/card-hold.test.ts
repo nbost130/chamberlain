@@ -6,25 +6,22 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import type { WaitingItem } from "./adapter.ts";
-import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
+import type { WaitingItem } from "./adapter-waiting.ts";
+import { closeHeldForCard, heldId, heldOpen } from "./afk-held.ts";
 import {
-	CARD_UNVERIFIED,
-	cardKey,
 	cardQuestion,
 	cardWaitOf,
 	closeCard,
 	closeCardByHand,
 	closeCardQuestions,
 	holdCard,
-	openCards,
 	questionForCard,
-	reconcileCardHolds,
-	trackUnverified,
-	unverifiedAlarm,
 } from "./card-hold.ts";
+import { CARD_UNVERIFIED, cardKey, openCards } from "./card-open.ts";
+import { reconcileCardHolds, trackUnverified, unverifiedAlarm } from "./card-reconcile.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
-import { askQuestion, getQuestion, isUrgent, questionStates, ranked } from "./questions.ts";
+import { askQuestion, getQuestion, isUrgent, questionStates } from "./questions.ts";
+import { ranked } from "./questions-wake.ts";
 import { findSettled } from "./settled.ts";
 import { openStore } from "./sqlite-store.ts";
 
@@ -291,7 +288,7 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		// While the read of th-1 is out, the first card's hold is replaced (closed by hand, then held again) and a second card is held.
 		let late = "";
 		const r = await reconcileCardHolds(store, async () => {
-			closeCardByHand(store, "main", "req-a1", "test: replaced");
+			closeCardByHand(store, { server: "main", requestId: "req-a1" }, "test: replaced");
 			late = holdCard(store, cardWaitOf(approval, AT)).item;
 			holdCard(store, cardWaitOf({ ...approval, requestId: "req-b" }, AT));
 			return { ok: true as const, waiting: new Set<string>(), resolved: new Set(["req-a1", "req-b"]) };
@@ -355,11 +352,16 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		expect(open(store)).toEqual({ holds: 1, questions: 1 });
 		expect(getQuestion(store, item)!.status).toBe("open");
 		// The operator closes it by hand: hold and question together, and the unverified record ends.
-		expect(closeCardByHand(store, "main", "req-a1", "answered in the thread")).toEqual({ questions: 1, holds: 1 });
+		expect(closeCardByHand(store, { server: "main", requestId: "req-a1" }, "answered in the thread")).toEqual({
+			questions: 1,
+			holds: 1,
+		});
 		expect(heldOpen(store)).toEqual([]);
 		expect(getQuestion(store, item)!.status).toBe("answered-on-card");
 		expect(store.items.get(CARD_UNVERIFIED, cardKey({ server: "main", requestId: "req-a1" }))!.status).toBe("resolved");
-		expect(() => closeCardByHand(store, "main", "req-a1", "again")).toThrow("no open card hold or question");
+		expect(() => closeCardByHand(store, { server: "main", requestId: "req-a1" }, "again")).toThrow(
+			"no open card hold or question",
+		);
 	});
 	test("a card seen waiting again ends its unverified record, so the period starts over", async () => {
 		const store = memStore();

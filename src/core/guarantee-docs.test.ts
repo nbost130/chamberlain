@@ -59,8 +59,8 @@ describe("the one-relay lock does not leak into a child (close-on-exec covers an
 	test("no production module forks without exec: the only foreign code called through bun:ffi is flock and errno", () => {
 		const prod = sources("src").filter((f) => !f.endsWith(".test.ts"));
 		const ffi = prod.filter((f) => /\bdlopen\s*\(/.test(read(f)));
-		expect(ffi.map((f) => relative(ROOT, join(ROOT, f)))).toEqual(["src/core/singleton.ts"]);
-		const code = read("src/core/singleton.ts");
+		expect(ffi.map((f) => relative(ROOT, join(ROOT, f)))).toEqual(["src/core/flock.ts"]);
+		const code = read("src/core/flock.ts");
 		expect(
 			[...code.matchAll(/\b(flock|errno|__errno_location|__error|fork|vfork|clone|posix_spawn)\s*:\s*\{\s*args/g)]
 				.map((m) => m[1])

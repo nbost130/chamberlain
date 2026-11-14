@@ -7,11 +7,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { askQuestion, getQuestion, type Question, readClaim } from "../core/questions.ts";
+import { askQuestion, getQuestion, type Question } from "../core/questions.ts";
+import { readClaim } from "../core/questions-claim.ts";
 import { readRulings } from "../core/rulings.ts";
 import { openCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
-import { createApp, inlineVerdict } from "./app.ts";
+import { createApp } from "./app.ts";
+import { inlineVerdict } from "./app-http.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";

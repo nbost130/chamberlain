@@ -6,8 +6,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld } from "../core/afk.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
+import { appendHeld } from "../core/afk-held.ts";
+import { askQuestion, getQuestion, type Question } from "../core/questions.ts";
 import { addInForce, readRulings } from "../core/rulings.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath, type Store } from "../core/store.ts";
@@ -89,6 +89,18 @@ describe("routes that refuse", () => {
 		expect(await read(await s.call("PUT", "/api/queue", {}))).toEqual({ status: 404, body: { error: "not found" } });
 	});
 
+	test("a JSON array is not a JSON body: it is refused (400) on every body route, and nothing changes", async () => {
+		const s = setup();
+		s.asked(question("Q-abcd"));
+		for (const path of ["/api/items/Q-abcd/answer", "/api/items/Q-abcd/snooze", "/api/accept-all", "/api/rulings"]) {
+			for (const body of [[], [{ choice: 0 }]]) {
+				expect(await read(await s.post(path, body))).toEqual({ status: 400, body: { error: "expected a JSON body" } });
+			}
+		}
+		expect(getQuestion(s.real, "Q-abcd")?.status).toBe("open");
+		expect(readRulings(s.real)).toEqual([]);
+	});
+
 	test("a card answer on a page with no mirror is 404", async () => {
 		const s = setup();
 		expect((await read(await s.post("/api/cards/c1/answer", { choice: 0 }))).status).toBe(404);
@@ -122,7 +134,8 @@ describe("routes that refuse", () => {
 describe("ruling actions", () => {
 	const withRulings = () => {
 		const s = setup();
-		for (const w of ["one", "two", "three", "four"]) addInForce(s.real, `words ${w}`, `decides ${w}`, "chat", "stated");
+		for (const w of ["one", "two", "three", "four"])
+			addInForce(s.real, { words: `words ${w}`, decides: `decides ${w}`, source: "chat", how: "stated" });
 		return { s, ids: readRulings(s.real).map((r) => r.id) };
 	};
 

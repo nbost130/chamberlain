@@ -129,59 +129,78 @@ async function everChildren(pid: number, ms: number): Promise<{ seen: string[]; 
 	return { seen, reapedFaults: await reapedChildFaults(pid) };
 }
 
+/** These tests read the daemon's children from /proc, which only Linux has: they run in CI and are skipped on a Mac. */
+const linuxOnly = test.skipIf(process.platform !== "linux");
+
 describe("the real daemon", () => {
-	test("with no mail section: no mail.db, no mail.* event and no child process", async () => {
-		const w = world();
-		const p = w.daemon();
-		await w.until("the daemon's first pass", () => w.events(["startup-recovered"]).length > 0);
-		// Every child, by any name and of any lifetime: the list sampled over 1.5 seconds and the kernel's account of every child since the start.
-		const children = await everChildren(p.pid, 1500);
-		expect(existsSync(mailDbPath(w.state))).toBe(false);
-		expect(w.mailEvents()).toEqual([]);
-		expect(children).toEqual({ seen: [], reapedFaults: 0 });
-		expect(existsSync(w.spawned)).toBe(false);
-		expect(readdirSync(w.state).filter((f) => f.startsWith("mail"))).toEqual([]);
-	}, 30_000);
+	linuxOnly(
+		"with no mail section: no mail.db, no mail.* event and no child process",
+		async () => {
+			const w = world();
+			const p = w.daemon();
+			await w.until("the daemon's first pass", () => w.events(["startup-recovered"]).length > 0);
+			// Every child, by any name and of any lifetime: the list sampled over 1.5 seconds and the kernel's account of every child since the start.
+			const children = await everChildren(p.pid, 1500);
+			expect(existsSync(mailDbPath(w.state))).toBe(false);
+			expect(w.mailEvents()).toEqual([]);
+			expect(children).toEqual({ seen: [], reapedFaults: 0 });
+			expect(existsSync(w.spawned)).toBe(false);
+			expect(readdirSync(w.state).filter((f) => f.startsWith("mail"))).toEqual([]);
+		},
+		30_000,
+	);
 
-	test('with "provider": "none": the same, whatever else the section says', async () => {
-		const w = world({ provider: "none", mode: "live", allowMailToLeaveMachine: true });
-		const p = w.daemon();
-		await w.until("the daemon's first pass", () => w.events(["startup-recovered"]).length > 0);
-		const children = await everChildren(p.pid, 1500);
-		expect(existsSync(mailDbPath(w.state))).toBe(false);
-		expect(w.mailEvents()).toEqual([]);
-		expect(children).toEqual({ seen: [], reapedFaults: 0 });
-		expect(existsSync(w.spawned)).toBe(false);
-	}, 30_000);
+	linuxOnly(
+		'with "provider": "none": the same, whatever else the section says',
+		async () => {
+			const w = world({ provider: "none", mode: "live", allowMailToLeaveMachine: true });
+			const p = w.daemon();
+			await w.until("the daemon's first pass", () => w.events(["startup-recovered"]).length > 0);
+			const children = await everChildren(p.pid, 1500);
+			expect(existsSync(mailDbPath(w.state))).toBe(false);
+			expect(w.mailEvents()).toEqual([]);
+			expect(children).toEqual({ seen: [], reapedFaults: 0 });
+			expect(existsSync(w.spawned)).toBe(false);
+		},
+		30_000,
+	);
 
-	test("with the module on: mail.db is made on the first start, one mail.start is written, and still no child process", async () => {
-		const w = world({ provider: "gog", allowMailToLeaveMachine: true });
-		const p = w.daemon();
-		await w.until("mail.start", () => w.mailEvents().length > 0);
-		expect(existsSync(mailDbPath(w.state))).toBe(true);
-		const children = await everChildren(p.pid, 1500);
-		expect(w.mailEvents()).toEqual(["mail.start"]);
-		// B1 reads no mailbox and calls no model: no process of any name was ever started, and neither tool was ever run.
-		expect(children).toEqual({ seen: [], reapedFaults: 0 });
-		expect(existsSync(w.spawned)).toBe(false);
-	}, 30_000);
+	linuxOnly(
+		"with the module on: mail.db is made on the first start, one mail.start is written, and still no child process",
+		async () => {
+			const w = world({ provider: "gog", allowMailToLeaveMachine: true });
+			const p = w.daemon();
+			await w.until("mail.start", () => w.mailEvents().length > 0);
+			expect(existsSync(mailDbPath(w.state))).toBe(true);
+			const children = await everChildren(p.pid, 1500);
+			expect(w.mailEvents()).toEqual(["mail.start"]);
+			// B1 reads no mailbox and calls no model: no process of any name was ever started, and neither tool was ever run.
+			expect(children).toEqual({ seen: [], reapedFaults: 0 });
+			expect(existsSync(w.spawned)).toBe(false);
+		},
+		30_000,
+	);
 
-	test("the account sees what the sampled list cannot: a child that began and ended before the first sample", async () => {
-		// The mutation this guards against: a process started and finished at once, by name nothing here knows, before any sample is taken.
-		const parent = Bun.spawn(["bun", "-e", 'Bun.spawnSync(["/usr/bin/true"]); await Bun.sleep(60_000)'], {
-			stdout: "ignore",
-			stderr: "ignore",
-		});
-		procs.push(parent);
-		const end = Date.now() + 20_000;
-		let faults = await reapedChildFaults(parent.pid);
-		while (faults === 0 && Date.now() < end) {
-			await Bun.sleep(25);
-			faults = await reapedChildFaults(parent.pid);
-		}
-		expect(faults).toBeGreaterThan(0);
-		expect(await childrenOf(parent.pid)).toEqual([]);
-	}, 30_000);
+	linuxOnly(
+		"the account sees what the sampled list cannot: a child that began and ended before the first sample",
+		async () => {
+			// The mutation this guards against: a process started and finished at once, by name nothing here knows, before any sample is taken.
+			const parent = Bun.spawn(["bun", "-e", 'Bun.spawnSync(["/usr/bin/true"]); await Bun.sleep(60_000)'], {
+				stdout: "ignore",
+				stderr: "ignore",
+			});
+			procs.push(parent);
+			const end = Date.now() + 20_000;
+			let faults = await reapedChildFaults(parent.pid);
+			while (faults === 0 && Date.now() < end) {
+				await Bun.sleep(25);
+				faults = await reapedChildFaults(parent.pid);
+			}
+			expect(faults).toBeGreaterThan(0);
+			expect(await childrenOf(parent.pid)).toEqual([]);
+		},
+		30_000,
+	);
 
 	test("a section the module cannot parse stops the daemon before it serves anything, naming the key", async () => {
 		const w = world({ provider: "gog", allowMailToLeaveMachine: true, password: "hunter2" });

@@ -5,7 +5,7 @@
  * (`log("delivered", { deliveryId, error: String(e), title })`) are read through the registry's `from` and `via`: only the keys it names are looked at.
  */
 import { BAD, check, corrOf, errClass, type FieldValue, type Known, own } from "./fields.ts";
-import type { EventSpec, FieldSpec } from "./registry.ts";
+import type { EventSpec, FieldSpec } from "./registry-spec.ts";
 
 /** What a call is about, kept as columns and not in `data`: the thread (a UUID), a delivery id (kept as its digest), the correlation id. */
 export type Ctx = { mod?: string; thread?: string; corr?: string; delivery?: string };

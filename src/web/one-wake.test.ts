@@ -6,15 +6,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-	askQuestion,
-	claimWake,
-	getQuestion,
-	pageClaim,
-	type Question,
-	readClaims,
-	wokenBy,
-} from "../core/questions.ts";
+import { askQuestion, getQuestion, type Question } from "../core/questions.ts";
+import { claimWake, pageClaim, readClaims, wokenBy } from "../core/questions-claim.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
 import { openCapability } from "../testing/capability.ts";

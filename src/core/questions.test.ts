@@ -1,29 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseAsk, stageEvidence } from "../ask.ts";
+import { stageEvidence } from "../ask.ts";
+import { parseAsk } from "../ask-parse.ts";
 import { memStore } from "../testing/store.ts";
+import { type Answer, askQuestion, getQuestion, notNow, QUEUE, type Question, questionStates } from "./questions.ts";
 import {
-	type Answer,
-	answerWake,
-	askQuestion,
-	batchable,
 	type Claim,
 	claimWake,
 	finishRelay,
-	getQuestion,
-	notNow,
 	pageClaim,
-	QUEUE,
-	type Question,
-	questionStates,
-	ranked,
 	readClaim,
-	recordAnswerDelivered,
 	recoverClaims,
 	startRelay,
 	wokenBy,
-} from "./questions.ts";
+} from "./questions-claim.ts";
+import { answerWake, batchable, ranked, recordAnswerDelivered } from "./questions-wake.ts";
 import type { Store } from "./store.ts";
 
 export const item = (id: string, over: Partial<Question> = {}): Question => ({

@@ -22,7 +22,10 @@ export const bool = (o: Obj, k: string, where: string, d: boolean): boolean => {
 	return o[k] as boolean;
 };
 
-export const num = (o: Obj, k: string, where: string, d: number, whole: boolean, zeroOk = false): number => {
+/** How a number setting is read: its default, whether it must be whole, and whether zero is allowed. */
+export type NumSpec = { d: number; whole: boolean; zeroOk?: boolean };
+
+export const num = (o: Obj, k: string, where: string, { d, whole, zeroOk = false }: NumSpec): number => {
 	const v = o[k];
 	if (v === undefined) return d;
 	if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || (!zeroOk && v === 0) || (whole && !Number.isInteger(v)))
@@ -38,7 +41,12 @@ export const str = (o: Obj, k: string, where: string, d: string): string => {
 };
 
 /** One of `allowed`, or `d` when left out. */
-export function oneOf<T extends string>(o: Obj, k: string, where: string, allowed: readonly T[], d: T): T {
+export function oneOf<T extends string>(
+	o: Obj,
+	k: string,
+	where: string,
+	{ allowed, d }: { allowed: readonly T[]; d: T },
+): T {
 	const v = o[k] ?? d;
 	if (typeof v !== "string" || !(allowed as readonly string[]).includes(v))
 		throw Error(`${where}: ${k} must be one of ${allowed.join(", ")}`);

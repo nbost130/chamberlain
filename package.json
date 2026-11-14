@@ -23,7 +23,8 @@
 		"lint:fix": "biome check --write .",
 		"knip": "knip --no-progress",
 		"jscpd": "jscpd src scripts --silent",
-		"checks": "bun run lint && bun run typecheck && bun run knip && bun run jscpd && bun test",
+		"cycles": "bun scripts/cycles.ts",
+		"checks": "bun run lint && bun run typecheck && bun run knip && bun run jscpd && bun run cycles && bun test",
 		"migrate": "bun src/core/migrate.ts",
 		"format": "biome format --write .",
 		"prepare": "bun scripts/hooks.ts install"

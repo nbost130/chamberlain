@@ -14,16 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git, gitTestEnv } from "../src/testing/git.ts";
 import { GIT_REDIRECTING, sealedGitEnv } from "./git-env.ts";
-import {
-	droppedJobs,
-	isBypass,
-	pushedShas,
-	releaseLock,
-	runTests,
-	snapshotCommit,
-	snapshotIndex,
-	takeLock,
-} from "./hooks.ts";
+import { droppedJobs, isBypass, pushedShas } from "./hooks.ts";
+import { releaseLock, takeLock } from "./hooks-lock.ts";
+import { runTests, snapshotCommit, snapshotIndex } from "./hooks-run.ts";
 
 const made: string[] = [];
 /** A fresh temporary directory, removed when the file's tests are done. */

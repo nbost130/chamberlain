@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged } from "./decide.ts";
 import { rightsWake } from "./messages.ts";
-import type { RightsStamp, Store } from "./store.ts";
+import type { Store } from "./store.ts";
+import type { RightsStamp } from "./store-wakes.ts";
 
 export const RIGHTS_SENT_KEY = "rights-sent";
 
@@ -123,12 +124,21 @@ export const rightsHash = (stewardId: string | undefined, rules: string) =>
  */
 export function rightsFor(
 	sent: RightsSent | undefined,
-	stewardId: string | undefined,
-	rules: string,
-	mandate: string,
-	used: number | undefined,
-	now = new Date().toISOString(),
-	epoch?: number,
+	{
+		stewardId,
+		rules,
+		mandate,
+		used,
+		now = new Date().toISOString(),
+		epoch,
+	}: {
+		stewardId: string | undefined;
+		rules: string;
+		mandate: string;
+		used: number | undefined;
+		now?: string;
+		epoch?: number;
+	},
 ): { text: string; record: RightsSent; full: boolean } {
 	const hash = rightsHash(stewardId, rules),
 		full = rightsInFull(sent, hash, used);

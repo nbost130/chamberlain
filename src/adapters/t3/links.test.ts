@@ -1,6 +1,6 @@
 /** A T3 thread's links (./links.ts): the thread ids T3 issues, the environment each server's links name, and no link when unsure. */
 import { describe, expect, test } from "bun:test";
-import { conformance } from "../../core/adapter.ts";
+import { conformance } from "../../core/adapter-conformance.ts";
 import { createT3Adapter } from "./index.ts";
 import { DEFAULT_APP_SCHEME, ENV_REFRESH_MS, ENV_RETRY_MS, isT3ThreadId, t3Linker, t3ThreadLinks } from "./links.ts";
 

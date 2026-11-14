@@ -19,7 +19,10 @@ type Env = Record<string, string | undefined>;
 const usable = (v: string | undefined): v is string => v !== undefined && v !== "" && isAbsolute(v);
 
 /** Pure: the directory a Chamberlain override variable or an XDG base variable names, with the default under `home`. */
-function resolve(env: Env, override: string, xdg: string, fallback: string, home: string): string {
+/** The variables and default one directory comes from: its own override, the XDG base, and the home-relative fallback. */
+type DirNames = { override: string; xdg: string; fallback: string };
+
+function resolve(env: Env, { override, xdg, fallback }: DirNames, home: string): string {
 	const own = env[override];
 	if (usable(own)) return own;
 	const base = env[xdg];
@@ -28,6 +31,6 @@ function resolve(env: Env, override: string, xdg: string, fallback: string, home
 }
 
 export const configDir = (env: Env, home: string) =>
-	resolve(env, "CHAMBERLAIN_CONF", "XDG_CONFIG_HOME", ".config", home);
+	resolve(env, { override: "CHAMBERLAIN_CONF", xdg: "XDG_CONFIG_HOME", fallback: ".config" }, home);
 export const stateDir = (env: Env, home: string) =>
-	resolve(env, "CHAMBERLAIN_STATE", "XDG_STATE_HOME", ".local/state", home);
+	resolve(env, { override: "CHAMBERLAIN_STATE", xdg: "XDG_STATE_HOME", fallback: ".local/state" }, home);

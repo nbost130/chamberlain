@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { canonical, EVENTS, FAMILIES } from "./registry.ts";
+import { canonical, FAMILIES } from "./registry.ts";
+import { EVENTS } from "./registry-events.ts";
 import { RULES } from "./scrub.ts";
 
 const SRC = new URL("../..", import.meta.url).pathname;

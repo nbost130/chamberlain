@@ -14,7 +14,8 @@
  *     adapter's app link. A tap gets a redirect straight to it; any other load gets a page that goes on by itself and keeps a link to tap.
  * Every target is made here, from the server name and thread id: never a URL a request carried.
  */
-import { has, type ThreadLinks } from "../core/adapter.ts";
+import { has } from "../core/adapter-conformance.ts";
+import type { ThreadLinks } from "../core/adapter-waiting.ts";
 import type { ServerAdapter } from "./waiting.ts";
 
 export type Linker = {

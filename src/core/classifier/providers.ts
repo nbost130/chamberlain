@@ -136,9 +136,7 @@ type JevReply = { answers?: Record<string, { noul?: unknown }>; model?: unknown;
 async function jevRequest(
 	doFetch: FetchLike,
 	o: JevOptions,
-	key: string,
-	state: SentState,
-	bank: Bank,
+	{ key, state, bank }: { key: string; state: SentState; bank: Bank },
 ): Promise<Response> {
 	let r: Response;
 	try {
@@ -202,7 +200,7 @@ export function jevProvider(o: JevOptions): Provider {
 			const key = o.key();
 			if (!key) throw Error("no TypeSafe API key (jev.keyFile in the config directory's secrets)");
 			const t0 = performance.now();
-			const j = await jevReply(await jevRequest(doFetch, o, key, state, bank));
+			const j = await jevReply(await jevRequest(doFetch, o, { key, state, bank }));
 			const usage = jevUsage(j);
 			const answers = jevAnswers(j, bank, usage);
 			return {

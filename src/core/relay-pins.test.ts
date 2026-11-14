@@ -8,7 +8,8 @@ import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { createOutbox, type WakeResult } from "./deliver.ts";
 import type { Gate } from "./hold.ts";
-import { createRelay, type RelayDeps } from "./relay.ts";
+import { createRelay } from "./relay.ts";
+import type { RelayDeps } from "./relay-ctx.ts";
 import { RIGHTS_SENT_KEY, rightsFirstId, rightsStateKey } from "./rights-sent.ts";
 import type { Store } from "./store.ts";
 

@@ -3,7 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { eventRows, memObs } from "../../testing/obs.ts";
 import type { FieldType } from "./fields.ts";
 import { makeLogger } from "./logger.ts";
-import { EVENTS, type EventName } from "./registry.ts";
+import type { EventName } from "./registry.ts";
+import { EVENTS } from "./registry-events.ts";
 
 /** A value the type accepts, and values it must refuse. */
 function samples(t: FieldType): { good: unknown; bad: unknown[] } {

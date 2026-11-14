@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { MAIL_DEFAULTS, mailEnabled, parseMail, UNATTENDED_FLOORS } from "./config.ts";
+import { mailEnabled, parseMail } from "./config.ts";
+import { MAIL_DEFAULTS, UNATTENDED_FLOORS } from "./defaults.ts";
 import { parseRoutes } from "./routes.ts";
 import { daysOf, parseSchedule } from "./schedule.ts";
 

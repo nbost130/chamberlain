@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { type LastAssistant, normalizeThread, type ThreadInput } from "./adapter.ts";
+import { normalizeThread, type ThreadInput } from "./adapter.ts";
+import type { LastAssistant } from "./adapter-inspect.ts";
 import type { Classified } from "./classifier/classify.ts";
 import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
 import {
@@ -10,19 +11,21 @@ import {
 	excerptOf,
 	IDLE_PARENTS_DEFAULTS,
 	type IdleClassification,
-	type IdleSelection,
-	type IdleThread,
-	type IdleThreadSource,
 	idleKey,
-	idleParentCandidate,
 	idleParentFindings,
 	idleParentsSource,
 	idlePrior,
 	idleText,
-	messageHash,
 	parseIdleParents,
-	selectIdleThreads,
 } from "./idle-parents.ts";
+import {
+	type IdleSelection,
+	type IdleThread,
+	type IdleThreadSource,
+	idleParentCandidate,
+	messageHash,
+	selectIdleThreads,
+} from "./idle-select.ts";
 import { runSource } from "./source.ts";
 import { parseSweepConfig } from "./sweep.ts";
 

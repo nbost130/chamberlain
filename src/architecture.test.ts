@@ -383,8 +383,8 @@ const NOTIFICATION_FIELD_WRITE =
 	/\b(notificationCount|nextNotificationAt|shadowNotificationCount|shadowNextNotificationAt)\s*(\+\+|--|[-+*]?=(?!=))/;
 const NOTIFICATION_DUE = /\bnextNotificationAt\s*(<=?|>=?)|(<=?|>=?)\s*[\w.]*\bnextNotificationAt\b/;
 
-/** The files allowed to name the notification columns and to write the items table: the store, its schema, and the one function. */
-const ITEM_OWNERS = new Set(["core/sqlite-store.ts", "core/migrations.ts", "core/notification.ts"]);
+/** The files allowed to name the notification columns and to write the items table: the store's items module, its schema, and the one function. */
+const ITEM_OWNERS = new Set(["core/sqlite-items.ts", "core/migrations.ts", "core/notification.ts"]);
 
 /** Pure: what a source file does that a second item mechanism would do. `file` is src/-relative. Comments are not code. */
 export function itemViolations(file: string, code: string): string[] {
@@ -450,7 +450,7 @@ describe("one item system", () => {
 				/\bdecideNotification\(/.test(readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "")) &&
 				f !== "core/notification.ts",
 		);
-		expect(callers).toEqual(["core/sqlite-store.ts"]);
+		expect(callers).toEqual(["core/sqlite-items.ts"]);
 	});
 
 	test("nothing in src/core/ but the store, the shared opener and the telemetry opener opens a database: the core reaches state only through the Store", () => {
@@ -484,7 +484,7 @@ describe("one item system", () => {
 		expect(itemViolations("core/x.ts", "if (now >= item.nextNotificationAt) send();")).toHaveLength(1);
 		expect(itemViolations("core/engine.ts", `readFileSync(\`\${d}/fired.json\`)`)).toHaveLength(1);
 		// What is allowed: the owners, comments, tests of a read, and the words in prose.
-		expect(itemViolations("core/sqlite-store.ts", 'run("UPDATE items SET notification_count = ?")')).toEqual([]);
+		expect(itemViolations("core/sqlite-items.ts", 'run("UPDATE items SET notification_count = ?")')).toEqual([]);
 		expect(itemViolations("core/notification.ts", "const due = s.nextNotificationAt; if (now >= due) {}")).toEqual([]);
 		expect(
 			itemViolations(
@@ -511,16 +511,18 @@ const RELAY = "core/relay.ts";
 export const SEND_IS_NOT_A_WAKE: Record<string, string> = {
 	"adapters/t3/rpc.ts": "WebSocket frames to the T3 server",
 	"web/waiting.ts": "Adapter.send, a message into a worker thread (the answer path), not a wake to the Steward",
-	"core/questions.ts":
+	"core/questions-claim.ts":
 		"RecoverOpts.send, a callback the page passes: its direct send to the item's thread, falling back to an outbox row",
 	"adapters/t3/index.ts":
 		"the adapter's optional `send` capability (a message into a worker thread), wired from waiting.ts, not the wake transport",
 	"core/engine.ts":
 		"Adapter.send, the daemon's one thread ping, used by stalled-thread recovery (src/core/recover.ts) to retry a failed run; not a wake to the Steward",
-	"core/adapter.ts": "validateAdapter reads `typeof wake.send` to check the contract is met; it never calls it",
+	"core/adapter-conformance.ts":
+		"validateAdapter reads `typeof wake.send` to check the contract is met; it never calls it",
 	"core/classifier/config.ts":
 		"the idle-thread classifier's `send` settings (how much text a provider gets), a config section, not a transport",
 	"core/classifier/classify.ts": "reads the classifier config's `send` settings; it never sends a wake",
+	"core/classifier/classify-one.ts": "reads the classifier config's `send` settings; it never sends a wake",
 };
 /** The only files that may POST over HTTP, with the reason. */
 export const MAY_POST: Record<string, string> = {

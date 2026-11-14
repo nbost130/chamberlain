@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { digestHead } from "./messages.ts";
-import type { HeldItem, HoldClock, WakeMeta } from "./store.ts";
+import type { HeldItem, HoldClock, WakeMeta } from "./store-wakes.ts";
 
 export type { HeldItem, HoldClock, WakeMeta };
 

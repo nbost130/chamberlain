@@ -33,7 +33,8 @@ import {
 	VIEW_KEY_FILE,
 	withoutToken,
 } from "./capability.ts";
-import { migrateLayout, revertLayout } from "./config-migrate.ts";
+import { migrateLayout } from "./config-migrate.ts";
+import { revertLayout } from "./config-revert.ts";
 
 const dirs: string[] = [];
 const conf = () => {

@@ -10,18 +10,9 @@ import { deliveredRow } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";
 import { ITEM_KEEP_MS, maintain } from "./maintain.ts";
-import {
-	type Answer,
-	askQuestion,
-	claimWake,
-	PAGE,
-	pageClaim,
-	QUEUE,
-	type Question,
-	readClaims,
-	recordAnswerDelivered,
-	recoverClaims,
-} from "./questions.ts";
+import { type Answer, askQuestion, QUEUE, type Question } from "./questions.ts";
+import { claimWake, PAGE, pageClaim, readClaims, recoverClaims } from "./questions-claim.ts";
+import { recordAnswerDelivered } from "./questions-wake.ts";
 import { createRelay } from "./relay.ts";
 
 const HOUR = 3600_000,
