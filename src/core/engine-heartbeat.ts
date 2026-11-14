@@ -15,9 +15,11 @@ export type HeartbeatDeps = {
 	/** Whether the named server is one that is often asleep (no alarm when it stays down). */
 	mayBeOffline: (server: string) => boolean | undefined;
 	raiseAlarm: (key: string, a: AlarmText) => void;
+	/** What this process has logged since it started: `warn` and `error` rows, and the logger's counters (`rejected` and `redacted` must read zero). */
+	logCounts?: () => Record<string, number>;
 };
 
-export function createHeartbeat({ store, watchers, failures, mayBeOffline, raiseAlarm }: HeartbeatDeps) {
+export function createHeartbeat({ store, watchers, failures, mayBeOffline, raiseAlarm, logCounts }: HeartbeatDeps) {
 	/** Once a minute: write the heartbeat file and turn silent stops into alarms. */
 	function heartbeat() {
 		const states = watchers.map((w) => w.health());
@@ -26,6 +28,7 @@ export function createHeartbeat({ store, watchers, failures, mayBeOffline, raise
 			away: Boolean(readAfk(store)),
 			deliveryFailures: failures(),
 			servers: states,
+			...(logCounts ? { log: logCounts() } : {}),
 		});
 		for (const s of states)
 			if (!s.connected && s.downMs > 10 * 60_000 && !mayBeOffline(s.name))

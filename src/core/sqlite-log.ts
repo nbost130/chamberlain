@@ -32,17 +32,34 @@ const eventWhere = (q: EventQuery) => {
 	}
 	return { sql: where.length ? `WHERE ${where.join(" AND ")}` : "", p };
 };
+const BUSY = /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i;
+const appendEvent = (c: Db, e: LogEvent, importKey?: string) => {
+	const { t, event, src, ...data } = e;
+	c.run(
+		"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
+		t,
+		event,
+		src ?? null,
+		JSON.stringify(data),
+		importKey ?? null,
+	);
+};
 export const makeEvents = (c: Db): Store["events"] => ({
-	append(e, importKey) {
-		const { t, event, src, ...data } = e;
-		c.run(
-			"INSERT INTO events (t, event, src, data, import_key) VALUES (?, ?, ?, ?, ?) ON CONFLICT (import_key) DO NOTHING",
-			t,
-			event,
-			src ?? null,
-			JSON.stringify(data),
-			importKey ?? null,
-		);
+	append: (e, importKey) => {
+		appendEvent(c, e, importKey);
+	},
+	tryAppendMany(lines) {
+		try {
+			c.nowait(() =>
+				c.tx(() => {
+					for (const [e, key] of lines) appendEvent(c, e, key);
+				}),
+			);
+			return true;
+		} catch (err) {
+			if (BUSY.test(String(err))) return false;
+			throw err;
+		}
 	},
 	query(q = {}) {
 		const w = eventWhere(q);

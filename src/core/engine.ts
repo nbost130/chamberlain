@@ -23,7 +23,7 @@ import {
 import { createSweep } from "./engine-sweep.ts";
 import { Watcher } from "./engine-watcher.ts";
 import { createJudge, type Judge, judgeOff, readJudgeConfig } from "./judge.ts";
-import { type Log, makeLog } from "./log.ts";
+import { type Log, logFor, obsFor } from "./log.ts";
 import { NOTIFICATION_LOG } from "./notification.ts";
 import { recordAnswerDelivered } from "./questions-wake.ts";
 import { createRecovery, type Recovery } from "./recover.ts";
@@ -65,7 +65,13 @@ export class Core extends CoreWork {
 		this.DRY = d.dry === true;
 		this.t = { ...defaultTiming(), ...d.timing };
 		this.EXCLUDE = new Set(d.exclude ?? []);
-		this.log = d.log ?? makeLog(d.store);
+		this.log = d.log ?? logFor(d.store);
+		const obs = obsFor(d.store);
+		obs.allow(
+			"server",
+			d.servers.map((x) => x.server.name),
+		);
+		obs.allow("receiver", [DESK_RECEIVER]);
 		this.home = homeServer(d.servers.map((x) => x.server));
 		this.homeAdapter = adapterOf(d.servers, this.home);
 		this.decisionsThread = this.privateFile("decisions-thread");

@@ -1,5 +1,7 @@
 /** The held ledger: what the Steward holds for the operator, and appending, reading and closing a hold. */
+
 import { createHash } from "node:crypto";
+import { ledgerEvents } from "./obs/ledger.ts";
 import type { AwayRecord, Store } from "./store.ts";
 
 export type Afk = AwayRecord;
@@ -95,6 +97,7 @@ export function closeHeld(store: Store, id: string, how: string, now = new Date(
 		const i = store.items.get(HELD, id);
 		if (!i || i.status === "resolved") throw Error(`no open held item ${id}`);
 		store.items.resolve(HELD, id, now.getTime(), { closedAt: now.toISOString(), how });
+		ledgerEvents(store).holdClosed(id);
 		return i.payload as Held;
 	});
 }
@@ -110,6 +113,7 @@ export function closeHeldWhere(store: Store, why: (h: Held) => string | undefine
 			const how = why(h);
 			if (!how) continue;
 			store.items.resolve(HELD, heldId(h), now.getTime(), { closedAt: now.toISOString(), how });
+			ledgerEvents(store).holdClosed(heldId(h));
 			n++;
 		}
 		return n;

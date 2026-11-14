@@ -14,7 +14,7 @@ import { CONF, selfCommand } from "../../core/config.ts";
 import { RIGHTS_MARKER } from "../../core/decide.ts";
 import { defaultStore } from "../../core/default-store.ts";
 import { createOutbox } from "../../core/deliver.ts";
-import { makeLog } from "../../core/log.ts";
+import { logFor } from "../../core/log.ts";
 import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
 import { rulingsText } from "../../core/rulings-read.ts";
 import { readServers } from "../../core/servers.ts";
@@ -49,7 +49,7 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		.filter(Boolean)
 		.join("\n");
 	const deliveryId = `synthetic:${threadId}:${Date.now()}`;
-	const log = makeLog(store, { src: "synthetic-wake" });
+	const log = logFor(store, { src: "synthetic-wake" });
 	const outbox = createOutbox({ store, log });
 	const result = outbox.deliver(message, deliveryId, { kind: "synthetic", thread: threadId });
 	if (result === "queued") log("synthetic-wake-queued", { deliveryId });

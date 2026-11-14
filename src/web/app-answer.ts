@@ -1,5 +1,7 @@
 /** Answering one queue item (or a batch of them): the checks, the claim, the ruling it saves and the reply. */
+
 import { crashPoint } from "../core/crash.ts";
+import { ledgerEvents } from "../core/obs/ledger.ts";
 import type { Answer, QuestionState } from "../core/questions.ts";
 import { type Claim, claimWake, enqueueClaim, pageClaim, wokenBy } from "../core/questions-claim.ts";
 import { answerDeliveryId, batchable } from "../core/questions-wake.ts";
@@ -127,6 +129,7 @@ function recordedReply(
 	crashPoint("committed");
 	const a = claim.answer;
 	if (!a) throw Error(`the page's claim on ${i.id} carries no answer`);
+	ledgerEvents(ctx.d.store).answered(i.id, a);
 	ctx.d.log("answered", { id: i.id, choice: a.choice, by, ruling: a.ruling?.id });
 	if (claim.relay) ctx.track(follow(ctx, claim));
 	return {

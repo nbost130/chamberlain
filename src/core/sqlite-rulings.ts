@@ -81,17 +81,18 @@ const toDecision = (r: Row): DecisionRow => ({
 	ref: (r.ref as string | null) ?? null,
 });
 export const makeDecisions = (c: Db): Store["decisions"] => ({
-	append: (d) => {
-		c.run(
-			"INSERT INTO decisions (t, thread, decision, ruling, ruling_ids, ref) VALUES (?, ?, ?, ?, ?, ?)",
-			d.t,
-			d.thread,
-			d.decision,
-			d.ruling,
-			json(d.rulingIds),
-			d.ref,
-		);
-	},
+	append: (d) =>
+		Number(
+			c.run(
+				"INSERT INTO decisions (t, thread, decision, ruling, ruling_ids, ref) VALUES (?, ?, ?, ?, ?, ?)",
+				d.t,
+				d.thread,
+				d.decision,
+				d.ruling,
+				json(d.rulingIds),
+				d.ref,
+			).lastInsertRowid,
+		),
 	list: () => c.all("SELECT * FROM decisions ORDER BY id").map(toDecision),
 });
 

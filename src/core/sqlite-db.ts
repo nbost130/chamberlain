@@ -17,4 +17,6 @@ export type Db = {
 	all(sql: string, ...p: unknown[]): Row[];
 	one(sql: string, ...p: unknown[]): Row | undefined;
 	run(sql: string, ...p: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+	/** Runs `fn` with the busy timeout at zero, so a held write lock is an error at once and not a wait of seconds. */
+	nowait<T>(fn: () => T): T;
 };

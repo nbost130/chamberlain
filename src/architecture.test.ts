@@ -236,10 +236,12 @@ describe("one item system", () => {
 	});
 
 	test("nothing in src/core/ but the store opens a database: the core reaches state only through the Store", () => {
+		// The ledger database is the Store's alone. The telemetry database (`obs.db`), and the read-only open of the ledger that the
+		// reconciler needs, are the one other place: core/obs/db.ts, which everything else in core/obs/ goes through.
 		const opens = sources().filter(
 			(f) => f.startsWith("core/") && /from\s*["']bun:sqlite["']/.test(readFileSync(join(SRC, f), "utf8")),
 		);
-		expect(opens).toEqual(["core/sqlite-store.ts"]);
+		expect(opens.sort()).toEqual(["core/obs/db.ts", "core/sqlite-store.ts"]);
 	});
 
 	test("the checker catches each kind of second mechanism (so a pass means something)", () => {

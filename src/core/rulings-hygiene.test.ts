@@ -115,7 +115,13 @@ describe("recording is idempotent, in the store", () => {
 		addInForce(d, { words: "w", decides: "d", source: "chat", how: "x" });
 		addInForce(
 			d,
-			{ words: "w", decides: "d", source: "chat", how: "x", opts: { expires: "2026-12-01", until: "the launch" } },
+			{
+				words: "w",
+				decides: "d",
+				source: "chat",
+				how: "x",
+				opts: { expires: "2026-12-01", until: "the launch" },
+			},
 			NOW,
 		);
 		expect(readRulings(d)[0]).toMatchObject({ expires: "2026-12-01", until: "the launch" });

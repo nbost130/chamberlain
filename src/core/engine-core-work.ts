@@ -1,4 +1,5 @@
 /** The engine's core, third layer: the tickers it builds and the housekeeping passes they run. */
+
 import { has } from "./adapter-conformance.ts";
 import { drainAlertDesk } from "./alert-desk.ts";
 import { inboxPath } from "./alert-desk-config.ts";
@@ -10,6 +11,7 @@ import { createIdleParents } from "./engine-idle.ts";
 import { createStewardCheck } from "./engine-steward.ts";
 import { clip, closeCardCommand } from "./engine-support.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
+import { obsFor } from "./log.ts";
 import { alarms } from "./messages.ts";
 import { announceReturns } from "./snooze.ts";
 import { type Health, handoffDeliveryId, handoffWakeMessage, liveHealth } from "./steward-health.ts";
@@ -67,6 +69,10 @@ export abstract class CoreWork extends CoreRights {
 			failures: () => this.relay.failures(),
 			mayBeOffline: (name) => this.d.servers.find((x) => x.server.name === name)?.server.mayBeOffline,
 			raiseAlarm: this.raiseAlarm,
+			logCounts: () => {
+				const obs = obsFor(this.store);
+				return { warn: obs.levels.warn, error: obs.levels.error, ...obs.counters };
+			},
 		}).beat;
 	}
 

@@ -61,21 +61,24 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	if (!store.wakes.held(l.name).length) return;
 	const look = observe(l.look, l.gate(), now, r.ceiling);
 	if (!look.post) return;
-	const row = store.wakes.compose(now, (held) => digestOf(l, held, now), l.name);
+	let kept: string[] = [];
+	const row = store.wakes.compose(now, (held) => digestOf(l, held, now, (k) => (kept = k)), l.name);
 	if (!row) return;
 	crashPoint("composed");
 	if (look.forced) l.look.lastForcedAt = now;
 	d.log("composed", {
 		deliveryId: row.deliveryId,
 		members: row.members.map((m) => m.deliveryId),
+		kept,
 		folded: row.folded,
 		...(look.forced ? { forced: "ceiling" } : {}),
 	});
 }
 
 /** Pure: the row a receiver's held wakes freeze into: the composed text and members, the kind and thread of a single item (else a digest), the receiver, and the members' stamps. */
-function digestOf(l: Lane, held: HeldItem[], now: number): Composed {
+function digestOf(l: Lane, held: HeldItem[], now: number, onKept: (kept: string[]) => void): Composed {
 	const { kept, ...c } = composeWake(held, now);
+	onKept(kept);
 	const only = held.length === 1 ? held[0] : undefined;
 	return {
 		...c,

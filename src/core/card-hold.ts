@@ -31,6 +31,7 @@
 import type { WaitingItem, WaitKind } from "./adapter-waiting.ts";
 import { appendHeld, type CardRef, closeHeldForCard, closeHeldWhere, heldOpen } from "./afk-held.ts";
 import { CARD_UNVERIFIED, cardAlarmKey, cardKey, cardRefOf, openCards, sameCard } from "./card-open.ts";
+import { ledgerEvents } from "./obs/ledger.ts";
 import { askQuestion, newItemId, QUEUE, type Question, questionStates } from "./questions.ts";
 import type { Store } from "./store.ts";
 
@@ -171,6 +172,7 @@ export function closeCardQuestions(store: Store, server: string, requestId: stri
 		for (const q of questionStates(store).values()) {
 			if (q.status !== "open" || q.cardRequest !== requestId || q.server !== server) continue;
 			store.items.resolve(QUEUE, q.id, now, { answeredOnCard: true });
+			ledgerEvents(store).answered(q.id);
 			n++;
 		}
 		return n;

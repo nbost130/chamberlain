@@ -4,7 +4,9 @@
  * rows. ask.ts, the page and the daemon all write through the Store, so none rewrites another's lines. What a question
  * looks like now is composed from those rows (`questionStates`).
  */
+
 import { randomBytes } from "node:crypto";
+import { ledgerEvents } from "./obs/ledger.ts";
 import type { ClaimRecord, EvidenceRow, Item, RelayRecord, Store } from "./store.ts";
 
 export type Kind = "only-you" | "product" | "ruling" | "idea";
@@ -125,6 +127,7 @@ export function askQuestion(store: Store, q: Question, now = Date.now()) {
 	const { evidence, ...rest } = withUrgency(q);
 	store.tx(() => {
 		if (store.items.get(QUEUE, q.id)) return;
+		ledgerEvents(store).asked(q.id);
 		store.items.observe({
 			source: QUEUE,
 			kind: "question",
