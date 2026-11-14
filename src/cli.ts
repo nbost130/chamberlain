@@ -32,6 +32,11 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	"queue-waits": () => import("./adapters/t3/queue-waits.ts"),
 	"switch-steward": () => import("./adapters/t3/switch-steward.ts"),
 	"synthetic-wake": () => import("./adapters/t3/synthetic-wake.ts"),
+	// An optional module, reached through the registry, which names it and no other file does (src/architecture.test.ts).
+	mail: async () => {
+		const { moduleMain } = await import("./modules/index.ts");
+		return { main: (argv) => moduleMain("mail", argv) };
+	},
 };
 
 /** One line for each subcommand, as `chamberlain help` lists them. */
@@ -56,6 +61,7 @@ const ABOUT: Record<CommandName, string> = {
 	"queue-waits": "how long wakes waited, from the database and T3's state",
 	"switch-steward": "make a thread the wake target: the last step of a hand-off",
 	"synthetic-wake": "queue one test wake for the Steward",
+	mail: "optional email triage (off unless config.json has a mail section): status",
 };
 
 export const VERSION: string = pkg.version;

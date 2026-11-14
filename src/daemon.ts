@@ -25,6 +25,7 @@ import {
 	RelayRunningError,
 } from "./core/singleton.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
+import { startModules } from "./modules/index.ts";
 
 /** Runs the daemon until it is stopped. It takes no arguments: its settings are the environment and the config directory. */
 export async function main(_argv: string[] = process.argv.slice(2)) {
@@ -40,6 +41,9 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 	}
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
 	startup({ migrate: true, log });
+	// The optional modules whose section of config.json turns them on (none by default: a module that is off starts nothing and makes no file).
+	const modules = startModules({ conf: CONF, state: STATE, log });
+	process.on("exit", () => modules.stop());
 	maintain(store);
 	// The ledger's events: one pass soon after start (the backfill, the first time) and one an hour, from a read-only open of chamberlain.db.
 	startReconciler(store);

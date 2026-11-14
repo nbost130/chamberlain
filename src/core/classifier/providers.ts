@@ -14,8 +14,18 @@
  * thread's text: only a status, an exit code or a fixed phrase.
  */
 import { looksLikeAsk, looksLikeStall } from "../decide.ts";
+import {
+	type CliReply,
+	type CliRunner,
+	claudeArgv,
+	MODEL_ID,
+	parseReply,
+	replyUsage,
+	reportedModels,
+	runClaude,
+	type Usage,
+} from "../llm/cli.ts";
 import { type Bank, DATA_PREAMBLE } from "./bank.ts";
-import { runPiped } from "./spawn.ts";
 import type { SentState } from "./state.ts";
 
 export const PROVIDERS = ["none", "rules", "jev", "haiku"] as const;
@@ -35,8 +45,6 @@ export type Provider = {
 	classify(state: SentState, bank: Bank): Promise<ProviderResult>;
 };
 
-/** What a call cost, when the provider said. A failed call that was billed still reports it, so the budget counts it. */
-export type Usage = { inputTokens?: number; costUsd?: number };
 /** A provider failure that may carry what the call cost. Its message is a fixed phrase: never a body, model output or the key. */
 export class ProviderError extends Error {
 	constructor(
@@ -47,8 +55,6 @@ export class ProviderError extends Error {
 		this.name = "ProviderError";
 	}
 }
-/** A model id as a provider may report it: a short token of letters, digits and `._:/-`. Anything else is refused, never stored. */
-export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 /** Pure: the reported model, checked; absent means the configured one. Throws (with the call's usage) for anything else. */
 function modelOf(reported: unknown, configured: string, usage: Usage, who: string): string {
 	if (reported === undefined || reported === null || reported === "") return configured;
@@ -211,12 +217,8 @@ export function jevProvider(o: JevOptions): Provider {
 
 // ---- haiku -------------------------------------------------------------------------------------
 
-export type CliRunner = (
-	argv: string[],
-	o: { stdin: string; env: Record<string, string | undefined>; timeoutMs: number },
-) => Promise<{ code: number | null; stdout: string }>;
-
-const spawnCli: CliRunner = (argv, o) => runPiped(argv, o.stdin, o.timeoutMs, o.env);
+export type { CliRunner };
+export { MODEL_ID };
 
 export type HaikuOptions = { command: string; model: string; timeoutMs: number; run?: CliRunner };
 
@@ -226,79 +228,9 @@ const haikuSystem = (bank: Bank): string =>
 	bank.map((q) => `- ${q.id}: ${DATA_PREAMBLE} ${q.ask}\n  YES: ${q.yes}\n  NO: ${q.no}`).join("\n") +
 	"\n\nReply with only a JSON object mapping each question id to a number, nothing else.";
 
-/** Pure: the argv. No settings, tools, MCP servers, slash commands or session file: a bare one-shot label. */
-export const haikuArgv = (o: Pick<HaikuOptions, "command" | "model">, bank: Bank): string[] => [
-	o.command,
-	"-p",
-	"--model",
-	o.model,
-	"--setting-sources",
-	"",
-	"--tools",
-	"",
-	"--strict-mcp-config",
-	"--disable-slash-commands",
-	"--no-session-persistence",
-	"--system-prompt",
-	haikuSystem(bank),
-	"--output-format",
-	"json",
-];
-
-type HaikuReply = {
-	result?: unknown;
-	total_cost_usd?: unknown;
-	usage?: Record<string, unknown>;
-	modelUsage?: Record<string, unknown>;
-};
-
-/** The CLI's stdout for one thread. A run that cannot start, a timeout and a non-zero exit each throw a fixed phrase, never output. */
-async function haikuRun(
-	run: CliRunner,
-	o: HaikuOptions,
-	state: SentState,
-	bank: Bank,
-	env: Record<string, string | undefined>,
-): Promise<string> {
-	let r: Awaited<ReturnType<CliRunner>>;
-	try {
-		r = await run(haikuArgv(o, bank), { stdin: JSON.stringify({ state }), env, timeoutMs: o.timeoutMs });
-	} catch {
-		throw Error(`${o.command} could not be run`);
-	}
-	if (r.code !== 0)
-		throw Error(
-			r.code === null ? `${o.command} did not finish within ${o.timeoutMs} ms` : `${o.command} exited ${r.code}`,
-		);
-	return r.stdout;
-}
-
-/** The CLI's JSON output, which must be an object. */
-function haikuReply(command: string, stdout: string): HaikuReply {
-	let j: HaikuReply;
-	try {
-		j = JSON.parse(stdout);
-	} catch {
-		throw Error(`${command} printed something that is not JSON`);
-	}
-	if (!j || typeof j !== "object") throw Error(`${command} printed JSON that is not an object`);
-	return j;
-}
-
-const nonNegative = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
-
-/** What the call cost, from the CLI's own report. Read first: a call whose reply is then refused was still spent. */
-function haikuUsage(j: HaikuReply): Usage {
-	const u = j.usage && typeof j.usage === "object" ? j.usage : {};
-	const tokens =
-		nonNegative(u.input_tokens) + nonNegative(u.cache_creation_input_tokens) + nonNegative(u.cache_read_input_tokens);
-	return {
-		...(tokens ? { inputTokens: tokens } : {}),
-		...(typeof j.total_cost_usd === "number" && Number.isFinite(j.total_cost_usd) && j.total_cost_usd >= 0
-			? { costUsd: j.total_cost_usd }
-			: {}),
-	};
-}
+/** Pure: the argv: the shared no-tools one-shot reader (src/core/llm/cli.ts), with this bank as its system prompt. */
+export const haikuArgv = (o: Pick<HaikuOptions, "command" | "model">, bank: Bank): string[] =>
+	claudeArgv({ ...o, system: haikuSystem(bank) });
 
 /** The first flat `{...}` in the model's reply, parsed, or undefined when there is none or it is not JSON. */
 function haikuObject(result: unknown): unknown {
@@ -311,7 +243,7 @@ function haikuObject(result: unknown): unknown {
 }
 
 /** The probability the model gave each question, checked; a refusal carries the call's usage. */
-function haikuAnswers(j: HaikuReply, bank: Bank, usage: Usage): Record<string, number> {
+function haikuAnswers(j: CliReply, bank: Bank, usage: Usage): Record<string, number> {
 	const parsed = haikuObject(j.result);
 	if (parsed === undefined) throw new ProviderError("the model's reply holds no JSON object of answers", usage);
 	try {
@@ -322,7 +254,6 @@ function haikuAnswers(j: HaikuReply, bank: Bank, usage: Usage): Record<string, n
 }
 
 export function haikuProvider(o: HaikuOptions): Provider {
-	const run = o.run ?? spawnCli;
 	return {
 		name: "haiku",
 		model: o.model,
@@ -330,12 +261,17 @@ export function haikuProvider(o: HaikuOptions): Provider {
 			const env: Record<string, string | undefined> = { ...process.env };
 			delete env.ANTHROPIC_API_KEY;
 			const t0 = performance.now();
-			const j = haikuReply(o.command, await haikuRun(run, o, state, bank, env));
-			const usage = haikuUsage(j);
+			const stdout = await runClaude({
+				...o,
+				system: haikuSystem(bank),
+				stdin: JSON.stringify({ state }),
+				env,
+			});
+			const j = parseReply(o.command, stdout);
+			const usage = replyUsage(j);
 			const answers = haikuAnswers(j, bank, usage);
-			const reported = j.modelUsage && typeof j.modelUsage === "object" ? Object.keys(j.modelUsage) : [];
 			// Every reported model is checked; the first is recorded.
-			const models = reported.map((id) => modelOf(id, o.model, usage, o.command));
+			const models = reportedModels(j).map((id) => modelOf(id, o.model, usage, o.command));
 			return {
 				answers,
 				model: models[0] ?? o.model,
