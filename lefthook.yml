@@ -1,40 +1,19 @@
 # Git hooks, installed by `bun install` (the `prepare` script). Same checks as CI (.github/workflows/ci.yml),
 # run on less: staged files at commit, changed files plus the full test suite at push.
 #
-# Not skippable: `guard` refuses LEFTHOOK_EXCLUDE and LEFTHOOK_ONLY. `git commit --no-verify` skips
+# Each hook is one job: scripts/hooks.ts runs its steps in order and stops at the first failure.
+# Not skippable: the steps refuse LEFTHOOK_EXCLUDE and LEFTHOOK_ONLY. `git commit --no-verify` skips
 # pre-commit, but post-commit still runs and `audit` logs the commit to
 # <git-common-dir>/chamberlain-hooks/bypass.log (scripts/hooks.ts says what git cannot see).
 pre-commit:
-  parallel: false
-  fail_fast: true
   jobs:
-    - name: guard
-      run: bun scripts/hooks.ts guard
-    - name: biome
-      glob: "*.ts"
-      run: bunx biome check --error-on-warnings --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
-    - name: typecheck
-      run: bun run typecheck
-    - name: mark
-      run: bun scripts/hooks.ts mark
+    - name: checks
+      run: bun scripts/hooks.ts pre-commit
 post-commit:
   jobs:
     - name: audit
       run: bun scripts/hooks.ts audit
 pre-push:
-  parallel: false
-  fail_fast: true
   jobs:
-    - name: guard
-      run: bun scripts/hooks.ts guard
-    - name: typecheck
-      run: bun run typecheck
-    - name: biome-changed
-      run: bun scripts/hooks.ts changed-lint
-    - name: knip
-      run: bun run knip
-    - name: jscpd
-      run: bun run jscpd
-    # The full suite, under the one lock every worktree of this clone shares, so concurrent pushes queue.
-    - name: test
-      run: bun scripts/hooks.ts lock bun test
+    - name: checks
+      run: bun scripts/hooks.ts pre-push

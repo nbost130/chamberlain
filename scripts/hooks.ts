@@ -1,12 +1,15 @@
 #!/usr/bin/env bun
 // Git hook helpers. lefthook.yml calls these; nothing here is needed to build or run Chamberlain.
 //
-//   install       lefthook install (skipped in CI and outside a git checkout)
-//   guard         refuse an environment that drops hook jobs (LEFTHOOK_EXCLUDE, LEFTHOOK_ONLY)
-//   mark          pre-commit, last job: record the staged tree as verified
-//   audit         post-commit: log a commit whose tree no pre-commit run verified (git commit --no-verify)
-//   changed-lint  pre-push: Biome on every file changed against origin/main
-//   lock <cmd>    run <cmd> while holding the one heavy-work lock all worktrees of this clone share
+//   install     lefthook install (skipped in CI and outside a git checkout)
+//   pre-commit  refuse an environment that drops hook jobs (LEFTHOOK_EXCLUDE, LEFTHOOK_ONLY); Biome on the staged files;
+//               the typecheck; then record the staged tree as verified
+//   audit       post-commit: log a commit whose tree no pre-commit run verified (git commit --no-verify)
+//   pre-push    the same refusal; the typecheck; Biome on every file changed against origin/main; knip; jscpd; then the full
+//               tests, under the one heavy-work lock all worktrees of this clone share
+//
+// Each hook is one lefthook job that runs its steps here in order and stops at the first failure, so a failed check never
+// reaches the step that marks a tree verified, and never starts the 100-second test run.
 //
 // `git commit --no-verify` skips pre-commit but not post-commit, so `audit` sees it and writes a line to
 // <git-common-dir>/chamberlain-hooks/bypass.log. Git has no hook after a `git push --no-verify`, and
@@ -60,7 +63,6 @@ function guard(): number {
 }
 
 function mark(): number {
-	if (guard() !== 0) return 1;
 	const tree = git(["write-tree"]);
 	if (!tree.ok) return 1;
 	const file = join(stateDir(), "verified-trees");
@@ -90,26 +92,68 @@ function audit(): number {
 	return 0;
 }
 
+const LINTED = /^(src|scripts)\/.*\.ts$/;
+const BIOME = ["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-unmatched"];
+
+/** The linted files a git command lists, or undefined when the command fails. */
+function listed(args: string[]): string[] | undefined {
+	const out = git(args);
+	return out.ok ? out.out.split("\n").filter((file) => LINTED.test(file)) : undefined;
+}
+
 function changedFiles(): string[] | undefined {
 	const base = git(["merge-base", "origin/main", "HEAD"]);
-	if (!base.ok) return undefined;
-	const diff = git(["diff", "--name-only", "--diff-filter=ACMR", `${base.out}...HEAD`]);
-	return diff.ok ? diff.out.split("\n").filter((file) => /^(src|scripts)\/.*\.ts$/.test(file)) : undefined;
+	return base.ok ? listed(["diff", "--name-only", "--diff-filter=ACMR", `${base.out}...HEAD`]) : undefined;
 }
 
 async function run(cmd: string[]): Promise<number> {
 	return await Bun.spawn(cmd, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 }
 
-async function changedLint(): Promise<number> {
-	const files = changedFiles();
-	if (files === undefined) {
-		console.error("hooks: origin/main is not fetched here; running Biome on the whole repo instead.");
-		return await run(["bunx", "biome", "check", "--error-on-warnings", "."]);
-	}
-	if (files.length === 0) return 0;
-	return await run(["bunx", "biome", "check", "--error-on-warnings", "--no-errors-on-unmatched", ...files]);
+/** Biome on `files` (every file when undefined); nothing to check is a pass. */
+async function lint(files: string[] | undefined): Promise<number> {
+	if (files === undefined) return await run([...BIOME, "."]);
+	return files.length === 0 ? 0 : await run([...BIOME, ...files]);
 }
+
+type Step = [name: string, run: () => number | Promise<number>];
+
+/** Runs the steps in order and stops at the first one that fails. */
+async function sequence(steps: Step[]): Promise<number> {
+	for (const [name, step] of steps) {
+		const code = await step();
+		if (code !== 0) {
+			console.error(`hooks: ${name} failed`);
+			return code;
+		}
+	}
+	return 0;
+}
+
+const preCommit = () =>
+	sequence([
+		["guard", guard],
+		["biome on the staged files", () => lint(listed(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]))],
+		["typecheck", () => run(["bun", "run", "typecheck"])],
+		["mark", mark],
+	]);
+
+function changedLint(): Promise<number> {
+	const files = changedFiles();
+	if (files === undefined)
+		console.error("hooks: origin/main is not fetched here; running Biome on the whole repo instead.");
+	return lint(files);
+}
+
+const prePush = () =>
+	sequence([
+		["guard", guard],
+		["typecheck", () => run(["bun", "run", "typecheck"])],
+		["biome on the changed files", changedLint],
+		["knip", () => run(["bun", "run", "knip"])],
+		["jscpd", () => run(["bun", "run", "jscpd"])],
+		["tests", () => withLock(["bun", "test"])],
+	]);
 
 function alive(pid: number): boolean {
 	try {
@@ -162,14 +206,12 @@ async function install(): Promise<number> {
 }
 
 if (import.meta.main) {
-	const [command, ...rest] = process.argv.slice(2);
+	const [command] = process.argv.slice(2);
 	const commands: Record<string, () => number | Promise<number>> = {
 		install,
-		guard,
-		mark,
+		"pre-commit": preCommit,
 		audit,
-		"changed-lint": changedLint,
-		lock: () => withLock(rest),
+		"pre-push": prePush,
 	};
 	const handler = commands[command ?? ""];
 	if (!handler) {
