@@ -6,6 +6,7 @@
 # <git-common-dir>/chamberlain-hooks/bypass.log (scripts/hooks.ts says what git cannot see).
 pre-commit:
   parallel: false
+  fail_fast: true
   jobs:
     - name: guard
       run: bun scripts/hooks.ts guard
@@ -22,6 +23,7 @@ post-commit:
       run: bun scripts/hooks.ts audit
 pre-push:
   parallel: false
+  fail_fast: true
   jobs:
     - name: guard
       run: bun scripts/hooks.ts guard
