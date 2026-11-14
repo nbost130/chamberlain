@@ -55,12 +55,14 @@ export type Report = {
 
 /** Nearest-rank percentile of an ascending list. */
 export function pct(sorted: number[], p: number): number {
-	return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)]!;
+	const v = sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
+	if (v === undefined) throw Error("pct: the list is empty");
+	return v;
 }
 export function stat(values: number[]): Stat | undefined {
 	if (!values.length) return undefined;
 	const v = [...values].sort((a, b) => a - b);
-	return { n: v.length, p50: pct(v, 0.5), p90: pct(v, 0.9), max: v[v.length - 1]! };
+	return { n: v.length, p50: pct(v, 0.5), p90: pct(v, 0.9), max: pct(v, 1) };
 }
 
 /** The kind and creation time a delivery ID itself records, for wakes logged before `queuedAt` existed. */
@@ -90,6 +92,32 @@ export type Delivered = {
 	members?: { deliveryId: string; queuedAt?: number; kind?: string; thread?: string }[];
 };
 
+type Member = NonNullable<Delivered["members"]>[number];
+
+/** A delivered event that is an accepted wake post: not a failure and not a post of /compact. */
+const isAcceptedPost = (e: Delivered): boolean =>
+	e.event === "delivered" && typeof e.http === "number" && !(e.http >= 300) && !e.deliveryId.startsWith("compact:");
+
+/** The wakes one accepted post carries: its digest's members, or the post itself. */
+const membersOf = (e: Delivered): Member[] =>
+	e.members ?? [{ deliveryId: e.deliveryId, queuedAt: e.queuedAt, kind: e.kind, thread: e.thread }];
+
+/** The wake a post's member is: its own recorded creation time, else the one its delivery ID carries, else none. */
+function wakeOf(m: Member, postedAt: number): Wake {
+	const id = fromDeliveryId(m.deliveryId);
+	return {
+		deliveryId: m.deliveryId,
+		kind: m.kind ?? id.kind,
+		thread: m.thread ?? id.thread,
+		postedAt,
+		...(typeof m.queuedAt === "number"
+			? { createdAt: m.queuedAt, createdFrom: "recorded" as const }
+			: id.createdAt !== undefined
+				? { createdAt: id.createdAt, createdFrom: "delivery-id" as const }
+				: {}),
+	};
+}
+
 /**
  * One wake per accepted post, or per member of an accepted digest. A wake posted twice (the documented crash window) is
  * counted once, at its first post. Posts of /compact are not wakes.
@@ -98,26 +126,13 @@ export function wakesFrom(events: Delivered[], sinceMs: number): Wake[] {
 	const seen = new Set<string>();
 	const out: Wake[] = [];
 	for (const e of events) {
-		if (e.event !== "delivered" || typeof e.http !== "number" || e.http >= 300 || e.deliveryId.startsWith("compact:"))
-			continue;
+		if (!isAcceptedPost(e)) continue;
 		const postedAt = Date.parse(e.t);
 		if (!Number.isFinite(postedAt) || postedAt < sinceMs) continue;
-		for (const m of e.members ?? [{ deliveryId: e.deliveryId, queuedAt: e.queuedAt, kind: e.kind, thread: e.thread }]) {
+		for (const m of membersOf(e)) {
 			if (seen.has(m.deliveryId)) continue;
 			seen.add(m.deliveryId);
-			const id = fromDeliveryId(m.deliveryId);
-			const recorded = typeof m.queuedAt === "number";
-			out.push({
-				deliveryId: m.deliveryId,
-				kind: m.kind ?? id.kind,
-				thread: m.thread ?? id.thread,
-				postedAt,
-				...(recorded
-					? { createdAt: m.queuedAt, createdFrom: "recorded" as const }
-					: id.createdAt !== undefined
-						? { createdAt: id.createdAt, createdFrom: "delivery-id" as const }
-						: {}),
-			});
+			out.push(wakeOf(m, postedAt));
 		}
 	}
 	return out;
@@ -127,8 +142,8 @@ export function wakesFrom(events: Delivered[], sinceMs: number): Wake[] {
 const MATCH_BEFORE_MS = 20_000,
 	MATCH_AFTER_MS = 2_000;
 
-export function analyze(wakes: Wake[], runs: Run[], hours: number, nowMs: number): Report {
-	const sinceMs = nowMs - hours * 3600_000;
+/** Each post's run: the earliest-requested run not already taken that was requested in the window around the post. */
+function matchRuns(wakes: Wake[], runs: Run[]): Map<number, Run> {
 	// One run per post: a digest's members share one.
 	const posts = [...new Set(wakes.map((w) => w.postedAt))].sort((a, b) => a - b);
 	const taken = new Set<string>();
@@ -142,71 +157,113 @@ export function analyze(wakes: Wake[], runs: Run[], hours: number, nowMs: number
 			runOf.set(p, run);
 		}
 	}
-	const total: number[] = [],
-		held: number[] = [],
-		t3: number[] = [],
-		worst: Worst[] = [];
-	let matched = 0,
-		noCreationTime = 0,
-		createdFromId = 0,
-		notStarted = 0;
-	for (const w of wakes) {
-		if (w.createdAt === undefined) noCreationTime++;
-		if (w.createdFrom === "delivery-id") createdFromId++;
-		const run = runOf.get(w.postedAt);
+	return runOf;
+}
+
+type Waits = {
+	total: number[];
+	held: number[];
+	t3: number[];
+	worst: Worst[];
+	matched: number;
+	noCreationTime: number;
+	createdFromId: number;
+	notStarted: number;
+};
+
+/** The wait of each wake against the run its post matched, and the counts of what could not be measured. */
+function measureWaits(wakes: Wake[], runOf: Map<number, Run>): Waits {
+	const w: Waits = {
+		total: [],
+		held: [],
+		t3: [],
+		worst: [],
+		matched: 0,
+		noCreationTime: 0,
+		createdFromId: 0,
+		notStarted: 0,
+	};
+	for (const wake of wakes) {
+		if (wake.createdAt === undefined) w.noCreationTime++;
+		if (wake.createdFrom === "delivery-id") w.createdFromId++;
+		const run = runOf.get(wake.postedAt);
 		if (!run) continue;
-		matched++;
+		w.matched++;
 		if (run.startedAt === undefined) {
-			notStarted++;
+			w.notStarted++;
 			continue;
 		}
-		t3.push(Math.max(0, run.startedAt - run.requestedAt));
-		if (w.createdAt === undefined) continue;
-		held.push(Math.max(0, run.requestedAt - w.createdAt));
-		const waitMs = Math.max(0, run.startedAt - w.createdAt);
-		total.push(waitMs);
-		worst.push({ deliveryId: w.deliveryId, kind: w.kind, thread: w.thread, createdAt: w.createdAt, waitMs });
+		w.t3.push(Math.max(0, run.startedAt - run.requestedAt));
+		if (wake.createdAt === undefined) continue;
+		w.held.push(Math.max(0, run.requestedAt - wake.createdAt));
+		const waitMs = Math.max(0, run.startedAt - wake.createdAt);
+		w.total.push(waitMs);
+		w.worst.push({
+			deliveryId: wake.deliveryId,
+			kind: wake.kind,
+			thread: wake.thread,
+			createdAt: wake.createdAt,
+			waitMs,
+		});
 	}
-	const turns = runs
-		.filter((r) => r.startedAt !== undefined && r.completedAt !== undefined && r.completedAt >= r.startedAt)
-		.map((r) => r.completedAt! - r.startedAt!);
+	return w;
+}
+
+/** The lengths of the runs with both a start and a completion, whatever started them. */
+const turnLengths = (runs: Run[]): number[] =>
+	runs.flatMap((r) =>
+		r.startedAt !== undefined && r.completedAt !== undefined && r.completedAt >= r.startedAt
+			? [r.completedAt - r.startedAt]
+			: [],
+	);
+
+const s = (n: number) => (n === 1 ? "" : "s");
+
+/** What the numbers leave out, in words. */
+function notesFor(wakeCount: number, w: Waits): string[] {
 	const notes: string[] = [];
-	if (!wakes.length) notes.push("No accepted wake posts in the event log for this window.");
-	if (noCreationTime)
+	if (!wakeCount) notes.push("No accepted wake posts in the event log for this window.");
+	if (w.noCreationTime)
 		notes.push(
-			`${noCreationTime} wake${noCreationTime === 1 ? "" : "s"} have no creation time in the log (answer wakes logged before queuedAt was recorded), so their total and held waits are not measured; their T3 queue wait is.`,
+			`${w.noCreationTime} wake${s(w.noCreationTime)} have no creation time in the log (answer wakes logged before queuedAt was recorded), so their total and held waits are not measured; their T3 queue wait is.`,
 		);
-	if (createdFromId)
+	if (w.createdFromId)
 		notes.push(
-			`${createdFromId} wake${createdFromId === 1 ? "" : "s"} took their creation time from the millisecond in their delivery ID, as no queuedAt was recorded.`,
+			`${w.createdFromId} wake${s(w.createdFromId)} took their creation time from the millisecond in their delivery ID, as no queuedAt was recorded.`,
 		);
-	if (matched < wakes.length)
+	if (w.matched < wakeCount)
 		notes.push(
-			`${wakes.length - matched} wake${wakes.length - matched === 1 ? "" : "s"} matched no Steward run (still queued, a different thread, or the run is outside the window); not counted in any wait.`,
+			`${wakeCount - w.matched} wake${s(wakeCount - w.matched)} matched no Steward run (still queued, a different thread, or the run is outside the window); not counted in any wait.`,
 		);
-	if (notStarted)
-		notes.push(`${notStarted} matched run${notStarted === 1 ? "" : "s"} had not started yet; not counted in any wait.`);
+	if (w.notStarted)
+		notes.push(`${w.notStarted} matched run${s(w.notStarted)} had not started yet; not counted in any wait.`);
 	notes.push(
 		"Runs are matched to wakes by time only (T3's run table does not name the wake): a run requested within 20s before the post was logged.",
 	);
+	return notes;
+}
+
+export function analyze(wakes: Wake[], runs: Run[], hours: number, nowMs: number): Report {
+	const sinceMs = nowMs - hours * 3600_000;
+	const w = measureWaits(wakes, matchRuns(wakes, runs));
 	return {
 		hours,
 		since: new Date(sinceMs).toISOString(),
 		until: new Date(nowMs).toISOString(),
 		wakes: {
 			posted: wakes.length,
-			matched,
-			unmatched: wakes.length - matched,
-			noCreationTime,
-			createdFromId,
-			notStarted,
+			matched: w.matched,
+			unmatched: wakes.length - w.matched,
+			noCreationTime: w.noCreationTime,
+			createdFromId: w.createdFromId,
+			notStarted: w.notStarted,
 		},
-		totalWait: stat(total),
-		heldWait: stat(held),
-		t3Wait: stat(t3),
-		turns: stat(turns),
-		worst: worst.sort((a, b) => b.waitMs - a.waitMs).slice(0, 5),
-		notes,
+		totalWait: stat(w.total),
+		heldWait: stat(w.held),
+		t3Wait: stat(w.t3),
+		turns: stat(turnLengths(runs)),
+		worst: w.worst.sort((a, b) => b.waitMs - a.waitMs).slice(0, 5),
+		notes: notesFor(wakes.length, w),
 	};
 }
 
