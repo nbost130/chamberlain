@@ -20,6 +20,9 @@ describe("a test run touches nothing of the developer's", () => {
 		for (const v of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"])
 			expect(process.env[v]!.startsWith(`${root}/home/`)).toBe(true);
 	});
+	test("no git environment leaks in: a hook's GIT_DIR would point a test's repository at the real one", () => {
+		expect(Object.keys(process.env).filter((k) => k.startsWith("GIT_"))).toEqual([]);
+	});
 	test("no settings are read: the config directory is empty, so there is no principal name, T3 path or alert command of the developer's", () => {
 		expect(readSettings()).toEqual({});
 	});

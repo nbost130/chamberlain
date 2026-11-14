@@ -5,7 +5,8 @@
  *    removed when the run ends. (Without it a tmpfs /tmp can run out of inodes long before it runs out of space.)
  *  - HOME, CHAMBERLAIN_CONF, CHAMBERLAIN_STATE and the XDG base directories are scratch directories under that root. A test that forgets to
  *    set its own can therefore never read the developer's settings.json, tokens or database, or write to them.
- *  - Every CHAMBERLAIN_*, ALERT_DESK_* and DESK_* variable the shell holds is dropped, and `<HOME>/bin` is off the PATH, so a live alert
+ *  - Every CHAMBERLAIN_*, ALERT_DESK_*, DESK_* and GIT_* variable the shell holds is dropped (a git hook runs with GIT_DIR and GIT_INDEX_FILE set, which
+ *    would point the repositories some tests make at the real one), and `<HOME>/bin` is off the PATH, so a live alert
  *    command (settings.json `alertCommand`, CHAMBERLAIN_ALERT_CMD) cannot be reached from a test.
  *  - The alert command is a sentinel that only records its call. A test that raises an alarm through a real engine must pass `noAlert`
  *    (the `noAlert` helper in the testing directory) or its own command; one that does not leaves a marker, and the run fails at the end with what was called.
@@ -30,7 +31,7 @@ writeFileSync(
 );
 
 for (const k of Object.keys(process.env))
-	if (/^(CHAMBERLAIN_|ALERT_DESK_|DESK_)/.test(k) || k === "CLAUDE_CONFIG_DIR") delete process.env[k];
+	if (/^(CHAMBERLAIN_|ALERT_DESK_|DESK_|GIT_)/.test(k) || k === "CLAUDE_CONFIG_DIR") delete process.env[k];
 Object.assign(process.env, {
 	HOME: home,
 	CHAMBERLAIN_CONF: conf,
