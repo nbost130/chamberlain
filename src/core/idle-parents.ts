@@ -153,41 +153,60 @@ export async function selectIdleThreads(
 ): Promise<IdleSelection> {
 	const skip = o.skip ?? new Set<string>();
 	const out: IdleSelection = { threads: [], unreadable: [] };
-	for (const src of sources) {
-		const read = src.lastAssistant;
-		if (!read) continue;
-		const candidates = [...src.threads].filter((th) => idleParentCandidate(th, skip, src.liveChildren(th.id)));
-		if (!src.connected) {
-			for (const th of candidates) out.unreadable.push({ server: src.server, threadId: th.id });
-			continue;
-		}
-		const one = async (th: ThreadState) => {
-			try {
-				if (src.runningSubagents && (await src.runningSubagents(th.id)) > 0) return;
-				const last = await read(th.id);
-				const at = last ? Date.parse(last.at) : Number.NaN;
-				if (!last || !Number.isFinite(at)) return;
-				const idleMs = now - at;
-				if (idleMs <= o.thresholdMinutes * 60_000) return;
-				out.threads.push({
-					server: src.server,
-					threadId: th.id,
-					title: th.title,
-					idleMinutes: Math.floor(idleMs / 60_000),
-					lastMessage: last.text,
-					lastMessageHash: messageHash(last),
-					looksLikeAsk: looksLikeAsk(last.text),
-					previous: last.previous ? { from: last.previous.by, text: last.previous.text } : { from: "none", text: "" },
-				});
-			} catch (e) {
-				src.readFailed?.(th.id, e);
-				out.unreadable.push({ server: src.server, threadId: th.id });
-			}
-		};
-		for (let i = 0; i < candidates.length; i += 8) await Promise.all(candidates.slice(i, i + 8).map(one));
-	}
+	for (const src of sources) await selectFromSource(src, now, o.thresholdMinutes, skip, out);
 	out.threads.sort(byAskThenIdle);
 	return out;
+}
+
+/** One source's part of the selection: its candidates read eight at a time, or all of them unreadable when it is not connected. */
+async function selectFromSource(
+	src: IdleThreadSource,
+	now: number,
+	thresholdMinutes: number,
+	skip: ReadonlySet<string>,
+	out: IdleSelection,
+): Promise<void> {
+	const read = src.lastAssistant;
+	if (!read) return;
+	const candidates = [...src.threads].filter((th) => idleParentCandidate(th, skip, src.liveChildren(th.id)));
+	if (!src.connected) {
+		for (const th of candidates) out.unreadable.push({ server: src.server, threadId: th.id });
+		return;
+	}
+	const one = (th: ThreadState) => readIdleThread(src, read, th, now, thresholdMinutes, out);
+	for (let i = 0; i < candidates.length; i += 8) await Promise.all(candidates.slice(i, i + 8).map(one));
+}
+
+/** One candidate's read: idle past the threshold it joins `out.threads`; a read that throws is `unreadable` and is told to the source. */
+async function readIdleThread(
+	src: IdleThreadSource,
+	read: NonNullable<IdleThreadSource["lastAssistant"]>,
+	th: ThreadState,
+	now: number,
+	thresholdMinutes: number,
+	out: IdleSelection,
+): Promise<void> {
+	try {
+		if (src.runningSubagents && (await src.runningSubagents(th.id)) > 0) return;
+		const last = await read(th.id);
+		const at = last ? Date.parse(last.at) : Number.NaN;
+		if (!last || !Number.isFinite(at)) return;
+		const idleMs = now - at;
+		if (idleMs <= thresholdMinutes * 60_000) return;
+		out.threads.push({
+			server: src.server,
+			threadId: th.id,
+			title: th.title,
+			idleMinutes: Math.floor(idleMs / 60_000),
+			lastMessage: last.text,
+			lastMessageHash: messageHash(last),
+			looksLikeAsk: looksLikeAsk(last.text),
+			previous: last.previous ? { from: last.previous.by, text: last.previous.text } : { from: "none", text: "" },
+		});
+	} catch (e) {
+		src.readFailed?.(th.id, e);
+		out.unreadable.push({ server: src.server, threadId: th.id });
+	}
 }
 
 /** Pure: the last of a message, whitespace collapsed, cut at the start so the end (where an ask is) stays. */
@@ -254,41 +273,65 @@ export function idleParentFindings(
 	cls?: IdleClassification,
 ): Finding[] {
 	const known = new Set(prior.map((p) => p.dedupKey));
-	let fresh = 0;
-	const out: Finding[] = [];
-	// Live: only escalate, nudge and unknown are reported, in that order and then by idle time; settle goes into the day's digest line.
-	const live = cls?.mode === "live";
-	const actionOf = (t: IdleThread) => cls?.byKey.get(idleKey(t))?.action ?? "unknown";
+	const live = cls?.mode === "live" ? cls : undefined;
+	const out = reportedThreads(sel.threads, cfg.maxThreads, known, live);
+	if (live) {
+		const settled = sel.threads.filter((t) => actionOf(t, live) === "settle");
+		const key = digestKey(live.day);
+		if (settled.length && !known.has(key)) out.push({ dedupKey: key, text: digestText(settled) });
+	}
+	out.push(...keptOpen(sel.unreadable, prior, out));
+	return out;
+}
+
+/** Pure: the disposition a live classification gave one thread (absent: unknown). */
+const actionOf = (t: IdleThread, live: IdleClassification) => live.byKey.get(idleKey(t))?.action ?? "unknown";
+
+/** Pure: the threads as findings, within the cap on the new ones. Live: only escalate, nudge and unknown are reported, in that order and then by idle time; settle goes into the day's digest line. */
+function reportedThreads(
+	all: readonly IdleThread[],
+	maxThreads: number,
+	known: ReadonlySet<string>,
+	live: IdleClassification | undefined,
+): Finding[] {
+	const rank = (t: IdleThread, l: IdleClassification) => RANK[actionOf(t, l)] ?? 2; // only called on actions that are in RANK
 	const threads = live
-		? sel.threads
-				.filter((t) => actionOf(t) in RANK)
+		? all
+				.filter((t) => actionOf(t, live) in RANK)
 				.sort(
 					(a, b) =>
-						RANK[actionOf(a)]! - RANK[actionOf(b)]! ||
+						rank(a, live) - rank(b, live) ||
 						b.idleMinutes - a.idleMinutes ||
 						(`${a.server}\0${a.threadId}` < `${b.server}\0${b.threadId}` ? -1 : 1),
 				)
-		: sel.threads;
+		: all;
+	let fresh = 0;
+	const out: Finding[] = [];
 	for (const t of threads) {
 		const dedupKey = idleKey(t);
 		const seen = known.has(dedupKey);
-		if (!seen && ++fresh > cfg.maxThreads) continue;
-		const text = live ? classifiedText(t, cls!.byKey.get(dedupKey)) : idleText(t);
+		if (!seen && ++fresh > maxThreads) continue;
+		const text = live ? classifiedText(t, live.byKey.get(dedupKey)) : idleText(t);
 		out.push({ dedupKey, text, ...(seen ? { alreadyReported: true } : {}) });
 	}
-	if (live) {
-		const settled = sel.threads.filter((t) => actionOf(t) === "settle");
-		const key = digestKey(cls!.day);
-		if (settled.length && !known.has(key)) out.push({ dedupKey: key, text: digestText(settled) });
-	}
+	return out;
+}
+
+/** Pure: the open findings of threads the selection could not read, which keep what they had (those not already in `out`). */
+function keptOpen(
+	unreadable: IdleSelection["unreadable"],
+	prior: readonly PriorFinding[],
+	out: readonly Finding[],
+): Finding[] {
 	const have = new Set(out.map((f) => f.dedupKey));
-	for (const u of sel.unreadable) {
+	const kept: Finding[] = [];
+	for (const u of unreadable) {
 		const stem = `${u.server}:${u.threadId}:`;
 		for (const p of prior)
 			if (p.dedupKey.startsWith(stem) && !p.resolved && !have.has(p.dedupKey))
-				out.push({ dedupKey: p.dedupKey, text: p.text });
+				kept.push({ dedupKey: p.dedupKey, text: p.text });
 	}
-	return out;
+	return kept;
 }
 
 /** The check as an item source. `select` is `selectIdleThreads` over the watchers; `prior` lists the source's open items. */

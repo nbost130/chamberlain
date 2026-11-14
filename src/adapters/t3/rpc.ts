@@ -1,10 +1,45 @@
 /** Minimal Effect-RPC client over T3 /ws. */
+/** A thread as the shell stream carries it: the fields the adapter reads, and whatever else T3 sends. */
+export type ShellThreadRecord = {
+	id?: string;
+	title?: string;
+	status?: string;
+	archivedAt?: string | null;
+	settledAt?: string | null;
+	snoozedUntil?: string | null;
+	pendingRuntimeRequest?: unknown;
+	lineage?: { parentThreadId?: string | null } | null;
+	[field: string]: unknown;
+};
+/** One value of a stream chunk. Only the shell stream (`orchestration.subscribeShell`) is read, so this is its shape. */
+export type StreamValue = {
+	kind?: string;
+	sequence?: number;
+	thread?: ShellThreadRecord;
+	/** Carried by a `snapshot` frame; read only after `kind` says so. */
+	snapshot: {
+		snapshotSequence?: number;
+		threads?: ShellThreadRecord[];
+		partial?: boolean;
+		complete?: boolean;
+		truncated?: boolean;
+		hasMore?: boolean;
+		nextCursor?: unknown;
+	};
+};
+/** A message from the server: a chunk of stream values, the end of a call, or a protocol failure. */
+type RpcMessage = {
+	_tag?: string;
+	requestId?: unknown;
+	values?: StreamValue[];
+	exit?: { _tag?: string; value?: unknown };
+};
 // ---- minimal Effect-RPC client over /ws -------------------------------------------------------
 export class Rpc {
 	next = 100;
 	pending = new Map<
 		string,
-		{ resolve: (v: unknown) => void; reject: (e: Error) => void; onChunk?: (v: any) => void }
+		{ resolve: (v: unknown) => void; reject: (e: Error) => void; onChunk?: (v: StreamValue) => void }
 	>();
 	last = Date.now();
 	pinger: ReturnType<typeof setInterval>;
@@ -26,20 +61,20 @@ export class Rpc {
 	}
 	receive(data: string) {
 		this.last = Date.now();
-		for (const m of ([] as any[]).concat(JSON.parse(data))) {
-			const p = this.pending.get(String(m.requestId));
-			if (m._tag === "Chunk" && p) {
-				for (const v of m.values ?? []) p.onChunk?.(v);
-				this.ws.send(JSON.stringify({ _tag: "Ack", requestId: m.requestId }));
-			} else if (m._tag === "Exit" && p) {
-				this.pending.delete(String(m.requestId));
-				m.exit?._tag === "Success"
-					? p.resolve(m.exit.value)
-					: p.reject(Error(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
-			} else if (m._tag === "Defect" || m._tag === "ClientProtocolError") this.ws.close();
-		}
+		for (const m of ([] as RpcMessage[]).concat(JSON.parse(data))) this.handle(m);
 	}
-	call(tag: string, payload: unknown, onChunk?: (v: any) => void) {
+	private handle(m: RpcMessage) {
+		const p = this.pending.get(String(m.requestId));
+		if (m._tag === "Chunk" && p) {
+			for (const v of m.values ?? []) p.onChunk?.(v);
+			this.ws.send(JSON.stringify({ _tag: "Ack", requestId: m.requestId }));
+		} else if (m._tag === "Exit" && p) {
+			this.pending.delete(String(m.requestId));
+			if (m.exit?._tag === "Success") p.resolve(m.exit.value);
+			else p.reject(Error(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
+		} else if (m._tag === "Defect" || m._tag === "ClientProtocolError") this.ws.close();
+	}
+	call(tag: string, payload: unknown, onChunk?: (v: StreamValue) => void) {
 		const id = String(this.next++);
 		return new Promise<unknown>((resolve, reject) => {
 			this.pending.set(id, { resolve, reject, onChunk });
@@ -86,7 +121,7 @@ export async function connect(origin: string, token: string): Promise<Rpc> {
  * Resolves only with a snapshot that carries a thread list, so a short or empty answer is a failure, never "no threads"; one that
  * marks itself partial (`partial`, `complete: false`, `truncated`, `hasMore`, a `nextCursor`) rejects.
  */
-export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: any[] }> {
+export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: ShellThreadRecord[] }> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => {
 			reject(Error("snapshot timed out"));
@@ -94,7 +129,8 @@ export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: any[] }>
 		}, ms);
 		rpc
 			.call("orchestration.subscribeShell", {}, (v) => {
-				if (v?.kind === "snapshot" && Array.isArray(v.snapshot?.threads)) {
+				const threads = v?.snapshot?.threads;
+				if (v?.kind === "snapshot" && Array.isArray(threads)) {
 					clearTimeout(timer);
 					// A snapshot that says it is not whole is refused, never read as "these are all the threads".
 					const s = v.snapshot;
@@ -106,7 +142,7 @@ export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: any[] }>
 						(s.nextCursor !== undefined && s.nextCursor !== null)
 					)
 						reject(Error("partial snapshot"));
-					else resolve({ threads: s.threads });
+					else resolve({ threads });
 					rpc.ws.close();
 				}
 			})
@@ -114,7 +150,11 @@ export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: any[] }>
 			.finally(() => clearTimeout(timer));
 	});
 }
-export async function fetchShellSnapshot(origin: string, token: string, ms = 15000): Promise<{ threads: any[] }> {
+export async function fetchShellSnapshot(
+	origin: string,
+	token: string,
+	ms = 15000,
+): Promise<{ threads: ShellThreadRecord[] }> {
 	const rpc = await connect(origin, token);
 	try {
 		return await shellSnapshot(rpc, ms);

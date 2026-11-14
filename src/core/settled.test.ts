@@ -86,6 +86,63 @@ describe("weak refs: a PR, branch or thread title matches only beside the same t
 	});
 });
 
+describe("refs: every form a text can name one in, and the other ways two sides can share one", () => {
+	test("a run named verbatim in the other side's text matches in either direction, and says so once", () => {
+		const store = memStore();
+		answered(store, "Q-run02", "Retry the pipeline?", { context: "- run 01JXYZXYZXYZX failed" });
+		expect(find(store, { title: "Unrelated", context: "- see 01JXYZXYZXYZX" }).matches).toEqual([]);
+		expect(find(store, { title: "Unrelated", run: "01JXYZXYZXYZX" }).matches.map((m) => m.why)).toEqual([
+			"run 01JXYZXYZXYZX",
+		]);
+	});
+	test("the PR forms (owner/repo#n, repo#n, #n, 'PR n', 'issue n') name the same PR beside the same topic", () => {
+		const topic = "Approve the database migration for invoices";
+		for (const context of ["acme/app#7", "app#7", "#7", "PR 7", "pull request #7", "issue 7"]) {
+			const store = memStore();
+			answered(store, "Q-prf01", topic, { context: `- ${context}` });
+			const r = find(store, { title: "Database migration invoices approval again", pr: "acme/app#7" });
+			expect([context, r.matches.length]).toEqual([context, 1]);
+		}
+	});
+	test("a thread title named whole in the other side's text is a weak ref that still needs the topic", () => {
+		const store = memStore();
+		answered(store, "Q-thr01", "Rotate the billing webhook signing secret", {
+			thread: "Webhook signing rotation work",
+		});
+		expect(
+			find(store, {
+				title: "Billing webhook signing secret rotation",
+				context: "from Webhook signing rotation work",
+			}).matches.map((m) => m.why),
+		).toEqual(["thread title + topic: billing, webhook, signing, secret"]);
+		expect(
+			find(store, { title: "Flaky retry test on the payments page", context: "from Webhook signing rotation work" })
+				.matches,
+		).toEqual([]);
+	});
+	test("a source that cannot be read is skipped and named, and the others still answer", () => {
+		const store = memStore();
+		store.decisions.append({
+			t: "2026-11-05T12:00:00.000Z",
+			thread: "x",
+			decision: "Rename to Atlas is off",
+			ruling: "R1",
+			ref: null,
+		});
+		const broken = {
+			...store,
+			decisions: {
+				...store.decisions,
+				list: () => {
+					throw new Error("disk gone");
+				},
+			},
+		} as unknown as Store;
+		const r = find(broken, { title: "Rename to Atlas?" });
+		expect(r.skipped).toEqual(["decisions (disk gone)"]);
+	});
+});
+
 describe("title overlap (rule 3)", () => {
 	test("a short title matches its phrase inside a longer one; a paraphrase is a documented miss", () => {
 		const store = memStore();

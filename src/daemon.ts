@@ -28,26 +28,7 @@ import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 export async function main(_argv: string[] = process.argv.slice(2)) {
 	const store = defaultStore();
 	const log = makeLog(store);
-	// The relay's flock on the state directory, held for this process's life: the operating system lets one process hold it, and frees it when this one dies.
-	let lock: RelayLock;
-	try {
-		lock = holdRelayLock(store.path);
-	} catch (e) {
-		if (e instanceof RelayLockUnavailableError) {
-			console.error(`chamberlain: ${e.message}`);
-			log("relay-lock-unavailable", { error: e.message.slice(0, 200) });
-			process.exit(1);
-		}
-		if (e instanceof RelayDatabaseLinkedError) {
-			console.error(`chamberlain: ${e.message}`);
-			log("relay-database-linked", { db: e.db, links: e.links });
-			process.exit(1);
-		}
-		if (!(e instanceof RelayRunningError)) throw e;
-		console.error(`chamberlain: ${e.message}`);
-		log("relay-refused", { lock: e.lock });
-		process.exit(5);
-	}
+	const lock = takeRelayLock(store, log);
 	const netfs = networkFilesystem(STATE);
 	if (netfs) {
 		console.error(
@@ -73,7 +54,42 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 		adapter: makeAdapter(server, { conf: CONF, state: STATE, store, log, alarm: (k, t, s) => raise(k, t, s) }),
 	}));
 
-	const engine = createEngine({
+	const engine = createEngine(engineDeps(store, log, lock, servers));
+	raise = engine.alarm;
+	log("adapters", { registered: adapterNames(), serving: servers.map((x) => `${x.server.name}:${x.server.adapter}`) });
+	await engine.start();
+}
+
+/** The relay's flock on the state directory, held for this process's life: the operating system lets one process hold it, and frees it when this one dies. A refusal is logged and exits. */
+function takeRelayLock(store: ReturnType<typeof defaultStore>, log: ReturnType<typeof makeLog>): RelayLock {
+	try {
+		return holdRelayLock(store.path);
+	} catch (e) {
+		if (e instanceof RelayLockUnavailableError) {
+			console.error(`chamberlain: ${e.message}`);
+			log("relay-lock-unavailable", { error: e.message.slice(0, 200) });
+			process.exit(1);
+		}
+		if (e instanceof RelayDatabaseLinkedError) {
+			console.error(`chamberlain: ${e.message}`);
+			log("relay-database-linked", { db: e.db, links: e.links });
+			process.exit(1);
+		}
+		if (!(e instanceof RelayRunningError)) throw e;
+		console.error(`chamberlain: ${e.message}`);
+		log("relay-refused", { lock: e.lock });
+		process.exit(5);
+	}
+}
+
+/** What the engine is made of: the real config, the lock, the store and the servers, and the daemon's own settings and hooks. */
+function engineDeps(
+	store: ReturnType<typeof defaultStore>,
+	log: ReturnType<typeof makeLog>,
+	lock: RelayLock,
+	servers: Parameters<typeof createEngine>[0]["servers"],
+): Parameters<typeof createEngine>[0] {
+	return {
 		conf: CONF,
 		lock,
 		store,
@@ -97,10 +113,7 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 			);
 			if ((await child.exited) !== 0) throw Error("steward-health ask failed; queue checked again on retry");
 		},
-	});
-	raise = engine.alarm;
-	log("adapters", { registered: adapterNames(), serving: servers.map((x) => `${x.server.name}:${x.server.adapter}`) });
-	await engine.start();
+	};
 }
 
 if (import.meta.main) await main();

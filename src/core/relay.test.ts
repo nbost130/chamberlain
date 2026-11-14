@@ -963,13 +963,12 @@ describe("a Steward row that depends on the rights goes only when the durable re
 			q3: `Decision rights: the same as in the first item of this digest above, and still in force.\n${block}`,
 		};
 		r.w.gate = "busy";
-		Object.entries(texts).forEach(([id, text], i) =>
+		for (const [i, [id, text]] of Object.entries(texts).entries())
 			r.outbox.deliver(text, id, {
 				kind: "turn_ended",
 				thread: `t${i}`,
 				rights: [{ ...stamp, session: "s1", full: true }],
-			}),
-		);
+			});
 		r.w.gate = "idle";
 		await r.relay().pass();
 		expect(r.posts).toHaveLength(1);

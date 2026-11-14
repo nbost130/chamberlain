@@ -5,7 +5,11 @@ import { normalizeWaitKind } from "./state.ts";
  * The shape the T3 adapter expects of a thread projection (`orchestration.getThreadProjection`). Every read of one goes
  * through `checkProjection`: an answer in any other shape throws, so it is a failed read and never an empty thread.
  */
-export type Projection = { turnItems: any[]; runs?: any[]; subagents?: { status?: string }[] };
+export type Projection = {
+	turnItems: Record<string, unknown>[];
+	runs?: { id?: string; ordinal?: number; status?: string }[];
+	subagents?: { status?: string }[];
+};
 export const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -67,48 +71,61 @@ export function readCards(
 	turnItems: readonly unknown[],
 	threadId: string,
 ): { ok: true; cards: WaitingItem[]; resolved: string[]; ignored: string[] } {
-	const ignored: string[] = [];
-	const terminal = new Set<string>();
-	const notDone = new Set<string>();
-	const waiting = new Map<string, { item: Record<string, unknown>; type: string }>();
-	for (const [n, i] of turnItems.entries()) {
-		if (!isObject(i) || !nonEmpty(i.type) || !isCardType(i.type)) continue;
-		if (i.threadId !== undefined && i.threadId !== null && i.threadId !== threadId) continue;
-		const at = `card item ${n} (${i.type})`;
-		const id = i.requestId ?? i.id;
-		if (!nonEmpty(id)) {
-			ignored.push(`${at} has no valid request id`);
-			continue;
-		}
-		if (typeof i.status !== "string" || i.status === "") {
-			ignored.push(`${at} ${id} has no status`);
-			notDone.add(id);
-			continue;
-		}
-		if (TERMINAL_CARD_STATUSES.has(i.status)) {
-			terminal.add(id);
-			continue;
-		}
-		notDone.add(id);
-		if (!OPEN_CARD_STATUSES.has(i.status)) {
-			ignored.push(`${at} ${id} has an unknown status ${JSON.stringify(i.status).slice(0, 40)}`);
-			continue;
-		}
-		if (i.status === "waiting" && !waiting.has(id)) waiting.set(id, { item: i, type: i.type });
-	}
-	const cards: WaitingItem[] = [...waiting].map(([id, c]) => {
-		const questions = (Array.isArray(c.item.questions) ? c.item.questions.filter(isObject) : []) as (WaitQuestion & {
-			header?: string;
-		})[];
-		return {
-			type: normalizeWaitKind(c.type) as WaitingItem["type"],
-			requestId: id,
-			label: asText(c.item.label) || asText(c.item.prompt) || asText(questions[0]?.header),
-			questions,
-		};
-	});
+	const scan: CardScan = { ignored: [], terminal: new Set(), notDone: new Set(), waiting: new Map() };
+	for (const [n, i] of turnItems.entries()) scanCardItem(scan, n, i, threadId);
+	const { ignored, terminal, notDone, waiting } = scan;
+	const cards: WaitingItem[] = [...waiting].map(([id, c]) => cardOf(id, c));
 	const resolved = [...terminal].filter((id) => !notDone.has(id));
 	for (const id of terminal)
 		if (notDone.has(id)) ignored.push(`card ${id} has a terminal item and one still going or unreadable: not resolved`);
 	return { ok: true, cards, resolved, ignored };
+}
+
+/** What `readCards` has gathered so far, item by item. */
+type CardScan = {
+	ignored: string[];
+	terminal: Set<string>;
+	notDone: Set<string>;
+	waiting: Map<string, { item: Record<string, unknown>; type: string }>;
+};
+
+/** One turn item's part in a `readCards` pass: it is passed over, ignored with a reason, or filed as terminal, not done or waiting. */
+function scanCardItem(scan: CardScan, n: number, i: unknown, threadId: string): void {
+	const { ignored, terminal, notDone, waiting } = scan;
+	if (!isObject(i) || !nonEmpty(i.type) || !isCardType(i.type)) return;
+	if (i.threadId !== undefined && i.threadId !== null && i.threadId !== threadId) return;
+	const at = `card item ${n} (${i.type})`;
+	const id = i.requestId ?? i.id;
+	if (!nonEmpty(id)) {
+		ignored.push(`${at} has no valid request id`);
+		return;
+	}
+	if (typeof i.status !== "string" || i.status === "") {
+		ignored.push(`${at} ${id} has no status`);
+		notDone.add(id);
+		return;
+	}
+	if (TERMINAL_CARD_STATUSES.has(i.status)) {
+		terminal.add(id);
+		return;
+	}
+	notDone.add(id);
+	if (!OPEN_CARD_STATUSES.has(i.status)) {
+		ignored.push(`${at} ${id} has an unknown status ${JSON.stringify(i.status).slice(0, 40)}`);
+		return;
+	}
+	if (i.status === "waiting" && !waiting.has(id)) waiting.set(id, { item: i, type: i.type });
+}
+
+/** The waiting card a waiting item makes. */
+function cardOf(id: string, c: { item: Record<string, unknown>; type: string }): WaitingItem {
+	const questions = (Array.isArray(c.item.questions) ? c.item.questions.filter(isObject) : []) as (WaitQuestion & {
+		header?: string;
+	})[];
+	return {
+		type: normalizeWaitKind(c.type) as WaitingItem["type"],
+		requestId: id,
+		label: asText(c.item.label) || asText(c.item.prompt) || asText(questions[0]?.header),
+		questions,
+	};
 }
