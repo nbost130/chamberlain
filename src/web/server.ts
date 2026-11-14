@@ -1,7 +1,7 @@
 /**
  * The decision-queue page: bun src/web/server.ts [--test]
  *
- * Binds only to the address in ~/.config/chamberlain/web.json (loopback or a Tailscale IP) and refuses a wildcard or a
+ * Binds only to the address in the `web` section of ~/.config/chamberlain/config.json (loopback or a Tailscale IP) and refuses a wildcard or a
  * missing one. An answer's wake is an outbox row written in the answer's own transaction; the daemon's relay sends it (src/core/relay.ts).
  *
  * --test runs against fixture data: CHAMBERLAIN_CONF and CHAMBERLAIN_STATE must point away from the live directories, the

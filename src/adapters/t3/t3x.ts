@@ -1,6 +1,6 @@
 /**
  * t3x: act on a thread on any configured T3 server, for the case the t3_* MCP tools can't reach one. Servers come from
- * ~/.config/chamberlain/servers.json; an optional `operateTokenFile` (orchestration:operate) enables respond/send.
+ * the `servers` list of ~/.config/chamberlain/config.json; an optional `operateTokenFile` (orchestration:operate) enables respond/send.
  * Tokens are never printed.
  *
  *   bun src/adapters/t3/t3x.ts threads <server>

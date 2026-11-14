@@ -11,19 +11,32 @@
  *
  * The first Chamberlain kept each setting in a file of its own in the config directory (settings.json, servers.json, web.json, sweep.json,
  * alert-desk.json, operating-rules.json, judge.json, one file per thread id, the tokens and webhook URLs). Those files are the LEGACY layout:
- * `chamberlain config migrate` (src/core/config-migrate.ts) and every daemon or page start convert them, and leave them where they are. Until
- * they are removed they are still READ for a key config.json does not hold, each with one `config-deprecated` line in the events log
- * (`attachDeprecationLog`). Setting a key to null in config.json says "none" and stops the fallback for that key.
+ * `chamberlain config migrate` (src/core/config-migrate.ts) and every daemon or page start MOVE them: each secret is renamed into `secrets/`, and
+ * each other file is renamed `<name>.migrated` once config.json is safely on disk. config.json lists what it moved (`migrated.files`).
+ *
+ * A file that was never migrated (an install the migration could not write to) is still READ for a key config.json does not hold, with one
+ * `config-deprecated` line in the events log (`attachDeprecationLog`). A file that WAS migrated is never read again by its old name: if an outside
+ * tool writes `steward-thread` or a re-minted `mac-token` there after the move, Chamberlain ignores it and logs `config-legacy-reappeared`
+ * (`chamberlain config show` flags it). Setting a key to null in config.json says "none" and stops the fallback for that key.
  *
  * An environment variable overrides a scalar key. ONE rule names it: `CHAMBERLAIN_` + the key in UPPER_SNAKE_CASE (`stallMs` is
  * CHAMBERLAIN_STALL_MS, `t3StateDb` is CHAMBERLAIN_T3_STATE_DB). The two directories themselves are env-only (CHAMBERLAIN_CONF, CHAMBERLAIN_STATE).
  *
  * This module imports nothing from config.ts (which imports it), so it takes the config directory as an argument and defaults it the same way.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readFileSync,
+	readdirSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { authorityProblem, isPrivateFile, modeText } from "./private.ts";
 import { SchemaTooNewError, checkVersion } from "./schema.ts";
-import { parseSettings } from "./settings-parse.ts";
+import { parseSettings, parseSettledMatch } from "./settings-parse.ts";
 import { configDir } from "./state-dir.ts";
 
 export const CONFIG_FILE = "config.json";
@@ -136,6 +149,13 @@ export function parseConfigDoc(raw: unknown): Record<string, unknown> {
 			if (val === null) continue;
 			if (k === "servers" ? !Array.isArray(val) : !isObject(val))
 				throw new ConfigFileError(`config.json: "${k}" must be ${k === "servers" ? "a list" : "an object"}`);
+			if (k === "settledMatch") {
+				try {
+					parseSettledMatch(val, "config.json");
+				} catch (e) {
+					throw new ConfigFileError((e as Error).message);
+				}
+			}
 		} else if (!(BOOKKEEPING as readonly string[]).includes(k))
 			throw new ConfigFileError(
 				`config.json: unknown key "${k}" (keys: ${[...Object.keys(SCALARS), ...SECTIONS].join(", ")})`,
@@ -185,12 +205,20 @@ export function writeConfigFile(conf: string, doc: Record<string, unknown>): voi
 
 type Legacy = { value: unknown; file: string; trust?: string };
 
+/** May an old file be read by its old name? Not once it was migrated: a rewritten one is noticed, and never read. */
+function readable(conf: string, name: string, secret: boolean): boolean {
+	const s = oldFileState(conf, name, secret);
+	if (s === "reappeared") reappeared(conf, name);
+	return s === "usable";
+}
+
 /** A legacy JSON file: undefined when absent; `private` demands mode exactly 0600 (it did, as a config file), `authority` leaves the check to the caller. */
 function legacyJson(
 	conf: string,
 	name: string,
 	how: "private" | "authority",
 ): { raw: unknown; trust?: string } | undefined {
+	if (!readable(conf, name, false)) return undefined;
 	const p = `${conf}/${name}`;
 	let st: ReturnType<typeof statSync>;
 	try {
@@ -218,6 +246,7 @@ function legacyThread(conf: string, member: ThreadKey): string | undefined {
 	return readLegacyText(conf, LEGACY_THREAD_FILES[member]);
 }
 function readLegacyText(conf: string, name: string): string | undefined {
+	if (!readable(conf, name, false)) return undefined;
 	try {
 		const p = `${conf}/${name}`;
 		const st = statSync(p);
@@ -291,6 +320,79 @@ export function legacyFilesPresent(conf: string): string[] {
 	return names.filter((n) => existsSync(`${conf}/${n}`));
 }
 
+// ---- what the migration moved ------------------------------------------------------------------------------
+
+/** What a non-secret file is renamed to when it has been migrated. */
+export const MIGRATED_SUFFIX = ".migrated";
+/** A secret file of the old layout, by its name: a token (`*-token`) or a webhook URL (`*-url`, and the `.steward` / `.prev` copies a hand-off makes). */
+export const SECRET_FILE = /(^|-)(token|url)(\.[A-Za-z]+)?$/;
+/** The old non-secret files, and where each one's values live now. */
+export const NON_SECRET_HOME: Record<string, string> = {
+	"settings.json": 'config.json keys "principal", "t3Dir", "t3StateDb", "alertCmd", "compactTokens", "settledMatch"',
+	"servers.json": 'config.json "servers"',
+	"web.json": 'config.json "web"',
+	"sweep.json": 'config.json "sweep"',
+	"alert-desk.json": 'config.json "alertDesk"',
+	"operating-rules.json": 'config.json "operatingRules"',
+	"judge.json": 'config.json "judge"',
+	"steward-thread": 'config.json "threads.steward" (read it with: chamberlain config get threads.steward)',
+	"decisions-thread": 'config.json "threads.decisions" (read it with: chamberlain config get threads.decisions)',
+	"desk-thread": 'config.json "threads.desk" (read it with: chamberlain config get threads.desk)',
+};
+/** Where a migrated old name lives now. */
+export const homeOfOld = (name: string): string => NON_SECRET_HOME[name] ?? `${SECRETS_DIR}/${name}`;
+
+/** The names config.json says the migration moved. A config.json that cannot be read lists none. */
+export function migratedNames(conf: string): Set<string> {
+	try {
+		const m = readConfigFile(conf)?.migrated;
+		return new Set(
+			isObject(m) && Array.isArray(m.files)
+				? (m.files as unknown[]).filter((x): x is string => typeof x === "string")
+				: [],
+		);
+	} catch {
+		return new Set();
+	}
+}
+
+/**
+ * What an old file's name holds now:
+ *   absent      nothing is at the old name;
+ *   usable      never migrated: it is still read, as a fallback, with a deprecation notice;
+ *   pending     migrated and its rename to `<name>.migrated` is still to come (a crash between the two steps): not read, config.json has the value;
+ *   reappeared  migrated, and something wrote the old name again afterwards: NEVER read.
+ */
+export type OldState = "absent" | "usable" | "pending" | "reappeared";
+export function oldFileState(conf: string, name: string, secret: boolean): OldState {
+	try {
+		lstatSync(`${conf}/${name}`);
+	} catch {
+		return "absent";
+	}
+	if (secret)
+		return existsSync(`${conf}/${SECRETS_DIR}/${name}`) || migratedNames(conf).has(name) ? "reappeared" : "usable";
+	if (!migratedNames(conf).has(name)) return "usable";
+	return existsSync(`${conf}/${name}${MIGRATED_SUFFIX}`) ? "reappeared" : "pending";
+}
+
+/** The old names present at their old place that Chamberlain will never read, because the migration moved them. */
+export function reappearedFiles(conf: string): string[] {
+	const out = Object.keys(NON_SECRET_HOME).filter((n) => oldFileState(conf, n, false) === "reappeared");
+	try {
+		for (const e of readdirSync(conf, { withFileTypes: true }))
+			if (
+				(e.isFile() || e.isSymbolicLink()) &&
+				SECRET_FILE.test(e.name) &&
+				oldFileState(conf, e.name, true) === "reappeared"
+			)
+				out.push(e.name);
+	} catch {
+		// EMPTY_CATCH_OK: an unreadable config directory has nothing to list; startup reports the directory itself.
+	}
+	return out;
+}
+
 // ---- deprecation notices -------------------------------------------------------------------------------
 
 type Sink = (event: string, data: Record<string, unknown>) => void;
@@ -315,6 +417,19 @@ export function deprecated(conf: string, file: string, key: string, replacement:
 	};
 	if (sink) sink("config-deprecated", data);
 	else pending.push(["config-deprecated", data]);
+}
+/** One `config-legacy-reappeared` line per process and file: an old name that was migrated has been written again and is never read. */
+export function reappeared(conf: string, file: string): void {
+	const id = `reappeared\0${conf}\0${file}`;
+	if (noticed.has(id)) return;
+	noticed.add(id);
+	const data = {
+		file,
+		now: homeOfOld(file),
+		note: "this old file is never read: the value lives where `now` says. Write new secrets into secrets/<name>; read a setting with `chamberlain config get <key>`",
+	};
+	if (sink) sink("config-legacy-reappeared", data);
+	else pending.push(["config-legacy-reappeared", data]);
 }
 /** Sends every notice so far, and every later one, to `log` (the daemon's and the page's event log). */
 export function attachDeprecationLog(log: Sink): void {
@@ -414,6 +529,7 @@ export function readSecret(conf: string, name: string): string | undefined {
 	if (!insideSecrets(name)) return undefined; // a name that climbs out of the directory (`..`, an absolute path) names no secret
 	const v = tryRead(`${conf}/${SECRETS_DIR}/${name}`);
 	if (v !== null) return v;
+	if (!readable(conf, name, true)) return undefined; // moved by the migration: the old name is never read
 	const old = tryRead(`${conf}/${name}`);
 	if (old === null) return undefined;
 	deprecated(conf, name, `secrets/${name}`, `${SECRETS_DIR}/${name}`);
@@ -423,7 +539,7 @@ export function readSecret(conf: string, name: string): string | undefined {
 /** A secret's file, new place first: for a tool that hands a path to something else. undefined when neither exists. */
 export function secretPath(conf: string, name: string): string | undefined {
 	if (insideSecrets(name) && existsSync(`${conf}/${SECRETS_DIR}/${name}`)) return `${conf}/${SECRETS_DIR}/${name}`;
-	return existsSync(`${conf}/${name}`) ? `${conf}/${name}` : undefined;
+	return insideSecrets(name) && readable(conf, name, true) ? `${conf}/${name}` : undefined;
 }
 
 /** The prose files the operator edits, which stay files in the config directory. Any other name `readNamed` is given is a secret. */

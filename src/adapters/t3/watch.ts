@@ -6,6 +6,7 @@
 import { statSync } from "node:fs";
 import type { AdapterEnv, Inspector, RunFailure, WaitingRead, WatchSink } from "../../core/adapter.ts";
 import { failedRead } from "../../core/history.ts";
+import { SECRETS_DIR, secretPath } from "../../core/layout.ts";
 import { alarms } from "../../core/messages.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { historyGet, readWhenConnected } from "./history.ts";
@@ -52,9 +53,15 @@ export class T3Link {
 	/** A read token older than TOKEN_MAX_AGE_DAYS is about to lapse (they last 30): alarm so a new one is minted first. */
 	private checkTokenAge() {
 		try {
-			const ageDays = (Date.now() - statSync(`${this.env.conf}/${this.srv.tokenFile}`).mtimeMs) / 86_400_000;
+			// The token's own file: `secrets/<name>` (a migration renames it there and keeps its date), else the old place of one never migrated.
+			const path = secretPath(this.env.conf, this.srv.tokenFile);
+			if (!path) return;
+			const ageDays = (Date.now() - statSync(path).mtimeMs) / 86_400_000;
 			if (ageDays > TOKEN_MAX_AGE_DAYS) {
-				const a = alarms.tokenExpiring(this.srv.name, Math.round(ageDays), this.srv.tokenFile);
+				const shown = path.startsWith(`${this.env.conf}/${SECRETS_DIR}/`)
+					? `${SECRETS_DIR}/${this.srv.tokenFile}`
+					: this.srv.tokenFile;
+				const a = alarms.tokenExpiring(this.srv.name, Math.round(ageDays), shown);
 				this.env.alarm(`token:${this.srv.name}`, a.title, a.summary);
 			}
 		} catch {
