@@ -731,9 +731,13 @@ export function createApp(d: AppDeps) {
 		// own origin. The same three reads and plain answer; anything else is refused whatever its path, so the key a post carries cannot read an
 		// item or its evidence, answer a card or an approval, save a ruling or accept a batch. A refusal here is a 403, not a 401: the key is valid.
 		const restricted = inline || !fullAuthority;
-		// A null-origin frame's own page-key requests stay exactly as they were (refused above for the API; its other GETs pass). The view key is
-		// held to the list on every path and from every origin, evidence included.
-		if (restricted && (!inline || byViewKey)) {
+		// A null-origin frame's own page-key requests stay exactly as they were (refused above for the API; its other GETs pass), except the
+		// /open route, which a frame has no use for and which did not exist when that rule was written. The view key is held to the list on
+		// every path and from every origin, evidence included.
+		// The page's own static shell (`/`, `/rulings`, `/item/<id>`) carries no data and is served to the page key in a header, as it always was: a
+		// browser loads it by navigation (cookie, or `?k=`), and a tool may fetch it. What the limit protects is the API, evidence and every write.
+		const shellRead = req.method === "GET" && isShell(url.pathname) && byPageKeyHeader;
+		if (restricted && !shellRead && (!inline || byViewKey || isOpen(url.pathname))) {
 			const v = inlineVerdict(req.method, url.pathname);
 			if (v !== "read" && v !== "answer")
 				return withSecurity(

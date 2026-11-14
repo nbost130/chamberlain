@@ -218,6 +218,8 @@ describe("the page", () => {
 		expect((await get(`/open/mac/${T1}`)).status).toBe(401);
 		// a bare header with no Origin, and the view key, are inline authority only: /open is refused, not served
 		expect((await get(`/open/mac/${T1}`, { "x-decision-token": token })).status).toBe(403);
+		// a null-origin frame holding the page key is inline authority too, and /open is not on its list
+		expect((await get(`/open/mac/${T1}`, { "x-decision-token": token, origin: "null" })).status).toBe(403);
 		expect((await get(`/open/laptop-gone/${T2}`, auth)).status).toBe(404);
 		expect((await get(`/open/mac/${T1}`, auth)).status).toBe(200);
 		expect((await get("/open/mac/%E0%A4%A", auth)).status).toBe(400);

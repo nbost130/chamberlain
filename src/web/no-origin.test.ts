@@ -115,9 +115,6 @@ const tok = (k: string) => ({ [TOKEN_HEADER]: k });
 const REFUSED: [string, string, unknown?][] = [
 	["GET", "/api/items/Q-abcd"],
 	["GET", "/evidence/Q-evid/shot.png"],
-	["GET", "/"],
-	["GET", "/rulings"],
-	["GET", "/item/Q-abcd"],
 	["GET", "/api/health"],
 	["POST", "/api/accept-all", { ids: ["Q-abcd"] }],
 	["POST", "/api/cards/C-0123456789ab/confirm", { choice: 0, sig: "s1" }],
@@ -131,6 +128,9 @@ const REFUSED: [string, string, unknown?][] = [
 	["POST", "/api/rulings/R1", { status: "retired" }],
 	["POST", "/api/rulings", { wording: "x" }],
 ];
+
+/** The page's static shell: no data in it, so the page key in a header may fetch it; the view key may not. */
+const SHELL = ["/", "/rulings", "/item/Q-abcd"];
 
 for (const [who, headers, how] of [
 	["the page key, no Origin", (s: ReturnType<typeof setup>) => tok(s.page), "page"],
@@ -155,6 +155,21 @@ for (const [who, headers, how] of [
 			expect(getQuestion(s.store, "Q-efgh")!.status).not.toBe("open");
 			expect(readRulings(s.store)).toEqual([]);
 		});
+		for (const path of SHELL) {
+			test(`GET ${path}: ${how === "page" ? "the static shell is served (it holds no data), and carries neither key" : "refused (403): the view key never loads a page"}`, async () => {
+				const s = setup();
+				const r = await s.send("GET", path, headers(s));
+				const text = await r.text();
+				if (how === "page" && !who.includes("Origin: null")) {
+					expect([path, r.status]).toEqual([path, 200]);
+					expect(text).toContain("index.html");
+					expect(r.headers.get("set-cookie")).toBeNull();
+				} else if (how === "page") {
+					expect([path, r.status]).toEqual([path, 200]); // a null-origin frame's own page-key request: unchanged
+				} else expect([path, r.status]).toEqual([path, 403]);
+				for (const k of [s.page, s.view]) expect(text.includes(k)).toBe(false);
+			});
+		}
 		for (const [method, path, body] of REFUSED) {
 			test(`${method} ${path}${body ? ` ${JSON.stringify(body).slice(0, 50)}` : ""} is refused (403), and nothing changes`, async () => {
 				const s = setup();
@@ -252,6 +267,25 @@ describe("full authority is still there for what earns it", () => {
 		expect((await s.send("POST", "/api/items/Q-abcd/answer", h, { choice: 0, saveRuling: true })).status).toBe(403);
 		expect((await s.send("POST", "/api/cards/C-0123456789ab/answer", h, { choice: 0, sig: "s1" })).status).toBe(403);
 		expect((await s.send("POST", "/api/items/Q-qrst/answer", h, { choice: 1, note: "n" })).status).toBe(200);
+	});
+});
+
+describe("a browser's navigation to the page keeps working", () => {
+	test("GET / and the other page paths with the page cookie and no Origin (what a top-level navigation sends) are 200 with the app's html; the static assets need nothing", async () => {
+		const s = setup();
+		const link = await s.send("GET", `/?k=${encodeURIComponent(s.page)}`);
+		expect(link.status).toBe(303);
+		const cookie = (link.headers.get("set-cookie") ?? "").split(";")[0]!;
+		for (const path of ["/", "/rulings", "/item/Q-abcd"]) {
+			const r = await s.send("GET", path, { cookie, "sec-fetch-mode": "navigate", "sec-fetch-site": "none" });
+			expect([path, r.status]).toEqual([path, 200]);
+			expect(r.headers.get("content-type")).toStartWith("text/html");
+			expect(await r.text()).toContain("index.html");
+		}
+		for (const path of ["/app.js", "/app.css", "/inline.js"]) expect((await s.send("GET", path)).status).toBe(200);
+		// and the same cookie reads the API from the page's own script (a same-origin fetch), while a header-only call is still inline authority
+		expect((await s.send("GET", "/api/items/Q-abcd", { cookie, origin: ORIGIN })).status).toBe(200);
+		expect((await s.send("GET", "/api/items/Q-abcd", tok(s.page))).status).toBe(403);
 	});
 });
 
