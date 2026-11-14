@@ -7,7 +7,7 @@ export type ShellThreadRecord = {
 	archivedAt?: string | null;
 	settledAt?: string | null;
 	snoozedUntil?: string | null;
-	pendingRuntimeRequest?: unknown;
+	pendingRuntimeRequest?: { id?: unknown } | null;
 	lineage?: { parentThreadId?: string | null } | null;
 	[field: string]: unknown;
 };

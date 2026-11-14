@@ -30,7 +30,7 @@ type ShellThread = {
 	snoozedUntil?: unknown;
 	settledAt?: unknown;
 	archivedAt?: unknown;
-	lineage?: { parentThreadId?: unknown };
+	lineage?: { parentThreadId?: unknown } | null;
 };
 
 function priv(name: string): string {

@@ -10,7 +10,7 @@ type Raw = {
 	id?: unknown;
 	title?: unknown;
 	status?: unknown;
-	snoozedUntil?: string;
+	snoozedUntil?: string | null;
 	lineage?: { parentThreadId?: string | null } | null;
 	pendingRuntimeRequest?: { id?: unknown } | null;
 	settledAt?: unknown;
