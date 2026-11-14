@@ -3,7 +3,8 @@
 Chamberlain watches your T3 Code agent threads and wakes one of them, the **Steward**, only when something needs it; whatever the Steward
 cannot decide goes to you on a **decision queue**.
 
-- **No model calls while threads work.** Plain code does the watching, so the Steward spends tokens only when it is woken.
+- **No model calls while threads work.** Plain code does the watching, so the Steward spends tokens only when it is woken. (One optional
+  feature, the idle-thread classifier, can ask a small model to sort idle threads; it is off by default: [configuration](docs/CONFIGURATION.md#the-idle-thread-classifier).)
 - **A wake is not lost.** Each one is written to the database with a fixed id and sent at least once, a crash included; the Steward
   ignores a repeat by its id.
 - **The authority is in your words.** The Steward's decision rights are a file you write, repeated in every wake, and nothing becomes a

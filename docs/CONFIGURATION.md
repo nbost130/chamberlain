@@ -226,6 +226,77 @@ code (`selectIdleThreads` in `src/core/idle-parents.ts`, which returns plain rec
 A key it does not know is refused. A configured check cannot be named `idle-parents`. The check reads each candidate thread's last
 message, so it needs an adapter whose `inspect` has `lastAssistant` (the T3 adapter does); without it the check lists nothing.
 
+### The idle-thread classifier
+
+**`sweep.idleParents.classifier`** is optional and **off by default** (`provider: "none"`): without it the check behaves exactly as
+above and makes no model call. Turned on, it asks a bank of narrow yes/no questions about each idle thread's last message, combines
+the answers in code into one action, and (in `live` mode) reports only the threads that need someone. The design and the evaluation
+behind it are in [`design/thread-state-classifier.md`](design/thread-state-classifier.md).
+
+| Action | Meaning | In `live` mode |
+| --- | --- | --- |
+| `escalate` | Someone has to decide or do something before work can continue. | Reported first, tagged `[ESCALATE asks_decision 0.98]` with the questions that fired. |
+| `nudge` | The thread owes work it has no way to resume. | Reported next, tagged `[NUDGE …]`. |
+| `settle` | Finished; nothing is owed. | Not reported one by one: at most one digest line a day counts them. |
+| `ignore` | Legitimately waiting (a watch it set is young enough to believe), or nothing matched. | Not reported. |
+| `unknown` | Not classified: the provider failed, an answer was malformed, the redaction hook failed, or the budget is spent. | Reported exactly as without the classifier. A failure never silences the net. |
+
+Precedence is fixed in code, `escalate > nudge > settle > ignore`; the model never picks the action. `partial_answer` counts only
+when the message before the last one is a human's, and `promises_more_work` and `waiting_external` are held (ignore) while the
+thread claims an armed wait and has been idle less than `armedGraceMinutes`; `waiting_external` never fires when `work_finished`
+does. In `shadow` mode (the default once a provider is on) every thread is classified and recorded, and the wake is exactly as
+without the classifier: run it that way first, and compare the dispositions with what you would have done.
+
+```json
+{
+  "sweep": {
+    "idleParents": {
+      "classifier": {
+        "provider": "jev",
+        "mode": "shadow",
+        "allowTextToLeaveMachine": true,
+        "questions": "default",
+        "thresholds": { "default": 0.5 },
+        "send": { "lastChars": 1500, "previousChars": 400, "title": true },
+        "redact": { "builtin": true, "command": null },
+        "budget": { "maxPerRun": 20, "maxCallsPerDay": 500, "maxUsdPerDay": 0.25 },
+        "armedGraceMinutes": 360,
+        "jev": { "model": "jev-1.14.0", "keyFile": "typesafe.key", "timeoutMs": 10000 },
+        "haiku": { "command": "claude", "model": "haiku", "timeoutMs": 60000 }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `provider` | `none` | `none` (off), `rules` (regular expressions, nothing leaves the machine), `jev` (TypeSafe's Jev, the recommended one: one HTTP request per thread, every question a head in it), or `haiku` (the `claude` CLI with `--model haiku`, on your own Claude Code login). |
+| `mode` | `shadow` | `shadow`: classify and record, report as without the classifier. `live`: report only escalate, nudge and unknown, tagged. |
+| `allowTextToLeaveMachine` | `false` | Must be `true` for `jev` or `haiku`, which send thread text off the machine; either without it is refused at load. |
+| `questions` | `default` | `default` (the evaluated bank, `src/core/classifier/questions.default.json`) or the path of a bank file, relative to this directory. |
+| `thresholds` | `{ "default": 0.5 }` | The probability at or over which a question counts as yes: `default`, and per question id. A threshold for an id the bank does not have is refused. |
+| `send` | `1500`, `400`, `true` | `lastChars` of the last message, `previousChars` of the user message before it, and whether the thread title (at most 200 characters) goes. Every cut is made well-formed Unicode. |
+| `redact` | `true`, `null` | `builtin`: replace emails, API-key and token shapes, JWTs, phone numbers and home-directory user names, found in the whole message so a long token that starts before the cut is still caught. `command`: `["program", "arg", …]`, given the state as JSON on stdin; it must print the same shape within 5 seconds, or nothing is sent and the thread is `unknown`. |
+| `budget` | `20`, `500`, `0.25` | `maxPerRun`: the most classifications one run makes (the rest are `unknown` this run, classified on a later one). `maxCallsPerDay` and `maxUsdPerDay`: for `jev` and `haiku`, every attempt in the UTC day counts, a retry of a failed call included, and so does the cost a failed but billed call reports (counted in the database as each call is made, and never less than the disposition table's own sum); when either is spent, unclassified threads are `unknown` until the next UTC day. Up to three calls already under way can finish past the dollar ceiling. |
+| `armedGraceMinutes` | `360` | How long a thread's claim that a watch or timer will wake it is believed. An idle parent has no running background task, so a claim older than this has lost its wait. |
+| `jev` | see above | `model` (pinned; the model the API reports is recorded, and a reported id that is not a short token is refused, so no echoed text is stored), `keyFile` (a file name in `secrets/`, mode 0600, read by the daemon at each call and never logged), `timeoutMs`. |
+| `haiku` | see above | `command`, `model`, `timeoutMs`. `ANTHROPIC_API_KEY` is removed from its environment, so it runs on your plan; the thread text goes on stdin. |
+
+`autoNudge` and `autoSettle` are designed (acting on a thread without the Steward) but not in this build: only `false` is accepted.
+Anything else the section does not know is refused, and a refusal puts the sweep section in error, so the check runs with the
+classifier off rather than guess.
+
+**Classified once per message.** Each attempt is a row of `thread_dispositions`, keyed by server, thread, the hash of its last message
+and the bank version (a hash of the bank, the thresholds, the provider and its model, and the send and redact settings). An idle
+thread's last message does not change, so a run at steady state makes no call; changing any of those settings reclassifies on the
+next run. A failed attempt is retried on the next run. The table holds answers, reasons, characters sent and redactions made, cost
+and latency, and **no message text**; its `feedback` and `corrected_action` columns mark a disposition right or wrong, and those
+rows are kept past the 30-day retention as the next evaluation set. A bank file is a JSON array of
+`{id, ask, yes, no, fires: "escalate"|"nudge"|"settle"|"modifier", requires?, unless?, rules?}`: `requires` takes structural facts
+(`human_asked`), `unless` other question ids (a `modifier` there holds a nudge while the thread is younger than the grace), and
+`rules` regular expressions or the builtins `@ask`, `@stall` and `@otherwise` for the `rules` provider.
+
 ## State directory `~/.local/state/chamberlain` (`CHAMBERLAIN_STATE`)
 
 Chamberlain follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/). The state

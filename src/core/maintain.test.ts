@@ -23,7 +23,7 @@ describe("maintain", () => {
 		s.events.append({ t: new Date(NOW - DAY).toISOString(), event: "fire" });
 
 		const r = maintain(s, NOW);
-		expect(r).toEqual({ delivered: 1, resolved: 1, items: 2, events: 1, challenges: 0 });
+		expect(r).toEqual({ delivered: 1, resolved: 1, items: 2, events: 1, challenges: 0, dispositions: 0 });
 		// The row is gone; the id is not (migration 7's tombstone), so it can never be queued again.
 		expect(s.wakes.rows("all").map((w) => w.deliveryId)).toEqual(["old", "new"]);
 		expect([s.wakes.isDelivered("ancient"), s.wakes.isDelivered("new")]).toEqual([true, true]);
@@ -33,7 +33,14 @@ describe("maintain", () => {
 		]);
 		expect(s.events.count()).toBe(1);
 		// Idempotent.
-		expect(maintain(s, NOW)).toEqual({ delivered: 0, resolved: 0, items: 0, events: 0, challenges: 0 });
+		expect(maintain(s, NOW)).toEqual({
+			delivered: 0,
+			resolved: 0,
+			items: 0,
+			events: 0,
+			challenges: 0,
+			dispositions: 0,
+		});
 	});
 
 	test("prunes confirmation challenges that expired or were used more than a day ago, and keeps a live one", () => {

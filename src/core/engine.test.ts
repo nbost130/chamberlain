@@ -15,6 +15,9 @@ import { memStore } from "../testing/store.ts";
 import type { OptionalCapability, RunFailure, ThreadInput, WaitingItem } from "./adapter.ts";
 import { appendHeld, heldOpen } from "./afk.ts";
 import { closeCardByHand } from "./card-hold.ts";
+import { DEFAULT_BANK } from "./classifier/bank.ts";
+import type { Provider } from "./classifier/providers.ts";
+import type { SentState } from "./classifier/state.ts";
 import type { TurnItem } from "./decide.ts";
 import { withDeliveryId } from "./deliver.ts";
 import { createEngine, type EngineDeps } from "./engine.ts";
@@ -45,6 +48,7 @@ function rig(
 		housekeeping?: boolean;
 		gh?: EngineDeps["gh"];
 		ask?: EngineDeps["ask"];
+		classifierProvider?: EngineDeps["classifierProvider"];
 	} = {},
 ) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
@@ -69,6 +73,7 @@ function rig(
 		housekeeping: o.housekeeping ?? false,
 		gh: o.gh,
 		ask: o.ask,
+		...(o.classifierProvider ? { classifierProvider: o.classifierProvider } : {}),
 		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 		log: (event, data) => events.push({ event, ...data }),
 		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
@@ -723,8 +728,8 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 	});
 
 	describe("the idle-parents timer: its own schedule, apart from the routine sweep", () => {
-		const idleRig = (conf?: object) => {
-			const r = rig({ housekeeping: true, steward: "stew" });
+		const idleRig = (conf?: object, classifierProvider?: EngineDeps["classifierProvider"]) => {
+			const r = rig({ housekeeping: true, steward: "stew", ...(classifierProvider ? { classifierProvider } : {}) });
 			if (conf) r.priv("sweep.json", JSON.stringify(conf));
 			/** A last message that finished `min` minutes before the engine's clock. */
 			const ago = (min: number, text: string, id = "m1") => ({
@@ -905,6 +910,127 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 			pass(1);
 			await r.engine.tick();
 			expect(runs()).toBe(2);
+		});
+
+		describe("with the classifier", () => {
+			const IDS = DEFAULT_BANK.map((q) => q.id);
+			const no = Object.fromEntries(IDS.map((id) => [id, 0.02]));
+			/** A fake Jev: answers from the last message's words; counts calls; can be made to fail. */
+			const fakeJev = (fail = false) => {
+				const sent: SentState[] = [];
+				const provider: Provider = {
+					name: "jev",
+					model: "jev-1.14.0",
+					classify: async (state) => {
+						sent.push(state);
+						if (fail) throw Error("Jev answered HTTP 503");
+						const m = state.last_message;
+						const answers = /say go/i.test(m)
+							? { ...no, asks_decision: 0.98 }
+							: /I'll confirm/i.test(m)
+								? { ...no, promises_more_work: 0.91 }
+								: { ...no, work_finished: 0.96 };
+						return { answers, model: "jev-1.14.0", inputTokens: 1700, costUsd: 0.00007, latencyMs: 100 };
+					},
+				};
+				return { sent, make: () => provider };
+			};
+			const classifier = (mode: string) => ({
+				idleParents: { classifier: { provider: "jev", allowTextToLeaveMachine: true, mode } },
+			});
+			const three = (
+				seen: (id: string, s: string, o: object, l: { id: string; text: string; at: string }) => void,
+				ago: (m: number, t: string, id?: string) => { id: string; text: string; at: string },
+			) => {
+				seen("ask", "idle", {}, ago(540, "The token is in. Say go and I'll start it."));
+				seen("promise", "idle", {}, ago(400, "Opened the PR; I'll confirm when it merges."));
+				seen("done", "completed", {}, ago(300, "Merged and deployed. Nothing more is owed."));
+			};
+
+			test("live: escalate and nudge are reported, tagged; the finished one only in the digest line; then the cache makes no call", async () => {
+				const jev = fakeJev();
+				const { r, ago, seen, pass } = idleRig(classifier("live"), jev.make);
+				three(seen, ago);
+				await r.quiet();
+				await r.engine.tick();
+				await r.until("the idle wake", () => r.fake.wakes.length === 1);
+				const msg = r.fake.wakes[0]!.message;
+				expect(msg).toContain("A classifier sorted them");
+				// Two threads are reported; the digest line is not counted as one.
+				expect(msg).toContain("[chamberlain] idle threads: 2 top-level threads finished");
+				expect(msg).toContain(
+					'[ESCALATE asks_decision 0.98] thread "Thread ask" on fake (threadId ask), idle 540 min.',
+				);
+				expect(msg).toContain(
+					'[NUDGE promises_more_work 0.91] thread "Thread promise" on fake (threadId promise), idle 400 min.',
+				);
+				expect(msg).not.toContain("threadId done)");
+				expect(msg).toContain(
+					'1 idle thread looks finished (the classifier\'s settle; not reported one by one): "Thread done" on fake.',
+				);
+				expect(msg.indexOf("threadId ask")).toBeLessThan(msg.indexOf("threadId promise"));
+				expect(jev.sent).toHaveLength(3);
+				// What was sent: never a thread id or a server name.
+				for (const s of jev.sent) expect(JSON.stringify(s)).not.toMatch(/"(ask|promise|done)"|fake/);
+				// Many runs later, the same messages: no call and no wake.
+				for (let n = 0; n < 3; n++) {
+					pass(16);
+					await r.engine.tick();
+				}
+				await r.quiet();
+				expect(jev.sent).toHaveLength(3);
+				expect(r.fake.wakes).toHaveLength(1);
+				expect(r.events.filter((e) => e.event === "classifier").at(-1)).toMatchObject({ calls: 0, cached: 3 });
+			});
+
+			test("shadow: the wake is exactly as without the classifier, and the dispositions are recorded", async () => {
+				const plain = idleRig();
+				three(plain.seen, plain.ago);
+				await plain.r.quiet();
+				await plain.r.engine.tick();
+				await plain.r.until("the plain wake", () => plain.r.fake.wakes.length === 1);
+				const jev = fakeJev();
+				const { r, ago, seen } = idleRig(classifier("shadow"), jev.make);
+				three(seen, ago);
+				await r.quiet();
+				await r.engine.tick();
+				await r.until("the shadow wake", () => r.fake.wakes.length === 1);
+				const norm = (m: string) => m.replace(/idle-parents:\d+/g, "idle-parents:<at>");
+				expect(norm(r.fake.wakes[0]!.message)).toBe(norm(plain.r.fake.wakes[0]!.message));
+				expect(jev.sent).toHaveLength(3);
+				expect(r.store.dispositions.usage(0, ["jev"]).calls).toBe(3);
+			});
+
+			test("live with Jev down: every thread is reported exactly as without the classifier", async () => {
+				const plain = idleRig();
+				three(plain.seen, plain.ago);
+				await plain.r.quiet();
+				await plain.r.engine.tick();
+				await plain.r.until("the plain wake", () => plain.r.fake.wakes.length === 1);
+				const jev = fakeJev(true);
+				const { r, ago, seen } = idleRig(classifier("live"), jev.make);
+				three(seen, ago);
+				await r.quiet();
+				await r.engine.tick();
+				await r.until("the wake", () => r.fake.wakes.length === 1);
+				const block = (m: string) => m.slice(m.indexOf("<<<"), m.indexOf(">>>"));
+				expect(block(r.fake.wakes[0]!.message)).toBe(block(plain.r.fake.wakes[0]!.message));
+				expect(r.events.some((e) => e.event === "idle-parents" && !("error" in e))).toBe(true);
+			});
+
+			test("off by default, and a sender without allowTextToLeaveMachine is refused: no call is ever made", async () => {
+				for (const conf of [undefined, { idleParents: { classifier: { provider: "jev" } } }]) {
+					const jev = fakeJev();
+					const { r, ago, seen } = idleRig(conf, jev.make);
+					three(seen, ago);
+					await r.quiet();
+					await r.engine.tick();
+					await r.until("the wake", () => r.fake.wakes.length === 1);
+					expect(r.fake.wakes[0]!.message).toContain("[ASKING]");
+					expect(jev.sent).toEqual([]);
+					expect(r.store.dispositions.usage(0, ["jev", "haiku", "rules"]).calls).toBe(0);
+				}
+			});
 		});
 
 		test("it can be switched off in the sweep section", async () => {

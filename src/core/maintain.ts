@@ -12,6 +12,8 @@
  *     own items are history and stay.
  *   - Events older than 90 days.
  *   - Confirmation challenges that expired or were consumed more than a day ago.
+ *   - Idle-thread classifier dispositions classified more than 30 days ago, except those marked right or wrong (they are the next
+ *     evaluation set, and stay).
  */
 
 import { DELIVERED_KEEP_MS } from "./deliver.ts";
@@ -25,7 +27,14 @@ export const CHALLENGE_KEEP_MS = 24 * 3600_000;
 /** Item sources whose rows only record that something was done or raised; they age out. */
 export const EPHEMERAL_SOURCES = [NOTIFICATION_LOG, "alarm"] as const;
 
-export type Maintained = { delivered: number; resolved: number; items: number; events: number; challenges: number };
+export type Maintained = {
+	delivered: number;
+	resolved: number;
+	items: number;
+	events: number;
+	challenges: number;
+	dispositions: number;
+};
 
 export function maintain(store: Store, now = Date.now()): Maintained {
 	return store.tx(() => {
@@ -44,6 +53,7 @@ export function maintain(store: Store, now = Date.now()): Maintained {
 			items: store.items.prune(now - ITEM_KEEP_MS),
 			events: store.events.prune(new Date(now - EVENT_KEEP_MS).toISOString()),
 			challenges: store.challenges.prune(now - CHALLENGE_KEEP_MS),
+			dispositions: store.dispositions.prune(now - ITEM_KEEP_MS),
 		};
 	});
 }

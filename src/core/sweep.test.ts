@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
+import { CLASSIFIER_DEFAULTS } from "./classifier/config.ts";
 import { type ItemSource, runSources } from "./source.ts";
 import {
 	checkSource,
@@ -193,7 +194,13 @@ describe("sweep.json", () => {
 		expect(c).toEqual({
 			schemaVersion: 2,
 			checks: [{ name: "disk", command: ["/usr/bin/df", "-k"], timeoutMs: 5000 }],
-			idleParents: { enabled: true, intervalMinutes: 15, thresholdMinutes: 30, maxThreads: 10 },
+			idleParents: {
+				enabled: true,
+				intervalMinutes: 15,
+				thresholdMinutes: 30,
+				maxThreads: 10,
+				classifier: CLASSIFIER_DEFAULTS,
+			},
 		});
 	});
 	test("a check may be set to shadow or silenced, and an unknown mode is refused", () => {

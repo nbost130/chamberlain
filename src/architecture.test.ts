@@ -297,12 +297,17 @@ export const SEND_IS_NOT_A_WAKE: Record<string, string> = {
 	"core/engine.ts":
 		"Adapter.send, the daemon's one thread ping, used by stalled-thread recovery (src/core/recover.ts) to retry a failed run; not a wake to the Steward",
 	"core/adapter.ts": "validateAdapter reads `typeof wake.send` to check the contract is met; it never calls it",
+	"core/classifier/config.ts":
+		"the idle-thread classifier's `send` settings (how much text a provider gets), a config section, not a transport",
+	"core/classifier/classify.ts": "reads the classifier config's `send` settings; it never sends a wake",
 };
 /** The only files that may POST over HTTP, with the reason. */
 export const MAY_POST: Record<string, string> = {
 	"adapters/t3/wake.ts": "the T3 wake transport; only the relay calls it",
 	"adapters/t3/rpc.ts": "the websocket ticket request to the T3 server",
 	"testing/wake.ts": "fetchWake, a test double for the transport",
+	"core/classifier/providers.ts":
+		"the opt-in idle-thread classifier's one Jev request per thread (a classification, never a wake to the Steward)",
 };
 /** The only files that may name the wake or compaction webhook's config file. */
 const NAMES_A_WAKE_URL = new Set([

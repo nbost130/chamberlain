@@ -52,6 +52,7 @@ import type { RelayLock } from "./singleton.ts";
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 const RECOVER_KEY = "recover";
 
+import type { ClassifyDeps } from "./classifier/classify.ts";
 import {
 	type Candidate,
 	decide,
@@ -158,6 +159,8 @@ export type EngineDeps = {
 	alert?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => void;
 	/** The one judge (src/core/judge.ts). Default: judge.json in the config directory. */
 	judge?: Judge;
+	/** The idle-thread classifier's provider (src/core/classifier/). Default: the one `sweep.idleParents.classifier` names. Tests pass a fake. */
+	classifierProvider?: ClassifyDeps["provider"];
 	/** Reads GitHub for the held-ledger reconciler (src/core/gh.ts). Undefined: holds that name a PR, issue or branch are not checked. */
 	gh?: GhRead;
 };
@@ -960,6 +963,7 @@ export function createEngine(d: EngineDeps) {
 				),
 			),
 		...(d.relay?.now ? { now: d.relay.now } : {}),
+		...(d.classifierProvider ? { provider: d.classifierProvider } : {}),
 	});
 
 	const heartbeat = createHeartbeat({

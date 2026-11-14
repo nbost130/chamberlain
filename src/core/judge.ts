@@ -1,7 +1,8 @@
 /**
- * The one judge. Anything in the daemon that needs a small model's opinion asks it here, by trigger name, and the trigger's
- * configuration says which backend answers. There is no second path to a model: src/core/judge.test.ts fails when another core
- * file spawns one.
+ * The one judge. Anything in the daemon that needs a small model's VERDICT (a choice among named answers, with a reason) asks it here,
+ * by trigger name, and the trigger's configuration says which backend answers. The one other path to a model is the idle-thread
+ * classifier (src/core/classifier/), which asks for probabilities on a fixed question bank and is off by default; it names its
+ * providers in its own config. src/core/judge.test.ts fails when a core file names an inference tool of its own.
  *
  * The backend is an EXPLICIT setting, with no default: `<conf>/judge.json` names each backend's command and which backend judges
  * each trigger, for example
