@@ -30,6 +30,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { homeAdapter } from "./adapters/index.ts";
+import type { Adapter, PostResult } from "./core/adapter.ts";
 import { readViewKey } from "./core/capability.ts";
 import { CONF, STATE } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
@@ -315,11 +316,18 @@ async function inlineView(): Promise<{ queueUrl: string | undefined; capability:
 	return { queueUrl: inline ? base : undefined, capability: inline ? key : undefined };
 }
 
+/**
+ * Shows a question where the operator reads, through the adapter: the pinned view when the page answers and has a key, else a one-line
+ * notice. The daemon uses it too, when a snoozed urgent question returns (src/core/snooze.ts).
+ */
+export async function postQuestion(item: Question, adapter: Adapter): Promise<PostResult> {
+	return adapter.post(item, await inlineView());
+}
+
 /** Posts the question where the operator reads and says where it went. */
 async function postAndReport(item: Question): Promise<void> {
-	const view = await inlineView();
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });
-	const card = await adapter.post(item, view);
+	const card = await postQuestion(item, adapter);
 	if (!card.ok) {
 		console.error(`${item.id} is on the queue page, but the question did not post: ${card.detail}`);
 		process.exit(1);

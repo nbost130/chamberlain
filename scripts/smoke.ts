@@ -203,6 +203,44 @@ try {
 			id !== undefined && queue.includes(id) && queue.includes("Smoke: which colour?"),
 			queue.slice(0, 300),
 		);
+		// Snooze, un-snooze and dismiss through the built page: state changes need the key from the page's own origin, and a frame is refused.
+		const lists = async () => {
+			const body = (await (await fetch(`${base}/api/queue`, { headers: key })).json()) as {
+				items: { id: string }[];
+				snoozed: { id: string }[];
+			};
+			return { active: body.items.some((i) => i.id === id), later: body.snoozed.some((i) => i.id === id) };
+		};
+		const act = (route: string, body: unknown, origin = base) =>
+			fetch(`${base}/api/items/${id}/${route}`, {
+				method: "POST",
+				headers: { ...key, origin, "content-type": "application/json", "x-decision-queue": "1" },
+				body: JSON.stringify(body),
+			});
+		const until = new Date(Date.now() + 3_600_000).toISOString();
+		const frame = await act("snooze", { until }, "null");
+		check("an inline frame holding the key cannot snooze (403)", frame.status === 403, `status ${frame.status}`);
+		const snoozed = await act("snooze", { until });
+		const afterSnooze = await lists();
+		check(
+			"snooze moves the question to the Snoozed list, off the active one",
+			snoozed.status === 200 && !afterSnooze.active && afterSnooze.later,
+			`status ${snoozed.status} ${JSON.stringify(afterSnooze)}`,
+		);
+		const unsnoozed = await act("unsnooze", {});
+		const afterUnsnooze = await lists();
+		check(
+			"un-snooze puts it back on the active list at once",
+			unsnoozed.status === 200 && afterUnsnooze.active && !afterUnsnooze.later,
+			`status ${unsnoozed.status} ${JSON.stringify(afterUnsnooze)}`,
+		);
+		const dismissed = await act("dismiss", { note: "smoke" });
+		const afterDismiss = await lists();
+		check(
+			"dismiss takes the question off both lists",
+			dismissed.status === 200 && !afterDismiss.active && !afterDismiss.later,
+			`status ${dismissed.status} ${JSON.stringify(afterDismiss)}`,
+		);
 	} finally {
 		page.kill();
 		await page.exited;

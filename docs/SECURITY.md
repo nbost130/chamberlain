@@ -44,7 +44,9 @@ it is deliberately conservative.
   frame; full authority is the signed cookie, the header on a **same-origin** request, or `?k=` on a page load. The server limits a frame, by
   route and by field (not the page's own script, which an attacker would not run): such a request
   may `GET /api/queue`, `/api/recent` and `/api/rulings`, and `POST /api/items/<id>/answer` with a `choice` and an optional `note`
-  and **no other field**. It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
+  and **no other field**. It **cannot** snooze, un-snooze, direct or dismiss an item (`POST /api/items/<id>/snooze|unsnooze|direction|dismiss`
+  are the full page's alone: full authority, the guard header and a JSON body, as an answer to a card needs; any other key gets a 403 and
+  writes nothing). It **cannot** save or edit a ruling (a `saveRuling` or `rulingWording` field is refused with 403 and writes
   nothing), answer a mirrored card or an approval (refused, however exact the fingerprint), read one item on its own
   (`GET /api/items/<id>` is refused), read an item's evidence (a request with no `Origin` or the view key; a null-origin frame's evidence
   reads are as before), batch-accept, or change anything else. Cards, approvals and rulings are done on the full page.
