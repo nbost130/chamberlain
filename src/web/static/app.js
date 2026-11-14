@@ -177,9 +177,9 @@ function contextHtml(text) {
 	return `<div class="context">${out}${open ? "</ul>" : ""}</div>`;
 }
 
-// A thread's link: the page's own /open route when it has one (it sends the device on to the app, src/web/thread-links.ts), else the
-// card's link as its config or adapter gave it. A browser opens no t3-thread:// link; it can open /open.
-const threadHref = (x) => (typeof x.open === "string" && x.open.startsWith("/open/") ? x.open : x.link);
+// A thread's link: only the page's own /open route (it sends the device on to the app, src/web/thread-links.ts). No browser opens a
+// t3-thread:// link, and a card's raw link is never made an href: without /open there is no link, as in the inline view.
+const threadHref = (x) => (typeof x.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? x.open : undefined);
 function detailHtml() {
 	const i = current();
 	const v = visible();

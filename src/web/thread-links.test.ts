@@ -31,36 +31,74 @@ const SERVERS = [
 	t3("omar", { environmentId: "env-omar" }),
 ];
 
+const T1 = "11111111-2222-3333-4444-555555555555";
+const T2 = "66666666-7777-8888-9999-000000000000";
+const LAUNCHED = `mcp:launch:${"ab12".repeat(16)}`;
+const LAUNCHED_PATH = encodeURIComponent(LAUNCHED);
+
 describe("createLinker", () => {
 	const linker = createLinker({ servers: () => SERVERS });
 	test("each server's link names its own environment", () => {
-		expect(linker.link("mithrandir", "t1")).toBe("t3-thread://v2/env-home/t1");
-		expect(linker.link("mac", "mcp:launch:ab12")).toBe("t3-thread://v2/env-mac/mcp:launch:ab12");
-		expect(linker.link("omar", "t2")).toBe("t3-thread://v2/env-omar/t2");
+		expect(linker.link("mithrandir", T1)).toBe(`t3-thread://v2/env-home/${T1}`);
+		expect(linker.link("mac", LAUNCHED)).toBe(`t3-thread://v2/env-mac/${LAUNCHED}`);
+		expect(linker.link("omar", T2)).toBe(`t3-thread://v2/env-omar/${T2}`);
 	});
 	test("/open sends a device to the app link, which a phone opens in T3 Code", () => {
-		expect(linker.target("mac", "t1")).toBe("t3code://threads/env-mac/t1");
-		expect(linker.openPath("mac", "mcp:launch:ab12")).toBe("/open/mac/mcp%3Alaunch%3Aab12");
+		expect(linker.target("mac", T1)).toBe(`t3code://threads/env-mac/${T1}`);
+		expect(linker.openPath("mac", LAUNCHED)).toBe(`/open/mac/${LAUNCHED_PATH}`);
 	});
 	test("a home server whose environment is not known yet has no link and no /open path, never a broken one", () => {
 		const l = createLinker({ servers: () => [t3("mithrandir", {})] });
-		expect(l.link("mithrandir", "t1")).toBeUndefined();
-		expect(l.target("mithrandir", "t1")).toBeUndefined();
-		expect(l.openPath("mithrandir", "t1")).toBeUndefined();
+		expect(l.link("mithrandir", T1)).toBeUndefined();
+		expect(l.target("mithrandir", T1)).toBeUndefined();
+		expect(l.openPath("mithrandir", T1)).toBeUndefined();
 	});
-	test("an unknown server, an adapter without threadLinks, or an id that is not one gives nothing", () => {
+	test("an unknown server or an adapter without threadLinks and no prefix gives nothing", () => {
 		const thin = { server: { name: "thin", adapter: "fake" }, adapter: createFakeAdapter({ capabilities: [] }) };
 		const l = createLinker({ servers: () => [...SERVERS, thin] });
-		expect(l.link("nowhere", "t1")).toBeUndefined();
-		expect(l.openPath("thin", "t1")).toBeUndefined();
-		for (const bad of ["a/b", "has space", "", "x\u0000"]) expect(l.openPath("mac", bad)).toBeUndefined();
-		expect(l.link("__proto__", "t1")).toBeUndefined();
+		expect(l.link("nowhere", T1)).toBeUndefined();
+		expect(l.openPath("thin", T1)).toBeUndefined();
+		expect(l.link("__proto__", T1)).toBeUndefined();
+	});
+	test("a thread id T3 does not issue gets nothing, not even from a config prefix", () => {
+		const l = createLinker({
+			servers: () => SERVERS,
+			threadLinks: { mac: "https://t3.example/m/" },
+			mirrorLinks: { mac: "https://t3.example/m/" },
+		});
+		for (const bad of [
+			"garbage",
+			":",
+			"a/b",
+			"has space",
+			"",
+			"x\u0000",
+			"mcp:launch:NOTHEX",
+			`mcp:launch:${"ab".repeat(31)}`,
+		]) {
+			expect([bad, l.link("mac", bad), l.target("mac", bad), l.openPath("mac", bad)]).toEqual([
+				bad,
+				undefined,
+				undefined,
+				undefined,
+			]);
+		}
+	});
+	test("a config prefix for a server that is not in `servers` links nothing", () => {
+		const l = createLinker({
+			servers: () => [],
+			threadLinks: { gone: "https://removed.example/t/" },
+			mirrorLinks: { gone: "https://removed.example/m/" },
+		});
+		expect(l.link("gone", LAUNCHED)).toBeUndefined();
+		expect(l.target("gone", LAUNCHED)).toBeUndefined();
+		expect(l.openPath("gone", LAUNCHED)).toBeUndefined();
 	});
 	test("web.threadLinks overrides a server's link; an http(s) one is also where /open goes", () => {
 		const l = createLinker({ servers: () => SERVERS, threadLinks: { mac: "https://t3.example/env-mac/" } });
-		expect(l.link("mac", "a:b")).toBe("https://t3.example/env-mac/a%3Ab");
-		expect(l.target("mac", "a:b")).toBe("https://t3.example/env-mac/a%3Ab");
-		expect(l.link("omar", "t1")).toBe("t3-thread://v2/env-omar/t1");
+		expect(l.link("mac", LAUNCHED)).toBe(`https://t3.example/env-mac/${LAUNCHED_PATH}`);
+		expect(l.target("mac", LAUNCHED)).toBe(`https://t3.example/env-mac/${LAUNCHED_PATH}`);
+		expect(l.link("omar", T1)).toBe(`t3-thread://v2/env-omar/${T1}`);
 	});
 	test("a t3-thread:// override is kept as the link, but /open still goes to the app: no browser opens t3-thread://", () => {
 		const l = createLinker({
@@ -68,12 +106,18 @@ describe("createLinker", () => {
 			threadLinks: { mac: "t3-thread://v2/env-x/" },
 			mirrorLinks: { mac: "t3-thread://v2/env-x/" },
 		});
-		expect(l.link("mac", "t1")).toBe("t3-thread://v2/env-x/t1");
-		expect(l.target("mac", "t1")).toBe("t3code://threads/env-mac/t1");
+		expect(l.link("mac", T1)).toBe(`t3-thread://v2/env-x/${T1}`);
+		expect(l.target("mac", T1)).toBe(`t3code://threads/env-mac/${T1}`);
 	});
 	test("an http(s) web.mirrorLinks prefix is where /open goes for that server", () => {
 		const l = createLinker({ servers: () => SERVERS, mirrorLinks: { omar: "https://omar.example/t/" } });
-		expect(l.target("omar", "t1")).toBe("https://omar.example/t/t1");
+		expect(l.target("omar", T1)).toBe(`https://omar.example/t/${T1}`);
+	});
+	test("an adapter without threadLinks is linked only by a prefix, for an id made of link-safe characters", () => {
+		const thin = { server: { name: "thin", adapter: "fake" }, adapter: createFakeAdapter({ capabilities: [] }) };
+		const l = createLinker({ servers: () => [thin], threadLinks: { thin: "https://thin.example/t/" } });
+		expect(l.target("thin", "abc-1")).toBe("https://thin.example/t/abc-1");
+		expect(l.target("thin", "a/b")).toBeUndefined();
 	});
 });
 
@@ -96,13 +140,13 @@ const card: WaitingCard = {
 	id: "C-aaaaaaaaaaaa",
 	type: "approval",
 	server: "mac",
-	threadId: "mcp:launch:ab12",
+	threadId: LAUNCHED,
 	threadTitle: "Build it",
 	requestId: "r1",
 	question: "command",
 	options: [],
 	answerable: false,
-	link: "t3-thread://v2/env-mac/mcp:launch:ab12",
+	link: `t3-thread://v2/env-mac/${LAUNCHED}`,
 	sig: "s",
 };
 function page(servers = SERVERS) {
@@ -119,11 +163,11 @@ function page(servers = SERVERS) {
 		recommended: 0,
 		thread: "Mobile app",
 		server: "mithrandir",
-		threadId: "11111111-2222-3333-4444-555555555555",
+		threadId: T1,
 		createdAt: "2026-11-09T10:00:00.000Z",
 	};
 	askQuestion(store, q);
-	askQuestion(store, { ...q, id: "Q-efgh", server: "laptop-gone", threadId: "t9" });
+	askQuestion(store, { ...q, id: "Q-efgh", server: "laptop-gone", threadId: T2 });
 	const token = newToken();
 	const app = createApp({
 		capability: memoryCapability(token, { now: 1_800_000_000_000 }).capability,
@@ -145,39 +189,46 @@ describe("the page", () => {
 		const { token, get } = page();
 		const q = (await (await get("/api/queue", { "x-decision-token": token })).json()) as any;
 		const plain = q.items.find((i: any) => i.id === "Q-abcd");
-		expect(plain.link).toBe("t3-thread://v2/env-home/11111111-2222-3333-4444-555555555555");
-		expect(plain.open).toBe("/open/mithrandir/11111111-2222-3333-4444-555555555555");
+		expect(plain.link).toBe(`t3-thread://v2/env-home/${T1}`);
+		expect(plain.open).toBe(`/open/mithrandir/${T1}`);
 		const gone = q.items.find((i: any) => i.id === "Q-efgh");
 		expect(gone.link).toBeUndefined();
 		expect(gone.open).toBeUndefined();
-		expect(q.cards[0].open).toBe("/open/mac/mcp%3Alaunch%3Aab12");
-		expect(q.cards[0].link).toBe("t3-thread://v2/env-mac/mcp:launch:ab12");
+		expect(q.cards[0].open).toBe(`/open/mac/${LAUNCHED_PATH}`);
+		expect(q.cards[0].link).toBe(`t3-thread://v2/env-mac/${LAUNCHED}`);
 	});
 	test("/open with ?k= signs the browser in and drops the key; then it sends the device on to the app link", async () => {
 		const { token, get } = page();
-		const r = await get(`/open/mac/mcp%3Alaunch%3Aab12?k=${token}`);
+		const r = await get(`/open/mac/${LAUNCHED_PATH}?k=${token}`);
 		expect(r.status).toBe(303);
-		expect(r.headers.get("location")).toBe("/open/mac/mcp%3Alaunch%3Aab12");
+		expect(r.headers.get("location")).toBe(`/open/mac/${LAUNCHED_PATH}`);
 		const cookie = r.headers.get("set-cookie")!.split(";")[0]!;
-		const o = await get("/open/mac/mcp%3Alaunch%3Aab12", { cookie });
+		const o = await get(`/open/mac/${LAUNCHED_PATH}`, { cookie });
 		expect(o.status).toBe(200);
 		const html = await o.text();
-		expect(html).toContain('http-equiv="refresh" content="0;url=t3code://threads/env-mac/mcp:launch:ab12"');
-		expect(html).toContain('href="t3code://threads/env-mac/mcp:launch:ab12"');
+		expect(html).toContain(`http-equiv="refresh" content="0;url=t3code://threads/env-mac/${LAUNCHED}"`);
+		expect(html).toContain(`href="t3code://threads/env-mac/${LAUNCHED}"`);
 		expect(html).toContain("Build it");
 		expect(o.headers.get("content-security-policy")).toContain("script-src 'self'");
 	});
 	test("/open needs the key, and gives no page for a thread it cannot link", async () => {
 		const { token, get } = page();
-		expect((await get("/open/mac/t1")).status).toBe(401);
-		expect((await get("/open/laptop-gone/t9", { "x-decision-token": token })).status).toBe(404);
-		expect((await get("/open/mac/a%2Fb", { "x-decision-token": token })).status).toBe(404);
-		expect((await get("/open/mac/%E0%A4%A", { "x-decision-token": token })).status).toBe(400);
+		const auth = { "x-decision-token": token };
+		expect((await get(`/open/mac/${T1}`)).status).toBe(401);
+		expect((await get(`/open/laptop-gone/${T2}`, auth)).status).toBe(404);
+		expect((await get(`/open/mac/${T1}`, auth)).status).toBe(200);
+		expect((await get("/open/mac/%E0%A4%A", auth)).status).toBe(400);
+	});
+	test("/open gives 404 for every thread id shape T3 does not issue", async () => {
+		const { token, get } = page();
+		const auth = { "x-decision-token": token };
+		for (const bad of ["mcp%3Alaunch%3ANOTHEX", "garbage", "%3A", "a%2Fb", "t1", `mcp%3Alaunch%3A${"ab".repeat(31)}`])
+			expect([bad, (await get(`/open/mac/${bad}`, auth)).status]).toEqual([bad, 404]);
 	});
 	test("/open goes only where the linker says: a target in the query is ignored", async () => {
 		const { token, get } = page();
-		const html = await (await get("/open/mac/t1?to=https://evil.example", { "x-decision-token": token })).text();
-		expect(html).toContain("t3code://threads/env-mac/t1");
+		const html = await (await get(`/open/mac/${T1}?to=https://evil.example`, { "x-decision-token": token })).text();
+		expect(html).toContain(`t3code://threads/env-mac/${T1}`);
 		expect(html).not.toContain("evil.example");
 	});
 });

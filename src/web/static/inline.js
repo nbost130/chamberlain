@@ -177,7 +177,7 @@
 	// custom scheme such as t3-thread:// or t3code://, so every link here is one of the page's own addresses, signed in with ?k=.
 	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}${kq}`; a.target = "_blank"; a.rel = "noopener"; return a; };
 	// The thread's own link goes through the page's /open route, which sends the device on to the app (src/web/thread-links.ts).
-	const threadLink = (open) => (typeof open === "string" && open.startsWith("/open/") ? linkOut("Open the thread", open) : null);
+	const threadLink = (open) => (typeof open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(open) ? linkOut("Open the thread", open) : null);
 
 	function card(it) {
 		const c = el("div", "dq-card");

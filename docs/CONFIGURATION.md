@@ -148,7 +148,7 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `tokenFile` | T3 adapter: file in `secrets/` with an `orchestration:read` token. |
 | `operateTokenFile` | Ignored by the page (answer rights come only from the `web` section); read by `chamberlain debug t3x`. File in `secrets/`. |
 | `environmentId` | Set for a server other than the Steward's own: the Steward passes it to the `t3_*` tools. The one without it is "this server". |
-| `linkEnvironmentId` | T3 adapter, optional: the environment id this server's thread links name. Default: `environmentId`, else the id the server reports at `/.well-known/t3/environment` (read once; until it answers, its cards have no thread link). Set it on the Steward's own server only to skip that read: it does not make the server "linked". |
+| `linkEnvironmentId` | T3 adapter, optional: the environment id this server's thread links name. Default: `environmentId`, else the id the server reports at `/.well-known/t3/environment` (read in the background, never on the listing's path, and again every 6 hours; until the first read answers, its cards have no thread link). Set it on the Steward's own server only to skip that read: it does not make the server "linked". |
 | `appScheme` | T3 adapter, optional: the URL scheme of the T3 Code app a thread's app link opens (`<appScheme>://threads/<environmentId>/<threadId>`). Default `t3code` (the App Store build); `t3code-preview` or `t3code-dev` for those builds. |
 | `mayBeOffline` | A laptop that sleeps: no alarm when its socket stays down. |
 | `sshHost` | `user@host` reachable by key-based ssh, so `git` can be asked about a worktree path on that machine. |
@@ -167,7 +167,9 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `publicBase` | An `https://` base (for example from `tailscale serve`) used in inline views when T3 is loaded over https. |
 
 **Thread links.** Every card that comes from a thread links to it. The link is the adapter's (`threadLinks` and `mirrorLinks` above
-override it per server), and a server whose environment is not known gets no link rather than a wrong one. A page or view does not
+override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the
+adapter does not issue (T3: a UUID, `mcp:<uuid>`, `mcp:launch:<64 hex>`, `thread:<kind>:...`, `import:<instance>:<session>`), get no
+link rather than a wrong one. A page or view does not
 put that link in front of a device as it is: T3 Code's inline frame opens only `http(s)` links, and no browser or phone opens
 `t3-thread://`. "Open the thread" goes to the page's own `/open/<server>/<threadId>` (signed in with `?k=` like any page link),
 which sends the device on to the thread's app link (T3: `t3code://threads/<environmentId>/<threadId>`, opened by the T3 Code app)

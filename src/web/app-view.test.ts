@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-async function detail(context: string): Promise<string> {
+async function detail(context: string, over: Record<string, unknown> = {}): Promise<string> {
 	const app: any = { innerHTML: "", className: "", addEventListener() {} };
 	const document = {
 		getElementById: (id: string) => (id === "app" ? app : { textContent: "", className: "", hidden: false }),
@@ -22,6 +22,7 @@ async function detail(context: string): Promise<string> {
 		thread: "t",
 		server: "s",
 		batchable: true,
+		...over,
 	};
 	const fetch = async () => ({ ok: true, status: 200, json: async () => ({ items: [it], rulings: [] }) });
 	const noop = () => {};
@@ -314,4 +315,44 @@ test("(a) an approval, a secret and a card pointer stay under the urgent groups 
 	}
 	expect(at("NOT URGENT")).toBeLessThan(at("Can wait row"));
 	expect(html.match(/not urgent<\/span>/g)).toHaveLength(1);
+});
+
+// ---- a thread's link on the full page: only the page's own /open route, never a card's raw link ----
+
+const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]!);
+test("a question links to its thread only through /open", async () => {
+	const open = "/open/mac/11111111-2222-3333-4444-555555555555";
+	const html = await detail("x", { link: "t3-thread://v2/env/t", open });
+	expect(hrefs(html)).toContain(open);
+	expect(hrefs(html).some((h) => h.startsWith("t3-thread:"))).toBe(false);
+});
+test("without /open, a custom-scheme or foreign link is never made an href", async () => {
+	for (const link of ["t3-thread://v2/env/t", "https://outside.example/t", "javascript:alert(1)"]) {
+		for (const extra of [{}, { cardRequest: { requestId: "r" } }, { secret: true }]) {
+			const html = await detail("x", { link, ...extra });
+			expect([link, hrefs(html).filter((h) => h === link || h.includes("outside") || h.includes(":"))]).toEqual([
+				link,
+				[],
+			]);
+		}
+	}
+	for (const open of [
+		"https://outside.example/open/a/b",
+		"//outside.example/open/a/b",
+		"/open/a/b?x=https://e",
+		"/elsewhere",
+	]) {
+		const html = await detail("x", { open });
+		expect([open, hrefs(html).includes(open)]).toEqual([open, false]);
+	}
+});
+test("a card read from a thread links only through /open, never its raw link", async () => {
+	const foreign = { ...approval, link: "https://outside.example/t", answerable: false };
+	const { app } = await cardPage(
+		[foreign, { ...approval, id: "C-ba9876543210", link: "t3-thread://v2/e/t", open: "/open/main/t" }],
+		() => ({ json: {} }),
+	);
+	const h = hrefs(app.innerHTML);
+	expect(h).toContain("/open/main/t");
+	expect(h.some((x) => x.includes("outside.example") || x.startsWith("t3-thread:"))).toBe(false);
 });

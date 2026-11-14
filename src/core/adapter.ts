@@ -376,10 +376,11 @@ export interface Adapter {
 	 */
 	handoffInstruction?(): string;
 	/**
-	 * Links to one of this server's threads (`ThreadLinks`). Synchronous: an adapter that must look something up first (T3 asks its
-	 * server which environment it is) answers with what it knows now and starts the lookup, so a later call has the rest.
+	 * Links to one of this server's threads (`ThreadLinks`), or `undefined` when `threadId` is not an id this backend issues: then
+	 * nothing links to it, not even a prefix from the page's config. Synchronous and never slow: an adapter that must look something
+	 * up first (T3 asks its server which environment it is) answers with what it knows now and looks it up in the background.
 	 */
-	threadLinks?(threadId: string): ThreadLinks;
+	threadLinks?(threadId: string): ThreadLinks | undefined;
 
 	// -- wording --
 

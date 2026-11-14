@@ -30,34 +30,42 @@ export type LinkerDeps = {
 	mirrorLinks?: Record<string, string>;
 };
 
-/** A server name or thread id the page will make a link for: anything else gets none. */
-const NAME = /^[A-Za-z0-9._~:-]{1,256}$/;
+/** A server name the page will make a link for. */
+const SERVER = /^[A-Za-z0-9._~-]{1,128}$/;
+/** A thread id for a server whose adapter cannot vouch for its ids (no `threadLinks`): only a config prefix links it then. */
+const ANY_ID = /^[A-Za-z0-9._~:%-]{1,512}$/;
 const RESERVED = new Set(["__proto__", "constructor", "prototype"]);
 const isHttp = (u: string | undefined): u is string => !!u && /^https?:\/\//i.test(u);
 const prefix = (m: Record<string, string> | undefined, server: string) =>
-	m && !RESERVED.has(server) && Object.hasOwn(m, server) && typeof m[server] === "string" && m[server]
-		? m[server]
-		: undefined;
+	m && Object.hasOwn(m, server) && typeof m[server] === "string" && m[server] ? m[server] : undefined;
 
 export function createLinker(d: LinkerDeps): Linker {
-	const own = (server: string, threadId: string): ThreadLinks => {
+	/**
+	 * The server's own links for a thread, or undefined when nothing may link to it: a server not in `servers` (a config prefix for a
+	 * removed server links nothing), a malformed name, or an id the server's adapter says is not one of its threads.
+	 */
+	const resolve = (server: string, threadId: string): { own: ThreadLinks } | undefined => {
+		if (!SERVER.test(server) || RESERVED.has(server)) return undefined;
 		const s = d.servers().find((x) => x.server.name === server);
-		return s && has(s.adapter, "threadLinks") ? s.adapter.threadLinks(threadId) : {};
+		if (!s) return undefined;
+		if (!has(s.adapter, "threadLinks")) return ANY_ID.test(threadId) ? { own: {} } : undefined;
+		const own = s.adapter.threadLinks(threadId);
+		return own ? { own } : undefined;
 	};
-	const valid = (server: string, threadId: string) => NAME.test(server) && NAME.test(threadId) && !RESERVED.has(server);
 	const link = (server: string, threadId: string) => {
-		if (!valid(server, threadId)) return undefined;
+		const r = resolve(server, threadId);
+		if (!r) return undefined;
 		const p = prefix(d.threadLinks, server);
-		return p ? p + encodeURIComponent(threadId) : own(server, threadId).ref;
+		return p ? p + encodeURIComponent(threadId) : r.own.ref;
 	};
 	const target = (server: string, threadId: string) => {
-		if (!valid(server, threadId)) return undefined;
+		const r = resolve(server, threadId);
+		if (!r) return undefined;
 		const tp = prefix(d.threadLinks, server);
 		const mp = prefix(d.mirrorLinks, server);
 		const fromConfig = [tp && tp + encodeURIComponent(threadId), mp && mp + threadId].find(isHttp);
 		if (fromConfig) return fromConfig;
-		const o = own(server, threadId);
-		return o.app ?? (isHttp(o.ref) ? o.ref : undefined);
+		return r.own.app ?? (isHttp(r.own.ref) ? r.own.ref : undefined);
 	};
 	return {
 		link,

@@ -151,6 +151,8 @@ function rig(
 		fail?: (token: string) => string | undefined;
 		linker?: WaitingDeps["linker"];
 		links?: Record<string, string>;
+		/** The waiting thread's id (default `th-1`). */
+		threadId?: string;
 	} = {},
 ) {
 	const conf = mkdtempSync(`${tmpdir()}/chamberlain-mirror-`);
@@ -173,7 +175,7 @@ function rig(
 					kind: "snapshot",
 					snapshot: {
 						threads: [
-							T,
+							{ ...T, id: opts.threadId ?? T.id },
 							{ id: "skipme", pendingRuntimeRequest: { id: "q" } },
 							{ id: "gone", pendingRuntimeRequest: { id: "z" }, archivedAt: "2026-11-10" },
 							{ id: "idle" },
@@ -212,20 +214,35 @@ function rig(
 }
 
 describe("a card's thread link", () => {
+	const LAUNCHED = `mcp:launch:${"ab".repeat(32)}`;
 	test("is the server's own T3 link, made from its environment, when the page names no prefix", async () => {
-		const { m } = rig({ linker: t3Linker({ origin: "http://x", environmentId: "env-mac" }) });
+		const { m } = rig({ linker: t3Linker({ origin: "http://x", environmentId: "env-mac" }), threadId: LAUNCHED });
 		await m.poll();
-		expect(m.list()[0]!.link).toBe("t3-thread://v2/env-mac/th-1");
+		expect(m.list()[0]!.link).toBe(`t3-thread://v2/env-mac/${LAUNCHED}`);
 	});
-	test("waits for the home server's environment read before it lists, so the first list already links", async () => {
-		const read = async () => ({ environmentId: "env-home" });
-		const { m } = rig({ linker: t3Linker({ origin: "http://x" }, { read }) });
+	test("a slow environment read never delays the listing: the card lists at once without a link, and links once the read lands", async () => {
+		let land: (v: { environmentId: string }) => void = () => {};
+		const read = () => new Promise<{ environmentId: string }>((r) => (land = r));
+		const { m } = rig({ linker: t3Linker({ origin: "http://x" }, { read: read as never }), threadId: LAUNCHED });
+		const started = performance.now();
 		await m.poll();
-		expect(m.list()[0]!.link).toBe("t3-thread://v2/env-home/th-1");
+		expect(performance.now() - started).toBeLessThan(150);
+		expect(m.list()).toHaveLength(1);
+		expect(m.list()[0]!.link).toBeUndefined();
+		land({ environmentId: "env-home" });
+		await new Promise((r) => setTimeout(r, 0));
+		await m.poll();
+		expect(m.list()[0]!.link).toBe(`t3-thread://v2/env-home/${LAUNCHED}`);
 	});
 	test("is none when the environment can't be read: no link rather than a broken one", async () => {
 		const read = async () => undefined;
-		const { m } = rig({ linker: t3Linker({ origin: "http://x" }, { read }) });
+		const { m } = rig({ linker: t3Linker({ origin: "http://x" }, { read }), threadId: LAUNCHED });
+		await m.poll();
+		await m.poll();
+		expect(m.list()[0]!.link).toBeUndefined();
+	});
+	test("is none for a thread id T3 does not issue", async () => {
+		const { m } = rig({ linker: t3Linker({ origin: "http://x", environmentId: "env-mac" }) });
 		await m.poll();
 		expect(m.list()[0]!.link).toBeUndefined();
 	});
@@ -233,9 +250,10 @@ describe("a card's thread link", () => {
 		const { m } = rig({
 			linker: t3Linker({ origin: "http://x", environmentId: "env-mac" }),
 			links: { main: "https://t3.example/env-x/" },
+			threadId: LAUNCHED,
 		});
 		await m.poll();
-		expect(m.list()[0]!.link).toBe("https://t3.example/env-x/th-1");
+		expect(m.list()[0]!.link).toBe(`https://t3.example/env-x/${LAUNCHED}`);
 	});
 });
 
