@@ -298,15 +298,21 @@ describe("the page", () => {
 	});
 	test("/open needs the key, and gives no page for a thread it cannot link", async () => {
 		const { token, get } = page();
-		const auth = { "x-decision-token": token };
+		// the page key from the page's own origin: a bare header with no Origin is inline authority, which never reaches /open
+		const auth = { "x-decision-token": token, origin: ORIGIN };
 		expect((await get(`/open/mac/${T1}`)).status).toBe(401);
+		// a tap is a navigation GET: the page key in a header (no Origin) is served it, as it is the page's shell; the view key never is
+		expect((await get(`/open/mac/${T1}`, { "x-decision-token": token })).status).toBe(200);
+		// a null-origin frame holding the page key is inline authority, and /open is not on its list
+		expect((await get(`/open/mac/${T1}`, { "x-decision-token": token, origin: "null" })).status).toBe(403);
 		expect((await get(`/open/laptop-gone/${T2}`, auth)).status).toBe(404);
 		expect((await get(`/open/mac/${T1}`, auth)).status).toBe(200);
 		expect((await get("/open/mac/%E0%A4%A", auth)).status).toBe(400);
 	});
 	test("/open gives 404 for every thread id shape T3 does not issue", async () => {
 		const { token, get } = page();
-		const auth = { "x-decision-token": token };
+		// the page key from the page's own origin: a bare header with no Origin is inline authority, which never reaches /open
+		const auth = { "x-decision-token": token, origin: ORIGIN };
 		for (const bad of ["mcp%3Alaunch%3ANOTHEX", "garbage", "%3A", "a%2Fb", "t1", `mcp%3Alaunch%3A${"ab".repeat(31)}`])
 			expect([bad, (await get(`/open/mac/${bad}`, auth)).status]).toEqual([bad, 404]);
 	});
@@ -392,7 +398,9 @@ describe("the page", () => {
 	});
 	test("/open goes only where the linker says: a target in the query is ignored", async () => {
 		const { token, get } = page();
-		const html = await (await get(`/open/mac/${T1}?to=https://evil.example`, { "x-decision-token": token })).text();
+		const html = await (
+			await get(`/open/mac/${T1}?to=https://evil.example`, { "x-decision-token": token, origin: ORIGIN })
+		).text();
 		expect(html).toContain(`t3code://threads/env-mac/${T1}`);
 		expect(html).not.toContain("evil.example");
 	});

@@ -718,11 +718,15 @@ export function createApp(d: AppDeps) {
 					headers: { "content-type": STATIC[url.pathname]!, "cache-control": "no-cache" },
 				}),
 			);
-		// The capability. Three ways to show it, none of them from a frame that is not ours:
-		//   the header (an inline frame, or a tool);
+		// The capability. Four ways to show it, none of them from a frame that is not ours:
 		//   the cookie (a browser that opened a link; never for a null origin, which holds no cookie of ours);
-		//   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address).
-		const byHeader = d.capability.accepts(req.headers.get(TOKEN_HEADER));
+		//   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address);
+		//   the page key in the header, FROM THE PAGE'S OWN ORIGIN;
+		//   the header with anything else: the page key from an inline frame or from a request with no Origin at all (curl, an agent), or the
+		//   view key (the weak secret a Decisions post carries) from anywhere. Those get inline authority only: inlineVerdict, nothing more.
+		const headerKey = req.headers.get(TOKEN_HEADER);
+		const byPageKeyHeader = d.capability.accepts(headerKey);
+		const byViewKey = !byPageKeyHeader && d.capability.acceptsView(headerKey);
 		// A cookie reaches an item's evidence only from the page's own origin (or a direct navigation): another PORT on the same host is "same-site", not
 		// "same-origin", and must not be able to embed the evidence images with the owner's cookie. The header and ?k= are explicit and unaffected.
 		const fetchSite = req.headers.get("sec-fetch-site");
@@ -734,7 +738,8 @@ export function createApp(d: AppDeps) {
 			(isShell(url.pathname) || isOpen(url.pathname) || url.pathname.startsWith("/evidence/"));
 		const linkKey = url.searchParams.get(TOKEN_PARAM);
 		const byLink = linkable && linkKey !== null && d.capability.accepts(linkKey);
-		if (!byHeader && !byCookie && !byLink) {
+		const fullAuthority = byCookie || byLink || (byPageKeyHeader && sameOrigin);
+		if (!fullAuthority && !byPageKeyHeader && !byViewKey) {
 			// A page load without the key gets the static "needs its link" page, not the app; everything else a plain 401.
 			if (req.method === "GET" && isShell(url.pathname))
 				return withSecurity(
@@ -744,6 +749,29 @@ export function createApp(d: AppDeps) {
 					}),
 				);
 			return locked(allowed);
+		}
+		// Inline authority only: a null-origin frame (above), or a request whose only proof is a header and which has no cookie, no link and no
+		// own origin. The same three reads and plain answer; anything else is refused whatever its path, so the key a post carries cannot read an
+		// item or its evidence, answer a card or an approval, save a ruling or accept a batch. A refusal here is a 403, not a 401: the key is valid.
+		const restricted = inline || !fullAuthority;
+		// A null-origin frame's own page-key requests stay exactly as they were (refused above for the API; its other GETs pass), except the
+		// /open route, which a frame has no use for and which did not exist when that rule was written. The view key is held to the list on
+		// every path and from every origin, evidence included.
+		// The page's own static shell (`/`, `/rulings`, `/item/<id>`) carries no data and is served to the page key in a header, as it always was: a
+		// browser loads it by navigation (cookie, or `?k=`), and a tool may fetch it. What the limit protects is the API, evidence and every write.
+		// /open (a tap on a thread link) is the same kind of GET: a redirect to the thread's app link, which /api/queue already hands to an inline
+		// frame (a card's `app`), so it adds nothing. A null-origin frame has no use for it, so only a request that is not one may.
+		const shellRead =
+			req.method === "GET" && byPageKeyHeader && (isShell(url.pathname) || (isOpen(url.pathname) && !inline));
+		if (restricted && !shellRead && (!inline || byViewKey || isOpen(url.pathname))) {
+			const v = inlineVerdict(req.method, url.pathname);
+			if (v !== "read" && v !== "answer")
+				return withSecurity(
+					fail(
+						403,
+						"refused: this key may read the queue, recent answers and rulings, and answer a question; the rest needs the page's own link",
+					),
+				);
 		}
 		if (byLink && (isShell(url.pathname) || isOpen(url.pathname))) {
 			// A link: set the long-lived cookie and go to the same page without the key, so it is not left in the address bar or history.
@@ -773,7 +801,7 @@ export function createApp(d: AppDeps) {
 				return withSecurity(fail(403, "refused"));
 		}
 		if (url.pathname.startsWith("/api/")) {
-			const r = withSecurity(await api(req, url, inline));
+			const r = withSecurity(await api(req, url, restricted));
 			return allowed ? inlineCors(r) : r;
 		}
 		if (req.method !== "GET") return withSecurity(fail(404, "not found"));

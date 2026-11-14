@@ -12,7 +12,16 @@
  * address must be loopback, no wake is sent and no card is touched.
  */
 import { CONF, STATE } from "../core/config.ts";
-import { ensureToken, fileCapability, inlineScriptSrc, pageLink, readToken, rotateToken } from "../core/capability.ts";
+import {
+	ensureToken,
+	ensureViewKey,
+	fileCapability,
+	inlineScriptSrc,
+	pageLink,
+	readToken,
+	readViewKey,
+	rotateToken,
+} from "../core/capability.ts";
 import { STATIC_FILES } from "../embedded.ts";
 import { has } from "../core/adapter.ts";
 import { configDir, stateDir } from "../core/state-dir.ts";
@@ -64,16 +73,30 @@ export function linkTargets(cfg: { host: string; port: number; allowedHosts?: st
 	return { bases: [...new Set(bases)], skipped };
 }
 
-/** Pure: what `chamberlain web link` prints. The token is in it, on purpose: it is the link. */
-export function linkLines(bases: string[], token: string, skipped: string[] = []): string[] {
+/**
+ * Pure: what `chamberlain web link` prints. The page key is in the page link, on purpose: it is the link. The script tag carries the VIEW key,
+ * the weak one: that is the only key that belongs in a Decisions message.
+ */
+export function linkLines(
+	bases: string[],
+	token: string,
+	viewKey: string | undefined,
+	skipped: string[] = [],
+): string[] {
 	return [
 		"Open one of these on any device that can reach the page. It signs the browser in (a long-lived cookie) and then drops the key from the address:",
 		...bases.map((b) => `  ${pageLink(b, token)}`),
 		"",
-		"For the Decisions thread's setup message (docs/decisions-thread-setup.md), the script tag of the inline view, ready to paste into its html:",
-		...bases.map((b) => `  <script src="${inlineScriptSrc(b, token).replaceAll("&", "&amp;")}"></script>`),
+		...(viewKey
+			? [
+					"For the Decisions thread's setup message (docs/decisions-thread-setup.md), the script tag of the inline view, ready to paste into its html. It carries the view key, which can only read the queue and answer a question:",
+					...bases.map((b) => `  <script src="${inlineScriptSrc(b, viewKey).replaceAll("&", "&amp;")}"></script>`),
+				]
+			: [
+					"The page has no view key yet, so there is no script tag for the Decisions thread: start the page (chamberlain web), then run web link again.",
+				]),
 		"",
-		"Treat these like a password: anyone who holds one can read the queue and answer for you. `chamberlain web rotate-token` ends them all.",
+		"Treat the page link like a password: anyone who holds it can use the whole page and answer for you. Never paste it into a thread. `chamberlain web rotate-token` ends every copy.",
 		...skipped.map((x) => `Not printed, because the page would refuse it: ${x}`),
 	];
 }
@@ -96,14 +119,22 @@ function tokenCommand(sub: "link" | "rotate-token") {
 	if (sub === "rotate-token") {
 		const token = rotateToken(CONF);
 		console.log(
-			"rotated: every old link, browser cookie and already-rendered view stops working now. The new links:\n",
+			"rotated: every old link, browser cookie and already-rendered view that carries the old page key stops working now. The view key is unchanged. The new links:\n",
 		);
-		for (const l of linkLines(t.bases, token, t.skipped)) console.log(l);
+		let viewKey: string | undefined;
+		try {
+			viewKey = readViewKey(CONF);
+		} catch {
+			viewKey = undefined; // not a private file: the page will not accept it either, and says so when it starts
+		}
+		for (const l of linkLines(t.bases, token, viewKey, t.skipped)) console.log(l);
 		return;
 	}
 	let token: string | undefined;
+	let viewKey: string | undefined;
 	try {
 		token = readToken(CONF);
+		viewKey = readViewKey(CONF);
 	} catch (e) {
 		console.error(`the page's key could not be read: ${String((e as Error).message).slice(0, 160)}`);
 		process.exitCode = 1;
@@ -114,7 +145,7 @@ function tokenCommand(sub: "link" | "rotate-token") {
 		process.exitCode = 1;
 		return;
 	}
-	for (const l of linkLines(t.bases, token, t.skipped)) console.log(l);
+	for (const l of linkLines(t.bases, token, viewKey, t.skipped)) console.log(l);
 }
 
 /** Serves the page until stopped. `argv` is the arguments after the command: `--test`, or `link` or `rotate-token`. */
@@ -155,6 +186,8 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	startup({ migrate: true, log });
 	// The page's capability: made on the first start, kept in secrets/web-token, followed if `chamberlain web rotate-token` replaces it.
 	ensureToken(CONF);
+	// The view key a Decisions post carries instead of that token: made once, never replaced by a start (src/core/capability.ts).
+	ensureViewKey(CONF);
 	maintain(store);
 	const alarm = (key: string, title: string) => log("alarm", { key, title });
 	const qs = cfg.decisionsServer;

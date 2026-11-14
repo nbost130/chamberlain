@@ -9,6 +9,7 @@ import {
 	readdirSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,13 +19,17 @@ import {
 	COOKIE_NAME,
 	TOKEN_BYTES,
 	TOKEN_FILE,
+	VIEW_KEY_FILE,
 	ensureToken,
+	ensureViewKey,
 	fileCapability,
+	holdsToken,
 	inlineScriptSrc,
 	makeCapability,
 	newToken,
 	pageLink,
 	readToken,
+	readViewKey,
 	rotateToken,
 	sameSecret,
 	withoutToken,
@@ -154,6 +159,88 @@ describe("the token", () => {
 		const t = ensureToken(c);
 		chmodSync(`${c}/secrets/${TOKEN_FILE}`, 0o644);
 		expect(fileCapability(c).accepts(t)).toBe(false);
+	});
+});
+
+describe("the view key", () => {
+	test("is its own secret, made like the token (0600, in secrets/view-key), distinct from it, and kept after", () => {
+		const c = conf();
+		const t = ensureToken(c);
+		const v = ensureViewKey(c);
+		expect(v).toMatch(/^[A-Za-z0-9_-]{43}$/);
+		expect(v).not.toBe(t);
+		expect(readFileSync(`${c}/secrets/${VIEW_KEY_FILE}`, "utf8")).toBe(`${v}\n`);
+		expect(mode(`${c}/secrets/${VIEW_KEY_FILE}`)).toBe(0o600);
+		expect(ensureViewKey(c)).toBe(v);
+		expect(readViewKey(c)).toBe(v);
+		expect(readToken(c)).toBe(t); // making it left the page's token alone
+	});
+	test("a rotation of the page's token leaves it alone; a short or empty file is never replaced and the error does not point at rotate-token", () => {
+		const c = conf();
+		ensureToken(c);
+		const v = ensureViewKey(c);
+		rotateToken(c);
+		expect(readViewKey(c)).toBe(v);
+		writeFileSync(`${c}/secrets/${VIEW_KEY_FILE}`, "short\n", { mode: 0o600 });
+		expect(() => ensureViewKey(c)).toThrow(`remove secrets/${VIEW_KEY_FILE}`);
+		expect(readViewKey(c)).toBeUndefined();
+		expect(readFileSync(`${c}/secrets/${VIEW_KEY_FILE}`, "utf8")).toBe("short\n"); // untouched
+	});
+	test("acceptsView takes the view key and nothing else: not the page's token, not a cookie, not a wrong or empty one", () => {
+		const T = "t".repeat(43);
+		const V = "v".repeat(43);
+		const cap = makeCapability(
+			() => T,
+			() => 1_800_000_000_000,
+			() => V,
+		);
+		expect(cap.acceptsView(V)).toBe(true);
+		expect(cap.accepts(V)).toBe(false);
+		expect(cap.acceptsView(T)).toBe(false);
+		expect(cap.accepts(T)).toBe(true);
+		for (const bad of [undefined, null, "", "v".repeat(42)]) expect(cap.acceptsView(bad)).toBe(false);
+		expect(cap.acceptsCookie(cookieOf(cap.grant(false)))).toBe(true);
+		expect(makeCapability(() => T).acceptsView(V)).toBe(false); // no view key to hold
+	});
+	test("the file capability follows both files, and a loose view key accepts nothing", () => {
+		const c = conf();
+		const t = ensureToken(c);
+		const v = ensureViewKey(c);
+		const cap = fileCapability(c);
+		expect(cap.accepts(t)).toBe(true);
+		expect(cap.acceptsView(v)).toBe(true);
+		expect(cap.acceptsView(t)).toBe(false);
+		chmodSync(`${c}/secrets/${VIEW_KEY_FILE}`, 0o644);
+		expect(cap.acceptsView(v)).toBe(false);
+		expect(cap.accepts(t)).toBe(true);
+	});
+	test("a view key that holds the page's own token (a copy, a symlink) is no view key: it is not read, not made, not accepted", () => {
+		const c = conf();
+		const t = ensureToken(c);
+		symlinkSync(`${c}/secrets/${TOKEN_FILE}`, `${c}/secrets/${VIEW_KEY_FILE}`);
+		expect(readViewKey(c)).toBeUndefined();
+		expect(() => ensureViewKey(c)).toThrow("holds the page's own token");
+		const cap = fileCapability(c);
+		expect(cap.acceptsView(t)).toBe(false);
+		expect(cap.accepts(t)).toBe(true);
+		rmSync(`${c}/secrets/${VIEW_KEY_FILE}`);
+		writeFileSync(`${c}/secrets/${VIEW_KEY_FILE}`, `${t}\n`, { mode: 0o600 });
+		expect(readViewKey(c)).toBeUndefined();
+		expect(fileCapability(c).acceptsView(t)).toBe(false);
+	});
+	test("holdsToken sees the raw key, its URL-encoding and every character as %XX in either case, and nothing else", () => {
+		const T = "ab-_CD0123456789abcdefghijklmnopqrstuvwxyz";
+		const pct = [...Buffer.from(T)].map((b) => `%${b.toString(16).padStart(2, "0")}`).join("");
+		for (const s of [`x ${T} y`, `x ${pct} y`, `x ${pct.toUpperCase()} y`, `x ${encodeURIComponent(T)} y`])
+			expect(holdsToken(s, T)).toBe(true);
+		expect(holdsToken(`x ${T.slice(0, -1)} y`, T)).toBe(false);
+		expect(holdsToken("anything", undefined)).toBe(false);
+		expect(holdsToken("anything", "")).toBe(false);
+	});
+	test("a post's script address takes whatever key it is given, URL-encoded, and nothing else", () => {
+		expect(inlineScriptSrc("http://q.test/", "a b+/", "Q-abcd")).toBe(
+			"http://q.test/inline.js?view=decisions&item=Q-abcd&k=a%20b%2B%2F",
+		);
 	});
 });
 

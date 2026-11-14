@@ -206,7 +206,13 @@ describe("page path: the real queue server dies answering a real request, and th
 		const host = `127.0.0.1:${w.port}`;
 		const r = await fetch(`http://${host}/api/items/${ID}/answer`, {
 			method: "POST",
-			headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
+			headers: {
+				host,
+				"content-type": "application/json",
+				"x-decision-queue": "1",
+				"x-decision-token": w.key,
+				origin: `http://${host}`,
+			},
 			body: JSON.stringify(body),
 		}).then(
 			(x) => x.status,
@@ -223,7 +229,13 @@ describe("page path: the real queue server dies answering a real request, and th
 		const host = `127.0.0.1:${w.port}`;
 		const status = await fetch(`http://${host}/api/items/${ID}/answer`, {
 			method: "POST",
-			headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
+			headers: {
+				host,
+				"content-type": "application/json",
+				"x-decision-queue": "1",
+				"x-decision-token": w.key,
+				origin: `http://${host}`,
+			},
 			body: JSON.stringify({ choice }),
 		}).then((x) => x.status);
 		p.kill();
@@ -681,7 +693,13 @@ describe("an answer is never held: the real page writes it and the real daemon s
 			const host = `127.0.0.1:${w.port}`;
 			const r = await fetch(`http://${host}/api/items/${ID}/answer`, {
 				method: "POST",
-				headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
+				headers: {
+					host,
+					"content-type": "application/json",
+					"x-decision-queue": "1",
+					"x-decision-token": w.key,
+					origin: `http://${host}`,
+				},
 				body: JSON.stringify({ choice: 0 }),
 			});
 			expect(r.status).toBe(200);

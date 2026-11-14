@@ -9,7 +9,7 @@
 	// Shells posted before the tag was added to them get it here.
 	try { if (document.head && !document.querySelector('meta[name="viewport"]')) { const m = document.createElement("meta"); m.name = "viewport"; m.content = "width=device-width, initial-scale=1"; document.head.append(m); } } catch { /* a page without a head keeps its layout */ }
 	const BASE = SRC.origin;
-	// The page's capability token rides on this script's own address (?k=). Every call proves it with a header, and an <img> or a link carries it as ?k=.
+	// The view key (never the page key: a Decisions post is copied into the thread) rides on this script's own address (?k=). Every call proves it with a header; the image links below carry it as ?k= too, but the page serves evidence only to its own link or cookie.
 	// A 401 means the key is missing, or it was rotated since this view was made: say so instead of showing an empty queue.
 	const KEY = SRC.searchParams.get("k") || "";
 	const kq = KEY ? `?k=${encodeURIComponent(KEY)}` : "";
@@ -173,9 +173,10 @@
 		return box;
 	}
 
-	// A link out of this view: one of the page's own addresses, signed in with ?k=. T3 Code's web and desktop clients show this view in a
-	// sandboxed frame that opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets.
-	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}${kq}`; a.target = "_blank"; a.rel = "noopener"; return a; };
+	// A link out of this view: one of the page's own addresses. T3 Code's web and desktop clients show this view in a sandboxed frame that
+	// opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets. None carries a key: the frame holds only the
+	// weak view key (never the page key), which cannot sign a browser in, so a link opens signed in only where the browser already holds the page's cookie.
+	const linkOut = (text, path) => { const a = el("a", "dq-meta dq-link", text); a.href = `${BASE}${path}`; a.target = "_blank"; a.rel = "noopener"; return a; };
 	// T3 Code's phone app shows this view as the top document of its own web view, not in a frame, and hands any link that is not http(s)
 	// to the phone's OS, which opens the app's own link (t3code://threads/…) in the app itself: the thread opens in place, no browser.
 	// So the top document links straight to the app link the server made; a frame (T3's web and desktop clients) uses /open.
@@ -197,7 +198,7 @@
 		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
 		if (imgs.length) {
 			const ev = el("div", "dq-ev");
-			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; ev.append(i); }
+			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; i.onerror = () => i.replaceWith(el("div", "dq-meta", "Image evidence shows on the full queue page.")); ev.append(i); }
 			c.append(ev);
 		}
 		const own = threadLink(it);
