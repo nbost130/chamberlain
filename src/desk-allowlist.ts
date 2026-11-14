@@ -22,10 +22,9 @@ import type { Shape, ShapeBody, ShapeSet, ValueKind } from "./core/desk-shapes.t
 import { checkSimple, verdictOf } from "./desk-checks.ts";
 import { DIGITS, type Flag, parse, REF, REPO, type Spec, TIME, UNIT, WORD } from "./desk-parse.ts";
 import { tokenize } from "./desk-tokenize.ts";
+import { no, ok, type Verdict } from "./desk-verdict.ts";
 
-export type Verdict = { ok: true } | { ok: false; reason: string };
-export const ok: Verdict = { ok: true };
-export const no = (reason: string): Verdict => ({ ok: false, reason });
+export type { Verdict } from "./desk-verdict.ts";
 
 const HOME = process.env.HOME ?? "";
 /** The only places a file may be read from. */

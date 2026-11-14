@@ -1,7 +1,8 @@
 /** The Alert Desk's command allowlist: the checks for journalctl, systemctl, docker and the simple commands. */
 import { GENERIC_SHAPES, type ShapeSet } from "./core/desk-shapes.ts";
-import { checkShape, no, ok, type Verdict } from "./desk-allowlist.ts";
+import { checkShape } from "./desk-allowlist.ts";
 import { DIGITS, type Parsed, parse, type Spec, TIME, UNIT } from "./desk-parse.ts";
+import { no, ok, type Verdict } from "./desk-verdict.ts";
 
 const isVerdict = (x: Parsed | Verdict): x is Verdict => "ok" in x;
 

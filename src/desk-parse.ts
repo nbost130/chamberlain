@@ -1,5 +1,5 @@
 /** The Alert Desk's command allowlist: parsing a command's flags and arguments against its spec. */
-import { no, type Verdict } from "./desk-allowlist.ts";
+import { no, type Verdict } from "./desk-verdict.ts";
 
 export type Flag = "bool" | RegExp | ((value: string) => boolean);
 export type Spec = {
