@@ -11,6 +11,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { migrateLayout, revertLayout } from "./config-migrate.ts";
 import {
 	COOKIE_MAX_AGE_S,
 	COOKIE_NAME,
@@ -204,4 +205,18 @@ test("the token file is not a path anything else makes: nothing in a fresh confi
 	ensureToken(c);
 	expect(existsSync(`${c}/secrets/${TOKEN_FILE}`)).toBe(true);
 	expect(existsSync(`${c}/${TOKEN_FILE}`)).toBe(false);
+});
+
+test("a revert of the config migration leaves the page's token where it is: it is a secret with no old name", () => {
+	const c = conf();
+	writeFileSync(`${c}/wake-url`, "https://fake.example/hook\n", { mode: 0o600 });
+	migrateLayout(c);
+	const t = ensureToken(c);
+	revertLayout(c);
+	expect(readFileSync(`${c}/secrets/${TOKEN_FILE}`, "utf8").trim()).toBe(t);
+	expect(existsSync(`${c}/${TOKEN_FILE}`)).toBe(false);
+	expect(readFileSync(`${c}/wake-url`, "utf8").trim()).toBe("https://fake.example/hook");
+	// a migration run again does not mistake it for an old file, and a rotation after a revert still works
+	expect(migrateLayout(c).plan.secrets.map((s) => s.name)).toEqual(["wake-url"]);
+	expect(rotateToken(c)).not.toBe(t);
 });

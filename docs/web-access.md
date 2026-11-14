@@ -8,7 +8,7 @@ anything else that can reach the port: another user on the machine, or any peer 
 | Request | What it needs |
 | --- | --- |
 | `app.js`, `app.css`, `inline.js` | Nothing: they are the page's own code and carry no data. |
-| The page (`/`, `/rulings`, `/item/<id>`), the API, an item's evidence | The key: a signed cookie, the `x-decision-token` header, or (for a page load or an evidence image) `?k=<key>` in the address. |
+| The page (`/`, `/rulings`, `/item/<id>`), the API, an item's evidence | The key: a signed cookie, the `x-decision-token` header, or (for a page load or an evidence image) `?k=<key>` in the address. For **evidence** the cookie counts only when the browser says the request comes from the page's own origin (`Sec-Fetch-Site: same-origin` or `none`): another port on the same host is "same-site", and cannot embed your evidence images with your cookie. The header and `?k=` are explicit and work as before. |
 | An inline frame (origin `null`) | The key in the `x-decision-token` header, nothing else. A cookie or `?k=` on an API call does not count. |
 | A page on any other origin | Refused (`403`), key or not. |
 
@@ -24,7 +24,7 @@ holds no token, and a rotation kills it. It is `HttpOnly` and `SameSite=Lax`, an
 chamberlain web link
 ```
 
-prints, for each address the page answers on (its bind address, each `allowedHosts` name and a `publicBase` if you set one):
+reads the key (it never makes one: with none, because the page has never started, it says "start the page first (chamberlain web), then run web link again" and exits 1) and prints, for each address the page answers on (its bind address, each `allowedHosts` name and a `publicBase` if you set one):
 
 - the **page link**, `<base>/?k=<key>`: open it once on each phone or laptop you use, in the browser or installed web app you use. After that the plain address works there.
 - the **script tag** of the inline view for the Decisions thread's setup message ([decisions-thread-setup.md](decisions-thread-setup.md)).
@@ -66,5 +66,5 @@ should print the queue (the key goes in through stdin, not in the command line, 
 
 `secrets/web-token` is one of the config directory's secrets ([CONFIGURATION.md](CONFIGURATION.md#secrets)): mode 0600 in a 0700 directory, never logged, never in the events table, redacted from the
 output of the command that posts the view. A token file that is not exactly 0600 is not trusted, and the page accepts nothing until it is fixed (it fails closed). The key is also in the html of the
-Decisions thread's messages, because that is how the frame gets it: anyone who can read that thread can use it, as you can. It does not widen what a frame may do: even with the key, a `null`-origin request can read the
+Decisions thread's messages, because that is how the frame gets it. **Who can read it there:** anyone who holds an `orchestration:read` token on that T3 server (the Steward included, since its thread tools read every thread), and the Decisions agent's own transcript, which stores the html it was given. Treat the Decisions thread as holding the key, and rotate it if any of those should lose access. It does not widen what a frame may do: even with the key, a `null`-origin request can read the
 queue, recent answers and rulings and plain-answer a question, and nothing else ([SECURITY.md](SECURITY.md)).

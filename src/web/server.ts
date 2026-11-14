@@ -12,7 +12,7 @@
  * address must be loopback, no wake is sent and no card is touched.
  */
 import { CONF, STATE } from "../core/config.ts";
-import { ensureToken, fileCapability, inlineScriptSrc, pageLink, rotateToken } from "../core/capability.ts";
+import { ensureToken, fileCapability, inlineScriptSrc, pageLink, readToken, rotateToken } from "../core/capability.ts";
 import { STATIC_FILES } from "../embedded.ts";
 import { has } from "../core/adapter.ts";
 import { configDir, stateDir } from "../core/state-dir.ts";
@@ -77,7 +77,11 @@ export function linkLines(bases: string[], token: string, skipped: string[] = []
 	];
 }
 
-/** `chamberlain web link` and `chamberlain web rotate-token`. */
+/**
+ * `chamberlain web link` and `chamberlain web rotate-token`. `link` only READS the token: a install whose page has never started has none, and
+ * a link made now would be one the page later disagrees with, so it says to start the page first and exits 1. `rotate-token` is the command that
+ * makes a new one.
+ */
 function tokenCommand(sub: "link" | "rotate-token") {
 	startup();
 	let cfg;
@@ -87,15 +91,29 @@ function tokenCommand(sub: "link" | "rotate-token") {
 		console.error(String((e as Error).message));
 		process.exit(2);
 	}
+	const t = linkTargets(cfg);
 	if (sub === "rotate-token") {
 		const token = rotateToken(CONF);
 		console.log(
 			"rotated: every old link, browser cookie and already-rendered view stops working now. The new links:\n",
 		);
-		for (const l of linkLines(pageBases(cfg), token)) console.log(l);
+		for (const l of linkLines(t.bases, token, t.skipped)) console.log(l);
 		return;
 	}
-	for (const l of linkLines(pageBases(cfg), ensureToken(CONF))) console.log(l);
+	let token: string | undefined;
+	try {
+		token = readToken(CONF);
+	} catch (e) {
+		console.error(`the page's key could not be read: ${String((e as Error).message).slice(0, 160)}`);
+		process.exitCode = 1;
+		return;
+	}
+	if (!token) {
+		console.error("the page has no key yet: start the page first (chamberlain web), then run web link again");
+		process.exitCode = 1;
+		return;
+	}
+	for (const l of linkLines(t.bases, token, t.skipped)) console.log(l);
 }
 
 /** Serves the page until stopped. `argv` is the arguments after the command: `--test`, or `link` or `rotate-token`. */

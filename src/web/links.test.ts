@@ -3,9 +3,9 @@
  * `chamberlain ask`, whose Decisions-thread message holds the inline view's script address.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { TOKEN_FILE } from "../core/capability.ts";
+import { TOKEN_FILE, ensureToken } from "../core/capability.ts";
 import { acceptedHosts, linkLines, linkTargets, pageBases } from "./server.ts";
 
 const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
@@ -75,12 +75,22 @@ describe("chamberlain web link and rotate-token", () => {
 			for (const b of linkTargets(c).bases) expect(acceptedHosts(c)).toContain(new URL(b).host);
 	});
 
-	test("link makes the token on first use (0600 in secrets/) and prints links that carry it; rotate-token ends the old one", () => {
-		const w = world({ host: "127.0.0.1", port: 3790, allowedHosts: ["h.example"] });
+	test("link does NOT make a token: with none it says to start the page first and exits 1, creating nothing", () => {
+		const w = world({ host: "127.0.0.1", port: 3790 });
 		const env = { CHAMBERLAIN_CONF: w.conf, CHAMBERLAIN_STATE: w.state };
 		const a = run(["src/cli.ts", "web", "link"], env);
+		expect(a.code).toBe(1);
+		expect(a.out).toBe("");
+		expect(a.err).toContain("start the page first (chamberlain web), then run web link again");
+		expect(existsSync(`${w.conf}/secrets`)).toBe(false);
+	});
+
+	test("link prints links that carry the page's token and never changes it; rotate-token ends the old one", () => {
+		const w = world({ host: "127.0.0.1", port: 3790, allowedHosts: ["h.example"] });
+		const env = { CHAMBERLAIN_CONF: w.conf, CHAMBERLAIN_STATE: w.state };
+		const t1 = ensureToken(w.conf); // what the page's first start does
+		const a = run(["src/cli.ts", "web", "link"], env);
 		expect(a.code, a.err).toBe(0);
-		const t1 = tokenIn(w.conf);
 		expect(Buffer.from(t1, "base64url")).toHaveLength(32);
 		expect(statSync(`${w.conf}/secrets/${TOKEN_FILE}`).mode & 0o777).toBe(0o600);
 		expect(a.out).toContain(`http://127.0.0.1:3790/?k=${t1}`);
@@ -99,6 +109,19 @@ describe("chamberlain web link and rotate-token", () => {
 		expect(b.out).toContain(`?k=${t2}`);
 		expect(b.out).not.toContain(t1);
 		expect(run(["src/cli.ts", "web", "link"], env).out).not.toContain(t1);
+	});
+
+	test("a publicBase the page would refuse is left out of what the command prints, and the output says so", () => {
+		const w = world({ host: "127.0.0.1", port: 3790, publicBase: "https://box.example.ts.net" });
+		const env = { CHAMBERLAIN_CONF: w.conf, CHAMBERLAIN_STATE: w.state };
+		const t = ensureToken(w.conf);
+		const a = run(["src/cli.ts", "web", "link"], env);
+		expect(a.code, a.err).toBe(0);
+		expect(a.out).toContain(`http://127.0.0.1:3790/?k=${t}`);
+		expect(a.out).not.toContain("https://box.example.ts.net/?k=");
+		expect(a.out).toContain(
+			'Not printed, because the page would refuse it: https://box.example.ts.net (add "box.example.ts.net" to "allowedHosts"',
+		);
 	});
 });
 

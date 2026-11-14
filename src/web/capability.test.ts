@@ -101,6 +101,28 @@ describe("a request with no token is refused", () => {
 	});
 });
 
+describe("an item's evidence takes the cookie only from the page's own origin", () => {
+	test("another port on the same host (same-site, not same-origin), another site and a request that says nothing are refused; the header and ?k= still work", async () => {
+		const s = setup();
+		const cookie = cookieFrom(
+			await s.app.fetch(new Request(`${ORIGIN}/?k=${s.token}`, { headers: { host: HOST }, redirect: "manual" })),
+		);
+		const img = "/evidence/Q-evid/shot.png";
+		for (const site of ["same-site", "cross-site", "", undefined]) {
+			const h: Record<string, string> = { cookie };
+			if (site !== undefined) h["sec-fetch-site"] = site;
+			expect((await s.get(img, h)).status, String(site)).toBe(401);
+		}
+		for (const site of ["same-origin", "none"])
+			expect((await s.get(img, { cookie, "sec-fetch-site": site })).status, site).toBe(200);
+		// an explicit token is not ambient authority: it works whatever the site
+		expect((await s.get(img, { "sec-fetch-site": "cross-site", ...key(s.token) })).status).toBe(200);
+		expect((await s.get(`${img}?k=${s.token}`, { "sec-fetch-site": "same-site" })).status).toBe(200);
+		// and the cookie's use for the API and the page is unchanged
+		expect((await s.get("/api/queue", { cookie, "sec-fetch-site": "same-site" })).status).toBe(200);
+	});
+});
+
 describe("the refusal is plain text, not JSON", () => {
 	test("so a frame still running the previous build's script, which reads every reply as JSON, fails loudly and does not show an empty queue", async () => {
 		const s = setup();
@@ -154,7 +176,7 @@ describe("a good token is served", () => {
 		expect((await s.get("/rulings", { cookie })).status).toBe(200);
 		expect((await s.get("/", { cookie })).status).toBe(200);
 		expect((await s.get("/api/queue", { cookie })).status).toBe(200);
-		expect((await s.get("/evidence/Q-abcd/none.png", { cookie })).status).toBe(404); // authorised, and there is no such file
+		expect((await s.get("/evidence/Q-abcd/none.png", { cookie, "sec-fetch-site": "same-origin" })).status).toBe(404); // authorised, and there is no such file
 		expect((await s.post("/api/items/Q-abcd/answer", { choice: 0 }, { cookie, origin: ORIGIN })).status).toBe(200);
 	});
 	test("an <img> may carry the key as ?k= (a header is not possible there), and the evidence file's bytes come back; without it they do not", async () => {
@@ -167,7 +189,9 @@ describe("a good token is served", () => {
 		const cookie = cookieFrom(
 			await s.app.fetch(new Request(`${ORIGIN}/?k=${s.token}`, { headers: { host: HOST }, redirect: "manual" })),
 		);
-		expect(await (await s.get("/evidence/Q-evid/shot.png", { cookie })).text()).toBe("PNGBYTES");
+		expect(await (await s.get("/evidence/Q-evid/shot.png", { cookie, "sec-fetch-site": "same-origin" })).text()).toBe(
+			"PNGBYTES",
+		);
 		expect((await s.get(`/api/queue?k=${s.token}`)).status).toBe(401); // never for the API
 	});
 	test("the cookie lasts a year and a bit, then is refused", async () => {

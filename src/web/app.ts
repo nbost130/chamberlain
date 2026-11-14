@@ -686,7 +686,11 @@ export function createApp(d: AppDeps) {
 		//   the cookie (a browser that opened a link; never for a null origin, which holds no cookie of ours);
 		//   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address).
 		const byHeader = d.capability.accepts(req.headers.get(TOKEN_HEADER));
-		const byCookie = !inline && d.capability.acceptsCookie(req.headers.get("cookie"));
+		// A cookie reaches an item's evidence only from the page's own origin (or a direct navigation): another PORT on the same host is "same-site", not
+		// "same-origin", and must not be able to embed the evidence images with the owner's cookie. The header and ?k= are explicit and unaffected.
+		const fetchSite = req.headers.get("sec-fetch-site");
+		const cookieOk = !url.pathname.startsWith("/evidence/") || fetchSite === "same-origin" || fetchSite === "none";
+		const byCookie = !inline && cookieOk && d.capability.acceptsCookie(req.headers.get("cookie"));
 		const linkable =
 			req.method === "GET" && !inline && (isShell(url.pathname) || url.pathname.startsWith("/evidence/"));
 		const linkKey = url.searchParams.get(TOKEN_PARAM);
