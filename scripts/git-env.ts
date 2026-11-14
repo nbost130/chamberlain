@@ -8,7 +8,7 @@
 // hook builds one explicit `env` and hands it to every subprocess (`sealedGitEnv`), and tests that run git use it too
 // (src/testing/git.ts).
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -74,11 +74,16 @@ export const GIT_TEST_IDENTITY = [
 export function scratchGitHome(): { root: string; home: string; env: Env } {
 	const root = mkdtempSync(join(tmpdir(), "chamberlain-git-home-"));
 	const home = join(root, "home");
-	mkdirSync(home, { recursive: true });
-	writeFileSync(
-		join(home, ".gitconfig"),
-		"[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n",
-	);
+	try {
+		mkdirSync(home, { recursive: true });
+		writeFileSync(
+			join(home, ".gitconfig"),
+			"[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n",
+		);
+	} catch (error) {
+		rmSync(root, { recursive: true, force: true });
+		throw error;
+	}
 	const env: Env = {
 		HOME: home,
 		XDG_CONFIG_HOME: join(home, ".config"),
@@ -88,7 +93,16 @@ export function scratchGitHome(): { root: string; home: string; env: Env } {
 	return { root, home, env };
 }
 
-/** The environment for a test run: sealed, with a scratch HOME and global git config and no system config. */
+/**
+ * The environment for a test run: sealed, with a scratch HOME and global git config and no system config. The developer's own
+ * `<HOME>/bin` leaves the PATH here, while the original HOME is still known: the test preload (src/test-setup.ts) removes
+ * `<HOME>/bin` too, but by the time it runs HOME is already the scratch home, so it could no longer name the original.
+ */
 export function testRunEnv(base: Record<string, string | undefined>, scratch: { env: Env }): Env {
-	return { ...sealedGitEnv(base), ...scratch.env };
+	const env = { ...sealedGitEnv(base), ...scratch.env };
+	if (base.HOME && env.PATH !== undefined)
+		env.PATH = env.PATH.split(":")
+			.filter((entry) => entry !== `${base.HOME}/bin`)
+			.join(":");
+	return env;
 }

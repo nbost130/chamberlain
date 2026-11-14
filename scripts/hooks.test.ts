@@ -171,6 +171,14 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+test("the launch handed this run no GIT_* of the hook's, only the scratch config", () => {
+	const git = Object.keys(process.env).filter((name) => name.startsWith("GIT_")).sort();
+	expect(git).toEqual(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
+	expect(process.env.GIT_CONFIG_NOSYSTEM).toBe("1");
+	expect(process.env.GIT_CONFIG_GLOBAL).toBe(process.env.HOME + "/.gitconfig");
+	expect(process.env.HOME!.startsWith(tmpdir())).toBe(true);
+	expect((process.env.PATH ?? "").split(":")).not.toContain(process.env.ORIGINAL_HOME + "/bin");
+});
 test("makes a repository the careless way", () => {
 	const repo = mkdtempSync(tmpdir() + "/leaky-");
 	const sh = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: repo });
@@ -217,6 +225,19 @@ test("makes a repository the careless way", () => {
 			GIT_CONFIG_KEY_1: "core.bare",
 			GIT_CONFIG_VALUE_1: "true",
 		}),
+		"GIT_NAMESPACE, GIT_CEILING_DIRECTORIES, GIT_EXEC_PATH, GIT_TEMPLATE_DIR, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE and author and committer identity":
+			(gitDir) => ({
+				GIT_NAMESPACE: "leaked",
+				GIT_CEILING_DIRECTORIES: gitDir,
+				GIT_EXEC_PATH: gitDir,
+				GIT_TEMPLATE_DIR: gitDir,
+				GIT_ALTERNATE_OBJECT_DIRECTORIES: gitDir,
+				GIT_INDEX_FILE: join(gitDir, "index"),
+				GIT_AUTHOR_NAME: "Leaked",
+				GIT_AUTHOR_EMAIL: "leaked@example.com",
+				GIT_COMMITTER_NAME: "Leaked",
+				GIT_COMMITTER_EMAIL: "leaked@example.com",
+			}),
 		GIT_CONFIG_PARAMETERS: () => ({ GIT_CONFIG_PARAMETERS: "'core.bare=true' 'user.email=leaked@example.com'" }),
 	};
 
@@ -234,7 +255,14 @@ test("makes a repository the careless way", () => {
 
 			const project = tmp("hooks-leaky-project-");
 			writeFileSync(join(project, "leaky.test.ts"), leakyTest);
-			const code = await runTests(["bun", "test"], project, { ...process.env, ...vars(gitDir, sentinel) });
+			const code = await runTests(["bun", "test"], project, {
+				...process.env,
+				// The developer's own home and its bin on the PATH: the launch must take that bin off the PATH.
+				HOME: "/home/original",
+				ORIGINAL_HOME: "/home/original",
+				PATH: `/home/original/bin:${process.env.PATH}`,
+				...vars(gitDir, sentinel),
+			});
 
 			// The sentinel first: a launch that reached it must fail on that, not only on the run's exit code.
 			expect(readFileSync(join(gitDir, "config"), "utf8")).toBe(config);

@@ -198,10 +198,14 @@ export async function runTests(
 	base: Record<string, string | undefined> = process.env,
 ): Promise<number> {
 	const scratch = scratchGitHome();
+	const remove = () => rmSync(scratch.root, { recursive: true, force: true });
+	// process.exit() (the lock's ^C handler) does not unwind this function, but it does run 'exit' listeners.
+	process.on("exit", remove);
 	try {
 		return await run(cmd, cwd, testRunEnv(base, scratch));
 	} finally {
-		rmSync(scratch.root, { recursive: true, force: true });
+		process.off("exit", remove);
+		remove();
 	}
 }
 
