@@ -168,6 +168,36 @@ describe("the return notice", () => {
 		expect(r.fake.posted).toEqual([]);
 	});
 
+	test("two urgent returns: a failure during the first leaves the second due, and the first is never shown twice", async () => {
+		const store = memStore();
+		for (const [id, until] of [
+			["Q-aaaa", T0 + HOUR],
+			["Q-bbbb", T0 + HOUR + 1],
+		] as const) {
+			askQuestion(store, question(id));
+			snoozeQuestion(store, id, iso(until), T0);
+		}
+		const shown: string[] = [];
+		let first = true;
+		const r = rig(store, {
+			post: (item) => {
+				if (first) {
+					first = false;
+					throw Error("the process went down mid-post");
+				}
+				shown.push(item.id);
+				return Promise.resolve({ ok: true, detail: "view", where: "view" as const });
+			},
+		});
+		r.clock.t = T0 + 2 * HOUR;
+		await r.tick();
+		expect(shown).toEqual([]);
+		await r.tick();
+		expect(shown).toEqual(["Q-bbbb"]);
+		await r.tick();
+		expect(shown).toEqual(["Q-bbbb"]);
+	});
+
 	test("a notice that fails, by answer or by throwing, is logged and never retried: the item is on the list either way", async () => {
 		for (const post of [
 			async () => ({ ok: false, detail: "the thread is gone", where: "notice" as const }),

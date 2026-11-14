@@ -464,11 +464,14 @@ builds ignore.
   is why a restart, or a daemon that is down, changes nothing about when it returns. `ranked` leaves a snoozed item out and `snoozed` lists it.
   The item stays `open`, no claim is made, and its afk hold stays open (`reconcileItemHolds` closes holds only for an answered, directed or
   dismissed question) with a note of when it returns. What the daemon adds is the notice: each tick, `returnDueSnoozes` records every return once
-  (`snoozeReturned`, written before the notice, so a crash loses at most one notice and never repeats one), tells the holds, and the engine shows
+  (`snoozeReturned`, written for each item just before its own notice, so a crash loses at most that one notice, never repeats one, and
+  leaves the items after it still due), tells the holds, and the engine shows
   an urgent question where the operator reads again, through the adapter's `post` (the daemon passes ask.ts's `postQuestion`, the pinned view).
   A question that can wait comes back silently. Answering, directing or dismissing a snoozed item clears its snooze in the same transaction.
 - **Direction** is an answer with no option: a note, `choice: -1`, `kind: "direction"`. It takes the same one-wake claim as any answer and never
   the direct thread relay (`answerRoute` returns `direct: false` for it), so the Steward reads the note.
+  The page closes the item's afk hold itself as soon as the claim commits (best effort); the daemon's reconciler closes it from the claim
+  anyway, so a crash between the two loses nothing. The same holds for Dismiss.
 - **Dismiss** takes the same claim, so it is sent once and survives a crash, but the answer JSON carries `kind: "dismissed"` and
   `questionStates` reads it back as status `dismissed` with a `dismissal`, never as an `answer`: it is not an answer or a ruling, and
   `settled.ts` skips it. The Steward's wake says dismissed (`dismissedWakeText`), still under the `[chamberlain] answer:` head.

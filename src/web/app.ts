@@ -484,6 +484,8 @@ function answerNow(ctx: Ctx, id: string, body: AnswerIn, by: "page" | "batch", i
 	const found = answerableItem(ctx, id);
 	if (!found.ok) return found.reply;
 	const i = found.value;
+	// A batch was decided from a list read before this change got its turn: an item snoozed since is no longer on the active list.
+	if (by === "batch" && i.snooze?.active) return refusal(409, "snoozed: it is off the active list");
 	const chosen = chosenLabel(i, body.choice);
 	if (!chosen.ok) return chosen.reply;
 	const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 4000) : undefined;
@@ -547,8 +549,10 @@ function rulingsView(ctx: Ctx) {
 
 function queueResponse(ctx: Ctx): Response {
 	const { d } = ctx;
-	const open = ranked(ctx.state().values()).map((i) => view(d, i));
-	const later = snoozed(ctx.state().values()).map((i) => view(d, i));
+	// One snapshot for both lists, so an item whose time arrives between two reads is never in neither.
+	const states = [...ctx.state().values()];
+	const open = ranked(states).map((i) => view(d, i));
+	const later = snoozed(states).map((i) => view(d, i));
 	const list = readRulings(d.store);
 	return json({
 		items: open,

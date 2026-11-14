@@ -70,7 +70,7 @@ async function load() {
 			scheduleReturn();
 			if (!S.total || S.items.length > S.total - S.done) { S.total = S.items.length + S.done; }
 			S.route = r.route;
-			if (r.id) { const k = visible().findIndex((i) => i.id === r.id); if (k >= 0) S.sel = k; else if (r.route === "item") { S.route = "queue"; history.replaceState({}, "", "/"); } }
+			if (r.id) { const k = visible().findIndex((i) => i.id === r.id); if (k >= 0) S.sel = k; else if (r.route === "item") { S.route = "queue"; history.replaceState({}, "", "/"); if (S.snoozed.some((i) => i.id === r.id)) S.snoozedOpen = true; } }
 			S.sel = Math.min(S.sel, Math.max(0, visible().length - 1));
 		}
 	} catch (e) { toast(`Could not load: ${e.message}`, true); }

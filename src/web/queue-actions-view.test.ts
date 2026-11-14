@@ -303,6 +303,18 @@ describe("the Snoozed section", () => {
 		await p.tap({ act: "toggle-snoozed" });
 		expect(p.html()).not.toContain("Title Q-bbbb");
 	});
+	test("a link to a snoozed item's own address lands on the queue with the Snoozed section open, so Un-snooze is in reach", async () => {
+		const p = await page(
+			() => ({ items: [item("Q-aaaa")], snoozed: [snoozedItem("Q-bbbb", new Date(2026, 10, 15, 9, 0))] }),
+			{
+				path: "/item/Q-bbbb",
+			},
+		);
+		expect(p.went).toContain("/");
+		expect(p.html()).toContain('aria-expanded="true"');
+		expect(p.html()).toContain("Title Q-bbbb");
+		expect(p.html()).toContain('data-act="unsnooze" data-id="Q-bbbb"');
+	});
 	test("is absent when nothing is snoozed", async () => {
 		const p = await page(() => ({ items: [item("Q-aaaa")] }));
 		expect(p.html()).not.toContain("SNOOZED");

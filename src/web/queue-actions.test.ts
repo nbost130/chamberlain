@@ -139,6 +139,28 @@ describe("snooze", () => {
 		expect(r.skipped).toEqual([{ id: "Q-aaaa", why: "no recommendation" }]);
 	});
 
+	test("a batch decided before the snooze is refused for that item inside the serialized step", async () => {
+		const s = setup();
+		askQuestion(s.store, question("Q-aaaa"));
+		await s.post("Q-aaaa", "snooze");
+		const r = await s.app.answer("Q-aaaa", { choice: 0 }, "batch");
+		expect([r.status, (r.body as { error: string }).error]).toEqual([409, "snoozed: it is off the active list"]);
+		expect(wakes(s)).toEqual([]);
+		// a plain answer to a snoozed item is still allowed
+		expect((await s.app.answer("Q-aaaa", { choice: 0 }, "page")).status).toBe(200);
+	});
+
+	test("the queue lists an item in exactly one of its two lists, even when its time arrives between two reads of the clock", async () => {
+		const s = setup();
+		askQuestion(s.store, question("Q-aaaa"));
+		await s.post("Q-aaaa", "snooze");
+		const until = T0 + 2 * HOUR;
+		let reads = 0;
+		Object.defineProperty(s.clock, "t", { get: () => (reads++ === 0 ? until - 1 : until) });
+		const q = await s.queue();
+		expect(q.items.length + q.snoozed.length).toBe(1);
+	});
+
 	test("comes back on its own when its time arrives, with no request and nothing run", async () => {
 		const s = setup();
 		askQuestion(s.store, question("Q-aaaa"));
@@ -182,7 +204,17 @@ describe("snooze", () => {
 		const s = setup();
 		askQuestion(s.store, question("Q-aaaa"));
 		const before = world(s.store);
-		for (const until of [undefined, null, 7, "", "soon", iso(T0 - HOUR), iso(T0), iso(T0 + 400 * 24 * HOUR)]) {
+		for (const until of [
+			undefined,
+			null,
+			7,
+			"",
+			"soon",
+			"2026-11-14T15:00:00",
+			iso(T0 - HOUR),
+			iso(T0),
+			iso(T0 + 400 * 24 * HOUR),
+		]) {
 			const r = await s.post("Q-aaaa", "snooze", { until });
 			expect([until, r.status]).toEqual([until, 400]);
 		}
@@ -268,8 +300,9 @@ describe("direction: a note and no option", () => {
 		askQuestion(s.store, question("Q-aaaa"));
 		const h = hold(s.store, "Q-aaaa");
 		await s.post("Q-aaaa", "direction", { note: "go" });
-		expect(reconcileItemHolds(s.store, new Date(T0)).closed).toBe(1);
+		// closed by the page the moment it settled the item, with the daemon stopped; the reconciler then has nothing left to do
 		expect(heldOpen(s.store)).toEqual([]);
+		expect(reconcileItemHolds(s.store, new Date(T0)).closed).toBe(0);
 		expect(String(s.store.items.get(HELD, h)?.payload.how)).toContain("direction, no option chosen");
 	});
 
@@ -331,7 +364,8 @@ describe("dismiss: already handled, or no longer needed", () => {
 		askQuestion(s.store, q);
 		const h = hold(s.store, "Q-aaaa");
 		await s.post("Q-aaaa", "dismiss", { note: "no longer needed" });
-		expect(reconcileItemHolds(s.store, new Date(T0)).closed).toBe(1);
+		expect(heldOpen(s.store)).toEqual([]);
+		expect(reconcileItemHolds(s.store, new Date(T0)).closed).toBe(0);
 		expect(String(s.store.items.get(HELD, h)?.payload.how)).toContain("Dismissed");
 		expect(findSettled(s.store, { title: q.title, thread: q.thread }, {}).matches).toEqual([]);
 		// control: the same question answered with an option is found

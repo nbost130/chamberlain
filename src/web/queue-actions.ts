@@ -3,6 +3,7 @@
  * direction (a note, no option) or dismiss it. Kept out of the app's closure so each step is small enough to read and test on its own;
  * the app wires it to its serial queue and clock (./app.ts), and the routes are the full page's alone (`inlineVerdict`).
  */
+import { closeHeldForItem } from "../core/afk.ts";
 import { crashPoint } from "../core/crash.ts";
 import {
 	type AnswerKind,
@@ -70,6 +71,20 @@ export type ItemActionDeps = {
 
 const stateOf = (d: ItemActionDeps, id: string) => questionStates(d.store, d.clock()).get(id);
 
+/**
+ * Closes the item's afk hold now, so it does not wait for the daemon's next pass. After the claim has committed, and best effort: the daemon's
+ * reconciler (hold-reconcile.ts) closes it from the claim anyway, so a crash or a failure here loses nothing.
+ */
+function closeHolds(d: ItemActionDeps, id: string, kind: AnswerKind) {
+	try {
+		const how = `${kind === "direction" ? "Directed (direction, no option chosen)" : "Dismissed"} on the queue page; closed by the queue page.`;
+		const n = closeHeldForItem(d.store, id, how);
+		if (n) d.log("held-closed-for-item", { item: id, closed: n });
+	} catch (e) {
+		d.log("held-close-failed", { item: id, error: String(e).slice(0, 200) });
+	}
+}
+
 /** Takes the item's one wake for a direction or a dismissal, in one transaction with its outbox row and the end of its snooze. */
 function claimSettled(d: ItemActionDeps, i: QuestionState, kind: AnswerKind, note: string | undefined): Reply {
 	const claim = pageClaim(i, plainAnswer(kind, i.id, note, new Date().toISOString()));
@@ -84,6 +99,7 @@ function claimSettled(d: ItemActionDeps, i: QuestionState, kind: AnswerKind, not
 	if (lost) return takenReply(lost.owner);
 	crashPoint("committed");
 	d.log(kind === "direction" ? "directed" : "dismissed", { id: i.id });
+	closeHolds(d, i.id, kind);
 	return { status: 200, body: { ok: true, id: i.id, kind, recorded: true, to: "steward", wake: "queued" } };
 }
 

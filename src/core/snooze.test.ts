@@ -76,6 +76,7 @@ describe("what a snooze time may be", () => {
 		expect(parseSnoozeUntil(iso(NOW + HOUR), NOW)).toEqual({ ok: true, until: iso(NOW + HOUR) });
 		expect(parseSnoozeUntil("2026-11-15T09:00:00-05:00", NOW)).toEqual({ ok: true, until: "2026-11-15T14:00:00.000Z" });
 		expect(parseSnoozeUntil(iso(NOW + SNOOZE_MAX_MS), NOW).ok).toBe(true);
+		expect(parseSnoozeUntil("2026-11-15T09:00:00.500+00:00", NOW).ok).toBe(true);
 	});
 	test("nothing else: not text, not a date, not in the past, not within half a minute, not past a year", () => {
 		for (const bad of [
@@ -87,6 +88,10 @@ describe("what a snooze time may be", () => {
 			"  ",
 			"tomorrow",
 			"2026-13-45",
+			"2026-11-15T09:00:00",
+			"2026-11-15T09:00",
+			"2026-11-15",
+			"Sun, 15 Nov 2026 09:00:00 GMT",
 			iso(NOW - HOUR),
 			iso(NOW),
 			iso(NOW + SNOOZE_MIN_MS - 1),

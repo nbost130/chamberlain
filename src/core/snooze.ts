@@ -19,12 +19,17 @@ export const SNOOZE_MAX_MS = 366 * 86_400_000;
 /** The shortest: a snooze that ends before the page reloads is no snooze. */
 export const SNOOZE_MIN_MS = 30_000;
 
+const ISO_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
 /** Pure: the time a snooze request names, as an ISO time, or why it is refused. Only an absolute time counts: the page works out "1 hour" and "tomorrow morning" in the browser's own time zone. */
 export function parseSnoozeUntil(
 	raw: unknown,
 	now: number,
 ): { ok: true; until: string } | { ok: false; error: string } {
 	if (typeof raw !== "string" || !raw.trim()) return { ok: false, error: "until must be a date and time" };
+	// A time with no zone ("2026-11-15T09:00:00") names no instant: it would be read in whatever zone this process runs in.
+	if (!ISO_WITH_ZONE.test(raw.trim()))
+		return { ok: false, error: "until must be an ISO time with its zone, like 2026-11-15T09:00:00Z" };
 	const t = Date.parse(raw);
 	if (Number.isNaN(t)) return { ok: false, error: "until is not a date and time" };
 	if (t < now + SNOOZE_MIN_MS) return { ok: false, error: "until must be in the future" };
@@ -90,20 +95,23 @@ function dueOf(store: Store, now: number): Due[] {
  * The caller notifies only the urgent ones (`isUrgent`): a question that can wait (`urgent: false`) comes back silently, as it was filed.
  */
 export function returnDueSnoozes(store: Store, now = Date.now()): QuestionState[] {
-	const back: QuestionState[] = [];
-	for (const { question, until } of dueOf(store, now)) {
-		store.tx(() => {
-			store.items.patch(QUEUE, question.id, { snoozeReturned: until });
-			noteHolds(
-				store,
-				question.id,
-				`Snooze ended (${until.slice(0, 16)}Z): the item is back on the active list.`,
-				new Date(now),
-			);
-		});
-		back.push(question);
-	}
-	return back;
+	return dueOf(store, now).map((d) => {
+		markReturned(store, d, now);
+		return d.question;
+	});
+}
+
+/** Records one return and tells the item's holds, in one transaction. */
+function markReturned(store: Store, { question, until }: Due, now: number) {
+	store.tx(() => {
+		store.items.patch(QUEUE, question.id, { snoozeReturned: until });
+		noteHolds(
+			store,
+			question.id,
+			`Snooze ended (${until.slice(0, 16)}Z): the item is back on the active list.`,
+			new Date(now),
+		);
+	});
 }
 
 export type ReturnDeps = {
@@ -124,7 +132,10 @@ export type ReturnDeps = {
  */
 export async function announceReturns(d: ReturnDeps): Promise<void> {
 	try {
-		for (const q of returnDueSnoozes(d.store, d.now)) {
+		// Each return is recorded just before its own notice, never all at once: a crash during one post leaves the rest due, not lost.
+		for (const due of dueOf(d.store, d.now)) {
+			markReturned(d.store, due, d.now);
+			const q = due.question;
 			const notify = isUrgent(q) && !d.dry;
 			d.log("snooze-returned", { id: q.id, notified: notify });
 			if (!notify) continue;
