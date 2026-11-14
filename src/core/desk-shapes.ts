@@ -53,7 +53,18 @@ export const GENERIC_SHAPES: ShapeSet = {
 };
 function gitRead(): ShapeBody {
 	return {
-		flags: { "--stat": "bool", "--shortstat": "bool", "--name-only": "bool", "--name-status": "bool", "--oneline": "bool", "--no-color": "bool", "-n": "digits", "--max-count": "digits", "--since": "time", "--until": "time" },
+		flags: {
+			"--stat": "bool",
+			"--shortstat": "bool",
+			"--name-only": "bool",
+			"--name-status": "bool",
+			"--oneline": "bool",
+			"--no-color": "bool",
+			"-n": "digits",
+			"--max-count": "digits",
+			"--since": "time",
+			"--until": "time",
+		},
 		same: { "--max-count": "-n" },
 		positional: "ref",
 		max: 4,
@@ -75,7 +86,15 @@ const count = (x: unknown) => typeof x === "number" && Number.isInteger(x) && x 
 /** Pure: why a shape body is malformed, or its normalized form. */
 function parseBody(raw: unknown, withSubcommands: boolean): ShapeBody | string {
 	if (!isObj(raw)) return "is not an object";
-	const known = new Set(["flags", "same", "positional", "min", "max", "paths", ...(withSubcommands ? ["bare", "subcommands"] : [])]);
+	const known = new Set([
+		"flags",
+		"same",
+		"positional",
+		"min",
+		"max",
+		"paths",
+		...(withSubcommands ? ["bare", "subcommands"] : []),
+	]);
 	const stray = Object.keys(raw).find((k) => !known.has(k));
 	if (stray !== undefined) return `has an unknown field ${JSON.stringify(stray.slice(0, 40))}`;
 	const out: ShapeBody = {};
@@ -84,7 +103,8 @@ function parseBody(raw: unknown, withSubcommands: boolean): ShapeBody | string {
 		const flags: Record<string, "bool" | ValueKind> = {};
 		for (const [k, v] of Object.entries(raw.flags)) {
 			if (!FLAG.test(k)) return `has the flag ${JSON.stringify(k.slice(0, 40))}, which is not written -x or --name`;
-			if (v !== "bool" && !isKind(v)) return `has the flag ${k} with a value kind that is not bool, ${VALUE_KINDS.join(", ")}`;
+			if (v !== "bool" && !isKind(v))
+				return `has the flag ${k} with a value kind that is not bool, ${VALUE_KINDS.join(", ")}`;
 			flags[k] = v;
 		}
 		out.flags = flags;
@@ -93,14 +113,21 @@ function parseBody(raw: unknown, withSubcommands: boolean): ShapeBody | string {
 		if (!isObj(raw.same)) return "has `same` that is not an object";
 		const same: Record<string, string> = {};
 		for (const [k, v] of Object.entries(raw.same)) {
-			if (typeof v !== "string" || !FLAG.test(k) || !out.flags || !(k in out.flags) || !(v in out.flags)) return `has a \`same\` entry (${JSON.stringify(k.slice(0, 40))}) that does not join two flags it lists`;
+			if (typeof v !== "string" || !FLAG.test(k) || !out.flags || !(k in out.flags) || !(v in out.flags))
+				return `has a \`same\` entry (${JSON.stringify(k.slice(0, 40))}) that does not join two flags it lists`;
 			same[k] = v;
 		}
 		out.same = same;
 	}
 	if (raw.positional !== undefined) {
 		if (isKind(raw.positional)) out.positional = raw.positional;
-		else if (Array.isArray(raw.positional) && raw.positional.length > 0 && raw.positional.length <= 20 && raw.positional.every((w) => typeof w === "string" && LITERAL.test(w))) out.positional = raw.positional as string[];
+		else if (
+			Array.isArray(raw.positional) &&
+			raw.positional.length > 0 &&
+			raw.positional.length <= 20 &&
+			raw.positional.every((w) => typeof w === "string" && LITERAL.test(w))
+		)
+			out.positional = raw.positional as string[];
 		else return `has a \`positional\` that is neither a kind (${VALUE_KINDS.join(", ")}) nor a list of plain words`;
 	}
 	for (const k of ["min", "max"] as const) {
@@ -121,31 +148,59 @@ function parseBody(raw: unknown, withSubcommands: boolean): ShapeBody | string {
  */
 export function parseShapes(raw: unknown, warn: (msg: string) => void = () => {}): ShapeSet {
 	if (raw === undefined) return {};
-	if (!isObj(raw)) { warn("alert desk: ignoring commandShapes: it is not an object"); return {}; }
+	if (!isObj(raw)) {
+		warn("alert desk: ignoring commandShapes: it is not an object");
+		return {};
+	}
 	const out: ShapeSet = {};
 	for (const [name, def] of Object.entries(raw)) {
-		const drop = (why: string) => warn(`alert desk: ignoring the command shape ${JSON.stringify(name.slice(0, 60))}: ${why}`);
-		if (!COMMAND.test(name)) { drop("a command is a bare name"); continue; }
-		if (BUILT_IN_COMMANDS.includes(name)) { drop("it is a built-in command, whose shape cannot be changed"); continue; }
+		const drop = (why: string) =>
+			warn(`alert desk: ignoring the command shape ${JSON.stringify(name.slice(0, 60))}: ${why}`);
+		if (!COMMAND.test(name)) {
+			drop("a command is a bare name");
+			continue;
+		}
+		if (BUILT_IN_COMMANDS.includes(name)) {
+			drop("it is a built-in command, whose shape cannot be changed");
+			continue;
+		}
 		const top = parseBody(def, true);
-		if (typeof top === "string") { drop(top); continue; }
+		if (typeof top === "string") {
+			drop(top);
+			continue;
+		}
 		const shape: Shape = { ...top };
 		const d = def as Record<string, unknown>;
 		if (d.bare !== undefined) {
-			if (typeof d.bare !== "boolean") { drop("has `bare` that is not true or false"); continue; }
+			if (typeof d.bare !== "boolean") {
+				drop("has `bare` that is not true or false");
+				continue;
+			}
 			if (d.bare) shape.bare = true;
 		}
 		if (d.subcommands !== undefined) {
-			if (!isObj(d.subcommands)) { drop("has `subcommands` that is not an object"); continue; }
+			if (!isObj(d.subcommands)) {
+				drop("has `subcommands` that is not an object");
+				continue;
+			}
 			const subs: Record<string, ShapeBody> = {};
 			let bad: string | undefined;
 			for (const [sub, body] of Object.entries(d.subcommands)) {
-				if (!SUBCOMMAND.test(sub)) { bad = `the subcommand ${JSON.stringify(sub.slice(0, 40))} is not one or two lowercase words`; break; }
+				if (!SUBCOMMAND.test(sub)) {
+					bad = `the subcommand ${JSON.stringify(sub.slice(0, 40))} is not one or two lowercase words`;
+					break;
+				}
 				const b = parseBody(body, false);
-				if (typeof b === "string") { bad = `the subcommand ${JSON.stringify(sub)} ${b}`; break; }
+				if (typeof b === "string") {
+					bad = `the subcommand ${JSON.stringify(sub)} ${b}`;
+					break;
+				}
 				subs[sub] = b;
 			}
-			if (bad) { drop(bad); continue; }
+			if (bad) {
+				drop(bad);
+				continue;
+			}
 			shape.subcommands = subs;
 		}
 		out[name] = shape;
@@ -164,14 +219,19 @@ export function parseGatherer(raw: unknown, warn: (msg: string) => void = () => 
 /** Pure: one line of the standing prompt for each thing a shape allows, so the prompt teaches exactly what the hook accepts. */
 export function describeShape(name: string, shape: Shape): string[] {
 	const arg = (b: ShapeBody) => {
-		const flags = Object.entries(b.flags ?? {}).filter(([k]) => !(b.same && k in b.same)).map(([k, v]) => (v === "bool" ? `[${k}]` : `[${k} <${v}>]`));
-		const one = b.positional === undefined ? "" : Array.isArray(b.positional) ? b.positional.join("|") : `<${b.positional}>`;
+		const flags = Object.entries(b.flags ?? {})
+			.filter(([k]) => !(b.same && k in b.same))
+			.map(([k, v]) => (v === "bool" ? `[${k}]` : `[${k} <${v}>]`));
+		const one =
+			b.positional === undefined ? "" : Array.isArray(b.positional) ? b.positional.join("|") : `<${b.positional}>`;
 		const pos = b.positional === undefined ? [] : [(b.min ?? 0) > 0 && !Array.isArray(b.positional) ? one : `[${one}]`];
 		return [...flags, ...pos, ...(b.paths ? ["[-- <relative path>]"] : [])].join(" ");
 	};
 	const lines: string[] = [];
 	if (shape.bare) lines.push(`\`${name}\``);
-	if (shape.subcommands) for (const [sub, body] of Object.entries(shape.subcommands)) lines.push(`\`${`${name} ${sub} ${arg(body)}`.trim()}\``);
+	if (shape.subcommands)
+		for (const [sub, body] of Object.entries(shape.subcommands))
+			lines.push(`\`${`${name} ${sub} ${arg(body)}`.trim()}\``);
 	else lines.push(`\`${`${name} ${arg(shape)}`.trim()}\``);
 	return lines;
 }

@@ -8,7 +8,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { testRelay } from "../testing/relay.ts";
 import { fetchWake } from "../testing/wake.ts";
-import { askQuestion, claimWake, getQuestion, pageClaim, readClaims, recordAnswerDelivered, wokenBy, type Question } from "../core/questions.ts";
+import {
+	askQuestion,
+	claimWake,
+	getQuestion,
+	pageClaim,
+	readClaims,
+	recordAnswerDelivered,
+	wokenBy,
+	type Question,
+} from "../core/questions.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
 import { createApp } from "./app.ts";
@@ -16,11 +25,21 @@ import { createApp } from "./app.ts";
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 const item = (id: string): Question => ({
-	id, kind: "product", title: "Lead the onboarding with a photo?", context: "Two layouts tested.", options: [{ label: "Photo first" }, { label: "Text first" }], recommended: 0,
-	thread: "Mobile app", server: "main", threadId: "thread-1", createdAt: "2026-11-09T10:00:00.000Z",
+	id,
+	kind: "product",
+	title: "Lead the onboarding with a photo?",
+	context: "Two layouts tested.",
+	options: [{ label: "Photo first" }, { label: "Text first" }],
+	recommended: 0,
+	thread: "Mobile app",
+	server: "main",
+	threadId: "thread-1",
+	createdAt: "2026-11-09T10:00:00.000Z",
 });
 
 /** One database file, one webhook that counts what it accepted, and fresh processes (each with its own connection) on demand. */
@@ -45,20 +64,50 @@ function world(status: () => number = () => 202) {
 		const own = store();
 		const { drain } = testRelay(own, wake);
 		const ui = createApp({ store: own, state, log: () => {}, hosts: [HOST], staticDir: root });
-		const app = { ...ui, idle: async () => { await ui.idle(); if (daemon) await drain(); } };
+		const app = {
+			...ui,
+			idle: async () => {
+				await ui.idle();
+				if (daemon) await drain();
+			},
+		};
 		const answer = async (id: string, choice: number) => {
-			const r = await app.fetch(new Request(`http://${HOST}/api/items/${id}/answer`, { method: "POST", headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice }) }));
+			const r = await app.fetch(
+				new Request(`http://${HOST}/api/items/${id}/answer`, {
+					method: "POST",
+					headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" },
+					body: JSON.stringify({ choice }),
+				}),
+			);
 			await app.idle();
 			return r.status;
 		};
-		const tick = async () => { await ui.recover(); if (daemon) await drain(); };
+		const tick = async () => {
+			await ui.recover();
+			if (daemon) await drain();
+		};
 		return { answer, tick, app };
 	}
 	const wakesFor = (id: string) => accepted.filter((p) => p.message.includes(id));
-	return { state, store: shared, accepted, page, wakesFor, setStatus: (s: () => number) => { code = s; } };
+	return {
+		state,
+		store: shared,
+		accepted,
+		page,
+		wakesFor,
+		setStatus: (s: () => number) => {
+			code = s;
+		},
+	};
 }
 
-const first = { choice: 0, label: "Photo first", by: "page" as const, t: new Date().toISOString(), deliveryId: "answer:item:Q-abcd" };
+const first = {
+	choice: 0,
+	label: "Photo first",
+	by: "page" as const,
+	t: new Date().toISOString(),
+	deliveryId: "answer:item:Q-abcd",
+};
 
 describe("one wake per item", () => {
 	test("answered once, then answered again and restarted: one wake, and the second answer is refused", async () => {
@@ -106,7 +155,13 @@ describe("one wake per item", () => {
 		askQuestion(w.store, item("Q-abcd"));
 		const p = w.page();
 		// The item has no proposed ruling, so ticking "save as a ruling" with no wording is refused.
-		const r = await p.app.fetch(new Request(`http://${HOST}/api/items/Q-abcd/answer`, { method: "POST", headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice: 0, saveRuling: true }) }));
+		const r = await p.app.fetch(
+			new Request(`http://${HOST}/api/items/Q-abcd/answer`, {
+				method: "POST",
+				headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" },
+				body: JSON.stringify({ choice: 0, saveRuling: true }),
+			}),
+		);
 		expect(r.status).toBe(400);
 		await p.app.idle();
 		expect(wokenBy(w.store, "Q-abcd")).toBeUndefined();
@@ -134,7 +189,11 @@ test("the claim is first come, first served, and every later claimant gets the w
 	expect(claimWake(w.store, pageClaim(item("Q-abcd"), first)).won).toBe(true);
 	const lost = claimWake(w.store, pageClaim(item("Q-abcd"), { ...first, choice: 1, label: "Text first" }));
 	expect(lost.won).toBe(false);
-	expect(lost.claim).toMatchObject({ owner: "page", deliveryId: "answer:item:Q-abcd", answer: { label: "Photo first" } });
+	expect(lost.claim).toMatchObject({
+		owner: "page",
+		deliveryId: "answer:item:Q-abcd",
+		answer: { label: "Photo first" },
+	});
 	expect(claimWake(w.store, pageClaim(item("Q-abcd"), first)).won).toBe(false);
 	expect(claimWake(w.store, pageClaim(item("Q-efgh"), { ...first, deliveryId: "answer:item:Q-efgh" })).won).toBe(true);
 	expect(() => claimWake(w.store, { ...pageClaim(item("Q-abcd"), first), item: "Q-nope1" })).toThrow(/no item/);

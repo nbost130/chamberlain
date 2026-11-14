@@ -62,26 +62,63 @@ const fragmentText = (t: string) => t.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/
  *     naming it and the error; an entry that cannot be examined (a 0600 directory: listable, not searchable) is skipped the same way.
  * No `brief.d/` is no fragments. `o.euid` is a seam for tests.
  */
-export function loadBriefFragments(conf: string, warn: (msg: string) => void = (m) => console.error(m), o: { euid?: number } = {}): string[] {
+export function loadBriefFragments(
+	conf: string,
+	warn: (msg: string) => void = (m) => console.error(m),
+	o: { euid?: number } = {},
+): string[] {
 	const dir = `${conf}/brief.d`;
 	const euid = "euid" in o ? o.euid : process.geteuid?.();
 	let dst;
-	try { dst = lstatSync(dir); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return []; warn(`brief.ts: ignoring ${dir}: ${(e as Error).message}`); return []; }
+	try {
+		dst = lstatSync(dir);
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+		warn(`brief.ts: ignoring ${dir}: ${(e as Error).message}`);
+		return [];
+	}
 	const bad = authorityProblem(dst, "directory", euid);
-	if (bad) { warn(`brief.ts: ignoring every brief fragment: ${dir} is refused: ${bad}`); return []; }
+	if (bad) {
+		warn(`brief.ts: ignoring every brief fragment: ${dir} is refused: ${bad}`);
+		return [];
+	}
 	let listed: string[];
-	try { listed = readdirSync(dir); } catch (e) { warn(`brief.ts: ignoring every brief fragment: ${dir} cannot be read: ${(e as Error).message}`); return []; }
+	try {
+		listed = readdirSync(dir);
+	} catch (e) {
+		warn(`brief.ts: ignoring every brief fragment: ${dir} cannot be read: ${(e as Error).message}`);
+		return [];
+	}
 	const names = listed.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 	const out: string[] = [];
 	for (const name of names) {
 		const path = `${dir}/${name}`;
 		let st;
-		try { st = lstatSync(path); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
-		if (st.isSymbolicLink()) { warn(`brief.ts: ignoring brief fragment ${path}: a symlink is never followed`); continue; }
-		if (!st.isFile()) { warn(`brief.ts: ignoring ${path}: not a regular file`); continue; }
-		if (!name.endsWith(".md")) { warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`); continue; }
+		try {
+			st = lstatSync(path);
+		} catch (e) {
+			warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`);
+			continue;
+		}
+		if (st.isSymbolicLink()) {
+			warn(`brief.ts: ignoring brief fragment ${path}: a symlink is never followed`);
+			continue;
+		}
+		if (!st.isFile()) {
+			warn(`brief.ts: ignoring ${path}: not a regular file`);
+			continue;
+		}
+		if (!name.endsWith(".md")) {
+			warn(`brief.ts: ignoring ${path}: a brief fragment's name ends in .md`);
+			continue;
+		}
 		let text: string;
-		try { text = readAuthority(path, euid); } catch (e) { warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`); continue; }
+		try {
+			text = readAuthority(path, euid);
+		} catch (e) {
+			warn(`brief.ts: ignoring brief fragment ${path}: ${(e as Error).message}`);
+			continue;
+		}
 		const body = fragmentText(text);
 		if (body.trim()) out.push(body);
 	}
@@ -98,7 +135,9 @@ function readAuthority(path: string, euid: number | undefined): string {
 		const bad = authorityProblem(fstatSync(fd), "file", euid);
 		if (bad) throw Error(bad);
 		return readFileSync(fd, "utf8");
-	} finally { closeSync(fd); }
+	} finally {
+		closeSync(fd);
+	}
 }
 
 /** Pure: `brief` with the fragments appended, one blank line apart, before its `## Open work at hand-over` section when it has one. */
@@ -139,7 +178,10 @@ function genericBrief(i: BriefInput): string {
 	const state = i.state ?? STATE;
 	const here = i.environments.find((e) => !e.environmentId);
 	const reach = i.environments
-		.map((e) => `- ${e.name}: ${e.environmentId ? `pass \`environmentId: ${e.environmentId}\`` : "this server, no environmentId"}${e.mayBeOffline ? " (a laptop: offline when the lid is shut, which is normal)" : ""}`)
+		.map(
+			(e) =>
+				`- ${e.name}: ${e.environmentId ? `pass \`environmentId: ${e.environmentId}\`` : "this server, no environmentId"}${e.mayBeOffline ? " (a laptop: offline when the lid is shut, which is normal)" : ""}`,
+		)
 		.join("\n");
 	return [
 		`# You are the Steward
@@ -180,8 +222,12 @@ ${reach}${notes.reachOutro ? `\n\n${notes.reachOutro}` : ""}`,
 You are one long-lived thread, and ${who} talks to you here. When your context grows too large it is compacted into a summary, in this same thread. A summary loses detail, so anything that must survive goes in the ledgers the moment it happens: decisions, holds and rulings. Every wake repeats your rights and rulings, and this hand-off stays at \`${state}/steward-brief.md\` if you need it again.`,
 		`## Decision rights (${poss} standing rules, verbatim)\n\n${i.rights.trim() || "None written. Hold anything you are unsure of and ask."}`,
 		`## Standing rulings in force (their words; cite each by its ID)\n\n${i.rulings.trim() || "None recorded."}`,
-		i.operatingRules.trim() ? `## Operating rules (copied in by the hand-off builder; the source file stays canonical)\n\n${i.operatingRules.trim()}` : "",
-		i.afk ? `## Away record\n\n${awayModeLine(i.afk)}` : `## Away record\n\n${i.principal ?? Principal()} is not marked away.`,
+		i.operatingRules.trim()
+			? `## Operating rules (copied in by the hand-off builder; the source file stays canonical)\n\n${i.operatingRules.trim()}`
+			: "",
+		i.afk
+			? `## Away record\n\n${awayModeLine(i.afk)}`
+			: `## Away record\n\n${i.principal ?? Principal()} is not marked away.`,
 		`## The ledgers
 
 The ledgers stay in the database, so this hand-off stays small. Read them when a wake or ${who} needs them, never all at once.
@@ -194,7 +240,11 @@ The ledgers stay in the database, so this hand-off stays small. Read them when a
 
 - Start every message you send to a thread with the word \`Steward\`. That signature is how the daemon knows the thread answers to you, and it wakes you when that thread finishes a turn. Up to three such wakes follow each message.
 - Whether or not ${who} is away, the daemon runs the routine sweep checks itself, every two hours, and wakes you only with what they find. A full sweep comes every six hours or whenever a check could not run. You create no sweep task.`,
-		i.predecessor ? `## Predecessor\n\nThe previous operator is thread \`${i.predecessor}\`. Do not read its history unless a specific question needs it, and then read narrowly.` : "",
+		i.predecessor
+			? `## Predecessor\n\nThe previous operator is thread \`${i.predecessor}\`. Do not read its history unless a specific question needs it, and then read narrowly.`
+			: "",
 		here ? "" : "⚠️ No environment in servers.json is marked as this server (one with no environmentId).",
-	].filter(Boolean).join("\n\n");
+	]
+		.filter(Boolean)
+		.join("\n\n");
 }

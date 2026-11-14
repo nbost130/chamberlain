@@ -15,7 +15,11 @@ import type { Store, WakeMeta } from "./store.ts";
  * `ok: true` means the receiver accepted it. Anything else, `ok: false` or a throw, is an attempt that did not deliver: it is counted all
  * the same (a timeout may well have reached the receiver), and the row is tried again after a pause until its attempts run out.
  */
-export type WakeResult = { ok: boolean; /** The transport's own status, such as an HTTP code. Logged, never interpreted. */ status?: number; error?: string };
+export type WakeResult = {
+	ok: boolean /** The transport's own status, such as an HTTP code. Logged, never interpreted. */;
+	status?: number;
+	error?: string;
+};
 export type WakeTransport = {
 	/** Is there a place to send to right now? Read fresh on every call. False means nothing is attempted: rows wait (the `wake-not-ready` alarm says why) and no attempt is used. */
 	ready: () => boolean;
@@ -42,8 +46,10 @@ export const DELIVERED_KEEP_MS = 30 * 24 * 3600_000;
  * de-duplicate, so the Steward has to: a wake whose delivery id it has already handled is a repeat. The id is frozen with the row, so every
  * POST of it reads the same.
  */
-export const DELIVERY_ID_LINE = (deliveryId: string) => `delivery id: ${deliveryId} (the same id again is a repeat: do not act on it twice)`;
-export const withDeliveryId = (message: string, deliveryId: string): string => (message.includes(DELIVERY_ID_LINE(deliveryId)) ? message : `${message}\n${DELIVERY_ID_LINE(deliveryId)}`);
+export const DELIVERY_ID_LINE = (deliveryId: string) =>
+	`delivery id: ${deliveryId} (the same id again is a repeat: do not act on it twice)`;
+export const withDeliveryId = (message: string, deliveryId: string): string =>
+	message.includes(DELIVERY_ID_LINE(deliveryId)) ? message : `${message}\n${DELIVERY_ID_LINE(deliveryId)}`;
 
 /** What `commit` did: nothing to send, written (a pending row or a held item), already known (any row or held item under this id), or a dry run. */
 export type Committed = "none" | "queued" | "known" | "dry";
@@ -72,8 +78,16 @@ export function createOutbox(d: OutboxDeps) {
 			// A kill here leaves neither the decision nor the wake: they are one transaction.
 			crashPoint("notified");
 			if (d.dry) return { kind: "dry", wake };
-			const row = { deliveryId: wake.deliveryId, message: wake.message, queuedAt: d.now?.() ?? Date.now(), ...wake.meta };
-			return { kind: (holdable(wake.meta) ? store.wakes.hold(row) : store.wakes.enqueue(row)) ? "queued" : "known", wake };
+			const row = {
+				deliveryId: wake.deliveryId,
+				message: wake.message,
+				queuedAt: d.now?.() ?? Date.now(),
+				...wake.meta,
+			};
+			return {
+				kind: (holdable(wake.meta) ? store.wakes.hold(row) : store.wakes.enqueue(row)) ? "queued" : "known",
+				wake,
+			};
 		});
 		if (out.kind === "none") return "none";
 		const { deliveryId, message, meta } = out.wake!;

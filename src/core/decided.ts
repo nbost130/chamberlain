@@ -13,7 +13,13 @@ import type { DecisionRow } from "./store.ts";
 export type DecisionRecord = DecisionRow;
 
 /** Pure: the log line for one decision. */
-export function decisionRecord(thread: string, decision: string, ruling: string, ref: string | undefined, t = new Date().toISOString()): DecisionRecord {
+export function decisionRecord(
+	thread: string,
+	decision: string,
+	ruling: string,
+	ref: string | undefined,
+	t = new Date().toISOString(),
+): DecisionRecord {
 	const ids = citedIds(ruling);
 	return { t, thread, decision, ruling, ...(ids.length ? { rulingIds: ids } : {}), ref: ref ?? null };
 }
@@ -23,7 +29,8 @@ export function main(argv: string[] = process.argv.slice(2)) {
 	const [thread, decision, ruling, ref] = argv;
 	if (thread === "list") {
 		const n = Math.max(1, Number(decision ?? 15) || 15);
-		for (const d of defaultStore().decisions.list().slice(-n)) console.log(`${d.t}\t${d.thread}\t${d.decision}\t${d.ruling}`);
+		for (const d of defaultStore().decisions.list().slice(-n))
+			console.log(`${d.t}\t${d.thread}\t${d.decision}\t${d.ruling}`);
 		process.exit(0);
 	}
 	if (!thread || !decision || !ruling) {

@@ -11,7 +11,12 @@ export function fetchWake(url: () => string | undefined, doFetch: typeof fetch):
 	return {
 		ready: () => Boolean(url()),
 		send: async (deliveryId, message) => {
-			const r = await doFetch(url()!, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deliveryId, message }), signal: AbortSignal.timeout(15000) });
+			const r = await doFetch(url()!, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ deliveryId, message }),
+				signal: AbortSignal.timeout(15000),
+			});
 			return { ok: r.ok, status: r.status };
 		},
 	};
@@ -29,5 +34,11 @@ export function recordingWake(status: () => number = () => 202) {
 			return { ok: s < 300, status: s };
 		},
 	};
-	return { wake, accepted, setStatus: (f: () => number) => { code = f; } };
+	return {
+		wake,
+		accepted,
+		setStatus: (f: () => number) => {
+			code = f;
+		},
+	};
 }

@@ -22,14 +22,24 @@ export function compatWarning(env: ServerEnvironment | undefined, tested = T3_TE
 	if (!env) return "could not read the server's version, so compatibility is unchecked";
 	const v = env.serverVersion;
 	const out: string[] = [];
-	if (typeof v !== "string" || !/^\d+\.\d+\.\d+/.test(v)) out.push(`the server reports no usable version (${JSON.stringify(v)})`);
-	else if (Bun.semver.order(v, tested.min) < 0 || Bun.semver.order(v, tested.max) > 0) out.push(`T3 ${v} is outside the tested range ${tested.min} to ${tested.max}`);
-	if (env.orchestrationProtocolVersion !== tested.orchestrationProtocol) out.push(`it speaks orchestration protocol ${JSON.stringify(env.orchestrationProtocolVersion)}, not ${tested.orchestrationProtocol}`);
-	return out.length ? `${out.join("; ")}. Chamberlain may misread threads or miss wakes; check docs/upstream-asks.md and docs/COMPATIBILITY.md.` : undefined;
+	if (typeof v !== "string" || !/^\d+\.\d+\.\d+/.test(v))
+		out.push(`the server reports no usable version (${JSON.stringify(v)})`);
+	else if (Bun.semver.order(v, tested.min) < 0 || Bun.semver.order(v, tested.max) > 0)
+		out.push(`T3 ${v} is outside the tested range ${tested.min} to ${tested.max}`);
+	if (env.orchestrationProtocolVersion !== tested.orchestrationProtocol)
+		out.push(
+			`it speaks orchestration protocol ${JSON.stringify(env.orchestrationProtocolVersion)}, not ${tested.orchestrationProtocol}`,
+		);
+	return out.length
+		? `${out.join("; ")}. Chamberlain may misread threads or miss wakes; check docs/upstream-asks.md and docs/COMPATIBILITY.md.`
+		: undefined;
 }
 
 /** Reads T3's unauthenticated environment document. Never throws: a failure is `undefined`. */
-export async function readEnvironment(origin: string, doFetch: typeof fetch = fetch): Promise<ServerEnvironment | undefined> {
+export async function readEnvironment(
+	origin: string,
+	doFetch: typeof fetch = fetch,
+): Promise<ServerEnvironment | undefined> {
 	try {
 		const r = await doFetch(new URL("/.well-known/t3/environment", origin), { signal: AbortSignal.timeout(8000) });
 		if (!r.ok) return undefined;
@@ -43,7 +53,9 @@ export async function readEnvironment(origin: string, doFetch: typeof fetch = fe
 export async function main(argv: string[] = process.argv.slice(2)) {
 	const origin = argv[0] ?? process.env.CHAMBERLAIN_T3_ORIGIN ?? "http://127.0.0.1:3773";
 	const env = await readEnvironment(origin);
-	console.log(`${origin}: T3 ${String(env?.serverVersion ?? "unknown")}, protocol ${String(env?.orchestrationProtocolVersion ?? "unknown")}; tested ${T3_TESTED.min} to ${T3_TESTED.max}, protocol ${T3_TESTED.orchestrationProtocol}`);
+	console.log(
+		`${origin}: T3 ${String(env?.serverVersion ?? "unknown")}, protocol ${String(env?.orchestrationProtocolVersion ?? "unknown")}; tested ${T3_TESTED.min} to ${T3_TESTED.max}, protocol ${T3_TESTED.orchestrationProtocol}`,
+	);
 	const w = compatWarning(env);
 	console.log(w ? `WARNING: ${w}` : "inside the tested range");
 	process.exit(w ? 1 : 0);

@@ -33,16 +33,25 @@ export type ServerEntry = {
 
 /** Pure: the entries of a parsed servers.json. Throws on a newer schema or a malformed entry. */
 export function parseServers(raw: unknown): ServerEntry[] {
-	const list = raw && typeof raw === "object" && !Array.isArray(raw) ? (checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion), (raw as { servers?: unknown }).servers) : undefined;
+	const list =
+		raw && typeof raw === "object" && !Array.isArray(raw)
+			? (checkVersion("servers.json", (raw as { schemaVersion?: unknown }).schemaVersion),
+				(raw as { servers?: unknown }).servers)
+			: undefined;
 	if (!Array.isArray(list)) throw Error('servers.json: need {"schemaVersion": 2, "servers": [{name, adapter, ...}]}');
 	const names = new Set<string>();
 	for (const x of list as Partial<ServerEntry>[]) {
-		if (!x || typeof x !== "object" || typeof x.name !== "string" || !x.name) throw Error("servers.json: every server needs a name");
-		if (x.adapter !== undefined && (typeof x.adapter !== "string" || !x.adapter.trim())) throw Error(`servers.json: ${x.name}: adapter must be a non-empty string`);
+		if (!x || typeof x !== "object" || typeof x.name !== "string" || !x.name)
+			throw Error("servers.json: every server needs a name");
+		if (x.adapter !== undefined && (typeof x.adapter !== "string" || !x.adapter.trim()))
+			throw Error(`servers.json: ${x.name}: adapter must be a non-empty string`);
 		if (names.has(x.name)) throw Error(`servers.json: two servers are named ${x.name}`);
 		names.add(x.name);
 	}
-	return (list as Partial<ServerEntry>[]).map((x) => ({ ...x, adapter: x.adapter?.trim() || DEFAULT_ADAPTER })) as ServerEntry[];
+	return (list as Partial<ServerEntry>[]).map((x) => ({
+		...x,
+		adapter: x.adapter?.trim() || DEFAULT_ADAPTER,
+	})) as ServerEntry[];
 }
 
 export const serversDoc = (servers: ServerEntry[]) => ({ schemaVersion: SCHEMA_VERSION, servers });
@@ -52,7 +61,8 @@ export function readServers(conf = CONF): ServerEntry[] | undefined {
 	const p = `${conf}/servers.json`;
 	if (!existsSync(p)) return undefined;
 	const st = statSync(p);
-	if (!isPrivateFile(st)) throw Error(`servers.json must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
+	if (!isPrivateFile(st))
+		throw Error(`servers.json must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
 	return parseServers(JSON.parse(readFileSync(p, "utf8")));
 }
 

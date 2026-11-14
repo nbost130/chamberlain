@@ -15,11 +15,32 @@ import { openStore } from "./sqlite-store.ts";
 import type { Store } from "./store.ts";
 
 const cleanups: (() => void)[] = [];
-afterEach(() => { for (const c of cleanups.splice(0).reverse()) c(); });
-const scratch = () => { const d = mkdtempSync(`${tmpdir()}/chamberlain-binding-`); cleanups.push(() => rmSync(d, { recursive: true, force: true })); return d; };
-const open = (path: string) => { const s = openStore(path); cleanups.push(() => s.close()); return s; };
-const hold = (path: string) => { const l = holdRelayLock(path); cleanups.push(() => l.release()); return l; };
-const base = (store: Store, lock: RelayLock): RelayDeps => ({ store, lock, wake: { ready: () => true, send: async () => ({ ok: true }) }, gate: () => "idle", log: () => {}, alarm: () => {} });
+afterEach(() => {
+	for (const c of cleanups.splice(0).reverse()) c();
+});
+const scratch = () => {
+	const d = mkdtempSync(`${tmpdir()}/chamberlain-binding-`);
+	cleanups.push(() => rmSync(d, { recursive: true, force: true }));
+	return d;
+};
+const open = (path: string) => {
+	const s = openStore(path);
+	cleanups.push(() => s.close());
+	return s;
+};
+const hold = (path: string) => {
+	const l = holdRelayLock(path);
+	cleanups.push(() => l.release());
+	return l;
+};
+const base = (store: Store, lock: RelayLock): RelayDeps => ({
+	store,
+	lock,
+	wake: { ready: () => true, send: async () => ({ ok: true }) },
+	gate: () => "idle",
+	log: () => {},
+	alarm: () => {},
+});
 
 describe("a relay lock is the lock on the relay's own database", () => {
 	test("a handle for another database is refused, with the real lock held and nothing locking the store's own file", () => {
@@ -44,7 +65,9 @@ describe("a relay lock is the lock on the relay's own database", () => {
 		const store = open(`${dir}/chamberlain.db`);
 		symlinkSync(store.path, `${dir}/alias.db`);
 		const lock = hold(`${dir}/alias.db`);
-		expect(lock.identity).toBe(`${statSync(dir).dev}:${statSync(dir).ino} ${statSync(store.path).dev}:${statSync(store.path).ino}`);
+		expect(lock.identity).toBe(
+			`${statSync(dir).dev}:${statSync(dir).ino} ${statSync(store.path).dev}:${statSync(store.path).ino}`,
+		);
 		expect(lock.directory).toBe(realpathSync(dir));
 		expect(lock.path).toBe(realpathSync(store.path));
 		expect(() => createRelay(base(store, lock))).not.toThrow();
@@ -73,8 +96,25 @@ describe("a relay lock is the lock on the relay's own database", () => {
 		const store = open(`${scratch()}/actual.db`);
 		const unrelated = hold(`${scratch()}/unrelated.db`);
 		const root = scratch();
-		const adapter = { id: "fake", capabilities: [], watch: () => new Promise<void>(() => {}), wake: { ready: () => true, send: async () => ({ ok: true }) }, isBusy: () => "idle", post: async () => ({ ok: true }), serverLine: () => "" };
-		expect(() => createEngine({ conf: root, lock: unrelated, store, servers: [{ server: { name: "fake", adapter: "fake" }, adapter }], housekeeping: false, log: () => {} } as unknown as Parameters<typeof createEngine>[0])).toThrow("not on this store's database");
+		const adapter = {
+			id: "fake",
+			capabilities: [],
+			watch: () => new Promise<void>(() => {}),
+			wake: { ready: () => true, send: async () => ({ ok: true }) },
+			isBusy: () => "idle",
+			post: async () => ({ ok: true }),
+			serverLine: () => "",
+		};
+		expect(() =>
+			createEngine({
+				conf: root,
+				lock: unrelated,
+				store,
+				servers: [{ server: { name: "fake", adapter: "fake" }, adapter }],
+				housekeeping: false,
+				log: () => {},
+			} as unknown as Parameters<typeof createEngine>[0]),
+		).toThrow("not on this store's database");
 	});
 
 	test("the test handle is bound the same way: to the store it was made for, and an in-memory store only takes the in-memory one", () => {

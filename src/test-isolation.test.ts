@@ -17,7 +17,8 @@ describe("a test run touches nothing of the developer's", () => {
 		expect(process.env.HOME).toBe(`${root}/home`);
 		expect(CONF).toBe(`${root}/conf`);
 		expect(STATE).toBe(`${root}/state`);
-		for (const v of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"]) expect(process.env[v]!.startsWith(`${root}/home/`)).toBe(true);
+		for (const v of ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"])
+			expect(process.env[v]!.startsWith(`${root}/home/`)).toBe(true);
 	});
 	test("no settings are read: the config directory is empty, so there is no principal name, T3 path or alert command of the developer's", () => {
 		expect(readSettings()).toEqual({});

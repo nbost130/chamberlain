@@ -14,16 +14,26 @@ const dirs: string[] = [];
 const world = () => {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-migrate-`);
 	dirs.push(root);
-	const conf = `${root}/conf`, state = `${root}/state`;
-	mkdirSync(conf, { mode: 0o700 }); mkdirSync(state, { mode: 0o700 });
+	const conf = `${root}/conf`,
+		state = `${root}/state`;
+	mkdirSync(conf, { mode: 0o700 });
+	mkdirSync(state, { mode: 0o700 });
 	return { conf, state };
 };
-const put = (path: string, text: string) => { writeFileSync(path, text, { mode: 0o600 }); chmodSync(path, 0o600); };
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+const put = (path: string, text: string) => {
+	writeFileSync(path, text, { mode: 0o600 });
+	chmodSync(path, 0o600);
+};
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 /** Config files written by hand: none carries a schemaVersion. */
 function oldInstall(w: { conf: string; state: string }) {
-	put(`${w.conf}/servers.json`, JSON.stringify({ servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }] }));
+	put(
+		`${w.conf}/servers.json`,
+		JSON.stringify({ servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }] }),
+	);
 	put(`${w.conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port: 3790 }));
 	put(`${w.conf}/settings.json`, JSON.stringify({ principalName: "Ada" }));
 	put(`${w.conf}/sweep.json`, JSON.stringify({ checks: [] }));
@@ -34,8 +44,11 @@ describe("schema helpers", () => {
 		expect(versionOf("x", undefined)).toBe(0);
 		expect(checkVersion("x", SCHEMA_VERSION)).toBe(SCHEMA_VERSION);
 		expect(() => checkVersion("settings.json", SCHEMA_VERSION + 1)).toThrow(SchemaTooNewError);
-		expect(() => checkVersion("settings.json", SCHEMA_VERSION + 1)).toThrow(/settings\.json has schemaVersion 3, but this Chamberlain understands up to 2/);
-		for (const bad of ["1", -1, 1.5, null]) expect(() => versionOf("x", bad)).toThrow("schemaVersion must be a non-negative integer");
+		expect(() => checkVersion("settings.json", SCHEMA_VERSION + 1)).toThrow(
+			/settings\.json has schemaVersion 3, but this Chamberlain understands up to 2/,
+		);
+		for (const bad of ["1", -1, 1.5, null])
+			expect(() => versionOf("x", bad)).toThrow("schemaVersion must be a non-negative integer");
 	});
 	test("stamp puts the current version first and does not disturb the record", () => {
 		expect(stamp({ a: 1 })).toEqual({ schemaVersion: SCHEMA_VERSION, a: 1 });
@@ -44,26 +57,46 @@ describe("schema helpers", () => {
 });
 
 describe("upgradeData: steps walk the chain", () => {
-	const steps = { json: [(d: object) => ({ ...d, a: 1 }), (d: object) => ({ ...d, b: 2 }), (d: object) => ({ ...d, c: 3 })], jsonl: [], servers: [] } as unknown as typeof STEPS;
+	const steps = {
+		json: [(d: object) => ({ ...d, a: 1 }), (d: object) => ({ ...d, b: 2 }), (d: object) => ({ ...d, c: 3 })],
+		jsonl: [],
+		servers: [],
+	} as unknown as typeof STEPS;
 	test("from 0 runs every step, from 2 only the last, from the target none", () => {
 		expect(upgradeData("json", {}, 0, 3, steps)).toEqual({ schemaVersion: 3, a: 1, b: 2, c: 3 });
 		expect(upgradeData("json", { schemaVersion: 2 }, 2, 3, steps)).toEqual({ schemaVersion: 3, c: 3 });
 		expect(upgradeData("json", { x: 1 }, 3, 3, steps)).toEqual({ x: 1 });
 	});
-	test("a missing step is an error, never a silent skip", () => expect(() => upgradeData("jsonl", {}, 0, 1, steps)).toThrow("no migration for jsonl from schemaVersion 0"));
+	test("a missing step is an error, never a silent skip", () =>
+		expect(() => upgradeData("jsonl", {}, 0, 1, steps)).toThrow("no migration for jsonl from schemaVersion 0"));
 	test("the shipped steps cover 0 to SCHEMA_VERSION for every kind", () => {
 		for (const kind of Object.keys(STEPS) as (keyof typeof STEPS)[]) expect(STEPS[kind]).toHaveLength(SCHEMA_VERSION);
 	});
 	test("servers: an unversioned file is stamped, and each entry gains its adapter", () => {
-		expect(upgradeData("servers", { servers: [{ name: "a" }] }, 0)).toEqual({ schemaVersion: 2, servers: [{ name: "a", adapter: "t3" }] });
+		expect(upgradeData("servers", { servers: [{ name: "a" }] }, 0)).toEqual({
+			schemaVersion: 2,
+			servers: [{ name: "a", adapter: "t3" }],
+		});
 	});
 	test("servers 1 -> 2: every entry names its adapter, T3 unless it already names one, and nothing else changes", () => {
-		const v1 = { schemaVersion: 1, servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", mayBeOffline: true }, { name: "box", adapter: "other", socket: "/run/x.sock" }] };
+		const v1 = {
+			schemaVersion: 1,
+			servers: [
+				{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", mayBeOffline: true },
+				{ name: "box", adapter: "other", socket: "/run/x.sock" },
+			],
+		};
 		expect(upgradeData("servers", v1, 1)).toEqual({
 			schemaVersion: 2,
-			servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", mayBeOffline: true, adapter: "t3" }, { name: "box", adapter: "other", socket: "/run/x.sock" }],
+			servers: [
+				{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", mayBeOffline: true, adapter: "t3" },
+				{ name: "box", adapter: "other", socket: "/run/x.sock" },
+			],
 		});
-		expect(upgradeData("servers", { schemaVersion: 2, servers: [{ name: "a", adapter: "t3" }] }, 2)).toEqual({ schemaVersion: 2, servers: [{ name: "a", adapter: "t3" }] });
+		expect(upgradeData("servers", { schemaVersion: 2, servers: [{ name: "a", adapter: "t3" }] }, 2)).toEqual({
+			schemaVersion: 2,
+			servers: [{ name: "a", adapter: "t3" }],
+		});
 	});
 	test("every other kind only re-stamps at 1 -> 2", () => {
 		expect(upgradeData("json", { schemaVersion: 1, host: "x" }, 1)).toEqual({ schemaVersion: 2, host: "x" });
@@ -91,7 +124,9 @@ describe("assertSupported", () => {
 		for (const name of ["web.json", "settings.json", "sweep.json", "servers.json"]) {
 			const w = world();
 			put(`${w.conf}/${name}`, JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 }) + "\n");
-			expect(() => assertSupported(w)).toThrow(new RegExp(`${name.replace(".", "\\.")} has schemaVersion ${SCHEMA_VERSION + 1}`));
+			expect(() => assertSupported(w)).toThrow(
+				new RegExp(`${name.replace(".", "\\.")} has schemaVersion ${SCHEMA_VERSION + 1}`),
+			);
 		}
 	});
 });
@@ -105,15 +140,28 @@ describe("migrateStorage (config files)", () => {
 		expect(r.migrated.sort()).toEqual(["servers.json", "settings.json", "sweep.json", "web.json"]);
 		expect(r.skipped).toEqual([]);
 		expect(readFileSync(`${w.conf}/servers.json.pre-schema-v2.bak`, "utf8")).toBe(before);
-		expect(readServers(w.conf)).toEqual([{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", adapter: "t3" }]);
+		expect(readServers(w.conf)).toEqual([
+			{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token", adapter: "t3" },
+		]);
 		expect(JSON.parse(readFileSync(`${w.conf}/servers.json`, "utf8")).schemaVersion).toBe(SCHEMA_VERSION);
-		expect(JSON.parse(readFileSync(`${w.conf}/web.json`, "utf8"))).toEqual({ schemaVersion: SCHEMA_VERSION, host: "127.0.0.1", port: 3790 });
-		for (const f of ["servers.json", "web.json", "settings.json"]) expect(statSync(`${w.conf}/${f}`).mode & 0o777).toBe(0o600);
+		expect(JSON.parse(readFileSync(`${w.conf}/web.json`, "utf8"))).toEqual({
+			schemaVersion: SCHEMA_VERSION,
+			host: "127.0.0.1",
+			port: 3790,
+		});
+		for (const f of ["servers.json", "web.json", "settings.json"])
+			expect(statSync(`${w.conf}/${f}`).mode & 0o777).toBe(0o600);
 		expect(existsSync(`${w.state}/.migrate.lock`)).toBe(false);
 	});
 	test("a version-1 install (stamped, but every server unnamed) gains `adapter: t3` on its servers and is re-stamped", () => {
 		const w = world();
-		const servers = { schemaVersion: 1, servers: [{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" }, { name: "laptop", origin: "http://laptop:3773", tokenFile: "laptop-token", mayBeOffline: true, adapter: "t3" }] };
+		const servers = {
+			schemaVersion: 1,
+			servers: [
+				{ name: "main", origin: "http://127.0.0.1:3773", tokenFile: "read-token" },
+				{ name: "laptop", origin: "http://laptop:3773", tokenFile: "laptop-token", mayBeOffline: true, adapter: "t3" },
+			],
+		};
 		put(`${w.conf}/servers.json`, JSON.stringify(servers));
 		// Before the migration the old file already reads: every server is T3.
 		expect(readServers(w.conf)!.map((x) => x.adapter)).toEqual(["t3", "t3"]);
@@ -161,7 +209,9 @@ describe("migrateStorage (config files)", () => {
 			expect(r.migrated).toEqual([]);
 			expect(r.skipped.map((s) => s.what)).toEqual(["*"]);
 			expect(r.skipped[0]!.why).toContain("another process is migrating");
-		} finally { lock.release(); }
+		} finally {
+			lock.release();
+		}
 		expect(JSON.parse(readFileSync(`${w.conf}/web.json`, "utf8")).schemaVersion).toBeUndefined();
 	});
 	test("a newer file anywhere stops it before it touches anything", () => {
@@ -175,11 +225,20 @@ describe("migrateStorage (config files)", () => {
 
 describe("entry points refuse a newer schema with exit code 3", () => {
 	const run = async (script: string, w: { conf: string; state: string }, ...args: string[]) => {
-		const p = Bun.spawn([process.execPath, new URL(script, import.meta.url).pathname, ...args], { env: { ...process.env, CHAMBERLAIN_CONF: w.conf, CHAMBERLAIN_STATE: w.state }, stdout: "pipe", stderr: "pipe" });
+		const p = Bun.spawn([process.execPath, new URL(script, import.meta.url).pathname, ...args], {
+			env: { ...process.env, CHAMBERLAIN_CONF: w.conf, CHAMBERLAIN_STATE: w.state },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
 		const [err, code] = [await new Response(p.stderr).text(), await p.exited];
 		return { err, code };
 	};
-	const TOOLS = [["./decided.ts", ["t", "d", "R1"]], ["./ruling.ts", ["list"]], ["./butler.ts", ["list"]], ["./afk.ts", ["held"]]] as const;
+	const TOOLS = [
+		["./decided.ts", ["t", "d", "R1"]],
+		["./ruling.ts", ["list"]],
+		["./butler.ts", ["list"]],
+		["./afk.ts", ["held"]],
+	] as const;
 	test("migrate.ts, the command-line tools and the daemon, for a config file from a newer build", async () => {
 		const w = world();
 		put(`${w.conf}/settings.json`, JSON.stringify({ schemaVersion: SCHEMA_VERSION + 1 }));

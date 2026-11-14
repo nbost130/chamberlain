@@ -31,22 +31,55 @@ const stores: Store[] = [];
 const stoppers: (() => Promise<void>)[] = [];
 afterEach(async () => {
 	for (const s of stoppers.splice(0)) await s();
-	for (const s of stores.splice(0)) { try { s.close(); } catch { /* closed */ } }
+	for (const s of stores.splice(0)) {
+		try {
+			s.close();
+		} catch {
+			/* closed */
+		}
+	}
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
-const scratch = () => { const d = mkdtempSync(`${tmpdir()}/chamberlain-inv-`); dirs.push(d); return d; };
+const scratch = () => {
+	const d = mkdtempSync(`${tmpdir()}/chamberlain-inv-`);
+	dirs.push(d);
+	return d;
+};
 /** One more connection to the database file: another process, or the same one after a restart. */
-const connect = (dir: string) => { const s = openStore(`${dir}/chamberlain.db`); stores.push(s); return s; };
+const connect = (dir: string) => {
+	const s = openStore(`${dir}/chamberlain.db`);
+	stores.push(s);
+	return s;
+};
 
 // ---- cards -----------------------------------------------------------------------------------------
 
-const card: WaitingCard = { id: "C-0123456789ab", type: "question", server: "fake", threadId: "t1", threadTitle: "Build", requestId: "r1", question: "Merge?", options: [{ label: "Yes" }, { label: "No" }], answerable: true, sig: "sig-1" };
+const card: WaitingCard = {
+	id: "C-0123456789ab",
+	type: "question",
+	server: "fake",
+	threadId: "t1",
+	threadTitle: "Build",
+	requestId: "r1",
+	question: "Merge?",
+	options: [{ label: "Yes" }, { label: "No" }],
+	answerable: true,
+	sig: "sig-1",
+};
 
 /** A page process over the shared database: its own card layer and its own adapter handle, answering slowly so two of them really overlap. */
 async function pageProcess(dir: string, fake: FakeAdapter, delayMs = 30) {
 	const slow = Object.create(fake) as FakeAdapter;
-	slow.answer = async (c, choice, sig) => { await Bun.sleep(delayMs); return fake.answer!(c, choice, sig); };
-	const layer = createWaiting({ store: connect(dir), servers: () => [{ server: { name: "fake", adapter: "fake" }, adapter: slow }], skipThreads: () => [], log: () => {} });
+	slow.answer = async (c, choice, sig) => {
+		await Bun.sleep(delayMs);
+		return fake.answer!(c, choice, sig);
+	};
+	const layer = createWaiting({
+		store: connect(dir),
+		servers: () => [{ server: { name: "fake", adapter: "fake" }, adapter: slow }],
+		skipThreads: () => [],
+		log: () => {},
+	});
 	await layer.poll();
 	return layer;
 }
@@ -81,7 +114,8 @@ describe("a card is answered once", () => {
 		fake.cards = [card];
 		fake.answerOutcome = { ok: false, kind: "unreachable", error: "could not reach T3", maybeSent: true };
 		expect((await (await pageProcess(dir, fake, 0)).answer(card.id, 0, card.sig)).status).toBe(502);
-		for (const _ of [1, 2]) expect((await (await pageProcess(dir, fake, 0)).answer(card.id, 0, card.sig)).status).toBe(409);
+		for (const _ of [1, 2])
+			expect((await (await pageProcess(dir, fake, 0)).answer(card.id, 0, card.sig)).status).toBe(409);
 		expect(fake.answers).toHaveLength(1);
 	});
 
@@ -105,21 +139,51 @@ describe("a card is answered once", () => {
 		const store = connect(scratch());
 		const t0 = Date.parse("2026-11-12T12:00:00Z");
 		expect(reserveCardAnswer(store, { cardId: card.id, sig: "s", choice: 0, now: t0 })).toBe(true);
-		expect(reserveCardAnswer(store, { cardId: card.id, sig: "s", choice: 0, now: t0 + CARD_ANSWER_STALE_MS })).toBe(false);
-		expect(reserveCardAnswer(store, { cardId: card.id, sig: "s", choice: 0, now: t0 + CARD_ANSWER_STALE_MS + 1 })).toBe(true);
+		expect(reserveCardAnswer(store, { cardId: card.id, sig: "s", choice: 0, now: t0 + CARD_ANSWER_STALE_MS })).toBe(
+			false,
+		);
+		expect(reserveCardAnswer(store, { cardId: card.id, sig: "s", choice: 0, now: t0 + CARD_ANSWER_STALE_MS + 1 })).toBe(
+			true,
+		);
 	});
 });
 
 // ---- questions -------------------------------------------------------------------------------------
 
-const question: Question = { id: "Q-abcd1", kind: "product", title: "Photo first?", context: "ctx", options: [{ label: "Yes" }, { label: "No" }], recommended: 0, thread: "Mobile", server: "main", createdAt: "2026-11-09T10:00:00.000Z" };
+const question: Question = {
+	id: "Q-abcd1",
+	kind: "product",
+	title: "Photo first?",
+	context: "ctx",
+	options: [{ label: "Yes" }, { label: "No" }],
+	recommended: 0,
+	thread: "Mobile",
+	server: "main",
+	createdAt: "2026-11-09T10:00:00.000Z",
+};
 
 function pageApp(dir: string) {
-	return createApp({ store: connect(dir), state: `${dir}/state`, log: () => {}, hosts: ["127.0.0.1:3790"], staticDir: dir });
+	return createApp({
+		store: connect(dir),
+		state: `${dir}/state`,
+		log: () => {},
+		hosts: ["127.0.0.1:3790"],
+		staticDir: dir,
+	});
 }
 /** The wakes written to the outbox: the relay sends each row, and nothing else. */
-const rowsOf = (dir: string) => connect(dir).wakes.rows("all").map((r) => r.deliveryId);
-const answerReq = (app: ReturnType<typeof createApp>, choice: number) => app.fetch(new Request("http://127.0.0.1:3790/api/items/Q-abcd1/answer", { method: "POST", headers: { host: "127.0.0.1:3790", "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify({ choice }) }));
+const rowsOf = (dir: string) =>
+	connect(dir)
+		.wakes.rows("all")
+		.map((r) => r.deliveryId);
+const answerReq = (app: ReturnType<typeof createApp>, choice: number) =>
+	app.fetch(
+		new Request("http://127.0.0.1:3790/api/items/Q-abcd1/answer", {
+			method: "POST",
+			headers: { host: "127.0.0.1:3790", "content-type": "application/json", "x-decision-queue": "1" },
+			body: JSON.stringify({ choice }),
+		}),
+	);
 
 describe("a question is answered once", () => {
 	test("two page processes answering the same question at the same moment: one wake, the other refused", async () => {
@@ -145,13 +209,33 @@ function daemon(dir: string, store: Store) {
 	mkdirSync(conf, { recursive: true, mode: 0o700 });
 	writeFileSync(`${conf}/decision-rights.md`, "The Steward may merge green PRs.", { mode: 0o600 });
 	const fake = createFakeAdapter();
-	const engine = createEngine({ conf, lock: testRelayLock(store), store, alert: noAlert, servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }], housekeeping: false, log: () => {}, timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 } });
+	const engine = createEngine({
+		conf,
+		lock: testRelayLock(store),
+		store,
+		alert: noAlert,
+		servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
+		housekeeping: false,
+		log: () => {},
+		timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
+	});
 	void engine.start();
 	stoppers.push(() => engine.stop());
 	return { fake, engine };
 }
-const ask = { type: "user_input_request" as const, requestId: "req-1", label: "Pick", questions: [{ question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }] }] };
-const emitAsk = (fake: FakeAdapter) => { fake.threads.set("t1", { waiting: [ask], lastMessage: "stuck" }); fake.emit({ kind: "needs_input", thread: { id: "t1", title: "Build", status: "waiting", pendingRequestId: "req-1" } }); };
+const ask = {
+	type: "user_input_request" as const,
+	requestId: "req-1",
+	label: "Pick",
+	questions: [{ question: "Merge now?", options: [{ label: "Yes" }, { label: "No" }] }],
+};
+const emitAsk = (fake: FakeAdapter) => {
+	fake.threads.set("t1", { waiting: [ask], lastMessage: "stuck" });
+	fake.emit({
+		kind: "needs_input",
+		thread: { id: "t1", title: "Build", status: "waiting", pendingRequestId: "req-1" },
+	});
+};
 const settle = (ms = 150) => Bun.sleep(ms);
 
 describe("an event wakes the Steward once", () => {
@@ -161,8 +245,18 @@ describe("an event wakes the Steward once", () => {
 		const [a, b] = [daemon(dir, connect(dir)), daemon(dir, connect(dir))];
 		// Both read the thread slowly, so both have passed the "already notified?" look before either one has written anything:
 		// only the database, at the moment of the write, can tell the second that the first has already woken the Steward.
-		for (const [d, ms] of [[a, 20], [b, 30]] as const) { const read = d.fake.inspect!.lastMessage; (d.fake.inspect as { lastMessage: unknown }).lastMessage = async (id: string) => { await Bun.sleep(ms); return read(id); }; }
-		emitAsk(a.fake); emitAsk(b.fake);
+		for (const [d, ms] of [
+			[a, 20],
+			[b, 30],
+		] as const) {
+			const read = d.fake.inspect!.lastMessage;
+			(d.fake.inspect as { lastMessage: unknown }).lastMessage = async (id: string) => {
+				await Bun.sleep(ms);
+				return read(id);
+			};
+		}
+		emitAsk(a.fake);
+		emitAsk(b.fake);
 		await settle(250);
 		expect(rowsOf(dir)).toHaveLength(1);
 	});
@@ -184,8 +278,12 @@ describe("an event wakes the Steward once", () => {
 describe("a sweep finding notifies once", () => {
 	test("observed again by a fresh process, it does not notify again; observed gone and back, it does", async () => {
 		const dir = scratch();
-		const src = (present: boolean) => ({ name: "check:disk", run: async () => (present ? [{ dedupKey: "root", text: "the root disk is full" }] : []) });
-		const record = async (store: Store, present: boolean, now: number) => recordEvaluation(store, await evaluateSource(src(present)), { now });
+		const src = (present: boolean) => ({
+			name: "check:disk",
+			run: async () => (present ? [{ dedupKey: "root", text: "the root disk is full" }] : []),
+		});
+		const record = async (store: Store, present: boolean, now: number) =>
+			recordEvaluation(store, await evaluateSource(src(present)), { now });
 		expect((await record(connect(dir), true, 1)).notified).toHaveLength(1);
 		expect((await record(connect(dir), true, 2)).notified).toHaveLength(0);
 		expect((await record(connect(dir), false, 3)).notified).toHaveLength(0);

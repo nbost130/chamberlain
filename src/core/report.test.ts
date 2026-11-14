@@ -5,10 +5,28 @@ import { REPORT_HOLD_MS, reportWait, settleReport, type ReportWatch } from "./re
 
 const QUIET = 180_000;
 const idle: ThreadState = {
-	id: "t1", title: "T", status: "completed", parentThreadId: null, pendingRequestId: null, settled: false, archived: false, snoozed: false,
-	blockedOnThreadWait: false, openPrs: [], worktreePath: null, linkedPrDone: false, backgroundTasks: 0, backgroundWork: 0,
+	id: "t1",
+	title: "T",
+	status: "completed",
+	parentThreadId: null,
+	pendingRequestId: null,
+	settled: false,
+	archived: false,
+	snoozed: false,
+	blockedOnThreadWait: false,
+	openPrs: [],
+	worktreePath: null,
+	linkedPrDone: false,
+	backgroundTasks: 0,
+	backgroundWork: 0,
 };
-const instruction: TurnItem = { type: "user_message", id: "s1", text: "Steward: do it", createdBy: "agent", creationSource: "mcp" };
+const instruction: TurnItem = {
+	type: "user_message",
+	id: "s1",
+	text: "Steward: do it",
+	createdBy: "agent",
+	creationSource: "mcp",
+};
 const completeRead: InstructionRead = { items: [instruction], state: "complete", byMachine: false };
 
 /** The parts of a watch a test leaves alone. The clock only moves when the code under test sleeps. */
@@ -17,7 +35,9 @@ function watch(over: Partial<ReportWatch> = {}) {
 	let until = QUIET;
 	const w: ReportWatch = {
 		now: () => now,
-		sleep: async (ms) => { now += ms; },
+		sleep: async (ms) => {
+			now += ms;
+		},
 		quietUntil: () => until,
 		state: () => idle,
 		children: async () => 0,
@@ -27,7 +47,13 @@ function watch(over: Partial<ReportWatch> = {}) {
 		idleWork: async () => undefined,
 		...over,
 	};
-	return { w, clock: () => now, pushBack: (to: number) => { until = to; } };
+	return {
+		w,
+		clock: () => now,
+		pushBack: (to: number) => {
+			until = to;
+		},
+	};
 }
 
 describe("reportWait", () => {
@@ -55,10 +81,19 @@ describe("settleReport", () => {
 	test("a finished turn pushes the window back", async () => {
 		const t = watch();
 		let pushed = false;
-		t.w.sleep = async (ms) => { await watch().w.sleep(ms); if (!pushed) { pushed = true; t.pushBack(QUIET * 2); } };
+		t.w.sleep = async (ms) => {
+			await watch().w.sleep(ms);
+			if (!pushed) {
+				pushed = true;
+				t.pushBack(QUIET * 2);
+			}
+		};
 		let slept = 0;
 		const sleep = t.w.sleep;
-		t.w.sleep = async (ms) => { slept += ms; await sleep(ms); };
+		t.w.sleep = async (ms) => {
+			slept += ms;
+			await sleep(ms);
+		};
 		t.w.now = () => slept;
 		await settleReport(t.w);
 		expect(slept).toBe(QUIET * 2);
@@ -87,7 +122,13 @@ describe("settleReport", () => {
 	test("a read that outlasts a new turn does not wake on the old state", async () => {
 		// The state has to be taken after this read. It was once taken first, and this woke.
 		let state = idle;
-		const { w } = watch({ state: () => state, read: async () => { state = { ...idle, status: "running" }; return completeRead; } });
+		const { w } = watch({
+			state: () => state,
+			read: async () => {
+				state = { ...idle, status: "running" };
+				return completeRead;
+			},
+		});
 		expect(await settleReport(w)).toEqual({ wake: false, event: "skip-report-superseded" });
 	});
 	test("a card raised during the idle check does not wake on the old state", async () => {
@@ -95,14 +136,20 @@ describe("settleReport", () => {
 		const { w } = watch({
 			state: () => state,
 			reportKey: () => undefined,
-			idleWork: async () => { state = { ...idle, pendingRequestId: "new" }; return { key: "idle:s1", work: "open PR #1" }; },
+			idleWork: async () => {
+				state = { ...idle, pendingRequestId: "new" };
+				return { key: "idle:s1", work: "open PR #1" };
+			},
 		});
 		expect(await settleReport(w)).toEqual({ wake: false, event: "skip-report-superseded" });
 	});
 	test("a turn that ends during the read restarts the wait, and the read is taken again", async () => {
 		let reads = 0;
 		const t = watch();
-		t.w.read = async () => { if (++reads === 1) t.pushBack(QUIET * 2); return completeRead; };
+		t.w.read = async () => {
+			if (++reads === 1) t.pushBack(QUIET * 2);
+			return completeRead;
+		};
 		expect((await settleReport(t.w)).wake).toBe(true);
 		expect(reads).toBe(2);
 		expect(t.clock()).toBe(QUIET * 2);
@@ -111,13 +158,18 @@ describe("settleReport", () => {
 		let reads = 0;
 		const t = watch();
 		t.w.state = () => ({ ...idle, backgroundWork: reads === 1 && t.clock() < QUIET * 2 ? 1 : 0 });
-		t.w.read = async () => { reads++; return completeRead; };
+		t.w.read = async () => {
+			reads++;
+			return completeRead;
+		};
 		expect((await settleReport(t.w)).wake).toBe(true);
 		expect(t.clock()).toBeGreaterThanOrEqual(QUIET * 2);
 	});
 	test("one failed read is tried again, so a blip doesn't lose the report", async () => {
 		let reads = 0;
-		const { w } = watch({ read: async () => (++reads === 1 ? { items: [], state: "failed", byMachine: false } : completeRead) });
+		const { w } = watch({
+			read: async () => (++reads === 1 ? { items: [], state: "failed", byMachine: false } : completeRead),
+		});
 		expect((await settleReport(w)).wake).toBe(true);
 		expect(reads).toBe(2);
 	});
@@ -126,7 +178,10 @@ describe("settleReport", () => {
 		expect(await settleReport(w)).toEqual({ wake: false, event: "skip-read-failed" });
 	});
 	test("a truncated read gets its own skip", async () => {
-		const { w } = watch({ read: async () => ({ items: [], state: "truncated", byMachine: false }), reportKey: () => undefined });
+		const { w } = watch({
+			read: async () => ({ items: [], state: "truncated", byMachine: false }),
+			reportKey: () => undefined,
+		});
 		expect(await settleReport(w)).toEqual({ wake: false, event: "skip-read-truncated" });
 	});
 	test("nothing to report after a clean read is a plain skip", async () => {
@@ -138,13 +193,24 @@ describe("settleReport", () => {
 		expect(await settleReport(w)).toMatchObject({ wake: true, key: "idle:s1", work: "open PR #1" });
 	});
 	test("an older card is noted, not a reason to stay quiet", async () => {
-		const { w } = watch({ state: () => ({ ...idle, status: "waiting", pendingRequestId: "old" }), oldCards: () => new Set(["old"]) });
+		const { w } = watch({
+			state: () => ({ ...idle, status: "waiting", pendingRequestId: "old" }),
+			oldCards: () => new Set(["old"]),
+		});
 		expect(await settleReport(w)).toMatchObject({ wake: true, oldCard: true });
 	});
 });
 
-
-type Run = { ordinal: number; status: string; runId: string; start: string; end: string; first: string; ask: boolean; stall: boolean };
+type Run = {
+	ordinal: number;
+	status: string;
+	runId: string;
+	start: string;
+	end: string;
+	first: string;
+	ask: boolean;
+	stall: boolean;
+};
 type Timeline = { name: string; runs: Run[]; items: (TurnItem & { runId: string })[]; pending: [string, number][] };
 const timelines = (await Bun.file(new URL("./report.replay.json", import.meta.url)).json()) as Timeline[];
 
@@ -157,7 +223,11 @@ async function replay(t: Timeline) {
 	const ms = (s: string) => Date.parse(s);
 	type Ev = { at: number; kind: "start" | "stop" | "ended" | "pending"; run?: Run; n?: number };
 	const queue: Ev[] = [
-		...t.runs.flatMap((run): Ev[] => [{ at: ms(run.start), kind: "start", run }, { at: ms(run.end), kind: "stop", run }, { at: ms(run.end) + 3000, kind: "ended", run }]),
+		...t.runs.flatMap((run): Ev[] => [
+			{ at: ms(run.start), kind: "start", run },
+			{ at: ms(run.end), kind: "stop", run },
+			{ at: ms(run.end) + 3000, kind: "ended", run },
+		]),
 		...t.pending.map(([at, n]): Ev => ({ at: ms(at), kind: "pending", n })),
 	].sort((a, b) => a.at - b.at);
 	const fired = new Set<string>();
@@ -169,16 +239,32 @@ async function replay(t: Timeline) {
 	let pending = 0;
 	let until: number | undefined;
 	let start = false;
-	const read = (): InstructionRead => ({ items: t.items.filter((i) => latest && Number(i.runId.slice(1)) <= latest.ordinal), state: "complete", byMachine: lastEnded?.first === "notification" });
-	const wake = (key: string) => { fired.add(key); wakes.push({ at: new Date(now).toISOString().slice(11, 19), key }); };
+	const read = (): InstructionRead => ({
+		items: t.items.filter((i) => latest && Number(i.runId.slice(1)) <= latest.ordinal),
+		state: "complete",
+		byMachine: lastEnded?.first === "notification",
+	});
+	const wake = (key: string) => {
+		fired.add(key);
+		wakes.push({ at: new Date(now).toISOString().slice(11, 19), key });
+	};
 	const apply = (e: Ev) => {
 		now = e.at;
-		if (e.kind === "start") { latest = e.run; running = true; }
-		if (e.kind === "stop") { running = false; lastEnded = e.run; }
+		if (e.kind === "start") {
+			latest = e.run;
+			running = true;
+		}
+		if (e.kind === "stop") {
+			running = false;
+			lastEnded = e.run;
+		}
 		if (e.kind === "pending") pending = e.n as number;
 		if (e.kind !== "ended") return;
 		const run = e.run as Run;
-		if (run.ask || run.stall) { wake(`${run.ask ? "ask" : "stall"}:${run.runId}`); return; }
+		if (run.ask || run.stall) {
+			wake(`${run.ask ? "ask" : "stall"}:${run.runId}`);
+			return;
+		}
 		const r = read();
 		if (!reportKey(r.items, r.byMachine, fired)) return;
 		if (until === undefined) start = true;

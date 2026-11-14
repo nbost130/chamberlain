@@ -13,7 +13,9 @@ describe("where the directories are (XDG Base Directory Specification)", () => {
 		expect(stateDir({}, HOME)).toBe("/home/u/.local/state/chamberlain");
 		expect(stateDir({ XDG_STATE_HOME: "/var/xdg" }, HOME)).toBe("/var/xdg/chamberlain");
 		expect(stateDir({ XDG_STATE_HOME: "/var/xdg/" }, HOME)).toBe("/var/xdg/chamberlain");
-		expect(stateDir({ XDG_STATE_HOME: "/var/xdg", CHAMBERLAIN_STATE: "/srv/chamberlain-state" }, HOME)).toBe("/srv/chamberlain-state");
+		expect(stateDir({ XDG_STATE_HOME: "/var/xdg", CHAMBERLAIN_STATE: "/srv/chamberlain-state" }, HOME)).toBe(
+			"/srv/chamberlain-state",
+		);
 	});
 	test("an empty or relative value is invalid and ignored, as the specification says", () => {
 		expect(stateDir({ XDG_STATE_HOME: "" }, HOME)).toBe("/home/u/.local/state/chamberlain");

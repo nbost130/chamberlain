@@ -9,7 +9,8 @@ const NOW = Date.parse("2026-11-12T12:00:00Z");
 describe("maintain", () => {
 	test("forgets old deliveries, ages out wake and alarm items, deletes old resolved items, and keeps the queue's", () => {
 		const s = memStore();
-		deliveredRow(s, "old", NOW); deliveredRow(s, "new", NOW);
+		deliveredRow(s, "old", NOW);
+		deliveredRow(s, "new", NOW);
 		deliveredRow(s, "ancient", NOW - 31 * DAY);
 		// An old wake record that was never resolved, a recent one, an old resolved finding, and an old answered question.
 		s.items.observe({ source: "notification-log", kind: "sent", dedupKey: "old-key", now: NOW - ITEM_KEEP_MS - DAY });
@@ -26,7 +27,10 @@ describe("maintain", () => {
 		// The row is gone; the id is not (migration 7's tombstone), so it can never be queued again.
 		expect(s.wakes.rows("all").map((w) => w.deliveryId)).toEqual(["old", "new"]);
 		expect([s.wakes.isDelivered("ancient"), s.wakes.isDelivered("new")]).toEqual([true, true]);
-		expect(s.items.list().map((i) => `${i.source}/${i.dedupKey}`)).toEqual(["notification-log/new-key", "queue/Q-aaaa1"]);
+		expect(s.items.list().map((i) => `${i.source}/${i.dedupKey}`)).toEqual([
+			"notification-log/new-key",
+			"queue/Q-aaaa1",
+		]);
 		expect(s.events.count()).toBe(1);
 		// Idempotent.
 		expect(maintain(s, NOW)).toEqual({ delivered: 0, resolved: 0, items: 0, events: 0, challenges: 0 });
@@ -34,7 +38,15 @@ describe("maintain", () => {
 
 	test("prunes confirmation challenges that expired or were used more than a day ago, and keeps a live one", () => {
 		const s = memStore();
-		const c = (id: string, expiresAt: number) => ({ tokenHash: id, cardId: `C-${id}`, sig: "s", choice: 0, sessionHash: "h", issuedAt: expiresAt - 60_000, expiresAt });
+		const c = (id: string, expiresAt: number) => ({
+			tokenHash: id,
+			cardId: `C-${id}`,
+			sig: "s",
+			choice: 0,
+			sessionHash: "h",
+			issuedAt: expiresAt - 60_000,
+			expiresAt,
+		});
 		s.challenges.issue(c("old", NOW - 3 * DAY));
 		s.challenges.issue(c("live", NOW + 30_000));
 		s.challenges.issue(c("spent", NOW + 30_000));

@@ -5,5 +5,9 @@
  */
 import { defaultStore } from "../core/default-store.ts";
 
-defaultStore(process.argv[2]!, { chmod: () => { throw Error("EPERM: operation not permitted"); } });
+defaultStore(process.argv[2]!, {
+	chmod: () => {
+		throw Error("EPERM: operation not permitted");
+	},
+});
 console.log("opened");

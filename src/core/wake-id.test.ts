@@ -19,15 +19,33 @@ function rig(status = () => 202) {
 	const store = memStore();
 	const clock = { t: 1_000_000 };
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
-	const relay = createRelay({ store, lock: testRelayLock(store), gate: () => "idle", log: () => {}, alarm: () => {}, now: () => clock.t, retryAfterMs: () => 0,
-		wake: { ready: () => true, send: async (deliveryId, message) => { sent.push({ deliveryId, message }); const s = status(); return { ok: s < 300, status: s }; } } });
+	const relay = createRelay({
+		store,
+		lock: testRelayLock(store),
+		gate: () => "idle",
+		log: () => {},
+		alarm: () => {},
+		now: () => clock.t,
+		retryAfterMs: () => 0,
+		wake: {
+			ready: () => true,
+			send: async (deliveryId, message) => {
+				sent.push({ deliveryId, message });
+				const s = status();
+				return { ok: s < 300, status: s };
+			},
+		},
+	});
 	return { sent, store, outbox, relay, clock };
 }
 
 describe("every wake carries its delivery id as the last line of its text", () => {
 	test("a first send: the text the transport receives ends with the same id it receives beside it", async () => {
 		const r = rig();
-		r.outbox.deliver("[chamberlain] needs_input: thread X waits.", "t1:needs_input:req-1:99", { kind: "needs_input", thread: "t1" });
+		r.outbox.deliver("[chamberlain] needs_input: thread X waits.", "t1:needs_input:req-1:99", {
+			kind: "needs_input",
+			thread: "t1",
+		});
 		await r.relay.pass();
 		expect(r.sent).toHaveLength(1);
 		expect(lastLine(r.sent[0]!.message)).toBe(DELIVERY_ID_LINE("t1:needs_input:req-1:99"));
@@ -83,8 +101,19 @@ describe("the Steward's templates and the delivery docs say a repeated delivery 
 	});
 	test("the docs on delivery guarantees state the rule, the windows, and where the id travels", () => {
 		const arch = read("docs/ARCHITECTURE.md");
-		const section = arch.slice(arch.indexOf("## Delivery guarantees and the windows that remain"), arch.indexOf("## Where state lives"));
-		for (const part of ["delivery id", "repeat", "no row is POSTed more than `maxAttempts` times between explicit retries", "The windows that remain, exactly", "owed", "dead_letter"]) expect(section).toContain(part);
+		const section = arch.slice(
+			arch.indexOf("## Delivery guarantees and the windows that remain"),
+			arch.indexOf("## Where state lives"),
+		);
+		for (const part of [
+			"delivery id",
+			"repeat",
+			"no row is POSTed more than `maxAttempts` times between explicit retries",
+			"The windows that remain, exactly",
+			"owed",
+			"dead_letter",
+		])
+			expect(section).toContain(part);
 		expect(read("docs/DELIVERY.md")).toMatch(/delivery id/);
 	});
 });

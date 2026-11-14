@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { memStore } from "../testing/store.ts";
-import { addInForce, citations, citedIds, confirmRuling, editRuling, inForceRuling, nextId, propose, readRulings, renderInForce, retireRuling, rulingsText, updateRulings } from "./rulings.ts";
+import {
+	addInForce,
+	citations,
+	citedIds,
+	confirmRuling,
+	editRuling,
+	inForceRuling,
+	nextId,
+	propose,
+	readRulings,
+	renderInForce,
+	retireRuling,
+	rulingsText,
+	updateRulings,
+} from "./rulings.ts";
 import { decisionRecord } from "./decided.ts";
 
 /** A store holding eight rulings, as a long-running install would. */
@@ -20,15 +34,30 @@ describe("the table", () => {
 		const d = seeded();
 		addInForce(d, "w", "d", "chat", "x");
 		addInForce(d, "w2", "d2", "chat", "x");
-		expect(readRulings(d).map((r) => r.id).slice(-3)).toEqual(["R8", "R9", "R10"]);
+		expect(
+			readRulings(d)
+				.map((r) => r.id)
+				.slice(-3),
+		).toEqual(["R8", "R9", "R10"]);
 		expect(nextId(readRulings(d))).toBe("R11");
 	});
 	test("an update that throws changes nothing, and one that edits saves only what changed", () => {
 		const d = seeded();
-		expect(() => updateRulings(d, (list) => { list[0]!.decides = "lost"; throw Error("no"); })).toThrow("no");
+		expect(() =>
+			updateRulings(d, (list) => {
+				list[0]!.decides = "lost";
+				throw Error("no");
+			}),
+		).toThrow("no");
 		expect(readRulings(d)[0]!.decides).toBe("Rule 1.");
-		updateRulings(d, (list) => { list[1]!.decides = "changed"; });
-		expect(readRulings(d).map((r) => r.decides).slice(0, 3)).toEqual(["Rule 1.", "changed", "Rule 3."]);
+		updateRulings(d, (list) => {
+			list[1]!.decides = "changed";
+		});
+		expect(
+			readRulings(d)
+				.map((r) => r.decides)
+				.slice(0, 3),
+		).toEqual(["Rule 1.", "changed", "Rule 3."]);
 	});
 	test("inForceRuling builds the next ruling without saving it", () => {
 		const d = seeded();
@@ -83,7 +112,9 @@ describe("nothing goes in force without the principal's confirm", () => {
 	test("the hand-off marks unconfirmed card rulings and prefixes every line with its ID", () => {
 		const d = seeded();
 		// A card-sourced ruling that was never confirmed: written directly, as the page never does.
-		updateRulings(d, (list) => { list[1]!.confirmed = false; });
+		updateRulings(d, (list) => {
+			list[1]!.confirmed = false;
+		});
 		const lines = renderInForce(readRulings(d)).split("\n");
 		expect(lines.every((l) => /^- R\d+ \(/.test(l))).toBe(true);
 		expect(lines.find((l) => l.startsWith("- R2 "))).toContain("[unconfirmed");

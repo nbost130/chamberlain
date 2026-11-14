@@ -8,7 +8,21 @@ import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
 import { closeHeldForCard, heldId, heldOpen } from "./afk.ts";
 import type { WaitingItem } from "./adapter.ts";
-import { CARD_UNVERIFIED, cardKey, cardQuestion, cardWaitOf, closeCard, closeCardByHand, closeCardQuestions, holdCard, openCards, questionForCard, reconcileCardHolds, trackUnverified, unverifiedAlarm } from "./card-hold.ts";
+import {
+	CARD_UNVERIFIED,
+	cardKey,
+	cardQuestion,
+	cardWaitOf,
+	closeCard,
+	closeCardByHand,
+	closeCardQuestions,
+	holdCard,
+	openCards,
+	questionForCard,
+	reconcileCardHolds,
+	trackUnverified,
+	unverifiedAlarm,
+} from "./card-hold.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
 import { askQuestion, getQuestion, isUrgent, questionStates, ranked } from "./questions.ts";
 import { findSettled } from "./settled.ts";
@@ -16,8 +30,18 @@ import { openStore } from "./sqlite-store.ts";
 
 const AT = { thread: "Deploy pipeline", server: "main", threadId: "th-1" };
 const SENTINEL = "plain-SENTINEL-text-never-shown";
-const secretCard: WaitingItem = { type: "secret_request", requestId: "req-s1", label: "STRIPE_KEY", questions: [{ question: `paste it: ${SENTINEL}`, options: [{ label: SENTINEL, description: SENTINEL }] }] };
-const approval: WaitingItem = { type: "approval_request", requestId: "req-a1", label: "bun run deploy", questions: [{ question: "run it?" }] };
+const secretCard: WaitingItem = {
+	type: "secret_request",
+	requestId: "req-s1",
+	label: "STRIPE_KEY",
+	questions: [{ question: `paste it: ${SENTINEL}`, options: [{ label: SENTINEL, description: SENTINEL }] }],
+};
+const approval: WaitingItem = {
+	type: "approval_request",
+	requestId: "req-a1",
+	label: "bun run deploy",
+	questions: [{ question: "run it?" }],
+};
 
 describe("(d) one pointer question per card, and the hold behind it", () => {
 	test("a card is filed as an only-you question pointing to it, and held with that item", () => {
@@ -25,9 +49,25 @@ describe("(d) one pointer question per card, and the hold behind it", () => {
 		const r = holdCard(store, cardWaitOf(approval, AT));
 		expect(r).toMatchObject({ filed: true, held: true });
 		const q = getQuestion(store, r.item)!;
-		expect(q).toMatchObject({ kind: "only-you", status: "open", cardRequest: "req-a1", server: "main", threadId: "th-1", tag: "Approval", title: "Deploy pipeline waits on your command approval" });
+		expect(q).toMatchObject({
+			kind: "only-you",
+			status: "open",
+			cardRequest: "req-a1",
+			server: "main",
+			threadId: "th-1",
+			tag: "Approval",
+			title: "Deploy pipeline waits on your command approval",
+		});
 		expect(q.notSettled).toContain("live request");
-		expect(heldOpen(store)).toMatchObject([{ item: r.item, requestId: "req-a1", server: "main", what: "command or permission approval: bun run deploy", taken: "left parked" }]);
+		expect(heldOpen(store)).toMatchObject([
+			{
+				item: r.item,
+				requestId: "req-a1",
+				server: "main",
+				what: "command or permission approval: bun run deploy",
+				taken: "left parked",
+			},
+		]);
 	});
 	test("the same card again files nothing and holds nothing more; another server's card with the same id is its own", () => {
 		const store = memStore();
@@ -54,10 +94,17 @@ describe("(d) one pointer question per card, and the hold behind it", () => {
 		const store = memStore();
 		holdCard(store, cardWaitOf(approval, AT));
 		closeCardQuestions(store, "main", "req-a1");
-		const again = cardQuestion(cardWaitOf({ ...approval, requestId: "req-a2" }, AT), "Q-again1", new Date().toISOString());
+		const again = cardQuestion(
+			cardWaitOf({ ...approval, requestId: "req-a2" }, AT),
+			"Q-again1",
+			new Date().toISOString(),
+		);
 		expect(findSettled(store, { title: again.title }, {}).matches).not.toEqual([]);
 		expect(again.notSettled).toBeTruthy();
-		expect(holdCard(store, cardWaitOf({ ...approval, requestId: "req-a2" }, AT))).toMatchObject({ filed: true, held: true });
+		expect(holdCard(store, cardWaitOf({ ...approval, requestId: "req-a2" }, AT))).toMatchObject({
+			filed: true,
+			held: true,
+		});
 	});
 });
 
@@ -81,7 +128,14 @@ describe("(d) a secret's value is never copied", () => {
 });
 
 describe("(1) an approval or a secret is always urgent, on every path that files or reads a question", () => {
-	const base = { kind: "only-you" as const, context: "", options: [{ label: "A" }, { label: "B" }], thread: "T", server: "main", createdAt: "2026-11-13T00:00:00.000Z" };
+	const base = {
+		kind: "only-you" as const,
+		context: "",
+		options: [{ label: "A" }, { label: "B" }],
+		thread: "T",
+		server: "main",
+		createdAt: "2026-11-13T00:00:00.000Z",
+	};
 	test("askQuestion drops urgent: false from an approval, a secret and a card pointer, and keeps it on an ordinary question", () => {
 		const store = memStore();
 		askQuestion(store, { ...base, id: "Q-apr001", title: "a", tag: "approval", urgent: false });
@@ -97,12 +151,24 @@ describe("(1) an approval or a secret is always urgent, on every path that files
 	});
 	test("a row written around askQuestion (an older build) still reads back urgent, and ranks above every non-urgent one", () => {
 		const store = memStore();
-		const raw = (id: string, over: object) => store.items.observe({ source: "queue", kind: "question", dedupKey: id, mode: "silenced", payload: { ...base, id, title: id, urgent: false, ...over }, now: Date.now() });
+		const raw = (id: string, over: object) =>
+			store.items.observe({
+				source: "queue",
+				kind: "question",
+				dedupKey: id,
+				mode: "silenced",
+				payload: { ...base, id, title: id, urgent: false, ...over },
+				now: Date.now(),
+			});
 		raw("Q-plain2", {});
 		raw("Q-apr002", { tag: "Approval" });
 		raw("Q-sec002", { secret: true });
 		raw("Q-ptr002", { cardRequest: "req-9" });
-		expect(isUrgent(getQuestion(store, "Q-apr002")!) && isUrgent(getQuestion(store, "Q-sec002")!) && isUrgent(getQuestion(store, "Q-ptr002")!)).toBe(true);
+		expect(
+			isUrgent(getQuestion(store, "Q-apr002")!) &&
+				isUrgent(getQuestion(store, "Q-sec002")!) &&
+				isUrgent(getQuestion(store, "Q-ptr002")!),
+		).toBe(true);
 		expect(ranked(questionStates(store).values()).at(-1)!.id).toBe("Q-plain2");
 	});
 	test("a daemon's card pointer, approval or secret, is filed urgent", () => {
@@ -116,10 +182,18 @@ describe("(1) an approval or a secret is always urgent, on every path that files
 });
 
 describe("(2)(3) card holds close only on positive evidence: the card's own item in a terminal status, keyed by (server, request ID)", () => {
-	const fileStore = () => { const dir = mkdtempSync(`${tmpdir()}/chamberlain-cardrec-`); return { path: `${dir}/chamberlain.db`, open: () => openStore(`${dir}/chamberlain.db`) }; };
+	const fileStore = () => {
+		const dir = mkdtempSync(`${tmpdir()}/chamberlain-cardrec-`);
+		return { path: `${dir}/chamberlain.db`, open: () => openStore(`${dir}/chamberlain.db`) };
+	};
 	/** A read that saw these request IDs waiting and these resolved. */
-	const saw = (waiting: string[] = [], resolved: string[] = []) => async () => ({ ok: true as const, waiting: new Set(waiting), resolved: new Set(resolved) });
-	const open = (store: ReturnType<typeof memStore>) => ({ holds: heldOpen(store).length, questions: [...questionStates(store).values()].filter((q) => q.status === "open").length });
+	const saw =
+		(waiting: string[] = [], resolved: string[] = []) =>
+		async () => ({ ok: true as const, waiting: new Set(waiting), resolved: new Set(resolved) });
+	const open = (store: ReturnType<typeof memStore>) => ({
+		holds: heldOpen(store).length,
+		questions: [...questionStates(store).values()].filter((q) => q.status === "open").length,
+	});
 	test("the hold carries what closing needs: server, thread and request ID", () => {
 		const store = memStore();
 		holdCard(store, cardWaitOf(approval, AT));
@@ -133,8 +207,13 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		// A fresh process: nothing in memory, only the database.
 		const after = db.open();
 		const reads: string[] = [];
-		const read = async (server: string, threadId: string) => { reads.push(`${server}/${threadId}`); return { ok: true as const, waiting: new Set<string>(), resolved: new Set(["req-a1"]) }; };
-		expect((await reconcileCardHolds(after, read)).closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
+		const read = async (server: string, threadId: string) => {
+			reads.push(`${server}/${threadId}`);
+			return { ok: true as const, waiting: new Set<string>(), resolved: new Set(["req-a1"]) };
+		};
+		expect((await reconcileCardHolds(after, read)).closed).toEqual([
+			{ server: "main", threadId: "th-1", requestId: "req-a1" },
+		]);
 		expect(reads).toEqual(["main/th-1"]);
 		expect(getQuestion(after, item)!.status).toBe("answered-on-card");
 		expect(heldOpen(after)).toEqual([]);
@@ -158,7 +237,9 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		const r = await reconcileCardHolds(store, saw(["req-a1"]));
 		expect(r.closed).toEqual([]);
 		expect(r.verified.map((c) => c.requestId)).toEqual(["req-a1"]);
-		expect((await reconcileCardHolds(store, saw([], ["req-a1"]))).closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
+		expect((await reconcileCardHolds(store, saw([], ["req-a1"]))).closed).toEqual([
+			{ server: "main", threadId: "th-1", requestId: "req-a1" },
+		]);
 		expect((await reconcileCardHolds(store, saw([], ["req-a1"]))).closed).toEqual([]);
 		expect(store.items.list({ source: "held" }).filter((i) => i.status === "resolved")).toHaveLength(1);
 		expect(getQuestion(store, item)!.status).toBe("answered-on-card");
@@ -170,12 +251,26 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		holdCard(s, cardWaitOf({ ...approval, requestId: "req-a3" }, { ...AT, threadId: "th-live" }));
 		s.close();
 		const after = db.open();
-		const r = await reconcileCardHolds(after, async (_s, t) => (t === "th-down" ? { ok: false as const, reason: "thread not found" } : { ok: true as const, waiting: new Set(["req-a3"]), resolved: new Set<string>() }));
+		const r = await reconcileCardHolds(after, async (_s, t) =>
+			t === "th-down"
+				? { ok: false as const, reason: "thread not found" }
+				: { ok: true as const, waiting: new Set(["req-a3"]), resolved: new Set<string>() },
+		);
 		expect(r.closed).toEqual([]);
 		expect(r.unverified.map((u) => [u.card.requestId, u.reason])).toEqual([["req-a2", "thread not found"]]);
 		expect(r.verified.map((c) => c.requestId)).toEqual(["req-a3"]);
-		expect(heldOpen(after).map((h) => h.card!.requestId).sort()).toEqual(["req-a2", "req-a3"]);
-		expect((await reconcileCardHolds(after, async () => { throw Error("socket down"); })).closed).toEqual([]);
+		expect(
+			heldOpen(after)
+				.map((h) => h.card!.requestId)
+				.sort(),
+		).toEqual(["req-a2", "req-a3"]);
+		expect(
+			(
+				await reconcileCardHolds(after, async () => {
+					throw Error("socket down");
+				})
+			).closed,
+		).toEqual([]);
 		expect(heldOpen(after)).toHaveLength(2);
 		after.close();
 	});
@@ -184,7 +279,9 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		const { item } = holdCard(store, cardWaitOf(approval, AT), new Date("2099-01-01T00:00:00.000Z"));
 		const seq = heldOpen(store)[0]!.seq!;
 		expect(seq).toBe(store.sequence.current());
-		expect((await reconcileCardHolds(store, saw([], ["req-a1"]), () => new Date("2000-01-01T00:00:00.000Z"))).closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
+		expect(
+			(await reconcileCardHolds(store, saw([], ["req-a1"]), () => new Date("2000-01-01T00:00:00.000Z"))).closed,
+		).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
 		expect(getQuestion(store, item)!.status).toBe("answered-on-card");
 		expect(store.sequence.current()).toBe(seq + 1);
 	});
@@ -200,11 +297,17 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 			return { ok: true as const, waiting: new Set<string>(), resolved: new Set(["req-a1", "req-b"]) };
 		});
 		expect(r.closed).toEqual([]);
-		expect(heldOpen(store).map((h) => h.card!.requestId).sort()).toEqual(["req-a1", "req-b"]);
+		expect(
+			heldOpen(store)
+				.map((h) => h.card!.requestId)
+				.sort(),
+		).toEqual(["req-a1", "req-b"]);
 		expect(getQuestion(store, first.item)!.status).toBe("answered-on-card");
 		expect(getQuestion(store, late)!.status).toBe("open");
 		// The next read started after both holds: they close.
-		expect((await reconcileCardHolds(store, saw([], ["req-a1", "req-b"]))).closed.map((c) => c.requestId).sort()).toEqual(["req-a1", "req-b"]);
+		expect(
+			(await reconcileCardHolds(store, saw([], ["req-a1", "req-b"]))).closed.map((c) => c.requestId).sort(),
+		).toEqual(["req-a1", "req-b"]);
 		expect(heldOpen(store)).toEqual([]);
 		expect(getQuestion(store, late)!.status).toBe("answered-on-card");
 	});
@@ -213,20 +316,30 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		holdCard(store, cardWaitOf(approval, AT));
 		const h = store.items.list({ source: "held" })[0]!;
 		const { seq: _q, ...old } = h.payload as Record<string, unknown>;
-		store.items.observe({ source: "held", kind: "hold", dedupKey: h.dedupKey, mode: "silenced", payload: old, now: Date.now() });
+		store.items.observe({
+			source: "held",
+			kind: "hold",
+			dedupKey: h.dedupKey,
+			mode: "silenced",
+			payload: old,
+			now: Date.now(),
+		});
 		const r = await reconcileCardHolds(store, saw([], ["req-a1"]));
 		expect(r.closed).toEqual([]);
 		expect(r.unverified.map((u) => u.reason)).toEqual(["the read did not start after its hold was written"]);
 		const q = memStore();
 		askQuestion(q, cardQuestion(cardWaitOf(approval, AT), "Q-ptr01", new Date().toISOString()));
-		expect((await reconcileCardHolds(q, saw([], ["req-a1"]))).unverified.map((u) => u.reason)).toEqual(["it has no open hold, only its pointer question"]);
+		expect((await reconcileCardHolds(q, saw([], ["req-a1"]))).unverified.map((u) => u.reason)).toEqual([
+			"it has no open hold, only its pointer question",
+		]);
 		expect(getQuestion(q, "Q-ptr01")!.status).toBe("open");
 	});
 	test("unverifiable past the period: an alarm naming the hold, the card and the hand close command; then the operator closes it", async () => {
 		const store = memStore();
 		const { item } = holdCard(store, cardWaitOf(approval, AT));
 		const hold = heldOpen(store)[0]!;
-		const H = 3_600_000, t0 = Date.parse("2026-11-13T00:00:00.000Z");
+		const H = 3_600_000,
+			t0 = Date.parse("2026-11-13T00:00:00.000Z");
 		// The card has fallen out of its thread's history window: no evidence either way.
 		expect(trackUnverified(store, await reconcileCardHolds(store, saw()), 24 * H, t0)).toEqual([]);
 		expect(trackUnverified(store, await reconcileCardHolds(store, saw()), 24 * H, t0 + 23 * H)).toEqual([]);
@@ -251,7 +364,8 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 	test("a card seen waiting again ends its unverified record, so the period starts over", async () => {
 		const store = memStore();
 		holdCard(store, cardWaitOf(approval, AT));
-		const H = 3_600_000, t0 = Date.parse("2026-11-13T00:00:00.000Z");
+		const H = 3_600_000,
+			t0 = Date.parse("2026-11-13T00:00:00.000Z");
 		const down = async () => ({ ok: false as const, reason: "down" });
 		trackUnverified(store, await reconcileCardHolds(store, down), 24 * H, t0);
 		trackUnverified(store, await reconcileCardHolds(store, saw(["req-a1"])), 24 * H, t0 + 12 * H);
@@ -262,8 +376,20 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		const store = memStore();
 		holdCard(store, cardWaitOf(approval, AT));
 		const r = await reconcileCardHolds(store, async () => ({ ok: false, reason: "main is not connected" }));
-		expect(r).toEqual({ closed: [], verified: [], unverified: [{ card: expect.objectContaining({ server: "main", requestId: "req-a1" }), reason: "main is not connected" }], failed: [{ server: "main", reason: "main is not connected" }] });
-		for (const bad of [{ state: "read", resolved: new Set(["req-a1"]) }, { ok: true, waiting: new Set(), resolved: ["req-a1"] }, { ok: true, resolved: new Set(["req-a1"]) }, { ok: true, waiting: new Set(), resolved: new Set([3]) }]) {
+		expect(r).toEqual({
+			closed: [],
+			verified: [],
+			unverified: [
+				{ card: expect.objectContaining({ server: "main", requestId: "req-a1" }), reason: "main is not connected" },
+			],
+			failed: [{ server: "main", reason: "main is not connected" }],
+		});
+		for (const bad of [
+			{ state: "read", resolved: new Set(["req-a1"]) },
+			{ ok: true, waiting: new Set(), resolved: ["req-a1"] },
+			{ ok: true, resolved: new Set(["req-a1"]) },
+			{ ok: true, waiting: new Set(), resolved: new Set([3]) },
+		]) {
 			expect((await reconcileCardHolds(store, async () => bad as never)).closed).toEqual([]);
 		}
 		expect(heldOpen(store)).toHaveLength(1);
@@ -274,9 +400,18 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		// Rewrite the hold as an older build left it: server and request ID, no card.
 		const h = store.items.list({ source: "held" })[0]!;
 		const { card: _c, ...old } = h.payload as Record<string, unknown>;
-		store.items.observe({ source: "held", kind: "hold", dedupKey: h.dedupKey, mode: "silenced", payload: old, now: Date.now() });
+		store.items.observe({
+			source: "held",
+			kind: "hold",
+			dedupKey: h.dedupKey,
+			mode: "silenced",
+			payload: old,
+			now: Date.now(),
+		});
 		expect(heldOpen(store)[0]!.card).toBeUndefined();
-		expect(openCards(store)).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1", holds: [{ id: h.dedupKey, seq: 1 }] }]);
+		expect(openCards(store)).toEqual([
+			{ server: "main", threadId: "th-1", requestId: "req-a1", holds: [{ id: h.dedupKey, seq: 1 }] },
+		]);
 		expect((await reconcileCardHolds(store, saw([], ["req-a1"]))).closed).toHaveLength(1);
 		expect(heldOpen(store)).toEqual([]);
 		expect(getQuestion(store, item)!.status).toBe("answered-on-card");
@@ -287,13 +422,23 @@ describe("(2)(3) card holds close only on positive evidence: the card's own item
 		const b = holdCard(store, cardWaitOf(approval, { ...AT, server: "second" }));
 		expect(a.item).not.toBe(b.item);
 		// "main" shows req-a1 resolved; "second" shows it still waiting.
-		const r = await reconcileCardHolds(store, async (server) => ({ ok: true as const, waiting: new Set(server === "second" ? ["req-a1"] : []), resolved: new Set(server === "second" ? [] : ["req-a1"]) }));
+		const r = await reconcileCardHolds(store, async (server) => ({
+			ok: true as const,
+			waiting: new Set(server === "second" ? ["req-a1"] : []),
+			resolved: new Set(server === "second" ? [] : ["req-a1"]),
+		}));
 		expect(r.closed).toEqual([{ server: "main", threadId: "th-1", requestId: "req-a1" }]);
 		expect(heldOpen(store).map((h) => h.server)).toEqual(["second"]);
 		expect(getQuestion(store, b.item)!.status).toBe("open");
-		expect(closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({ questions: 0, holds: 0 });
+		expect(closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({
+			questions: 0,
+			holds: 0,
+		});
 		expect(heldOpen(store).map((h) => h.server)).toEqual(["second"]);
-		expect(closeCard(store, { server: "second", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({ questions: 1, holds: 1 });
+		expect(closeCard(store, { server: "second", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({
+			questions: 1,
+			holds: 1,
+		});
 		expect(heldOpen(store)).toEqual([]);
 	});
 });
@@ -305,7 +450,11 @@ describe("(A)(B) one hold per card, and a card hold closes only with its pointer
 		holdCard(store, cardWaitOf(secretCard, AT));
 		expect(heldOpen(store)).toHaveLength(2);
 		expect(questionStates(store).size).toBe(2);
-		const r = await reconcileCardHolds(store, async () => ({ ok: true as const, waiting: new Set(["req-s1"]), resolved: new Set(["req-a1"]) }));
+		const r = await reconcileCardHolds(store, async () => ({
+			ok: true as const,
+			waiting: new Set(["req-s1"]),
+			resolved: new Set(["req-a1"]),
+		}));
 		expect(r.closed.map((c) => c.requestId)).toEqual(["req-a1"]);
 		expect(heldOpen(store).map((h) => h.card!.requestId)).toEqual(["req-s1"]);
 	});
@@ -314,7 +463,12 @@ describe("(A)(B) one hold per card, and a card hold closes only with its pointer
 		const { item } = holdCard(store, cardWaitOf(approval, AT));
 		const h = store.items.list({ source: "held" })[0]!;
 		store.items.patch("held", h.dedupKey, { threadId: "th-1", ref: { threadId: "th-1" } });
-		const settled = { machine: "main", healthy: true, complete: true, get: () => ({ archived: true, settled: true, pendingRequestId: null, status: "idle" }) };
+		const settled = {
+			machine: "main",
+			healthy: true,
+			complete: true,
+			get: () => ({ archived: true, settled: true, pendingRequestId: null, status: "idle" }),
+		};
 		const r = await reconcileRefHolds({ store, snapshots: async () => [settled] });
 		expect(r.closed).toBe(0);
 		expect(heldOpen(store)).toHaveLength(1);
@@ -324,12 +478,18 @@ describe("(A)(B) one hold per card, and a card hold closes only with its pointer
 		const store = memStore();
 		const { item } = holdCard(store, cardWaitOf(approval, AT));
 		const resolve = store.items.resolve.bind(store.items);
-		store.items.resolve = ((source: string, ...rest: unknown[]) => { if (source === "held") throw Error("disk full"); return (resolve as (...a: unknown[]) => unknown)(source, ...rest); }) as typeof store.items.resolve;
+		store.items.resolve = ((source: string, ...rest: unknown[]) => {
+			if (source === "held") throw Error("disk full");
+			return (resolve as (...a: unknown[]) => unknown)(source, ...rest);
+		}) as typeof store.items.resolve;
 		expect(() => closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toThrow("disk full");
 		store.items.resolve = resolve;
 		expect(getQuestion(store, item)!.status).toBe("open");
 		expect(heldOpen(store)).toHaveLength(1);
-		expect(closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({ questions: 1, holds: 1 });
+		expect(closeCard(store, { server: "main", threadId: "th-1", requestId: "req-a1" }, "x")).toEqual({
+			questions: 1,
+			holds: 1,
+		});
 	});
 	test("(B) a thread's close (the live path's Steward-hold close) never closes a card hold", () => {
 		const store = memStore();

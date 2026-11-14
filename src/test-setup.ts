@@ -24,9 +24,13 @@ const conf = `${root}/conf`;
 const state = `${root}/state`;
 for (const d of [home, conf, state]) mkdirSync(d, { mode: 0o700 });
 // git needs an identity for the repositories some tests make; the scratch home has none of its own.
-writeFileSync(`${home}/.gitconfig`, "[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n");
+writeFileSync(
+	`${home}/.gitconfig`,
+	"[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n",
+);
 
-for (const k of Object.keys(process.env)) if (/^(CHAMBERLAIN_|ALERT_DESK_|DESK_)/.test(k) || k === "CLAUDE_CONFIG_DIR") delete process.env[k];
+for (const k of Object.keys(process.env))
+	if (/^(CHAMBERLAIN_|ALERT_DESK_|DESK_)/.test(k) || k === "CLAUDE_CONFIG_DIR") delete process.env[k];
 Object.assign(process.env, {
 	HOME: home,
 	CHAMBERLAIN_CONF: conf,
@@ -36,7 +40,11 @@ Object.assign(process.env, {
 	XDG_CACHE_HOME: `${home}/.cache`,
 	XDG_DATA_HOME: `${home}/.local/share`,
 });
-if (realHome) process.env.PATH = (process.env.PATH ?? "").split(":").filter((p) => p && p !== `${realHome}/bin`).join(":");
+if (realHome)
+	process.env.PATH = (process.env.PATH ?? "")
+		.split(":")
+		.filter((p) => p && p !== `${realHome}/bin`)
+		.join(":");
 
 /** Where the sentinel writes one line per call. A run that finds this file at its end has failed. */
 export const ALERT_MARKER = `${root}/alert-called`;
@@ -52,7 +60,9 @@ const cleanup = () => {
 	removed = true;
 	if (existsSync(ALERT_MARKER)) {
 		const calls = readFileSync(ALERT_MARKER, "utf8").trim().split("\n");
-		console.error(`\nFAIL: ${calls.length} test(s) ran the alert command. A test that raises an alarm must pass \`alert: noAlert\` (the noAlert helper in the testing directory). Calls:\n${calls.map((c) => `  ${c.slice(0, 200)}`).join("\n")}`);
+		console.error(
+			`\nFAIL: ${calls.length} test(s) ran the alert command. A test that raises an alarm must pass \`alert: noAlert\` (the noAlert helper in the testing directory). Calls:\n${calls.map((c) => `  ${c.slice(0, 200)}`).join("\n")}`,
+		);
 		process.exitCode = 1;
 	}
 	rmSync(root, { recursive: true, force: true });
@@ -61,4 +71,12 @@ afterAll(cleanup);
 // A run that is killed part-way (a timeout, ^C) still takes its root with it. A child process that outlives the runner
 // loses its temp dir here; that is deliberate: a test must stop every process it starts, and a survivor is a test bug.
 process.on("exit", cleanup);
-for (const [sig, code] of [["SIGHUP", 129], ["SIGINT", 130], ["SIGTERM", 143]] as const) process.on(sig, () => { cleanup(); process.exit(code); });
+for (const [sig, code] of [
+	["SIGHUP", 129],
+	["SIGINT", 130],
+	["SIGTERM", 143],
+] as const)
+	process.on(sig, () => {
+		cleanup();
+		process.exit(code);
+	});

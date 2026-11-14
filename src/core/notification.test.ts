@@ -1,7 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { decideNotification, repeatAtIntervals, NOTIFY_ONCE, repeatEvery, type NotificationState } from "./notification.ts";
+import {
+	decideNotification,
+	repeatAtIntervals,
+	NOTIFY_ONCE,
+	repeatEvery,
+	type NotificationState,
+} from "./notification.ts";
 
-const fresh = (o: Partial<NotificationState> = {}): NotificationState => ({ status: "triggered", mode: "live", notificationCount: 0, nextNotificationAt: null, shadowNotificationCount: 0, shadowNextNotificationAt: null, ...o });
+const fresh = (o: Partial<NotificationState> = {}): NotificationState => ({
+	status: "triggered",
+	mode: "live",
+	notificationCount: 0,
+	nextNotificationAt: null,
+	shadowNotificationCount: 0,
+	shadowNextNotificationAt: null,
+	...o,
+});
 const HOUR = 3600_000;
 
 describe("decideNotification: the one function that says whether an item alerts", () => {
@@ -15,19 +29,32 @@ describe("decideNotification: the one function that says whether an item alerts"
 		const l = repeatEvery(HOUR);
 		const a = decideNotification(fresh(), l, 0);
 		expect(a).toMatchObject({ notify: true, count: 1, nextAt: HOUR });
-		expect(decideNotification(fresh({ status: "triggered", notificationCount: 1, nextNotificationAt: HOUR }), l, HOUR - 1).notify).toBe(false);
-		const b = decideNotification(fresh({ status: "triggered", notificationCount: 1, nextNotificationAt: HOUR }), l, HOUR);
+		expect(
+			decideNotification(fresh({ status: "triggered", notificationCount: 1, nextNotificationAt: HOUR }), l, HOUR - 1)
+				.notify,
+		).toBe(false);
+		const b = decideNotification(
+			fresh({ status: "triggered", notificationCount: 1, nextNotificationAt: HOUR }),
+			l,
+			HOUR,
+		);
 		expect(b).toMatchObject({ notify: true, count: 2, nextAt: 2 * HOUR });
-		expect(decideNotification(fresh({ status: "triggered", notificationCount: 500, nextNotificationAt: 0 }), l, 1).notify).toBe(true);
+		expect(
+			decideNotification(fresh({ status: "triggered", notificationCount: 500, nextNotificationAt: 0 }), l, 1).notify,
+		).toBe(true);
 	});
 
 	test("an escalating ladder follows its steps, repeats the last, and stops at the cap", () => {
 		const l = repeatAtIntervals([10, 100], 4);
 		const times: number[] = [];
-		let s = fresh(), now = 0;
+		let s = fresh(),
+			now = 0;
 		for (let i = 0; i < 10; i++) {
 			const d = decideNotification(s, l, now);
-			if (d.notify) { times.push(now); s = fresh({ status: "triggered", notificationCount: d.count, nextNotificationAt: d.nextAt }); }
+			if (d.notify) {
+				times.push(now);
+				s = fresh({ status: "triggered", notificationCount: d.count, nextNotificationAt: d.nextAt });
+			}
 			now += 1;
 			if (d.nextAt !== null && i < 9) now = Math.max(now, d.nextAt);
 		}
@@ -37,7 +64,12 @@ describe("decideNotification: the one function that says whether an item alerts"
 	});
 
 	test("acknowledged, resolved and off items never alert", () => {
-		for (const o of [{ status: "acknowledged" as const }, { status: "resolved" as const }, { mode: "silenced" as const }]) expect(decideNotification(fresh(o), NOTIFY_ONCE, 0)).toMatchObject({ notify: false, wouldNotify: false });
+		for (const o of [
+			{ status: "acknowledged" as const },
+			{ status: "resolved" as const },
+			{ mode: "silenced" as const },
+		])
+			expect(decideNotification(fresh(o), NOTIFY_ONCE, 0)).toMatchObject({ notify: false, wouldNotify: false });
 	});
 
 	test("a cap below one never alerts", () => {
@@ -48,7 +80,11 @@ describe("decideNotification: the one function that says whether an item alerts"
 		const d = decideNotification(fresh({ mode: "shadow" }), repeatEvery(HOUR), 0);
 		expect(d).toEqual({ notify: false, wouldNotify: true, count: 1, nextAt: HOUR });
 		// The live counters are what live mode reads: a month of would-alerts leaves the first real alert still due.
-		const live = decideNotification(fresh({ mode: "live", notificationCount: 0, shadowNotificationCount: 30, shadowNextNotificationAt: 99 }), repeatEvery(HOUR), 5);
+		const live = decideNotification(
+			fresh({ mode: "live", notificationCount: 0, shadowNotificationCount: 30, shadowNextNotificationAt: 99 }),
+			repeatEvery(HOUR),
+			5,
+		);
 		expect(live).toMatchObject({ notify: true, wouldNotify: false, count: 1 });
 	});
 });

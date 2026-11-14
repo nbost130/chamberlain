@@ -4,12 +4,31 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { askQuestion, type Question } from "./questions.ts";
 import { tmpdir } from "node:os";
-import { appendHeld, brief, briefMarkdown, cleanRef, closeHeld, closeHeldForCard, closeHeldForItem, fyiReason, heldId, heldOpen, noteHeld, readAfk, type Afk, type Held } from "./afk.ts";
+import {
+	appendHeld,
+	brief,
+	briefMarkdown,
+	cleanRef,
+	closeHeld,
+	closeHeldForCard,
+	closeHeldForItem,
+	fyiReason,
+	heldId,
+	heldOpen,
+	noteHeld,
+	readAfk,
+	type Afk,
+	type Held,
+} from "./afk.ts";
 import { awayModeLine } from "./messages.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath } from "./store.ts";
 
-const a: Afk = { enteredAt: "2026-11-01T12:45:00.000Z", words: "keep everything moving", expectedReturn: "2026-11-01T20:00:00Z" };
+const a: Afk = {
+	enteredAt: "2026-11-01T12:45:00.000Z",
+	words: "keep everything moving",
+	expectedReturn: "2026-11-01T20:00:00Z",
+};
 
 describe("awayModeLine", () => {
 	test("carries his words, the hold rule and the never-pre-authorized limits", () => {
@@ -30,7 +49,13 @@ describe("briefMarkdown", () => {
 				{ t: "2026-11-01T13:00:00Z", thread: "T1", decision: "chose local route", ruling: "documented path" },
 			],
 			[{ t: "2026-11-01T13:05:00Z", thread: "T3", what: "approve flush of test db", taken: "left it parked" }],
-			[{ event: "fire" }, { event: "fire" }, { event: "skip-empty-wait" }, { event: "held-by-daemon" }, { event: "alarm" }],
+			[
+				{ event: "fire" },
+				{ event: "fire" },
+				{ event: "skip-empty-wait" },
+				{ event: "held-by-daemon" },
+				{ event: "alarm" },
+			],
 		);
 		expect(out.indexOf("Waiting on the operator (1)")).toBeLessThan(out.indexOf("Decided for the operator (1)"));
 		expect(out).toContain("approve flush of test db — meanwhile: left it parked");
@@ -48,10 +73,12 @@ describe("briefMarkdown", () => {
 describe("the held list", () => {
 	const old: Held = { t: "2026-11-01T01:00:00.000Z", thread: "A", what: "from an earlier absence" };
 	const fresh: Held = { t: "2026-11-05T09:00:00.000Z", thread: "B", what: "from this absence" };
-	const hold = (store: ReturnType<typeof memStore>, h: Held) => appendHeld(store, (({ t: _t, ...rest }) => rest)(h), new Date(h.t));
+	const hold = (store: ReturnType<typeof memStore>, h: Held) =>
+		appendHeld(store, (({ t: _t, ...rest }) => rest)(h), new Date(h.t));
 	test("an open item outlives the absence it was held in", () => {
 		const store = memStore();
-		hold(store, old); hold(store, fresh);
+		hold(store, old);
+		hold(store, fresh);
 		expect(heldOpen(store).map((h) => h.thread)).toEqual(["A", "B"]);
 		expect(briefMarkdown(a, [], heldOpen(store), [])).toContain("from an earlier absence");
 	});
@@ -59,7 +86,13 @@ describe("the held list", () => {
 		const store = memStore();
 		const id = hold(store, { ...old, item: "Q-abc12" });
 		expect(id).toBe(heldId(old));
-		expect(store.items.get("held", id)).toMatchObject({ kind: "hold", mode: "silenced", status: "triggered", subject: { kind: "question", id: "Q-abc12" }, payload: { thread: "A" } });
+		expect(store.items.get("held", id)).toMatchObject({
+			kind: "hold",
+			mode: "silenced",
+			status: "triggered",
+			subject: { kind: "question", id: "Q-abc12" },
+			payload: { thread: "A" },
+		});
 	});
 	test("ids stay stable and differ per entry", () => {
 		expect(heldId(old)).toBe(heldId({ ...old, taken: "later note" }));
@@ -69,7 +102,8 @@ describe("the held list", () => {
 	});
 	test("closeHeld resolves exactly one item and refuses an unknown or already closed id", () => {
 		const store = memStore();
-		hold(store, old); hold(store, fresh);
+		hold(store, old);
+		hold(store, fresh);
 		expect(closeHeld(store, heldId(old), "answered").thread).toBe("A");
 		expect(heldOpen(store).map((h) => h.thread)).toEqual(["B"]);
 		expect(store.items.get("held", heldId(old))).toMatchObject({ status: "resolved", payload: { how: "answered" } });
@@ -81,19 +115,29 @@ describe("the held list", () => {
 describe("closeHeldForCard", () => {
 	const seed = (entries: Partial<Held>[]) => {
 		const store = memStore();
-		entries.forEach((e, i) => appendHeld(store, { thread: "T", what: `w${i}`, ...e }, new Date(`2026-11-06T0${i}:00:00.000Z`)));
+		entries.forEach((e, i) =>
+			appendHeld(store, { thread: "T", what: `w${i}`, ...e }, new Date(`2026-11-06T0${i}:00:00.000Z`)),
+		);
 		return store;
 	};
 	const open = (store: ReturnType<typeof memStore>) => heldOpen(store).map((h) => h.what);
 
 	test("(B) never closes a daemon's card hold, which closes only with its pointer question (card-hold.ts closeCard)", () => {
-		const store = seed([{ server: "main", requestId: "r1", card: { server: "main", threadId: "th", requestId: "r1" } }, { requestId: "r2" }]);
+		const store = seed([
+			{ server: "main", requestId: "r1", card: { server: "main", threadId: "th", requestId: "r1" } },
+			{ requestId: "r2" },
+		]);
 		expect(closeHeldForCard(store, "main", "th", "answered")).toBe(0);
 		expect(open(store)).toEqual(["w0", "w1"]);
 	});
 
 	test("closes a Steward's hold on that thread, and leaves other threads and other servers alone", () => {
-		const store = seed([{ threadId: "th" }, { threadId: "other" }, { threadId: "th", server: "second" }, { threadId: "th", server: "main" }]);
+		const store = seed([
+			{ threadId: "th" },
+			{ threadId: "other" },
+			{ threadId: "th", server: "second" },
+			{ threadId: "th", server: "main" },
+		]);
 		expect(closeHeldForCard(store, "main", "th", "answered")).toBe(2);
 		expect(open(store)).toEqual(["w1", "w2"]);
 	});
@@ -130,7 +174,13 @@ describe("the away record and the brief", () => {
 		store.away.enter({ enteredAt: "2026-11-01T12:45:00.000Z", words: "keep going" });
 		expect(readAfk(store)).toEqual({ enteredAt: "2026-11-01T12:45:00.000Z", words: "keep going" });
 		appendHeld(store, { thread: "T3", what: "approve the flush" }, new Date("2026-11-01T13:00:00Z"));
-		store.decisions.append({ t: "2026-11-01T14:00:00.000Z", thread: "T1", decision: "chose local", ruling: "R1", ref: null });
+		store.decisions.append({
+			t: "2026-11-01T14:00:00.000Z",
+			thread: "T1",
+			decision: "chose local",
+			ruling: "R1",
+			ref: null,
+		});
 		store.events.append({ t: "2026-11-01T13:30:00.000Z", event: "fire" });
 		store.events.append({ t: "2026-11-01T10:00:00.000Z", event: "fire" });
 		const out = brief(store, readAfk(store)!);
@@ -144,7 +194,10 @@ describe("hold refs, notes and the CLI", () => {
 	/** afk.ts as a real process on a scratch state directory. */
 	function cli(dir: string, ...args: string[]) {
 		const { XDG_STATE_HOME: _s, XDG_CACHE_HOME: _c, XDG_CONFIG_HOME: _f, CHAMBERLAIN_STATE: _a, ...rest } = process.env;
-		return spawnSync(process.execPath, [new URL("./afk.ts", import.meta.url).pathname, ...args], { env: { ...rest, HOME: dir, CHAMBERLAIN_STATE: `${dir}/state`, CHAMBERLAIN_CONF: `${dir}/conf` }, encoding: "utf8" });
+		return spawnSync(process.execPath, [new URL("./afk.ts", import.meta.url).pathname, ...args], {
+			env: { ...rest, HOME: dir, CHAMBERLAIN_STATE: `${dir}/state`, CHAMBERLAIN_CONF: `${dir}/conf` },
+			encoding: "utf8",
+		});
 	}
 	const open = (dir: string) => openStore(dbPath(`${dir}/state`));
 	const scratch = () => mkdtempSync(`${tmpdir()}/chamberlain-afk-`);
@@ -152,7 +205,17 @@ describe("hold refs, notes and the CLI", () => {
 	const queued = (dir: string, id = "Q-abcd1", extra: Partial<Question> = {}) => {
 		mkdirSync(`${dir}/state`, { recursive: true });
 		const s = open(dir);
-		askQuestion(s, { id, kind: "only-you", title: `question ${id}`, context: "", options: [{ label: "A" }, { label: "B" }], thread: "T", server: "main", createdAt: new Date().toISOString(), ...extra });
+		askQuestion(s, {
+			id,
+			kind: "only-you",
+			title: `question ${id}`,
+			context: "",
+			options: [{ label: "A" }, { label: "B" }],
+			thread: "T",
+			server: "main",
+			createdAt: new Date().toISOString(),
+			...extra,
+		});
 		s.close();
 		return id;
 	};
@@ -160,10 +223,40 @@ describe("hold refs, notes and the CLI", () => {
 	test("hold takes --pr, --issue, --branch, --run and --thread and stores them as a structured ref", () => {
 		const dir = scratch();
 		queued(dir);
-		const r = cli(dir, "hold", "Billing", "approve the migration", "left it parked", "--pr", "example-org/app#962", "--issue", "o/r#5", "--branch", "o/r:feat/x", "--run", "01JRUN1234", "--thread", "th-abc1", "--item", "Q-abcd1");
+		const r = cli(
+			dir,
+			"hold",
+			"Billing",
+			"approve the migration",
+			"left it parked",
+			"--pr",
+			"example-org/app#962",
+			"--issue",
+			"o/r#5",
+			"--branch",
+			"o/r:feat/x",
+			"--run",
+			"01JRUN1234",
+			"--thread",
+			"th-abc1",
+			"--item",
+			"Q-abcd1",
+		);
 		expect(r.status).toBe(0);
 		const store = open(dir);
-		expect(heldOpen(store)[0]).toMatchObject({ thread: "Billing", what: "approve the migration", taken: "left it parked", item: "Q-abcd1", ref: { pr: "example-org/app#962", issue: "o/r#5", branch: "o/r:feat/x", runId: "01JRUN1234", threadId: "th-abc1" } });
+		expect(heldOpen(store)[0]).toMatchObject({
+			thread: "Billing",
+			what: "approve the migration",
+			taken: "left it parked",
+			item: "Q-abcd1",
+			ref: {
+				pr: "example-org/app#962",
+				issue: "o/r#5",
+				branch: "o/r:feat/x",
+				runId: "01JRUN1234",
+				threadId: "th-abc1",
+			},
+		});
 		store.close();
 	});
 
@@ -179,7 +272,15 @@ describe("hold refs, notes and the CLI", () => {
 
 	test("a malformed ref, an unknown flag or a flag with no value is refused with usage and writes nothing", () => {
 		const dir = scratch();
-		for (const bad of [["--pr", "962"], ["--pr", "o/r#x"], ["--branch", "o/r"], ["--issue", "o/r#1; rm"], ["--bogus", "x"], ["--pr"], ["--item", "nope"]]) {
+		for (const bad of [
+			["--pr", "962"],
+			["--pr", "o/r#x"],
+			["--branch", "o/r"],
+			["--issue", "o/r#1; rm"],
+			["--bogus", "x"],
+			["--pr"],
+			["--item", "nope"],
+		]) {
 			const r = cli(dir, "hold", "A", "waits", ...bad);
 			expect(r.status).toBe(2);
 			expect(r.stderr).toContain("usage: afk.ts hold");
@@ -228,7 +329,16 @@ describe("hold refs, notes and the CLI", () => {
 	// "no action from builders" in a real hold's text was refused.
 	test("fix 3: hold refuses an FYI that opens the thread or the text, with a non-zero exit, and points at decided.ts", () => {
 		const dir = scratch();
-		for (const [thread, what] of [["FYI", "build passed"], ["CI", "FYI only: build passed"], ["CI", "  ...For your information, the deploy finished"], ["CI", "no action needed, all green"], ["CI", "Nothing needed from the operator"], ["[FYI] Billing", "migration ran"], ["Notes", "nothing required"], ["Notes", "(FYI) done"]]) {
+		for (const [thread, what] of [
+			["FYI", "build passed"],
+			["CI", "FYI only: build passed"],
+			["CI", "  ...For your information, the deploy finished"],
+			["CI", "no action needed, all green"],
+			["CI", "Nothing needed from the operator"],
+			["[FYI] Billing", "migration ran"],
+			["Notes", "nothing required"],
+			["Notes", "(FYI) done"],
+		]) {
 			const r = cli(dir, "hold", thread!, what!);
 			expect(r.status).toBe(2);
 			expect(r.stderr).toContain("refused");
@@ -242,7 +352,12 @@ describe("hold refs, notes and the CLI", () => {
 	test("fix 3: a real wait that merely says 'no action' or 'nothing' somewhere passes", () => {
 		const dir = scratch();
 		const q = queued(dir);
-		for (const [thread, what] of [["Billing", "waits on the operator; no action from builders until then"], ["Deploy", "approve the release. Nothing needed from the build until they say go"], ["Secrets", "rotate the Stripe key; it is not an FYI, only they can"], ["App", "decide whether a one-way gate is needed"]]) {
+		for (const [thread, what] of [
+			["Billing", "waits on the operator; no action from builders until then"],
+			["Deploy", "approve the release. Nothing needed from the build until they say go"],
+			["Secrets", "rotate the Stripe key; it is not an FYI, only they can"],
+			["App", "decide whether a one-way gate is needed"],
+		]) {
 			expect(fyiReason(thread!, what!)).toBeUndefined();
 			expect(cli(dir, "hold", thread!, what!, "left it parked", "--item", q).status).toBe(0);
 		}
@@ -256,12 +371,17 @@ describe("hold refs, notes and the CLI", () => {
 	test("fix 1: --server names the thread's server, only beside a thread, and is stored on the hold", () => {
 		const dir = scratch();
 		const q = queued(dir);
-		expect(cli(dir, "hold", "A", "waits", "", "", "--thread", "th-abc1", "--server", "main", "--item", q).status).toBe(0);
+		expect(cli(dir, "hold", "A", "waits", "", "", "--thread", "th-abc1", "--server", "main", "--item", q).status).toBe(
+			0,
+		);
 		expect(cli(dir, "hold", "B", "waits", "", "th-card1", "--server", "second", "--item", q).status).toBe(0);
 		expect(cli(dir, "hold", "C", "waits", "", "", "--server", "main").status).toBe(2);
 		expect(cli(dir, "hold", "D", "waits", "", "", "--thread", "th-abc1", "--server", "ma in").status).toBe(2);
 		const store = open(dir);
-		expect(heldOpen(store).map((h) => [h.thread, h.server])).toEqual([["A", "main"], ["B", "second"]]);
+		expect(heldOpen(store).map((h) => [h.thread, h.server])).toEqual([
+			["A", "main"],
+			["B", "second"],
+		]);
 		store.close();
 	});
 });

@@ -6,13 +6,19 @@
 import type { RunFailure, RunLook } from "../../core/adapter.ts";
 
 type Run = { id?: string; ordinal?: number; status?: string };
-type Item = { type?: string; runId?: string; failure?: { class?: string; code?: string; message?: string; retryable?: boolean; resetAt?: string } };
+type Item = {
+	type?: string;
+	runId?: string;
+	failure?: { class?: string; code?: string; message?: string; retryable?: boolean; resetAt?: string };
+};
 
 const ACTIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 
 /** Pure: what the projection shows right now: the newest run and its status, whether any run is going, and whether any card is open. */
 export function lookOf(runs: Run[], items: { status?: string }[]): RunLook {
-	const newest = runs.filter((r) => r.id).reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
+	const newest = runs
+		.filter((r) => r.id)
+		.reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
 	return {
 		...(newest?.id ? { latestRunId: newest.id } : {}),
 		...(newest?.status ? { latestStatus: newest.status } : {}),
@@ -23,7 +29,9 @@ export function lookOf(runs: Run[], items: { status?: string }[]): RunLook {
 
 /** Pure: the newest failed run's failure, or undefined when no run of the thread failed. */
 export function failureOf(runs: Run[], items: Item[]): RunFailure | undefined {
-	const failed = runs.filter((r) => r.status === "failed" && r.id).reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
+	const failed = runs
+		.filter((r) => r.status === "failed" && r.id)
+		.reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
 	if (!failed?.id) return undefined;
 	const err = [...items].reverse().find((i) => i.type === "error" && i.runId === failed.id);
 	const interrupted = items.some((i) => i.type === "run_interrupt_request" && i.runId === failed.id);

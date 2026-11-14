@@ -13,7 +13,9 @@ import { holdTestRelayLock } from "./singleton.ts";
 import { inTestEnv, requireTestEnv, TEST_ONLY_FLAG } from "./test-env.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 const wake = { ready: () => true, send: async () => ({ ok: true }) };
 
@@ -21,7 +23,12 @@ const wake = { ready: () => true, send: async () => ({ ok: true }) };
 async function inFreshProcess(code: string, env: Record<string, string>): Promise<string> {
 	const dir = mkdtempSync(`${tmpdir()}/chamberlain-env-`);
 	dirs.push(dir);
-	const p = Bun.spawn([process.execPath, "-e", code], { cwd: dir, env: { PATH: process.env.PATH ?? "", HOME: dir, ...env }, stdout: "pipe", stderr: "pipe" });
+	const p = Bun.spawn([process.execPath, "-e", code], {
+		cwd: dir,
+		env: { PATH: process.env.PATH ?? "", HOME: dir, ...env },
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
 	return `${out}${err}`.trim();
 }
@@ -60,7 +67,14 @@ describe("the test-only helpers need a test environment", () => {
 			process.env[TEST_ONLY_FLAG] = "1";
 			expect(() => testRelay(store, wake)).not.toThrow();
 		} finally {
-			for (const [k, v] of [["NODE_ENV", keep.NODE_ENV], ["BUN_ENV", keep.BUN_ENV], [TEST_ONLY_FLAG, keep.flag]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+			for (const [k, v] of [
+				["NODE_ENV", keep.NODE_ENV],
+				["BUN_ENV", keep.BUN_ENV],
+				[TEST_ONLY_FLAG, keep.flag],
+			] as const) {
+				if (v === undefined) delete process.env[k];
+				else process.env[k] = v;
+			}
 		}
 	});
 

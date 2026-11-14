@@ -28,8 +28,13 @@ export function render(template: string, version: string, sums: Record<string, s
 	for (const target of Object.keys(TARGETS)) {
 		const name = tarballName(version, target);
 		const sum = sums[name];
-		if (!sum) throw Error(`SHA256SUMS has no entry for ${name}: the formula needs all ${Object.keys(TARGETS).length} platforms`);
-		out = out.replaceAll(`{{url:${target}}}`, `https://github.com/${repo}/releases/download/v${version}/${name}`).replaceAll(`{{sha256:${target}}}`, sum);
+		if (!sum)
+			throw Error(
+				`SHA256SUMS has no entry for ${name}: the formula needs all ${Object.keys(TARGETS).length} platforms`,
+			);
+		out = out
+			.replaceAll(`{{url:${target}}}`, `https://github.com/${repo}/releases/download/v${version}/${name}`)
+			.replaceAll(`{{sha256:${target}}}`, sum);
 	}
 	const left = out.match(/\{\{[^}]*\}\}/);
 	if (left) throw Error(`the template still has ${left[0]} after rendering`);
@@ -37,12 +42,28 @@ export function render(template: string, version: string, sums: Record<string, s
 }
 
 export function main(argv: string[] = process.argv.slice(2)) {
-	const flag = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
+	const flag = (n: string) => {
+		const i = argv.indexOf(n);
+		return i >= 0 ? argv[i + 1] : undefined;
+	};
 	const sumsFile = flag("--sums");
-	if (!sumsFile) { console.error("usage: bun scripts/render-formula.ts --sums <SHA256SUMS> [--version X.Y.Z] [--repo owner/name] [--out <file>]"); process.exit(2); }
-	const formula = render(readFileSync(resolve(ROOT, "packaging/homebrew/chamberlain.rb.tmpl"), "utf8"), flag("--version") ?? pkg.version, parseSums(readFileSync(sumsFile, "utf8")), flag("--repo") ?? "nbost130/chamberlain");
+	if (!sumsFile) {
+		console.error(
+			"usage: bun scripts/render-formula.ts --sums <SHA256SUMS> [--version X.Y.Z] [--repo owner/name] [--out <file>]",
+		);
+		process.exit(2);
+	}
+	const formula = render(
+		readFileSync(resolve(ROOT, "packaging/homebrew/chamberlain.rb.tmpl"), "utf8"),
+		flag("--version") ?? pkg.version,
+		parseSums(readFileSync(sumsFile, "utf8")),
+		flag("--repo") ?? "nbost130/chamberlain",
+	);
 	const out = flag("--out");
-	if (!out) { process.stdout.write(formula); return; }
+	if (!out) {
+		process.stdout.write(formula);
+		return;
+	}
 	mkdirSync(dirname(resolve(out)), { recursive: true });
 	writeFileSync(out, formula);
 	console.log(`wrote ${out}`);

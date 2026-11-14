@@ -25,20 +25,34 @@ const store = flags.has("store") ? openStore(db) : undefined;
 
 /** One local acquisition that must be refused: true if it was. */
 function localRetryRefused(): boolean {
-	try { holdRelayLock(db).release(); return false; } catch (e) { if (e instanceof RelayRunningError) return true; throw e; }
+	try {
+		holdRelayLock(db).release();
+		return false;
+	} catch (e) {
+		if (e instanceof RelayRunningError) return true;
+		throw e;
+	}
 }
 
-while (Date.now() < startAt) { /* spin: the starters must collide */ }
+while (Date.now() < startAt) {
+	/* spin: the starters must collide */
+}
 let lock: RelayLock | undefined;
 try {
 	for (;;) {
-		try { lock = holdRelayLock(db); break; } catch (e) {
+		try {
+			lock = holdRelayLock(db);
+			break;
+		} catch (e) {
 			if (!(e instanceof RelayRunningError) || retryMs < 0 || Date.now() > startAt + retryMs) throw e;
 			await Bun.sleep(20);
 		}
 	}
 	if (flags.has("twice")) {
-		if (!localRetryRefused()) { console.log("held, but a second acquisition in the same process was allowed"); process.exit(1); }
+		if (!localRetryRefused()) {
+			console.log("held, but a second acquisition in the same process was allowed");
+			process.exit(1);
+		}
 		closeSync(openSync(db, "r"));
 		closeSync(openSync(dirname(realpathSync(resolve(db))), "r"));
 		new Database(db).close();
@@ -54,11 +68,20 @@ try {
 	console.log(`held${pids}`);
 	const until = Date.now() + holdMs;
 	while (Date.now() < until) {
-		if (retryMs >= 0 && !localRetryRefused()) { console.log("a local retry was allowed while holding"); process.exit(1); }
+		if (retryMs >= 0 && !localRetryRefused()) {
+			console.log("a local retry was allowed while holding");
+			process.exit(1);
+		}
 		await Bun.sleep(retryMs >= 0 ? 20 : Math.max(0, until - Date.now()));
 	}
 	lock.release();
 } catch (e) {
-	console.log(e instanceof RelayRunningError ? "refused" : e instanceof RelayDatabaseLinkedError ? "linked" : `error: ${String(e)}`);
+	console.log(
+		e instanceof RelayRunningError
+			? "refused"
+			: e instanceof RelayDatabaseLinkedError
+				? "linked"
+				: `error: ${String(e)}`,
+	);
 }
 store?.close();

@@ -7,7 +7,11 @@ export type Log = (event: string, data?: Record<string, unknown>) => void;
 export function makeLog(store: Store, base: Record<string, unknown> = {}): Log {
 	return (event, data = {}) => {
 		const line = { t: new Date().toISOString(), ...base, event, ...data } as LogEvent;
-		try { store.events.append(line); } catch (e) { console.error(`chamberlain: could not write the event log: ${String(e).slice(0, 160)}`); }
+		try {
+			store.events.append(line);
+		} catch (e) {
+			console.error(`chamberlain: could not write the event log: ${String(e).slice(0, 160)}`);
+		}
 		if (process.env.CHAMBERLAIN_VERBOSE) console.log(JSON.stringify(line));
 	};
 }

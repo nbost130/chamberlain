@@ -4,23 +4,40 @@ import { Rpc, shellSnapshot } from "./rpc";
 /** A socket stand-in: records sends, and close() fires the close event like a real WebSocket. */
 class FakeSocket extends EventTarget {
 	sent: string[] = [];
-	send(s: string) { this.sent.push(s); }
-	close() { this.dispatchEvent(new Event("close")); }
+	send(s: string) {
+		this.sent.push(s);
+	}
+	close() {
+		this.dispatchEvent(new Event("close"));
+	}
 }
 
 describe("Rpc lifetime", () => {
 	// Must catch: the queue page leak (2026-11-11), where every closed connection kept a 5 s pinger alive forever.
 	test("a closed socket stops the pinger and fails every waiting call", async () => {
-		const realSet = globalThis.setInterval, realClear = globalThis.clearInterval;
+		const realSet = globalThis.setInterval,
+			realClear = globalThis.clearInterval;
 		const live = new Set<unknown>();
-		globalThis.setInterval = ((fn: () => void, ms: number) => { const h = realSet(fn, ms); live.add(h); return h; }) as typeof setInterval;
-		globalThis.clearInterval = ((h: ReturnType<typeof setInterval>) => { live.delete(h); realClear(h); }) as typeof clearInterval;
+		globalThis.setInterval = ((fn: () => void, ms: number) => {
+			const h = realSet(fn, ms);
+			live.add(h);
+			return h;
+		}) as typeof setInterval;
+		globalThis.clearInterval = ((h: ReturnType<typeof setInterval>) => {
+			live.delete(h);
+			realClear(h);
+		}) as typeof clearInterval;
 		try {
 			const waits: Promise<unknown>[] = [];
 			for (let i = 0; i < 50; i++) {
 				const ws = new FakeSocket();
 				const rpc = new Rpc(ws as unknown as WebSocket, Promise.resolve());
-				waits.push(rpc.call("orchestration.subscribeShell", {}).then(() => "resolved", (e) => String(e)));
+				waits.push(
+					rpc.call("orchestration.subscribeShell", {}).then(
+						() => "resolved",
+						(e) => String(e),
+					),
+				);
 				ws.close();
 				expect(rpc.pending.size).toBe(0);
 			}
@@ -42,7 +59,8 @@ describe("Rpc lifetime", () => {
 });
 
 describe("shellSnapshot: one fresh read of a server's threads", () => {
-	const chunk = (rpc: Rpc, value: unknown) => rpc.receive(JSON.stringify({ _tag: "Chunk", requestId: "100", values: [value] }));
+	const chunk = (rpc: Rpc, value: unknown) =>
+		rpc.receive(JSON.stringify({ _tag: "Chunk", requestId: "100", values: [value] }));
 	test("resolves with the first snapshot's thread list", async () => {
 		const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
 		const p = shellSnapshot(rpc, 1000);
@@ -57,7 +75,13 @@ describe("shellSnapshot: one fresh read of a server's threads", () => {
 		await expect(p).rejects.toThrow("snapshot timed out");
 	});
 	test("a snapshot that marks itself partial is refused, never read as every thread", async () => {
-		for (const mark of [{ partial: true }, { complete: false }, { truncated: true }, { hasMore: true }, { nextCursor: "c2" }]) {
+		for (const mark of [
+			{ partial: true },
+			{ complete: false },
+			{ truncated: true },
+			{ hasMore: true },
+			{ nextCursor: "c2" },
+		]) {
 			const rpc = new Rpc(new FakeSocket() as unknown as WebSocket, Promise.resolve());
 			const p = shellSnapshot(rpc, 1000);
 			chunk(rpc, { kind: "snapshot", snapshot: { threads: [{ id: "t1" }], ...mark } });

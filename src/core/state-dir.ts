@@ -25,5 +25,7 @@ function resolve(env: Env, override: string, xdg: string, fallback: string, home
 	return `${home}/${fallback}/chamberlain`;
 }
 
-export const configDir = (env: Env, home: string) => resolve(env, "CHAMBERLAIN_CONF", "XDG_CONFIG_HOME", ".config", home);
-export const stateDir = (env: Env, home: string) => resolve(env, "CHAMBERLAIN_STATE", "XDG_STATE_HOME", ".local/state", home);
+export const configDir = (env: Env, home: string) =>
+	resolve(env, "CHAMBERLAIN_CONF", "XDG_CONFIG_HOME", ".config", home);
+export const stateDir = (env: Env, home: string) =>
+	resolve(env, "CHAMBERLAIN_STATE", "XDG_STATE_HOME", ".local/state", home);

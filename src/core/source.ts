@@ -45,7 +45,8 @@ export const FINDING = "finding";
 export const EVALUATION_ERROR = "evaluation_error";
 
 /** The repeat policy a finding asks for. */
-export const repeatPolicyOf = (f: Pick<Finding, "repeatIntervalMs" | "maxNotifications">): RepeatPolicy => (f.repeatIntervalMs === undefined ? NOTIFY_ONCE : repeatEvery(f.repeatIntervalMs, f.maxNotifications));
+export const repeatPolicyOf = (f: Pick<Finding, "repeatIntervalMs" | "maxNotifications">): RepeatPolicy =>
+	f.repeatIntervalMs === undefined ? NOTIFY_ONCE : repeatEvery(f.repeatIntervalMs, f.maxNotifications);
 
 export type SourceOutcome = {
 	source: string;
@@ -58,14 +59,19 @@ export type SourceOutcome = {
 };
 
 /** What a source in error says, for the wake. */
-export const evaluationErrorText = (source: string, error: string) => `A routine check could not run: ${source}: ${error.replace(/\s+/g, " ").slice(0, 120)}.`;
+export const evaluationErrorText = (source: string, error: string) =>
+	`A routine check could not run: ${source}: ${error.replace(/\s+/g, " ").slice(0, 120)}.`;
 
 /** What running a source found, not yet recorded: its findings, or the error that kept it from running. Nothing is written to run one. */
 export type Evaluation = { src: ItemSource; findings?: readonly Finding[]; error?: string };
 
 /** Runs a source's own code. It never throws and writes nothing: a source that throws is in error. */
 export async function evaluateSource(src: ItemSource): Promise<Evaluation> {
-	try { return { src, findings: await src.run() }; } catch (e) { return { src, error: e instanceof Error ? e.message : String(e) }; }
+	try {
+		return { src, findings: await src.run() };
+	} catch (e) {
+		return { src, error: e instanceof Error ? e.message : String(e) };
+	}
 }
 
 /**
@@ -74,37 +80,77 @@ export async function evaluateSource(src: ItemSource): Promise<Evaluation> {
  * decisions and the wake commit together or not at all. `firstRun` is true only for the first run there has ever been, the
  * snapshot taken when watching starts, when findings marked `baseline` are learned silently.
  */
-export function recordEvaluation(store: Store, e: Evaluation, o: { now?: number; firstRun?: boolean } = {}): SourceOutcome {
+export function recordEvaluation(
+	store: Store,
+	e: Evaluation,
+	o: { now?: number; firstRun?: boolean } = {},
+): SourceOutcome {
 	const now = o.now ?? Date.now();
 	const { src, findings, error } = e;
 	const mode = src.mode ?? "live";
 	return store.tx(() => {
-		const notified: Item[] = [], wouldNotify: Item[] = [];
-		const take = (r: ReturnType<Store["items"]["observe"]>) => { if (r.notify) notified.push(r.item); else if (r.wouldNotify) wouldNotify.push(r.item); };
+		const notified: Item[] = [],
+			wouldNotify: Item[] = [];
+		const take = (r: ReturnType<Store["items"]["observe"]>) => {
+			if (r.notify) notified.push(r.item);
+			else if (r.wouldNotify) wouldNotify.push(r.item);
+		};
 		if (findings === undefined) {
 			// In error: the findings it had keep their state, and one item notifies on every run until it can run again.
-			take(store.items.observe({ source: src.name, kind: EVALUATION_ERROR, dedupKey: EVALUATION_ERROR, mode, repeat: repeatEvery(0), payload: { text: evaluationErrorText(src.name, error ?? "failed") }, now }));
+			take(
+				store.items.observe({
+					source: src.name,
+					kind: EVALUATION_ERROR,
+					dedupKey: EVALUATION_ERROR,
+					mode,
+					repeat: repeatEvery(0),
+					payload: { text: evaluationErrorText(src.name, error ?? "failed") },
+					now,
+				}),
+			);
 			return { source: src.name, ok: false, error: error ?? "failed", notified, wouldNotify };
 		}
 		store.items.resolve(src.name, EVALUATION_ERROR, now);
 		for (const f of findings) {
-			take(store.items.observe({
-				source: src.name, kind: FINDING, dedupKey: f.dedupKey, mode, repeat: repeatPolicyOf(f), baseline: f.baseline === true && o.firstRun === true,
-				...(f.subject ? { subject: f.subject } : {}), payload: { text: f.text }, now,
-			}));
+			take(
+				store.items.observe({
+					source: src.name,
+					kind: FINDING,
+					dedupKey: f.dedupKey,
+					mode,
+					repeat: repeatPolicyOf(f),
+					baseline: f.baseline === true && o.firstRun === true,
+					...(f.subject ? { subject: f.subject } : {}),
+					payload: { text: f.text },
+					now,
+				}),
+			);
 		}
-		store.items.resolveAbsent(src.name, FINDING, findings.map((f) => f.dedupKey), now);
+		store.items.resolveAbsent(
+			src.name,
+			FINDING,
+			findings.map((f) => f.dedupKey),
+			now,
+		);
 		return { source: src.name, ok: true, notified, wouldNotify };
 	});
 }
 
 /** Runs one source and records what it found, in that order: the run first (it may take a while and writes nothing), then one transaction. */
-export async function runSource(store: Store, src: ItemSource, o: { now?: number; firstRun?: boolean } = {}): Promise<SourceOutcome> {
+export async function runSource(
+	store: Store,
+	src: ItemSource,
+	o: { now?: number; firstRun?: boolean } = {},
+): Promise<SourceOutcome> {
 	return recordEvaluation(store, await evaluateSource(src), o);
 }
 
 /** Runs every source, one after another, and reports each outcome. A source that throws is in error and never stops the rest. */
-export async function runSources(store: Store, sources: readonly ItemSource[], o: { now?: number; firstRun?: boolean } = {}): Promise<SourceOutcome[]> {
+export async function runSources(
+	store: Store,
+	sources: readonly ItemSource[],
+	o: { now?: number; firstRun?: boolean } = {},
+): Promise<SourceOutcome[]> {
 	const out: SourceOutcome[] = [];
 	for (const s of sources) out.push(await runSource(store, s, o));
 	return out;

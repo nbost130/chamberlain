@@ -53,7 +53,9 @@ import { FILE_MODE } from "./private.ts";
 import { requireTestEnv } from "./test-env.ts";
 
 /** flock(2) operations, the same on Linux and macOS (<sys/file.h>). */
-const LOCK_EX = 2, LOCK_NB = 4, LOCK_UN = 8;
+const LOCK_EX = 2,
+	LOCK_NB = 4,
+	LOCK_UN = 8;
 const EINTR = 4;
 /** EWOULDBLOCK, which is EAGAIN on both: 11 on Linux (glibc and musl), 35 on macOS (<sys/errno.h>). */
 const EWOULDBLOCK = process.platform === "darwin" ? 35 : 11;
@@ -71,7 +73,9 @@ export function libcCandidates(platform: string = process.platform, arch: string
 /** The relay cannot take its lock on this platform: no flock to call. The relay must not start without it. */
 export class RelayLockUnavailableError extends Error {
 	constructor(why: string) {
-		super(`chamberlain cannot take the one-relay lock on this platform (${why}). The relay needs flock(2) through bun:ffi, on Linux or macOS; refusing to start rather than run without it.`);
+		super(
+			`chamberlain cannot take the one-relay lock on this platform (${why}). The relay needs flock(2) through bun:ffi, on Linux or macOS; refusing to start rather than run without it.`,
+		);
 		this.name = "RelayLockUnavailableError";
 	}
 }
@@ -89,7 +93,13 @@ export function loadFlock(candidates: string[] = libcCandidates(), platform: str
 			});
 			const flock = lib.symbols.flock as (fd: number, op: number) => number;
 			const errnoAt = lib.symbols[errnoSymbol] as () => Pointer | null;
-			return { flock: (fd, op) => flock(fd, op), errno: () => { const at = errnoAt(); return at ? read.i32(at, 0) : -1; } };
+			return {
+				flock: (fd, op) => flock(fd, op),
+				errno: () => {
+					const at = errnoAt();
+					return at ? read.i32(at, 0) : -1;
+				},
+			};
 		} catch (e) {
 			tried.push(`${name}: ${String((e as Error).message ?? e).slice(0, 120)}`);
 		}
@@ -101,14 +111,21 @@ let loaded: Flock | undefined;
 
 export class RelayRunningError extends Error {
 	constructor(readonly lock: string) {
-		super(`another chamberlain daemon is already running on this database (it holds the lock on its state directory, ${lock}); only one may relay wakes. Stop it first, or point CHAMBERLAIN_STATE elsewhere.`);
+		super(
+			`another chamberlain daemon is already running on this database (it holds the lock on its state directory, ${lock}); only one may relay wakes. Stop it first, or point CHAMBERLAIN_STATE elsewhere.`,
+		);
 	}
 }
 
 /** The database has more than one hard link. The relay's lock is on the database's directory, so a link elsewhere would be a second lock. */
 export class RelayDatabaseLinkedError extends Error {
-	constructor(readonly db: string, readonly links: number) {
-		super(`${db} has ${links} hard links. The one-relay lock is on the directory that holds the database, so a link to it in another directory would let a second relay in. Refusing to start: remove the other links and start again.`);
+	constructor(
+		readonly db: string,
+		readonly links: number,
+	) {
+		super(
+			`${db} has ${links} hard links. The one-relay lock is on the directory that holds the database, so a link to it in another directory would let a second relay in. Refusing to start: remove the other links and start again.`,
+		);
 		this.name = "RelayDatabaseLinkedError";
 	}
 }
@@ -148,7 +165,12 @@ const MEMORY = "memory";
 /** Where the database at `db` really is: its directory and its path, symlinks resolved (the file need not exist yet; its directory must). */
 function locate(db: string): { dir: string; path: string } {
 	const abs = resolve(db);
-	try { const real = realpathSync(abs); return { dir: dirname(real), path: real }; } catch { /* not there yet */ }
+	try {
+		const real = realpathSync(abs);
+		return { dir: dirname(real), path: real };
+	} catch {
+		/* not there yet */
+	}
 	const dir = realpathSync(dirname(abs));
 	return { dir, path: `${dir}/${basename(abs)}` };
 }
@@ -167,7 +189,11 @@ function identityOf(db: string): string {
  */
 export function lockCovers(lock: RelayLock, dbPath: string): boolean {
 	if (dbPath === ":memory:") return lock.identity === MEMORY;
-	try { return lock.identity === identityOf(dbPath); } catch { return false; }
+	try {
+		return lock.identity === identityOf(dbPath);
+	} catch {
+		return false;
+	}
 }
 /** The directories (`dev:ino`) this process holds the relay lock on. */
 const held = new Set<string>();
@@ -191,7 +217,11 @@ export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayL
 	const { dir, path } = locate(db);
 	// Defense in depth: a second acquisition in this process is refused before anything is opened.
 	let before: string | undefined;
-	try { before = fileKey(statSync(dir)); } catch { /* checked again on the descriptor */ }
+	try {
+		before = fileKey(statSync(dir));
+	} catch {
+		/* checked again on the descriptor */
+	}
 	if (before && held.has(before)) throw new RelayRunningError(dir);
 	const lib = o.lib ? o.lib() : (loaded ??= loadFlock());
 	const fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY);
@@ -205,7 +235,9 @@ export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayL
 		try {
 			// Under the lock: the database in this directory, created if it is not there yet (that descriptor is never closed: see the header).
 			let st;
-			try { st = statSync(path); } catch {
+			try {
+				st = statSync(path);
+			} catch {
 				const created = openSync(path, constants.O_RDONLY | constants.O_CREAT, FILE_MODE);
 				strays.push(created);
 				st = fstatSync(created);
@@ -213,8 +245,14 @@ export function holdRelayLock(db: string, o: { lib?: () => Flock } = {}): RelayL
 			if (!st.isFile()) throw new Error(`${path} is not a regular file; refusing to start the relay`);
 			if (st.nlink > 1) throw new RelayDatabaseLinkedError(path, st.nlink);
 			dbKey = fileKey(st);
-		} catch (e) { lib.flock(fd, LOCK_UN); throw e; }
-	} catch (e) { closeSync(fd); throw e; }
+		} catch (e) {
+			lib.flock(fd, LOCK_UN);
+			throw e;
+		}
+	} catch (e) {
+		closeSync(fd);
+		throw e;
+	}
 	held.add(key);
 	let released = false;
 	const handle = {
@@ -245,20 +283,33 @@ export function holdTestRelayLock(db: string): RelayLock {
 	const memory = db === ":memory:";
 	const identity = memory ? MEMORY : identityOf(db);
 	let released = false;
-	const handle = { path: db, directory: memory ? "" : locate(db).dir, identity, held: () => !released, release() { released = true; } } as RelayLock;
+	const handle = {
+		path: db,
+		directory: memory ? "" : locate(db).dir,
+		identity,
+		held: () => !released,
+		release() {
+			released = true;
+		},
+	} as RelayLock;
 	issued.add(handle);
 	return handle;
 }
 
 /** Nothing got the lock within the wait: another open file description holds it. */
 export class FlockBusyError extends Error {
-	constructor(readonly path: string, readonly waitedMs: number) {
+	constructor(
+		readonly path: string,
+		readonly waitedMs: number,
+	) {
 		super(`${path} is locked by another process (waited ${waitedMs} ms)`);
 		this.name = "FlockBusyError";
 	}
 }
 
-const sleepSync = (ms: number) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+const sleepSync = (ms: number) => {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
 
 /**
  * Takes an exclusive `flock(2)` on `path`, a directory or a file that is NOT a database (it is opened read-only and closed on release; closing a
@@ -283,13 +334,24 @@ export function holdFlock(path: string, o: { waitMs: number; lib?: () => Flock }
 			if (waited >= o.waitMs) throw new FlockBusyError(path, waited);
 			sleepSync(Math.min(25, Math.max(1, o.waitMs - waited)));
 		}
-	} catch (e) { closeSync(fd); throw e; }
+	} catch (e) {
+		closeSync(fd);
+		throw e;
+	}
 	let released = false;
-	return { release() { if (released) return; released = true; lib.flock(fd, LOCK_UN); closeSync(fd); } };
+	return {
+		release() {
+			if (released) return;
+			released = true;
+			lib.flock(fd, LOCK_UN);
+			closeSync(fd);
+		},
+	};
 }
 
 /** Filesystem types whose POSIX locks do not work reliably across clients. */
-const NETWORK_FS = /^(nfs\d?|cifs|smb3?|smbfs|afs|afpfs|9p|ncpfs|webdav|ceph|glusterfs|lustre|fuse\.sshfs|fuse\.glusterfs|fuse\.nfs|fuse\.cephfs|fuse\.rclone|fuse\.s3fs|fuse\.davfs|ocfs2|gfs2)$/i;
+const NETWORK_FS =
+	/^(nfs\d?|cifs|smb3?|smbfs|afs|afpfs|9p|ncpfs|webdav|ceph|glusterfs|lustre|fuse\.sshfs|fuse\.glusterfs|fuse\.nfs|fuse\.cephfs|fuse\.rclone|fuse\.s3fs|fuse\.davfs|ocfs2|gfs2)$/i;
 
 /** The octal escapes /proc/self/mountinfo uses for spaces and the like in a mount point. */
 const unescapeMount = (s: string) => s.replace(/\\([0-7]{3})/g, (_, o: string) => String.fromCharCode(parseInt(o, 8)));
@@ -324,8 +386,12 @@ export function networkFilesystemIn(path: string, mounts: { linux?: string; mac?
 export function networkFilesystem(dir: string): string | undefined {
 	try {
 		const real = realpathSync(dir);
-		if (process.platform === "linux") return networkFilesystemIn(real, { linux: readFileSync("/proc/self/mountinfo", "utf8") });
-		if (process.platform === "darwin") return networkFilesystemIn(real, { mac: execFileSync("/sbin/mount", { encoding: "utf8", timeout: 2000 }) });
-	} catch { /* unknown: say nothing */ }
+		if (process.platform === "linux")
+			return networkFilesystemIn(real, { linux: readFileSync("/proc/self/mountinfo", "utf8") });
+		if (process.platform === "darwin")
+			return networkFilesystemIn(real, { mac: execFileSync("/sbin/mount", { encoding: "utf8", timeout: 2000 }) });
+	} catch {
+		/* unknown: say nothing */
+	}
 	return undefined;
 }

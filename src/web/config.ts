@@ -42,7 +42,7 @@ function ipv4Bytes(s: string): number[] | undefined {
 /** Pure: an IPv6 literal as its sixteen bytes, from any spelling: compressed, zero-padded, any case, an IPv4 tail. */
 function ipv6Bytes(s: string): number[] | undefined {
 	if (!/^[0-9a-f:.]+$/.test(s) || s.split("::").length > 2) return undefined;
-	const [head, tail] = s.includes("::") ? s.split("::") as [string, string] : [s, undefined];
+	const [head, tail] = s.includes("::") ? (s.split("::") as [string, string]) : [s, undefined];
 	const groups = (part: string): number[] | undefined => {
 		if (part === "") return [];
 		const out: number[] = [];
@@ -66,19 +66,32 @@ function ipv6Bytes(s: string): number[] | undefined {
 	// An IPv4 tail is only valid at the very end of the address.
 	if (tail !== undefined && head.includes(".")) return undefined;
 	let words: number[];
-	if (tail === undefined) { if (h.length !== 8) return undefined; words = h; }
-	else { if (h.length + t.length > 7) return undefined; words = [...h, ...Array(8 - h.length - t.length).fill(0), ...t]; }
+	if (tail === undefined) {
+		if (h.length !== 8) return undefined;
+		words = h;
+	} else {
+		if (h.length + t.length > 7) return undefined;
+		words = [...h, ...Array(8 - h.length - t.length).fill(0), ...t];
+	}
 	return words.flatMap((w) => [w >> 8, w & 0xff]);
 }
 
 /** Pure: RFC 5952 text for sixteen bytes: lowercase, no leading zeros, the longest run of two or more zero groups as "::". */
 function ipv6Text(b: number[]): string {
 	const w = Array.from({ length: 8 }, (_, k) => (b[2 * k]! << 8) | b[2 * k + 1]!);
-	let best = -1, bestLen = 0;
-	for (let k = 0; k < 8;) {
-		if (w[k] !== 0) { k++; continue; }
-		let e = k; while (e < 8 && w[e] === 0) e++;
-		if (e - k > bestLen) { best = k; bestLen = e - k; }
+	let best = -1,
+		bestLen = 0;
+	for (let k = 0; k < 8; ) {
+		if (w[k] !== 0) {
+			k++;
+			continue;
+		}
+		let e = k;
+		while (e < 8 && w[e] === 0) e++;
+		if (e - k > bestLen) {
+			best = k;
+			bestLen = e - k;
+		}
 		k = e;
 	}
 	const hex = (a: number[]) => a.map((x) => x.toString(16)).join(":");
@@ -91,7 +104,10 @@ export type CanonicalIp = { family: 4 | 6; bytes: number[]; text: string };
  * IPv4-mapped IPv6 address (::ffff:a.b.c.d in any spelling) becomes the IPv4 address it maps, so it is judged as one.
  */
 export function canonicalIp(raw: string): CanonicalIp | undefined {
-	const s = raw.trim().replace(/^\[(.*)\]$/, "$1").toLowerCase();
+	const s = raw
+		.trim()
+		.replace(/^\[(.*)\]$/, "$1")
+		.toLowerCase();
 	const v4 = ipv4Bytes(s);
 	if (v4) return { family: 4, bytes: v4, text: v4.join(".") };
 	const v6 = ipv6Bytes(s);
@@ -105,7 +121,8 @@ export function canonicalIp(raw: string): CanonicalIp | undefined {
 
 /** Pure: do the first `bits` bits of two byte strings agree? */
 const inPrefix = (a: number[], prefix: number[], bits: number) => {
-	for (let k = 0; k < bits; k++) if (((a[k >> 3]! >> (7 - (k & 7))) & 1) !== ((prefix[k >> 3]! >> (7 - (k & 7))) & 1)) return false;
+	for (let k = 0; k < bits; k++)
+		if (((a[k >> 3]! >> (7 - (k & 7))) & 1) !== ((prefix[k >> 3]! >> (7 - (k & 7))) & 1)) return false;
 	return true;
 };
 const TAILSCALE_V4 = [100, 64, 0, 0]; // 100.64.0.0/10, Tailscale's CGNAT range
@@ -119,10 +136,16 @@ export function allowedBind(ip: CanonicalIp): boolean {
 
 /** Pure: the canonical bind address, or why it is refused. Only an allowed IP literal, so no name can resolve to a wildcard. */
 export function checkBind(host: unknown): string {
-	if (typeof host !== "string" || !host.trim()) throw Error("web.json: no bind address. Set \"host\" to this machine's Tailscale IP (or 127.0.0.1); the page never binds to every interface.");
+	if (typeof host !== "string" || !host.trim())
+		throw Error(
+			'web.json: no bind address. Set "host" to this machine\'s Tailscale IP (or 127.0.0.1); the page never binds to every interface.',
+		);
 	const ip = canonicalIp(host);
 	if (!ip) throw Error(`web.json: "${host}" is not an IP address. Give the Tailscale IP itself.`);
-	if (!allowedBind(ip)) throw Error(`web.json: "${host}" (${ip.text}) is not loopback or a Tailscale address. The page binds only to 127.0.0.1, ::1, 100.64.0.0/10 or fd7a:115c:a1e0::/48, never a wildcard or a public interface.`);
+	if (!allowedBind(ip))
+		throw Error(
+			`web.json: "${host}" (${ip.text}) is not loopback or a Tailscale address. The page binds only to 127.0.0.1, ::1, 100.64.0.0/10 or fd7a:115c:a1e0::/48, never a wildcard or a public interface.`,
+		);
 	return ip.text;
 }
 
@@ -134,12 +157,30 @@ export function parseConfig(raw: unknown): WebConfig {
 	if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error("web.json: port must be 1-65535");
 	return {
 		schemaVersion: SCHEMA_VERSION,
-		host, port,
+		host,
+		port,
 		...(Array.isArray(o.allowedHosts) ? { allowedHosts: o.allowedHosts.map(String) } : {}),
-		...(o.threadLinks && typeof o.threadLinks === "object" ? { threadLinks: o.threadLinks as Record<string, string> } : {}),
-		...(o.mirrorLinks && typeof o.mirrorLinks === "object" ? { mirrorLinks: o.mirrorLinks as Record<string, string> } : {}),
-		...(o.answerTokens && typeof o.answerTokens === "object" ? { answerTokens: Object.fromEntries(Object.entries(o.answerTokens as Record<string, unknown>).filter(([k, v]) => !["__proto__", "constructor", "prototype"].includes(k) && typeof v === "string" && /^[A-Za-z0-9._-]+$/.test(v))) as Record<string, string> } : {}),
-		...(o.decisionsServer && typeof o.decisionsServer === "object" ? { decisionsServer: o.decisionsServer as WebConfig["decisionsServer"] } : {}),
+		...(o.threadLinks && typeof o.threadLinks === "object"
+			? { threadLinks: o.threadLinks as Record<string, string> }
+			: {}),
+		...(o.mirrorLinks && typeof o.mirrorLinks === "object"
+			? { mirrorLinks: o.mirrorLinks as Record<string, string> }
+			: {}),
+		...(o.answerTokens && typeof o.answerTokens === "object"
+			? {
+					answerTokens: Object.fromEntries(
+						Object.entries(o.answerTokens as Record<string, unknown>).filter(
+							([k, v]) =>
+								!["__proto__", "constructor", "prototype"].includes(k) &&
+								typeof v === "string" &&
+								/^[A-Za-z0-9._-]+$/.test(v),
+						),
+					) as Record<string, string>,
+				}
+			: {}),
+		...(o.decisionsServer && typeof o.decisionsServer === "object"
+			? { decisionsServer: o.decisionsServer as WebConfig["decisionsServer"] }
+			: {}),
 		...(typeof o.publicBase === "string" ? { publicBase: o.publicBase } : {}),
 	};
 }
@@ -147,8 +188,14 @@ export function parseConfig(raw: unknown): WebConfig {
 /** web.json names the operate token file and the bind address, so like the other config files it must be a private regular file. */
 export function loadConfig(conf: string): WebConfig {
 	const p = `${conf}/web.json`;
-	if (!existsSync(p)) throw Error(`no ${p}. Write {"schemaVersion": 1, "host": "<Tailscale IP>", "port": 3790} there first (mode 0600); the page never binds without an address.`);
+	if (!existsSync(p))
+		throw Error(
+			`no ${p}. Write {"schemaVersion": 1, "host": "<Tailscale IP>", "port": 3790} there first (mode 0600); the page never binds without an address.`,
+		);
 	const st = statSync(p);
-	if (!isPrivateFile(st)) throw Error(`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`);
+	if (!isPrivateFile(st))
+		throw Error(
+			`${p} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)}): chmod 600 it first.`,
+		);
 	return parseConfig(JSON.parse(readFileSync(p, "utf8")));
 }

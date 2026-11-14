@@ -15,7 +15,9 @@ describe("scripts/render-formula.ts", () => {
 		expect(f).not.toMatch(/^\s*version\s/m);
 		expect(f).toContain('homepage "https://github.com/o/chamberlain"');
 		for (const [i, t] of Object.keys(TARGETS).entries()) {
-			expect(f).toContain(`url "https://github.com/o/chamberlain/releases/download/v1.2.3/chamberlain-1.2.3-${t}.tar.gz"`);
+			expect(f).toContain(
+				`url "https://github.com/o/chamberlain/releases/download/v1.2.3/chamberlain-1.2.3-${t}.tar.gz"`,
+			);
 			expect(f).toContain(`sha256 "${digest(i + 1)}"`);
 		}
 		expect(f).not.toMatch(/\{\{/);
@@ -28,7 +30,10 @@ describe("scripts/render-formula.ts", () => {
 		expect(() => render(template, "1.2.4", sums, "o/chamberlain")).toThrow("SHA256SUMS has no entry");
 	});
 	test("sha256sum output parses, in both text and binary mode, and a bad line is refused", () => {
-		expect(parseSums(`${digest(1)}  a.tar.gz\n${digest(2)} *b.tar.gz\n`)).toEqual({ "a.tar.gz": digest(1), "b.tar.gz": digest(2) });
+		expect(parseSums(`${digest(1)}  a.tar.gz\n${digest(2)} *b.tar.gz\n`)).toEqual({
+			"a.tar.gz": digest(1),
+			"b.tar.gz": digest(2),
+		});
 		expect(() => parseSums("nonsense")).toThrow("cannot read");
 	});
 	test("`brew services start chamberlain` runs the daemon, kept alive, and bin/chamberlain is not stripped", () => {
@@ -40,7 +45,12 @@ describe("scripts/render-formula.ts", () => {
 
 describe("scripts/build.ts", () => {
 	test("the four release platforms, as Bun's compile targets", () => {
-		expect(TARGETS).toEqual({ "linux-x64": "bun-linux-x64", "linux-arm64": "bun-linux-arm64", "darwin-arm64": "bun-darwin-arm64", "darwin-x64": "bun-darwin-x64" });
+		expect(TARGETS).toEqual({
+			"linux-x64": "bun-linux-x64",
+			"linux-arm64": "bun-linux-arm64",
+			"darwin-arm64": "bun-darwin-arm64",
+			"darwin-x64": "bun-darwin-x64",
+		});
 		expect(tarballName("0.2.0", "linux-x64")).toBe("chamberlain-0.2.0-linux-x64.tar.gz");
 	});
 });

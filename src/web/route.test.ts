@@ -8,7 +8,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appendHeld, heldOpen } from "../core/afk.ts";
 import { parseAsk } from "../ask.ts";
-import { answerRoute, askQuestion, claimWake, getQuestion, pageClaim, readRelay, recordAnswerDelivered, startRelay, type Answer, type Question } from "../core/questions.ts";
+import {
+	answerRoute,
+	askQuestion,
+	claimWake,
+	getQuestion,
+	pageClaim,
+	readRelay,
+	recordAnswerDelivered,
+	startRelay,
+	type Answer,
+	type Question,
+} from "../core/questions.ts";
 import { testRelay } from "../testing/relay.ts";
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
@@ -18,20 +29,32 @@ import type { SendToThread } from "./waiting.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 
 const routed = (id: string, over: Partial<Question> = {}): Question => ({
-	id, kind: "product", title: `Question ${id}`, context: "ctx",
+	id,
+	kind: "product",
+	title: `Question ${id}`,
+	context: "ctx",
 	options: [
 		{ label: "Ship the blue one", route: "thread", relay: "Use the blue palette and open the PR." },
 		{ label: "Hold", detail: "re-plan first" },
 	],
-	recommended: 0, thread: "Mobile app", server: "main", threadId: "thread-1", createdAt: "2026-11-09T10:00:00.000Z", ...over,
+	recommended: 0,
+	thread: "Mobile app",
+	server: "main",
+	threadId: "thread-1",
+	createdAt: "2026-11-09T10:00:00.000Z",
+	...over,
 });
 
 type Sent = { server: string; threadId: string; text: string; seed: string };
-function setup(opts: { send?: (n: number) => { ok: boolean; detail: string } | Error; root?: string; noSender?: boolean } = {}) {
+function setup(
+	opts: { send?: (n: number) => { ok: boolean; detail: string } | Error; root?: string; noSender?: boolean } = {},
+) {
 	const root = opts.root ?? mkdtempSync(`${tmpdir()}/chamberlain-route-`);
 	const state = `${root}/state`;
 	const store = openStore(dbPath(state));
@@ -39,7 +62,13 @@ function setup(opts: { send?: (n: number) => { ok: boolean; detail: string } | E
 	const posts: { deliveryId: string; message: string }[] = [];
 	const sends: Sent[] = [];
 	const logs: { event: string; data?: Record<string, unknown> }[] = [];
-	const { drain } = testRelay(store, fetchWake(() => "http://webhook.test/wake", (async (_u: string, init: RequestInit) => { posts.push(JSON.parse(String(init.body))); return new Response(null, { status: 202 }); }) as unknown as typeof fetch));
+	const { drain } = testRelay(
+		store,
+		fetchWake(() => "http://webhook.test/wake", (async (_u: string, init: RequestInit) => {
+			posts.push(JSON.parse(String(init.body)));
+			return new Response(null, { status: 202 });
+		}) as unknown as typeof fetch),
+	);
 	const sendToThread: SendToThread = async (server, threadId, text, seed) => {
 		sends.push({ server, threadId, text, seed });
 		const r = opts.send ? opts.send(sends.length) : { ok: true, detail: `sent to ${server}:${threadId}` };
@@ -47,18 +76,43 @@ function setup(opts: { send?: (n: number) => { ok: boolean; detail: string } | E
 		return r;
 	};
 	const page = createApp({
-		store, state,
-		log: (event, data) => logs.push({ event, data }), hosts: [HOST], staticDir: `${root}/static`, ...(opts.noSender ? {} : { sendToThread }),
+		store,
+		state,
+		log: (event, data) => logs.push({ event, data }),
+		hosts: [HOST],
+		staticDir: `${root}/static`,
+		...(opts.noSender ? {} : { sendToThread }),
 	});
-	const app = { ...page, idle: async () => { await page.idle(); await drain(); } };
-	const tick = async () => { await page.recover(); await drain(); };
-	const post = (path: string, body: unknown) => app.fetch(new Request(`http://${HOST}${path}`, { method: "POST", headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) }));
+	const app = {
+		...page,
+		idle: async () => {
+			await page.idle();
+			await drain();
+		},
+	};
+	const tick = async () => {
+		await page.recover();
+		await drain();
+	};
+	const post = (path: string, body: unknown) =>
+		app.fetch(
+			new Request(`http://${HOST}${path}`, {
+				method: "POST",
+				headers: { host: HOST, "content-type": "application/json", "x-decision-queue": "1" },
+				body: JSON.stringify(body),
+			}),
+		);
 	const add = (i: Question) => askQuestion(store, i);
-	const answer = async (id: string, body: unknown) => { const r = await post(`/api/items/${id}/answer`, body); await app.idle(); return r; };
+	const answer = async (id: string, body: unknown) => {
+		const r = await post(`/api/items/${id}/answer`, body);
+		await app.idle();
+		return r;
+	};
 	return { root, store, state, app, add, answer, posts, sends, logs, tick };
 }
 /** The direct sends on record: one relays row per item that took its one send, with how it ended. */
-const relays = (s: { store: ReturnType<typeof openStore> }) => [...s.store.claims.listRelays("queue")].map(([item, r]) => ({ item, ...r }));
+const relays = (s: { store: ReturnType<typeof openStore> }) =>
+	[...s.store.claims.listRelays("queue")].map(([item, r]) => ({ item, ...r }));
 
 describe("a thread-routed option picked with no note", () => {
 	test("goes straight to its thread as one message, and the Steward gets only the ledger and log lines", async () => {
@@ -79,7 +133,17 @@ describe("a thread-routed option picked with no note", () => {
 		expect(sent.text).toContain("What to do: Use the blue palette and open the PR.");
 		expect(sent.text).not.toContain("His note");
 		expect(relays(s)).toEqual([expect.objectContaining({ item: "Q-abcd", outcome: "delivered" })]);
-		expect(s.logs.filter((l) => l.event === "relayed-to-thread")).toEqual([{ event: "relayed-to-thread", data: expect.objectContaining({ item: "Q-abcd", choice: "Ship the blue one", threadId: "thread-1", outcome: "delivered" }) }]);
+		expect(s.logs.filter((l) => l.event === "relayed-to-thread")).toEqual([
+			{
+				event: "relayed-to-thread",
+				data: expect.objectContaining({
+					item: "Q-abcd",
+					choice: "Ship the blue one",
+					threadId: "thread-1",
+					outcome: "delivered",
+				}),
+			},
+		]);
 		const st = getQuestion(s.store, "Q-abcd")!;
 		expect(st.delivered).toBe(true);
 		expect(st.relay?.outcome).toBe("delivered");
@@ -144,7 +208,13 @@ describe("a failed direct send falls back to the Steward", () => {
 		const i = routed("Q-abcd");
 		s.add(i);
 		// The process died after taking the send and before recording how it ended.
-		const a: Answer = { choice: 0, label: "Ship the blue one", by: "page", t: new Date().toISOString(), deliveryId: "answer:item:Q-abcd" };
+		const a: Answer = {
+			choice: 0,
+			label: "Ship the blue one",
+			by: "page",
+			t: new Date().toISOString(),
+			deliveryId: "answer:item:Q-abcd",
+		};
 		expect(claimWake(s.store, pageClaim(i, a)).won).toBe(true);
 		expect(startRelay(s.store, "Q-abcd")).toBe(true);
 		const fresh = setup({ root: s.root });
@@ -166,7 +236,9 @@ describe("answers routed straight to the thread", () => {
 		s.add(routed("Q-abcd"));
 		// A database that refuses the relays row (as a full disk would): taking the direct send throws.
 		const raw = new Database(dbPath(s.state));
-		raw.run("CREATE TRIGGER refuse_relays BEFORE INSERT ON relays BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END");
+		raw.run(
+			"CREATE TRIGGER refuse_relays BEFORE INSERT ON relays BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END",
+		);
 		raw.close();
 		expect((await s.answer("Q-abcd", { choice: 0 })).status).toBe(200);
 		expect(s.sends).toHaveLength(0);
@@ -189,7 +261,10 @@ describe("answers routed straight to the thread", () => {
 		appendHeld(s.store, { thread: "Mobile app", what: "deploy approval, queue item Q-abcde" });
 		await s.answer("Q-abcd", { choice: 0 });
 		expect(s.sends).toHaveLength(1);
-		expect(heldOpen(s.store).map((h) => h.what)).toEqual(["palette pick, queue item Q-abcd", "deploy approval, queue item Q-abcde"]);
+		expect(heldOpen(s.store).map((h) => h.what)).toEqual([
+			"palette pick, queue item Q-abcd",
+			"deploy approval, queue item Q-abcde",
+		]);
 		expect(s.logs.find((l) => l.event === "held-closed-for-item")?.data).toEqual({ item: "Q-abcd", closed: 1 });
 	});
 
@@ -266,13 +341,28 @@ describe("answers that stay with the Steward", () => {
 
 	test("a custom answer, one that is not the option's own label, is the Steward's", () => {
 		const i = routed("Q-abcd");
-		const a = (over: Partial<Answer>): Answer => ({ choice: 0, label: "Ship the blue one", by: "page", t: "x", deliveryId: "answer:item:Q-abcd", ...over });
-		expect(answerRoute(i, a({}))).toEqual({ direct: true, server: "main", threadId: "thread-1", relay: "Use the blue palette and open the PR." });
+		const a = (over: Partial<Answer>): Answer => ({
+			choice: 0,
+			label: "Ship the blue one",
+			by: "page",
+			t: "x",
+			deliveryId: "answer:item:Q-abcd",
+			...over,
+		});
+		expect(answerRoute(i, a({}))).toEqual({
+			direct: true,
+			server: "main",
+			threadId: "thread-1",
+			relay: "Use the blue palette and open the PR.",
+		});
 		expect(answerRoute(i, a({ label: "Other: make it teal" }))).toEqual({ direct: false, why: "custom answer" });
 		expect(answerRoute(i, a({ choice: 7, label: "Something else" }))).toEqual({ direct: false, why: "custom answer" });
 		expect(answerRoute(i, a({ note: "teal" }))).toEqual({ direct: false, why: "note present" });
 		expect(answerRoute(i, a({ choice: 1, label: "Hold" }))).toEqual({ direct: false, why: "steward option" });
-		expect(answerRoute(i, a({ ruling: { id: "R9", decides: "blue" } }))).toEqual({ direct: false, why: "ruling saved" });
+		expect(answerRoute(i, a({ ruling: { id: "R9", decides: "blue" } }))).toEqual({
+			direct: false,
+			why: "ruling saved",
+		});
 		const c = pageClaim(i, a({ label: "Other: make it teal" }));
 		expect(c.relay).toBeUndefined();
 		expect(c.message).toContain("(custom answer)");
@@ -282,15 +372,38 @@ describe("answers that stay with the Steward", () => {
 describe("ask.ts validates routing", () => {
 	const base = { kind: "product", title: "T", context: "C", thread: "th", server: "main", threadId: "thread-1" };
 	test("keeps a thread route with its relay text, and drops relay text from a steward option", () => {
-		const i = parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: "  Do it.  " }, { label: "Hold", route: "steward", relay: "ignored" }, "Later"] }, "Q-abcd1");
-		expect(i.options).toEqual([{ label: "Go", route: "thread", relay: "Do it." }, { label: "Hold" }, { label: "Later" }]);
+		const i = parseAsk(
+			{
+				...base,
+				options: [
+					{ label: "Go", route: "thread", relay: "  Do it.  " },
+					{ label: "Hold", route: "steward", relay: "ignored" },
+					"Later",
+				],
+			},
+			"Q-abcd1",
+		);
+		expect(i.options).toEqual([
+			{ label: "Go", route: "thread", relay: "Do it." },
+			{ label: "Hold" },
+			{ label: "Later" },
+		]);
 	});
 	test("rejects a thread route with no relay text, one with no threadId, and an unknown route", () => {
 		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "thread" }, "Hold"] }, "Q-x")).toThrow(/relay/);
-		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: "   " }, "Hold"] }, "Q-x")).toThrow(/relay/);
-		expect(() => parseAsk({ ...base, threadId: undefined, options: [{ label: "Go", route: "thread", relay: "Do it." }, "Hold"] }, "Q-x")).toThrow(/threadId/);
+		expect(() =>
+			parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: "   " }, "Hold"] }, "Q-x"),
+		).toThrow(/relay/);
+		expect(() =>
+			parseAsk(
+				{ ...base, threadId: undefined, options: [{ label: "Go", route: "thread", relay: "Do it." }, "Hold"] },
+				"Q-x",
+			),
+		).toThrow(/threadId/);
 		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "elsewhere" }, "Hold"] }, "Q-x")).toThrow(/route/);
-		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: 5 }, "Hold"] }, "Q-x")).toThrow(/relay/);
+		expect(() => parseAsk({ ...base, options: [{ label: "Go", route: "thread", relay: 5 }, "Hold"] }, "Q-x")).toThrow(
+			/relay/,
+		);
 	});
 	test("an item with no routes parses as it always has", () => {
 		const i = parseAsk({ ...base, threadId: undefined, options: ["A", "B"] }, "Q-abcd1");

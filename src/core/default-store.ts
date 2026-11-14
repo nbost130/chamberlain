@@ -13,9 +13,15 @@ export function defaultStore(state = STATE, open: OpenOptions = {}): Store {
 	try {
 		return openStore(dbPath(state), open);
 	} catch (e) {
-		if (e instanceof SchemaTooNewError) { console.error(`chamberlain: ${e.message}`); process.exit(3); }
+		if (e instanceof SchemaTooNewError) {
+			console.error(`chamberlain: ${e.message}`);
+			process.exit(3);
+		}
 		// A database or directory that is not private enough exits 4 with the reason, before anything is stored in it.
-		if (e instanceof InsecureModeError) { console.error(`chamberlain: ${e.message}`); process.exit(4); }
+		if (e instanceof InsecureModeError) {
+			console.error(`chamberlain: ${e.message}`);
+			process.exit(4);
+		}
 		throw e;
 	}
 }

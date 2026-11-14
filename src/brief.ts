@@ -28,33 +28,59 @@ import { DESK_PROMPT_FILE, START_PROMPT_FILE, WAKE_PROMPT_FILE } from "./embedde
 export function main(argv: string[] = process.argv.slice(2)) {
 	const text = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "");
 	const sub = selfCommand("brief");
-	if (!["steward", "desk", "start", "wake-prompt"].includes(argv[0] ?? "")) { console.error(`usage: ${sub} steward [--predecessor <threadId>] [--mode test|live] | ${sub} desk | ${sub} start | ${sub} wake-prompt`); process.exit(2); }
+	if (!["steward", "desk", "start", "wake-prompt"].includes(argv[0] ?? "")) {
+		console.error(
+			`usage: ${sub} steward [--predecessor <threadId>] [--mode test|live] | ${sub} desk | ${sub} start | ${sub} wake-prompt`,
+		);
+		process.exit(2);
+	}
 	// The two that need no database: the first message of a new Steward thread, and the prompt of its wake task, both from the files embedded in the build.
-	if (argv[0] === "start") { console.log(renderStartPrompt(text(START_PROMPT_FILE), { conf: CONF })); return; }
-	if (argv[0] === "wake-prompt") { process.stdout.write(text(WAKE_PROMPT_FILE)); return; }
+	if (argv[0] === "start") {
+		console.log(renderStartPrompt(text(START_PROMPT_FILE), { conf: CONF }));
+		return;
+	}
+	if (argv[0] === "wake-prompt") {
+		process.stdout.write(text(WAKE_PROMPT_FILE));
+		return;
+	}
 	startup();
 	const store = defaultStore();
-	const flag = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
+	const flag = (n: string) => {
+		const i = argv.indexOf(n);
+		return i >= 0 ? argv[i + 1] : undefined;
+	};
 	const servers = loadServers(CONF);
 	if (argv[0] === "desk") {
 		const own = `${CONF}/alert-desk-prompt.md`;
 		const template = existsSync(own) ? text(own) : text(DESK_PROMPT_FILE);
 		const operator = readOperator(CONF, (m) => console.error(m));
-		console.log(renderDeskPrompt(template, { principalName: principal(), serverName: homeServer(servers).name, allowlistHook: `${selfCommand("desk-allowlist")} hook`, askCommand: deskAskCommand(), morning: operator.morning, shapes: operator.shapes, gatherer: operator.gatherer }));
+		console.log(
+			renderDeskPrompt(template, {
+				principalName: principal(),
+				serverName: homeServer(servers).name,
+				allowlistHook: `${selfCommand("desk-allowlist")} hook`,
+				askCommand: deskAskCommand(),
+				morning: operator.morning,
+				shapes: operator.shapes,
+				gatherer: operator.gatherer,
+			}),
+		);
 		process.exit(0);
 	}
-	console.log(stewardBrief({
-		mode: flag("--mode") === "live" ? "live" : "test",
-		repo: REPO,
-		rights: text(`${CONF}/decision-rights.md`),
-		rulings: rulingsBriefText(store),
-		operatingRules: loadOperatingRules(CONF),
-		afk: readAfk(store),
-		environments: servers,
-		predecessor: flag("--predecessor"),
-		notes: adapterEntry(homeServer(servers).adapter).brief?.({ repo: REPO }),
-		fragments: loadBriefFragments(CONF),
-	}));
+	console.log(
+		stewardBrief({
+			mode: flag("--mode") === "live" ? "live" : "test",
+			repo: REPO,
+			rights: text(`${CONF}/decision-rights.md`),
+			rulings: rulingsBriefText(store),
+			operatingRules: loadOperatingRules(CONF),
+			afk: readAfk(store),
+			environments: servers,
+			predecessor: flag("--predecessor"),
+			notes: adapterEntry(homeServer(servers).adapter).brief?.({ repo: REPO }),
+			fragments: loadBriefFragments(CONF),
+		}),
+	);
 }
 
 if (import.meta.main) main();

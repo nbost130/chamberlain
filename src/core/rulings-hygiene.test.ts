@@ -6,10 +6,29 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { memStore } from "../testing/store.ts";
-import { addInForce, expiresAt, expiredNow, inForceNow, isExpired, propose, readRulings, renderExpired, renderInForce, retireRuling, rulingsBriefText, rulingsText, confirmRuling, updateRulings, type Clock } from "./rulings.ts";
+import {
+	addInForce,
+	expiresAt,
+	expiredNow,
+	inForceNow,
+	isExpired,
+	propose,
+	readRulings,
+	renderExpired,
+	renderInForce,
+	retireRuling,
+	rulingsBriefText,
+	rulingsText,
+	confirmRuling,
+	updateRulings,
+	type Clock,
+} from "./rulings.ts";
 import { openStore } from "./sqlite-store.ts";
 
-const at = (iso: string): Clock => () => Date.parse(iso);
+const at =
+	(iso: string): Clock =>
+	() =>
+		Date.parse(iso);
 const NOW = at("2026-11-13T12:00:00Z");
 
 describe("recording is idempotent, in the store", () => {
@@ -50,11 +69,23 @@ describe("recording is idempotent, in the store", () => {
 		const r = addInForce(d, "w", "d", "chat", "stated in chat");
 		expect(r).toMatchObject({ id: p.id, duplicate: true, status: "in-force", confirmed: true });
 		expect(readRulings(d)).toHaveLength(1);
-		expect(readRulings(d)[0]!.history!.map((h) => h.what)).toEqual(["proposed by the Steward", "stated in chat (was not yet confirmed)"]);
+		expect(readRulings(d)[0]!.history!.map((h) => h.what)).toEqual([
+			"proposed by the Steward",
+			"stated in chat (was not yet confirmed)",
+		]);
 	});
 	test("an in-force card answer nobody confirmed is confirmed when the principal says it again", () => {
 		const d = memStore();
-		d.rulings.save({ id: "R1", date: "2026-11-01", words: "w", decides: "d", source: "card", status: "in-force", confirmed: false, history: [] });
+		d.rulings.save({
+			id: "R1",
+			date: "2026-11-01",
+			words: "w",
+			decides: "d",
+			source: "card",
+			status: "in-force",
+			confirmed: false,
+			history: [],
+		});
 		const r = addInForce(d, "w", "d", "chat", "stated in chat");
 		expect(r).toMatchObject({ id: "R1", duplicate: true, confirmed: true });
 		expect(readRulings(d)[0]).toMatchObject({ confirmed: true });
@@ -97,12 +128,18 @@ describe("recording is idempotent, in the store", () => {
 			const c = propose(one, "w", "d");
 			expect([a.id, b.id, c.id]).toEqual(["R1", "R1", "R1"]);
 			expect(readRulings(two)).toHaveLength(1);
-		} finally { one.close(); two.close(); rmSync(dir, { recursive: true, force: true }); }
+		} finally {
+			one.close();
+			two.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 	test("a recording that throws changes nothing", () => {
 		const d = memStore();
 		addInForce(d, "w", "d", "chat", "x");
-		expect(() => addInForce(d, "w2", "d2", "chat", "x", undefined, { supersedes: ["R1", "R9"] })).toThrow("R9: no such ruling");
+		expect(() => addInForce(d, "w2", "d2", "chat", "x", undefined, { supersedes: ["R1", "R9"] })).toThrow(
+			"R9: no such ruling",
+		);
 		expect(readRulings(d)).toHaveLength(1);
 		expect(readRulings(d)[0]!.status).toBe("in-force");
 	});
@@ -118,12 +155,26 @@ describe("expiry reads an injectable clock", () => {
 		expect(isExpired({}, Date.parse("2999-01-01T00:00:00Z"))).toBe(false);
 	});
 	test("a value that is not a date, a date-time without a zone, and a date that does not exist are all unreadable", () => {
-		for (const bad of ["tomorrow", "2026-13-01", "2026-02-30", "2026-11-13T09:00:00", "2026-11-13 09:00", "11/13/2026"]) expect(expiresAt(bad)).toBeNaN();
+		for (const bad of ["tomorrow", "2026-13-01", "2026-02-30", "2026-11-13T09:00:00", "2026-11-13 09:00", "11/13/2026"])
+			expect(expiresAt(bad)).toBeNaN();
 		// Unreadable counts as passed, so a bad stored value can never keep a ruling in force.
 		expect(isExpired({ expires: "tomorrow" }, 0)).toBe(true);
 	});
 	test("a date or date-time that does not exist is unreadable, never rolled into another day", () => {
-		for (const bad of ["2027-02-30T09:00:00Z", "2027-02-29T09:00:00Z", "2027-02-29", "2026-13-01T09:00:00Z", "2026-00-10T09:00:00Z", "2026-11-13T24:00:00Z", "2026-11-13T09:60:00Z", "2026-11-13T09:00:60Z", "2026-11-31T09:00:00+02:00", "2026-11-13T09:00:00+24:00", "2026-11-13T09:00:00+02:60"]) expect(expiresAt(bad)).toBeNaN();
+		for (const bad of [
+			"2027-02-30T09:00:00Z",
+			"2027-02-29T09:00:00Z",
+			"2027-02-29",
+			"2026-13-01T09:00:00Z",
+			"2026-00-10T09:00:00Z",
+			"2026-11-13T24:00:00Z",
+			"2026-11-13T09:60:00Z",
+			"2026-11-13T09:00:60Z",
+			"2026-11-31T09:00:00+02:00",
+			"2026-11-13T09:00:00+24:00",
+			"2026-11-13T09:00:00+02:60",
+		])
+			expect(expiresAt(bad)).toBeNaN();
 		expect(expiresAt("2028-02-29T09:00:00Z")).toBe(Date.parse("2028-02-29T09:00:00Z"));
 		expect(expiresAt("2028-02-29")).toBe(Date.parse("2028-02-29T23:59:59.999Z"));
 		expect(expiresAt("2026-11-13T09:00:00.250-05:30")).toBe(Date.parse("2026-11-13T09:00:00.250-05:30"));
@@ -131,12 +182,23 @@ describe("expiry reads an injectable clock", () => {
 	});
 	test("recording refuses an expiry that does not exist, with a clear error, and writes nothing", () => {
 		const d = memStore();
-		for (const expires of ["2027-02-30T09:00:00Z", "2027-02-29T09:00:00Z", "2026-13-01T09:00:00Z", "2026-11-13T24:00:00Z"]) {
-			expect(() => propose(d, "w", "d", undefined, { expires }, NOW)).toThrow(`expires "${expires}" is not a real date and time`);
-			expect(() => addInForce(d, "w", "d", "chat", "x", undefined, { expires }, NOW)).toThrow(`expires "${expires}" is not a real date and time`);
+		for (const expires of [
+			"2027-02-30T09:00:00Z",
+			"2027-02-29T09:00:00Z",
+			"2026-13-01T09:00:00Z",
+			"2026-11-13T24:00:00Z",
+		]) {
+			expect(() => propose(d, "w", "d", undefined, { expires }, NOW)).toThrow(
+				`expires "${expires}" is not a real date and time`,
+			);
+			expect(() => addInForce(d, "w", "d", "chat", "x", undefined, { expires }, NOW)).toThrow(
+				`expires "${expires}" is not a real date and time`,
+			);
 		}
 		expect(readRulings(d)).toHaveLength(0);
-		expect(propose(d, "w", "d", undefined, { expires: "2028-02-29T09:00:00Z" }, NOW).expires).toBe("2028-02-29T09:00:00Z");
+		expect(propose(d, "w", "d", undefined, { expires: "2028-02-29T09:00:00Z" }, NOW).expires).toBe(
+			"2028-02-29T09:00:00Z",
+		);
 	});
 	test("a ruling leaves the in-force set when its time passes, and the record stays", () => {
 		const d = memStore();
@@ -182,7 +244,9 @@ describe("expiry reads an injectable clock", () => {
 	test("an expired ruling cannot be confirmed", () => {
 		const d = memStore();
 		const p = propose(d, "w", "d", undefined, { expires: "2026-11-14" }, NOW);
-		expect(() => confirmRuling(d, p.id, undefined, at("2026-11-15T00:00:00Z"))).toThrow(`${p.id} expired on 2026-11-14`);
+		expect(() => confirmRuling(d, p.id, undefined, at("2026-11-15T00:00:00Z"))).toThrow(
+			`${p.id} expired on 2026-11-14`,
+		);
 		expect(confirmRuling(d, p.id, undefined, NOW)).toMatchObject({ status: "in-force", confirmed: true });
 	});
 });
@@ -194,7 +258,13 @@ describe("a ruling replaces others", () => {
 		addInForce(d, "b", "old two", "chat", "x");
 		const r = addInForce(d, "c", "new", "chat", "x", undefined, { supersedes: ["R1", "R2"] }, NOW);
 		expect(r.supersedes).toEqual(["R1", "R2"]);
-		for (const id of ["R1", "R2"]) expect(readRulings(d).find((x) => x.id === id)).toMatchObject({ status: "retired", retiredHow: "superseded", supersededBy: r.id, retiredWhy: `replaced by ${r.id}` });
+		for (const id of ["R1", "R2"])
+			expect(readRulings(d).find((x) => x.id === id)).toMatchObject({
+				status: "retired",
+				retiredHow: "superseded",
+				supersededBy: r.id,
+				retiredWhy: `replaced by ${r.id}`,
+			});
 		expect(rulingsText(d, NOW)).not.toContain("- R1 ");
 	});
 	test("a proposal that supersedes retires nothing until the principal confirms it", () => {
@@ -226,23 +296,47 @@ describe("a ruling replaces others", () => {
 		expect(again).toMatchObject({ id: p.id, duplicate: true, supersedes: ["R2", "R1"], supersedesAdded: ["R1"] });
 		expect(readRulings(d).find((x) => x.id === p.id)!.supersedes).toEqual(["R2", "R1"]);
 		// Nothing retires before the confirm; both do on it.
-		expect(readRulings(d).filter((x) => x.status === "in-force").map((x) => x.id)).toEqual(["R1", "R2"]);
+		expect(
+			readRulings(d)
+				.filter((x) => x.status === "in-force")
+				.map((x) => x.id),
+		).toEqual(["R1", "R2"]);
 		confirmRuling(d, p.id, undefined, NOW);
-		for (const id of ["R1", "R2"]) expect(readRulings(d).find((x) => x.id === id)).toMatchObject({ status: "retired", retiredHow: "superseded", supersededBy: p.id });
+		for (const id of ["R1", "R2"])
+			expect(readRulings(d).find((x) => x.id === id)).toMatchObject({
+				status: "retired",
+				retiredHow: "superseded",
+				supersededBy: p.id,
+			});
 	});
 	test("a proposal repeating a ruling already in force adds no supersedes and retires nothing", () => {
 		const d = memStore();
 		addInForce(d, "a", "old", "chat", "x");
 		const r = addInForce(d, "b", "new", "chat", "x");
 		const before = JSON.stringify(readRulings(d));
-		const again = propose(d, "b", "new", undefined, { supersedes: ["R1"], expires: "2027-01-01", until: "launch" }, NOW);
-		expect(again).toMatchObject({ id: r.id, status: "in-force", duplicate: true, alreadyInForce: true, supersedesNotAdded: ["R1"] });
+		const again = propose(
+			d,
+			"b",
+			"new",
+			undefined,
+			{ supersedes: ["R1"], expires: "2027-01-01", until: "launch" },
+			NOW,
+		);
+		expect(again).toMatchObject({
+			id: r.id,
+			status: "in-force",
+			duplicate: true,
+			alreadyInForce: true,
+			supersedesNotAdded: ["R1"],
+		});
 		expect(again).not.toHaveProperty("supersedesAdded");
 		expect(JSON.stringify(readRulings(d))).toBe(before);
 		expect(readRulings(d)[0]).toMatchObject({ status: "in-force" });
 		expect(readRulings(d).find((x) => x.id === r.id)).not.toHaveProperty("supersedes");
 		// A missing id is still an error, even on a repeat.
-		expect(() => propose(d, "b", "new", undefined, { supersedes: ["R9"] }, NOW)).toThrow("supersedes R9: no such ruling");
+		expect(() => propose(d, "b", "new", undefined, { supersedes: ["R9"] }, NOW)).toThrow(
+			"supersedes R9: no such ruling",
+		);
 	});
 	test("the principal's own repeat of an in-force ruling naming supersedes retires the newly named ones in the same write", () => {
 		const d = memStore();
@@ -252,7 +346,9 @@ describe("a ruling replaces others", () => {
 		expect(again).toMatchObject({ id: r.id, duplicate: true, supersedes: ["R1"], supersedesAdded: ["R1"] });
 		expect(again).not.toHaveProperty("alreadyInForce");
 		expect(readRulings(d)[0]).toMatchObject({ status: "retired", retiredHow: "superseded", supersededBy: r.id });
-		expect(() => addInForce(d, "b", "new", "chat", "x", undefined, { supersedes: ["R9"] }, NOW)).toThrow("supersedes R9: no such ruling");
+		expect(() => addInForce(d, "b", "new", "chat", "x", undefined, { supersedes: ["R9"] }, NOW)).toThrow(
+			"supersedes R9: no such ruling",
+		);
 		expect(readRulings(d).find((x) => x.id === r.id)!.supersedes).toEqual(["R1"]);
 	});
 	test("a repeat that names nothing new reports nothing added", () => {
@@ -271,15 +367,20 @@ describe("a ruling replaces others", () => {
 });
 
 describe("the supersede graph has no cycle", () => {
-	const ids = (d: ReturnType<typeof memStore>) => readRulings(d).map((r) => `${r.id}:${r.status}:${(r.supersedes ?? []).join("+")}`);
+	const ids = (d: ReturnType<typeof memStore>) =>
+		readRulings(d).map((r) => `${r.id}:${r.status}:${(r.supersedes ?? []).join("+")}`);
 	test("a 2-cycle is refused: propose R1, propose R2 superseding R1, repeat R1 superseding R2", () => {
 		const d = memStore();
 		propose(d, "a", "one", undefined, undefined, NOW);
 		propose(d, "b", "two", undefined, { supersedes: ["R1"] }, NOW);
 		const before = ids(d);
-		expect(() => propose(d, "a", "one", undefined, { supersedes: ["R2"] }, NOW)).toThrow("would make a supersede cycle: R1 → R2 → R1");
+		expect(() => propose(d, "a", "one", undefined, { supersedes: ["R2"] }, NOW)).toThrow(
+			"would make a supersede cycle: R1 → R2 → R1",
+		);
 		// The principal's word cannot make one either, and neither attempt wrote anything.
-		expect(() => addInForce(d, "a", "one", "chat", "x", undefined, { supersedes: ["R2"] }, NOW)).toThrow("supersede cycle: R1 → R2 → R1");
+		expect(() => addInForce(d, "a", "one", "chat", "x", undefined, { supersedes: ["R2"] }, NOW)).toThrow(
+			"supersede cycle: R1 → R2 → R1",
+		);
 		expect(ids(d)).toEqual(before);
 		expect(readRulings(d)[0]).toMatchObject({ status: "proposed" });
 	});
@@ -289,7 +390,9 @@ describe("the supersede graph has no cycle", () => {
 		propose(d, "b", "two", undefined, { supersedes: ["R1"] }, NOW);
 		propose(d, "c", "three", undefined, { supersedes: ["R2"] }, NOW);
 		const before = ids(d);
-		expect(() => addInForce(d, "a", "one", "chat", "x", undefined, { supersedes: ["R3"] }, NOW)).toThrow("supersede cycle: R1 → R3 → R2 → R1");
+		expect(() => addInForce(d, "a", "one", "chat", "x", undefined, { supersedes: ["R3"] }, NOW)).toThrow(
+			"supersede cycle: R1 → R3 → R2 → R1",
+		);
 		expect(ids(d)).toEqual(before);
 		expect(readRulings(d).map((r) => r.status)).toEqual(["in-force", "proposed", "proposed"]);
 	});
@@ -297,8 +400,12 @@ describe("the supersede graph has no cycle", () => {
 		const d = memStore();
 		propose(d, "a", "one", undefined, undefined, NOW);
 		addInForce(d, "b", "two", "chat", "x", undefined, undefined, NOW);
-		expect(() => propose(d, "a", "one", undefined, { supersedes: ["R1"] }, NOW)).toThrow("supersedes R1: a ruling cannot supersede itself");
-		expect(() => addInForce(d, "b", "two", "chat", "x", undefined, { supersedes: ["R2"] }, NOW)).toThrow("supersedes R2: a ruling cannot supersede itself");
+		expect(() => propose(d, "a", "one", undefined, { supersedes: ["R1"] }, NOW)).toThrow(
+			"supersedes R1: a ruling cannot supersede itself",
+		);
+		expect(() => addInForce(d, "b", "two", "chat", "x", undefined, { supersedes: ["R2"] }, NOW)).toThrow(
+			"supersedes R2: a ruling cannot supersede itself",
+		);
 		expect(readRulings(d).every((r) => !r.supersedes)).toBe(true);
 	});
 	test("confirming re-checks the graph: a cycle already stored is refused, and nothing is retired", () => {
@@ -306,10 +413,16 @@ describe("the supersede graph has no cycle", () => {
 		propose(d, "a", "one", undefined, undefined, NOW);
 		propose(d, "b", "two", undefined, { supersedes: ["R1"] }, NOW);
 		// A cycle that came in by another road (an imported ledger), written straight to the store.
-		updateRulings(d, (list) => { list[0]!.supersedes = ["R2"]; });
-		expect(() => confirmRuling(d, "R2", undefined, NOW)).toThrow("confirming R2 would put a supersede cycle in force: R1 → R2 → R1");
+		updateRulings(d, (list) => {
+			list[0]!.supersedes = ["R2"];
+		});
+		expect(() => confirmRuling(d, "R2", undefined, NOW)).toThrow(
+			"confirming R2 would put a supersede cycle in force: R1 → R2 → R1",
+		);
 		expect(readRulings(d).map((r) => r.status)).toEqual(["proposed", "proposed"]);
-		updateRulings(d, (list) => { list[0]!.supersedes = ["R1"]; });
+		updateRulings(d, (list) => {
+			list[0]!.supersedes = ["R1"];
+		});
 		expect(() => confirmRuling(d, "R1", undefined, NOW)).toThrow("supersede cycle in force: R1 → R1");
 	});
 	test("an acyclic chain is accepted and confirms in order", () => {
@@ -323,15 +436,28 @@ describe("the supersede graph has no cycle", () => {
 });
 
 describe("leaving force for a housekeeping reason", () => {
-	const seeded = () => { const d = memStore(); addInForce(d, "a", "one", "chat", "x"); addInForce(d, "b", "two", "chat", "x"); return d; };
+	const seeded = () => {
+		const d = memStore();
+		addInForce(d, "a", "one", "chat", "x");
+		addInForce(d, "b", "two", "chat", "x");
+		return d;
+	};
 	test("every reason is kept with the ruling, with its reason and the ruling that replaces it", () => {
 		const d = seeded();
 		retireRuling(d, "R1", "duplicate", "same rule, recorded twice", "R2");
-		expect(readRulings(d)[0]).toMatchObject({ status: "retired", retiredHow: "duplicate", retiredWhy: "same rule, recorded twice", supersededBy: "R2" });
+		expect(readRulings(d)[0]).toMatchObject({
+			status: "retired",
+			retiredHow: "duplicate",
+			retiredWhy: "same rule, recorded twice",
+			supersededBy: "R2",
+		});
 		const e = seeded();
 		retireRuling(e, "R1", "expired", "the launch is over");
 		retireRuling(e, "R2", "repeat", "decision-rights.md already says this");
-		expect(readRulings(e).map((r) => [r.retiredHow, r.retiredWhy])).toEqual([["expired", "the launch is over"], ["repeat", "decision-rights.md already says this"]]);
+		expect(readRulings(e).map((r) => [r.retiredHow, r.retiredWhy])).toEqual([
+			["expired", "the launch is over"],
+			["repeat", "decision-rights.md already says this"],
+		]);
 		const f = seeded();
 		retireRuling(f, "R1", "superseded", "folded into R2", "R2");
 		expect(readRulings(f)[0]).toMatchObject({ retiredHow: "superseded", supersededBy: "R2" });
@@ -340,10 +466,16 @@ describe("leaving force for a housekeeping reason", () => {
 		const d = seeded();
 		expect(() => retireRuling(d, "R1", "expired")).toThrow("retiring R1 as expired needs a reason");
 		expect(() => retireRuling(d, "R1", "duplicate", "twice")).toThrow("needs the ruling that replaces it");
-		expect(() => retireRuling(d, "R1", "duplicate", "twice", "R1")).toThrow("R1 is not another ruling that is still live");
-		expect(() => retireRuling(d, "R1", "duplicate", "twice", "R9")).toThrow("R9 is not another ruling that is still live");
+		expect(() => retireRuling(d, "R1", "duplicate", "twice", "R1")).toThrow(
+			"R1 is not another ruling that is still live",
+		);
+		expect(() => retireRuling(d, "R1", "duplicate", "twice", "R9")).toThrow(
+			"R9 is not another ruling that is still live",
+		);
 		retireRuling(d, "R2", "retired");
-		expect(() => retireRuling(d, "R1", "duplicate", "twice", "R2")).toThrow("R2 is not another ruling that is still live");
+		expect(() => retireRuling(d, "R1", "duplicate", "twice", "R2")).toThrow(
+			"R2 is not another ruling that is still live",
+		);
 		expect(readRulings(d)[0]!.status).toBe("in-force");
 	});
 	test("a ruling already retired keeps its first reason", () => {
@@ -364,12 +496,42 @@ describe("the new fields survive the table", () => {
 	test("every field of a ruling is read back as it was saved", () => {
 		const d = memStore();
 		d.rulings.save({
-			id: "R5", date: "2026-11-13", words: "w", decides: "d", source: "card", status: "retired", confirmed: true, confirmedAt: "2026-11-13T10:00:00.000Z", retiredAt: "2026-11-13T11:00:00.000Z",
-			retiredHow: "superseded", retiredWhy: "replaced by R6", supersededBy: "R6", supersedes: ["R1", "R2"], expires: "2026-12-01T09:00:00Z", until: "the launch", item: "Q-abc12", history: [{ t: "t", what: "x" }],
+			id: "R5",
+			date: "2026-11-13",
+			words: "w",
+			decides: "d",
+			source: "card",
+			status: "retired",
+			confirmed: true,
+			confirmedAt: "2026-11-13T10:00:00.000Z",
+			retiredAt: "2026-11-13T11:00:00.000Z",
+			retiredHow: "superseded",
+			retiredWhy: "replaced by R6",
+			supersededBy: "R6",
+			supersedes: ["R1", "R2"],
+			expires: "2026-12-01T09:00:00Z",
+			until: "the launch",
+			item: "Q-abc12",
+			history: [{ t: "t", what: "x" }],
 		});
 		expect(readRulings(d)[0]).toEqual({
-			id: "R5", date: "2026-11-13", words: "w", decides: "d", source: "card", status: "retired", confirmed: true, confirmedAt: "2026-11-13T10:00:00.000Z", retiredAt: "2026-11-13T11:00:00.000Z",
-			retiredHow: "superseded", retiredWhy: "replaced by R6", supersededBy: "R6", supersedes: ["R1", "R2"], expires: "2026-12-01T09:00:00Z", until: "the launch", item: "Q-abc12", history: [{ t: "t", what: "x" }],
+			id: "R5",
+			date: "2026-11-13",
+			words: "w",
+			decides: "d",
+			source: "card",
+			status: "retired",
+			confirmed: true,
+			confirmedAt: "2026-11-13T10:00:00.000Z",
+			retiredAt: "2026-11-13T11:00:00.000Z",
+			retiredHow: "superseded",
+			retiredWhy: "replaced by R6",
+			supersededBy: "R6",
+			supersedes: ["R1", "R2"],
+			expires: "2026-12-01T09:00:00Z",
+			until: "the launch",
+			item: "Q-abc12",
+			history: [{ t: "t", what: "x" }],
 		});
 	});
 	test("a ruling with none of them reads back with none of them", () => {
@@ -381,11 +543,25 @@ describe("the new fields survive the table", () => {
 	test("an update that changes only a new field is saved", () => {
 		const d = memStore();
 		addInForce(d, "w", "d", "chat", "x");
-		updateRulings(d, (list) => { list[0]!.expires = "2026-12-01"; });
+		updateRulings(d, (list) => {
+			list[0]!.expires = "2026-12-01";
+		});
 		expect(readRulings(d)[0]!.expires).toBe("2026-12-01");
 	});
 	test("the table refuses a retiredHow it does not know", () => {
 		const d = memStore();
-		expect(() => d.rulings.save({ id: "R1", date: "d", words: "w", decides: "d", source: "chat", status: "retired", confirmed: true, retiredHow: "bogus" as never, history: [] })).toThrow();
+		expect(() =>
+			d.rulings.save({
+				id: "R1",
+				date: "d",
+				words: "w",
+				decides: "d",
+				source: "chat",
+				status: "retired",
+				confirmed: true,
+				retiredHow: "bogus" as never,
+				history: [],
+			}),
+		).toThrow();
 	});
 });

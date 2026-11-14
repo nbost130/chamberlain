@@ -39,11 +39,33 @@ export type Settled = {
 	why: string;
 };
 /** What is being asked or held. `title` is an ask's title or a hold's text; `context` only adds refs. */
-export type Subject = { title: string; context?: string; thread?: string; item?: string; run?: string; pr?: string; issue?: string; branch?: string };
+export type Subject = {
+	title: string;
+	context?: string;
+	thread?: string;
+	item?: string;
+	run?: string;
+	pr?: string;
+	issue?: string;
+	branch?: string;
+};
 
-type SettledRecord = { source: SettledSource; date: string; id: string; answer: string; title: string; text: string; thread?: string; run?: string; item?: string };
+type SettledRecord = {
+	source: SettledSource;
+	date: string;
+	id: string;
+	answer: string;
+	title: string;
+	text: string;
+	thread?: string;
+	run?: string;
+	item?: string;
+};
 
-const oneLine = (s: string, n = 110) => { const t = s.replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const oneLine = (s: string, n = 110) => {
+	const t = s.replace(/\s+/g, " ").trim();
+	return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+};
 
 /* ---------- refs ---------- */
 
@@ -55,26 +77,39 @@ const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 /** Pure: the exact refs a text names. Fields (a run, a PR, a branch) are added by the caller. */
 export function refsIn(text: string): Refs {
 	const prs: PrRef[] = [];
-	for (const m of text.matchAll(new RegExp(`(${SLUG})#(\\d{1,9})\\b`, "g"))) prs.push({ repo: m[1]!.toLowerCase(), n: Number(m[2]) });
+	for (const m of text.matchAll(new RegExp(`(${SLUG})#(\\d{1,9})\\b`, "g")))
+		prs.push({ repo: m[1]!.toLowerCase(), n: Number(m[2]) });
 	// "app#962": a repo's name alone, which matches that repo under any owner.
-	for (const m of text.matchAll(/(?<![\w/.-])([A-Za-z][A-Za-z0-9_.-]*)#(\d{1,9})\b/g)) prs.push({ repo: m[1]!.toLowerCase(), n: Number(m[2]) });
+	for (const m of text.matchAll(/(?<![\w/.-])([A-Za-z][A-Za-z0-9_.-]*)#(\d{1,9})\b/g))
+		prs.push({ repo: m[1]!.toLowerCase(), n: Number(m[2]) });
 	for (const m of text.matchAll(/(?<![\w/&#])#(\d{1,9})\b/g)) prs.push({ n: Number(m[1]) });
-	for (const m of text.matchAll(/\b(?:PRs?|pull(?: request)?s?|issues?)\s+#?(\d{1,6})\b/gi)) prs.push({ n: Number(m[1]) });
+	for (const m of text.matchAll(/\b(?:PRs?|pull(?: request)?s?|issues?)\s+#?(\d{1,6})\b/gi))
+		prs.push({ n: Number(m[1]) });
 	const uniq = prs.filter((p, i) => prs.findIndex((q) => q.n === p.n && q.repo === p.repo) === i);
 	// A SHA has a digit and a letter, so a plain number or a word like "defaced" is not one.
-	const shas = [...text.matchAll(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g)].map((m) => m[0]).filter((s) => /\d/.test(s) && /[a-f]/.test(s));
+	const shas = [...text.matchAll(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g)]
+		.map((m) => m[0])
+		.filter((s) => /\d/.test(s) && /[a-f]/.test(s));
 	const items = [...text.matchAll(/(?<![A-Za-z0-9-])(Q-[a-z0-9]{4,16})(?![A-Za-z0-9-])/g)].map((m) => m[1]!);
-	const branches = [...text.matchAll(new RegExp(`(${SLUG}):([A-Za-z0-9_./-]{1,200})`, "g"))].map((m) => `${m[1]!.toLowerCase()}:${m[2]}`);
+	const branches = [...text.matchAll(new RegExp(`(${SLUG}):([A-Za-z0-9_./-]{1,200})`, "g"))].map(
+		(m) => `${m[1]!.toLowerCase()}:${m[2]}`,
+	);
 	return { prs: uniq, shas, items, runs: [], branches };
 }
 
 const refLabel = (p: PrRef) => `${p.repo ?? ""}#${p.n}`;
 const repoName = (r: string) => r.slice(r.lastIndexOf("/") + 1);
-const prMatch = (a: PrRef, b: PrRef) => a.n === b.n && (!a.repo || !b.repo || a.repo === b.repo || ((!a.repo.includes("/") || !b.repo.includes("/")) && repoName(a.repo) === repoName(b.repo)));
+const prMatch = (a: PrRef, b: PrRef) =>
+	a.n === b.n &&
+	(!a.repo ||
+		!b.repo ||
+		a.repo === b.repo ||
+		((!a.repo.includes("/") || !b.repo.includes("/")) && repoName(a.repo) === repoName(b.repo)));
 
 /** Pure: the refs both sides share, split into strong (one thing) and weak (a subject; needs the same topic too). */
 export function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { strong: string[]; weak: string[] } {
-	const strong: string[] = [], weak: string[] = [];
+	const strong: string[] = [],
+		weak: string[] = [];
 	for (const p of a.prs) if (b.prs.some((q) => prMatch(p, q))) weak.push(`PR/issue ${refLabel(p)}`);
 	for (const s of a.shas) if (b.shas.some((t) => t.startsWith(s) || s.startsWith(t))) strong.push(`commit ${s}`);
 	for (const i of a.items) if (b.items.includes(i)) strong.push(`item ${i}`);
@@ -87,9 +122,17 @@ export function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { st
 
 /* ---------- words ---------- */
 
-const STOP = new Set(("the and for with from this that these those into onto over under about after before while than then them they their there here have has had been being are was were will would should could can may might must not but you your his her its our out off per via who whom what when where which why how all any each some more most other such only own same too very just also now new old one two get got let use used using need needs want wants make made going goes done did does doing is it as at be by do if in of on or so to up we an a").split(" "));
+const STOP = new Set(
+	"the and for with from this that these those into onto over under about after before while than then them they their there here have has had been being are was were will would should could can may might must not but you your his her its our out off per via who whom what when where which why how all any each some more most other such only own same too very just also now new old one two get got let use used using need needs want wants make made going goes done did does doing is it as at be by do if in of on or so to up we an a".split(
+		" ",
+	),
+);
 /** Workflow words that open many unrelated questions. A title made only of these never matches on overlap. */
-export const GENERIC = new Set(("approve approval approved deploy deployed deployment merge merged review reviewed decision decide decided question ask asks asked fix fixed fixes pr issue release released delete deleted remove removed ready green red check checks run runs thread threads item items update updated add added change changes changed hold held wait waiting needs needed confirm confirmed yes no ok pick choose call plan test tests build builds work worker workers task tasks gate gates").split(" "));
+export const GENERIC = new Set(
+	"approve approval approved deploy deployed deployment merge merged review reviewed decision decide decided question ask asks asked fix fixed fixes pr issue release released delete deleted remove removed ready green red check checks run runs thread threads item items update updated add added change changes changed hold held wait waiting needs needed confirm confirmed yes no ok pick choose call plan test tests build builds work worker workers task tasks gate gates".split(
+		" ",
+	),
+);
 
 /** Pure: a title's significant words, in order, lightly stemmed (a plural "s" dropped). */
 export function tokens(text: string): string[] {
@@ -109,9 +152,11 @@ export function tokens(text: string): string[] {
  */
 export function titlesOverlap(x: string, y: string, ignore: ReadonlySet<string> = new Set()): string[] | undefined {
 	const drop = (t: string[]) => t.filter((w) => !ignore.has(w)).filter((w, i, kept) => i === 0 || kept[i - 1] !== w);
-	const tx = drop(tokens(x)), ty = drop(tokens(y));
+	const tx = drop(tokens(x)),
+		ty = drop(tokens(y));
 	const [a, b] = new Set(tx).size <= new Set(ty).size ? [tx, ty] : [ty, tx];
-	const aSet = new Set(a), bSet = new Set(b);
+	const aSet = new Set(a),
+		bSet = new Set(b);
 	if (aSet.size < 2) return undefined;
 	const shared = [...aSet].filter((w) => bSet.has(w));
 	const distinctive = shared.filter((w) => !GENERIC.has(w));
@@ -145,12 +190,17 @@ export function titlesOverlap(x: string, y: string, ignore: ReadonlySet<string> 
  */
 export function sameTopic(x: string, y: string, ignore: ReadonlySet<string> = new Set()): string[] | undefined {
 	const keep = (t: string) => new Set(tokens(t).filter((w) => !GENERIC.has(w) && !ignore.has(w) && !/^\d+$/.test(w)));
-	const a = keep(x), b = keep(y);
+	const a = keep(x),
+		b = keep(y);
 	const shared = [...a].filter((w) => b.has(w));
 	return shared.length >= 3 && shared.length / Math.min(a.size, b.size) >= 0.5 ? shared : undefined;
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (s: string) =>
+	s
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, " ")
+		.trim();
 /** Pure: does `text` name `title` as a whole phrase? Only a title of 12+ characters and two words counts. */
 export function names(text: string, title: string | undefined): boolean {
 	const t = title ? norm(title) : "";
@@ -165,28 +215,58 @@ function queueRecords(store: Store): SettledRecord[] {
 	for (const q of questionStates(store).values()) {
 		if (q.status === "open") continue;
 		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
-		const answer = q.status === "answered-on-card" ? "answered on its question card" : `answered "${q.answer?.label ?? "?"}"${q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : ""}${q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : ""}`;
-		out.push({ source: "queue", date, id: q.id, answer, title: q.title, text: `${q.title}\n${q.context ?? ""}\n${q.blocks ?? ""}`, thread: q.thread });
+		const answer =
+			q.status === "answered-on-card"
+				? "answered on its question card"
+				: `answered "${q.answer?.label ?? "?"}"${q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : ""}${q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : ""}`;
+		out.push({
+			source: "queue",
+			date,
+			id: q.id,
+			answer,
+			title: q.title,
+			text: `${q.title}\n${q.context ?? ""}\n${q.blocks ?? ""}`,
+			thread: q.thread,
+		});
 	}
 	return out;
 }
 
 /** The rulings in force at `nowMs`: status in-force and not past its expiry. Proposed, expired, superseded and retired rulings settle nothing. */
 function rulingRecords(store: Store, nowMs: number): SettledRecord[] {
-	return readRulings(store).filter((r) => r && typeof r === "object" && r.status === "in-force" && !isExpired(r, nowMs)).map((r) => ({
-		source: "ruling" as const, date: String(r.confirmedAt ?? r.date ?? "").slice(0, 10), id: r.id,
-		answer: `in force: ${oneLine(r.decides)}`, title: r.decides, text: `${r.words}\n${r.decides}`, ...(r.item ? { item: r.item } : {}),
-	}));
+	return readRulings(store)
+		.filter((r) => r && typeof r === "object" && r.status === "in-force" && !isExpired(r, nowMs))
+		.map((r) => ({
+			source: "ruling" as const,
+			date: String(r.confirmedAt ?? r.date ?? "").slice(0, 10),
+			id: r.id,
+			answer: `in force: ${oneLine(r.decides)}`,
+			title: r.decides,
+			text: `${r.words}\n${r.decides}`,
+			...(r.item ? { item: r.item } : {}),
+		}));
 }
 
 function decisionRecords(store: Store): SettledRecord[] {
-	return store.decisions.list()
+	return store.decisions
+		.list()
 		.filter((d) => d && typeof d === "object" && typeof d.t === "string" && typeof d.decision === "string")
-		.map((d) => ({ source: "decision" as const, date: d.t.slice(0, 10), id: `D@${d.t.slice(0, 16)}`, answer: `decided: ${oneLine(d.decision)}${d.ruling ? ` (${oneLine(d.ruling, 40)})` : ""}`, title: d.decision, text: `${d.decision}\n${d.ruling ?? ""}\n${d.ref ?? ""}`, thread: d.thread }));
+		.map((d) => ({
+			source: "decision" as const,
+			date: d.t.slice(0, 10),
+			id: `D@${d.t.slice(0, 16)}`,
+			answer: `decided: ${oneLine(d.decision)}${d.ruling ? ` (${oneLine(d.ruling, 40)})` : ""}`,
+			title: d.decision,
+			text: `${d.decision}\n${d.ruling ?? ""}\n${d.ref ?? ""}`,
+			thread: d.thread,
+		}));
 }
 
 /** The matching rule's settings: settings.json `settledMatch`, else the defaults (title overlap on, no extra ignored words). */
-export function matchSettings(m: SettledMatch | undefined = readSettings().settledMatch): { titleOverlap: boolean; ignore: Set<string> } {
+export function matchSettings(m: SettledMatch | undefined = readSettings().settledMatch): {
+	titleOverlap: boolean;
+	ignore: Set<string>;
+} {
 	// Case-insensitive: `tokens` lower-cases, so "ACME", "Acme" and "acme" ignore the same word.
 	const ignore = new Set([...(m?.ignoreWords ?? []), principal()].flatMap((w) => tokens(String(w))));
 	return { titleOverlap: m?.titleOverlap !== false, ignore };
@@ -196,13 +276,26 @@ export function matchSettings(m: SettledMatch | undefined = readSettings().settl
  * Everything already settled that this subject matches, newest first. A source that cannot be read, or a record that is
  * malformed, is skipped and named in `skipped`: a damaged record never blocks a question, and is never silent either.
  */
-export function findSettled(store: Store, s: Subject, match: SettledMatch | undefined = readSettings().settledMatch, clock: Clock = Date.now): { matches: Settled[]; skipped: string[] } {
+export function findSettled(
+	store: Store,
+	s: Subject,
+	match: SettledMatch | undefined = readSettings().settledMatch,
+	clock: Clock = Date.now,
+): { matches: Settled[]; skipped: string[] } {
 	const { titleOverlap, ignore } = matchSettings(match);
 	const skipped: string[] = [];
 	const records: SettledRecord[] = [];
 	const nowMs = clock();
-	for (const [name, read] of [["questions", queueRecords], ["rulings", (st: Store) => rulingRecords(st, nowMs)], ["decisions", decisionRecords]] as const) {
-		try { records.push(...read(store)); } catch (e) { skipped.push(`${name} (${String(e instanceof Error ? e.message : e).slice(0, 60)})`); }
+	for (const [name, read] of [
+		["questions", queueRecords],
+		["rulings", (st: Store) => rulingRecords(st, nowMs)],
+		["decisions", decisionRecords],
+	] as const) {
+		try {
+			records.push(...read(store));
+		} catch (e) {
+			skipped.push(`${name} (${String(e instanceof Error ? e.message : e).slice(0, 60)})`);
+		}
 	}
 	const body = `${s.title}\n${s.context ?? ""}`;
 	const mine = refsIn(body);
@@ -228,7 +321,10 @@ export function findSettled(store: Store, s: Subject, match: SettledMatch | unde
 			else {
 				const topic = weak.length ? sameTopic(s.title, r.title, ignore) : undefined;
 				if (topic) why = `${weak.slice(0, 2).join(", ")} + topic: ${topic.slice(0, 4).join(", ")}`;
-				else if (titleOverlap) { const words = titlesOverlap(s.title, r.title, ignore); if (words) why = `title overlap: ${words.slice(0, 5).join(", ")}`; }
+				else if (titleOverlap) {
+					const words = titlesOverlap(s.title, r.title, ignore);
+					if (words) why = `title overlap: ${words.slice(0, 5).join(", ")}`;
+				}
 			}
 			if (why) matches.push({ source: r.source, date: r.date, id: r.id, answer: r.answer, why });
 		} catch {

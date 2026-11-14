@@ -36,12 +36,25 @@ export const OBSERVE_GAP_MS = 5 * 60_000;
  * the latest is kept; the rest are folded into it and counted. Every item, folded or not, is a member: it is delivered with
  * the wake and is never sent again.
  */
-export function composeWake(items: HeldItem[], now: number): { deliveryId: string; message: string; members: string[]; kept: string[]; folded: number } {
-	if (items.length === 1) return { deliveryId: items[0]!.deliveryId, message: items[0]!.message, members: [items[0]!.deliveryId], kept: [items[0]!.deliveryId], folded: 0 };
+export function composeWake(
+	items: HeldItem[],
+	now: number,
+): { deliveryId: string; message: string; members: string[]; kept: string[]; folded: number } {
+	if (items.length === 1)
+		return {
+			deliveryId: items[0]!.deliveryId,
+			message: items[0]!.message,
+			members: [items[0]!.deliveryId],
+			kept: [items[0]!.deliveryId],
+			folded: 0,
+		};
 	const sorted = [...items].sort((a, b) => a.queuedAt - b.queuedAt);
 	const latest = new Map<string, HeldItem>();
 	const key = (i: HeldItem) => (i.kind && i.thread ? `${i.kind}\u0000${i.thread}` : undefined);
-	for (const i of sorted) { const k = key(i); if (k) latest.set(k, i); }
+	for (const i of sorted) {
+		const k = key(i);
+		if (k) latest.set(k, i);
+	}
 	const folds = new Map<HeldItem, HeldItem[]>();
 	const kept: HeldItem[] = [];
 	for (const i of sorted) {
@@ -52,7 +65,10 @@ export function composeWake(items: HeldItem[], now: number): { deliveryId: strin
 	}
 	const folded = sorted.length - kept.length;
 	const members = sorted.map((i) => i.deliveryId);
-	const deliveryId = `digest:${createHash("sha1").update([...members].sort().join("\n")).digest("hex").slice(0, 16)}`;
+	const deliveryId = `digest:${createHash("sha1")
+		.update([...members].sort().join("\n"))
+		.digest("hex")
+		.slice(0, 16)}`;
 	const head = digestHead(sorted.length, folded);
 	// Each item's text goes in exactly as it was queued: nothing in it is searched or replaced, a repeated rights block included (it costs
 	// tokens, never correctness).
@@ -72,11 +88,19 @@ export function composeWake(items: HeldItem[], now: number): { deliveryId: strin
  * idle, or when it has been busy for the whole ceiling and no ceiling digest has gone in the last ceiling's time.
  * Mutates the state it is given; the caller saves it.
  */
-export function observe(st: HoldClock, gate: Gate, now: number, ceilingMs = HOLD_CEILING_MS): { post: boolean; forced: boolean } {
+export function observe(
+	st: HoldClock,
+	gate: Gate,
+	now: number,
+	ceilingMs = HOLD_CEILING_MS,
+): { post: boolean; forced: boolean } {
 	if (st.seenAt === undefined || now - st.seenAt > OBSERVE_GAP_MS) st.busySince = undefined;
 	st.seenAt = now;
 	const busy = gate !== "idle" || (st.lastPostAt !== undefined && now - st.lastPostAt < POST_GRACE_MS);
-	if (!busy) { st.busySince = undefined; return { post: true, forced: false }; }
+	if (!busy) {
+		st.busySince = undefined;
+		return { post: true, forced: false };
+	}
 	st.busySince ??= now;
 	const forced = now - st.busySince >= ceilingMs && now - (st.lastForcedAt ?? -Infinity) >= ceilingMs;
 	return { post: forced, forced };

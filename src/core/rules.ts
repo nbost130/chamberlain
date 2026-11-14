@@ -59,11 +59,13 @@ const sectionLines = (text: string, name: string, keepBlank = false): string[] =
 
 const pick = (lines: string[], prefix: string, where: string): string => {
 	const hits = lines.filter((l) => l.startsWith(prefix));
-	if (hits.length !== 1) throw Error(`operating rules: expected one line starting "${prefix}" in ${where}, found ${hits.length}`);
+	if (hits.length !== 1)
+		throw Error(`operating rules: expected one line starting "${prefix}" in ${where}, found ${hits.length}`);
 	const line = hits[0] as string;
 	// Rules are one line each. A rule that wrapped would come through cut in half.
 	const next = lines[lines.indexOf(line) + 1];
-	if (next !== undefined && !/^(- |\|)/.test(next)) throw Error(`operating rules: the line starting "${prefix}" in ${where} now runs over two lines`);
+	if (next !== undefined && !/^(- |\|)/.test(next))
+		throw Error(`operating rules: the line starting "${prefix}" in ${where} now runs over two lines`);
 	return line;
 };
 
@@ -81,20 +83,26 @@ const tableLines = (lines: string[], name: string): { header: string[]; body: st
 		prev = row;
 	}
 	if (runs.length === 0) throw Error(`operating rules: section "${name}" no longer holds a table`);
-	if (runs.length > 1) throw Error(`operating rules: section "${name}" now holds ${runs.length} tables, so which one is meant is unclear`);
+	if (runs.length > 1)
+		throw Error(`operating rules: section "${name}" now holds ${runs.length} tables, so which one is meant is unclear`);
 	const [table] = runs as [string[]];
-	if (table.length < 2 || !SEPARATOR.test(table[1]!)) throw Error(`operating rules: the table in "${name}" no longer starts with its header`);
+	if (table.length < 2 || !SEPARATOR.test(table[1]!))
+		throw Error(`operating rules: the table in "${name}" no longer starts with its header`);
 	return { header: table.slice(0, 2), body: table.slice(2) };
 };
 
 const pickRow = (rows: string[], prefix: string, where: string): string => {
 	const hits = rows.filter((l) => l.startsWith(prefix));
-	if (hits.length !== 1) throw Error(`operating rules: expected one row starting "${prefix}" in the table in ${where}, found ${hits.length}`);
+	if (hits.length !== 1)
+		throw Error(
+			`operating rules: expected one row starting "${prefix}" in the table in ${where}, found ${hits.length}`,
+		);
 	return hits[0] as string;
 };
 
 /** Every selector in its object form. */
-const normalize = (s: Selector): SectionSelector | TableSelector => (Array.isArray(s) ? { section: s[0], lines: s[1] } : s);
+const normalize = (s: Selector): SectionSelector | TableSelector =>
+	Array.isArray(s) ? { section: s[0], lines: s[1] } : s;
 
 /** Pure: one selector's excerpt of `source` as markdown. Throws if a chosen heading, line or row has moved. */
 function excerptOne(source: string, selector: Selector): string {
@@ -105,7 +113,11 @@ function excerptOne(source: string, selector: Selector): string {
 		return [`## ${s.as ?? s.table}`, "", ...header, ...rows].join("\n");
 	}
 	const lines = sectionLines(source, s.section);
-	return [`## ${s.as ?? s.section}`, "", ...(s.lines === "whole" ? lines : s.lines.map((p) => pick(lines, p, s.section)))].join("\n");
+	return [
+		`## ${s.as ?? s.section}`,
+		"",
+		...(s.lines === "whole" ? lines : s.lines.map((p) => pick(lines, p, s.section))),
+	].join("\n");
 }
 
 /** Pure: the chosen sections of `source` as markdown, in the order given. Throws if a chosen heading, line or row has moved. */
@@ -126,69 +138,103 @@ const selectorName = (selector: Selector): string => {
 export function excerptEach(source: string, sections: Selector[], where: string, warn: (msg: string) => void): string {
 	const parts: string[] = [];
 	for (const s of sections) {
-		try { parts.push(excerptOne(source, s)); } catch (e) {
-			warn(`brief.ts: WARNING: operating rules from ${where}: the ${selectorName(s)} selector is left out of the hand-off, and nothing else is copied in its place. ${(e as Error).message}. Fix operating-rules.json or the source.`);
+		try {
+			parts.push(excerptOne(source, s));
+		} catch (e) {
+			warn(
+				`brief.ts: WARNING: operating rules from ${where}: the ${selectorName(s)} selector is left out of the hand-off, and nothing else is copied in its place. ${(e as Error).message}. Fix operating-rules.json or the source.`,
+			);
 		}
 	}
 	return parts.join("\n\n");
 }
 
-const WANTED = (x: unknown): x is string[] | "whole" => x === "whole" || (Array.isArray(x) && x.length > 0 && x.every((y) => typeof y === "string" && y.length > 0));
+const WANTED = (x: unknown): x is string[] | "whole" =>
+	x === "whole" || (Array.isArray(x) && x.length > 0 && x.every((y) => typeof y === "string" && y.length > 0));
 
 function parseSelector(raw: unknown, where: string, i: number): Selector {
 	if (Array.isArray(raw)) {
 		const [name, wanted] = raw as [unknown, unknown];
-		if (typeof name !== "string" || !name) throw Error(`operating-rules.json: ${where} section ${i + 1} needs a heading`);
-		if (!WANTED(wanted)) throw Error(`operating-rules.json: ${where} section "${name}" needs "whole" or a list of line prefixes`);
+		if (typeof name !== "string" || !name)
+			throw Error(`operating-rules.json: ${where} section ${i + 1} needs a heading`);
+		if (!WANTED(wanted))
+			throw Error(`operating-rules.json: ${where} section "${name}" needs "whole" or a list of line prefixes`);
 		return [name, wanted];
 	}
-	if (!raw || typeof raw !== "object") throw Error(`operating-rules.json: ${where} section ${i + 1} must be [heading, "whole" | [line prefixes]] or an object with "section" or "table"`);
+	if (!raw || typeof raw !== "object")
+		throw Error(
+			`operating-rules.json: ${where} section ${i + 1} must be [heading, "whole" | [line prefixes]] or an object with "section" or "table"`,
+		);
 	const o = raw as { section?: unknown; lines?: unknown; table?: unknown; rows?: unknown; as?: unknown };
-	if (o.as !== undefined && (typeof o.as !== "string" || !o.as.trim())) throw Error(`operating-rules.json: ${where} section ${i + 1}: "as" must be a heading`);
+	if (o.as !== undefined && (typeof o.as !== "string" || !o.as.trim()))
+		throw Error(`operating-rules.json: ${where} section ${i + 1}: "as" must be a heading`);
 	const as = typeof o.as === "string" ? { as: o.as.trim() } : {};
-	if ((o.section === undefined) === (o.table === undefined)) throw Error(`operating-rules.json: ${where} section ${i + 1} needs exactly one of "section" and "table"`);
+	if ((o.section === undefined) === (o.table === undefined))
+		throw Error(`operating-rules.json: ${where} section ${i + 1} needs exactly one of "section" and "table"`);
 	if (o.table !== undefined) {
-		if (typeof o.table !== "string" || !o.table) throw Error(`operating-rules.json: ${where} section ${i + 1}: "table" must be the heading the table sits under`);
-		if (!WANTED(o.rows)) throw Error(`operating-rules.json: ${where} table "${o.table}" needs "rows": "whole" or a list of row prefixes`);
+		if (typeof o.table !== "string" || !o.table)
+			throw Error(`operating-rules.json: ${where} section ${i + 1}: "table" must be the heading the table sits under`);
+		if (!WANTED(o.rows))
+			throw Error(`operating-rules.json: ${where} table "${o.table}" needs "rows": "whole" or a list of row prefixes`);
 		return { table: o.table, rows: o.rows, ...as };
 	}
-	if (typeof o.section !== "string" || !o.section) throw Error(`operating-rules.json: ${where} section ${i + 1}: "section" must be a heading`);
-	if (!WANTED(o.lines)) throw Error(`operating-rules.json: ${where} section "${o.section}" needs "lines": "whole" or a list of line prefixes`);
+	if (typeof o.section !== "string" || !o.section)
+		throw Error(`operating-rules.json: ${where} section ${i + 1}: "section" must be a heading`);
+	if (!WANTED(o.lines))
+		throw Error(
+			`operating-rules.json: ${where} section "${o.section}" needs "lines": "whole" or a list of line prefixes`,
+		);
 	return { section: o.section, lines: o.lines, ...as };
 }
 
 function parseSource(path: unknown, sections: unknown, where: string): RulesSource {
-	if (typeof path !== "string" || !path.trim()) throw Error(`operating-rules.json: ${where} needs the path of a markdown file`);
+	if (typeof path !== "string" || !path.trim())
+		throw Error(`operating-rules.json: ${where} needs the path of a markdown file`);
 	if (sections === "whole") return { path: path.trim(), sections: "whole" };
-	if (!Array.isArray(sections) || !sections.length) throw Error(`operating-rules.json: ${where} "sections" must be "whole" or list at least one [heading, "whole" | [line prefixes]] or table`);
+	if (!Array.isArray(sections) || !sections.length)
+		throw Error(
+			`operating-rules.json: ${where} "sections" must be "whole" or list at least one [heading, "whole" | [line prefixes]] or table`,
+		);
 	return { path: path.trim(), sections: sections.map((s, i) => parseSelector(s, where, i)) };
 }
 
 /** Pure: a parsed operating-rules.json, the single-source form read as one entry of `sources`. */
 export function parseRulesConfig(raw: unknown): RulesConfig {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("operating-rules.json: expected a JSON object");
-	const o = raw as { schemaVersion?: unknown; intro?: unknown; source?: unknown; sections?: unknown; sources?: unknown };
+	if (!raw || typeof raw !== "object" || Array.isArray(raw))
+		throw Error("operating-rules.json: expected a JSON object");
+	const o = raw as {
+		schemaVersion?: unknown;
+		intro?: unknown;
+		source?: unknown;
+		sections?: unknown;
+		sources?: unknown;
+	};
 	checkVersion("operating-rules.json", o.schemaVersion);
 	if (o.intro !== undefined && typeof o.intro !== "string") throw Error('operating-rules.json: "intro" must be text');
 	const intro = typeof o.intro === "string" && o.intro.trim() ? { intro: o.intro.trim() } : {};
 	if (o.sources !== undefined) {
-		if (o.source !== undefined || o.sections !== undefined) throw Error('operating-rules.json: use "sources", or "source" with "sections", not both');
-		if (!Array.isArray(o.sources) || !o.sources.length) throw Error('operating-rules.json: "sources" must list at least one { "path", "sections" }');
+		if (o.source !== undefined || o.sections !== undefined)
+			throw Error('operating-rules.json: use "sources", or "source" with "sections", not both');
+		if (!Array.isArray(o.sources) || !o.sources.length)
+			throw Error('operating-rules.json: "sources" must list at least one { "path", "sections" }');
 		const sources = o.sources.map((x, i) => {
-			if (!x || typeof x !== "object" || Array.isArray(x)) throw Error(`operating-rules.json: source ${i + 1} must be { "path", "sections" }`);
+			if (!x || typeof x !== "object" || Array.isArray(x))
+				throw Error(`operating-rules.json: source ${i + 1} must be { "path", "sections" }`);
 			const s = x as { path?: unknown; sections?: unknown };
 			return parseSource(s.path, s.sections, `source ${i + 1}`);
 		});
 		return { schemaVersion: SCHEMA_VERSION, ...intro, sources };
 	}
-	if (typeof o.source !== "string" || !o.source.trim()) throw Error('operating-rules.json: "source" must be the path of a markdown file (or use "sources")');
+	if (typeof o.source !== "string" || !o.source.trim())
+		throw Error('operating-rules.json: "source" must be the path of a markdown file (or use "sources")');
 	return { schemaVersion: SCHEMA_VERSION, ...intro, sources: [parseSource(o.source, o.sections, "source")] };
 }
 
 const tilde = (p: string) => p.replace(/^~(?=\/)/, process.env.HOME ?? "~");
 const regular = (p: string, what: string) => {
 	const st = statSync(p);
-	if (!isPrivateFile(st)) throw Error(`${what} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
+	if (!isPrivateFile(st))
+		throw Error(`${what} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
 };
 
 /**
@@ -208,6 +254,9 @@ export function loadOperatingRules(conf: string, warn: (msg: string) => void = (
 		return [...(c.intro ? [c.intro] : []), ...parts.filter(Boolean)].join("\n\n");
 	}
 	const md = `${conf}/operating-rules.md`;
-	if (existsSync(md)) { regular(md, "operating-rules.md"); return readFileSync(md, "utf8"); }
+	if (existsSync(md)) {
+		regular(md, "operating-rules.md");
+		return readFileSync(md, "utf8");
+	}
 	return "";
 }

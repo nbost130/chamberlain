@@ -30,7 +30,9 @@ export type ReportWatch = {
 	reportKey(read: InstructionRead): string | undefined;
 	idleWork(t: ThreadState, read: InstructionRead): Promise<{ key: string; work: string } | undefined>;
 };
-export type ReportOutcome = { wake: true; key: string; work: string; running: number; oldCard: boolean } | { wake: false; event: string };
+export type ReportOutcome =
+	| { wake: true; key: string; work: string; running: number; oldCard: boolean }
+	| { wake: false; event: string };
 
 export async function settleReport(w: ReportWatch): Promise<ReportOutcome> {
 	const left = async () => {
@@ -56,7 +58,14 @@ export async function settleReport(w: ReportWatch): Promise<ReportOutcome> {
 		// State last, with no await before the return: a new turn or card must count.
 		const after = w.state();
 		const wakeKey = key ?? idle?.key;
-		if (!wakeKey || !after || !reportStillDue(after, w.oldCards())) return { wake: false, event: skipEvent(read, "skip-report-superseded") };
-		return { wake: true, key: wakeKey, work: idle?.work ?? "", running: after.backgroundWork, oldCard: after.pendingRequestId !== null };
+		if (!wakeKey || !after || !reportStillDue(after, w.oldCards()))
+			return { wake: false, event: skipEvent(read, "skip-report-superseded") };
+		return {
+			wake: true,
+			key: wakeKey,
+			work: idle?.work ?? "",
+			running: after.backgroundWork,
+			oldCard: after.pendingRequestId !== null,
+		};
 	}
 }

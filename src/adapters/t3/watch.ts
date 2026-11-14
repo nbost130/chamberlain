@@ -21,9 +21,14 @@ const TOKEN_MAX_AGE_DAYS = 25;
 export class T3Link {
 	rpc: Rpc | undefined;
 	private compatChecked = false;
-	constructor(private env: AdapterEnv, private srv: T3Server) {}
+	constructor(
+		private env: AdapterEnv,
+		private srv: T3Server,
+	) {}
 
-	private token() { return this.env.readPrivate(this.srv.tokenFile); }
+	private token() {
+		return this.env.readPrivate(this.srv.tokenFile);
+	}
 
 	/** The T3 server's version, checked once per process. Outside the tested range is a warning only: the watcher keeps running. */
 	private async checkCompat(sink: WatchSink) {
@@ -33,7 +38,12 @@ export class T3Link {
 		const version = typeof env?.serverVersion === "string" ? env.serverVersion : undefined;
 		const warning = compatWarning(env);
 		if (warning) {
-			sink.log("compat-warning", { server: this.srv.name, t3Version: version ?? null, tested: `${T3_TESTED.min} to ${T3_TESTED.max}`, warning });
+			sink.log("compat-warning", {
+				server: this.srv.name,
+				t3Version: version ?? null,
+				tested: `${T3_TESTED.min} to ${T3_TESTED.max}`,
+				warning,
+			});
 			console.warn(`chamberlain: ${this.srv.name}: ${warning}`);
 		} else sink.log("compat-ok", { server: this.srv.name, t3Version: version });
 		if (this.rpc) sink.connected(true, { version });
@@ -43,11 +53,20 @@ export class T3Link {
 	private checkTokenAge() {
 		try {
 			const ageDays = (Date.now() - statSync(`${this.env.conf}/${this.srv.tokenFile}`).mtimeMs) / 86_400_000;
-			if (ageDays > TOKEN_MAX_AGE_DAYS) { const a = alarms.tokenExpiring(this.srv.name, Math.round(ageDays), this.srv.tokenFile); this.env.alarm(`token:${this.srv.name}`, a.title, a.summary); }
-		} catch { /* a missing file already fails the session loudly */ }
+			if (ageDays > TOKEN_MAX_AGE_DAYS) {
+				const a = alarms.tokenExpiring(this.srv.name, Math.round(ageDays), this.srv.tokenFile);
+				this.env.alarm(`token:${this.srv.name}`, a.title, a.summary);
+			}
+		} catch {
+			/* a missing file already fails the session loudly */
+		}
 	}
 
-	private async session(sink: WatchSink, signal: AbortSignal, afterSequence: number | undefined): Promise<number | undefined> {
+	private async session(
+		sink: WatchSink,
+		signal: AbortSignal,
+		afterSequence: number | undefined,
+	): Promise<number | undefined> {
 		const token = this.token();
 		if (!token) throw Error(`no ${this.srv.tokenFile}`);
 		const conn = await connect(this.srv.origin, token);
@@ -58,15 +77,20 @@ export class T3Link {
 		void this.checkCompat(sink);
 		let seq = afterSequence;
 		sink.log("connected", { server: this.srv.name, resumeFrom: seq ?? null });
-		conn.call("orchestration.subscribeShell", seq === undefined ? {} : { afterSequence: seq }, (v) => {
-			if (v.kind === "snapshot" && v.snapshot) {
-				seq = v.snapshot.snapshotSequence ?? seq;
-				for (const th of v.snapshot.threads ?? []) sink.event({ kind: "state", thread: toState(th) });
-			} else if (v.kind === "thread.updated" && v.thread) {
-				if (typeof v.sequence === "number") seq = v.sequence;
-				sink.event({ kind: "state", thread: toState(v.thread) });
-			}
-		}).then(() => conn.ws.close(), () => conn.ws.close());
+		conn
+			.call("orchestration.subscribeShell", seq === undefined ? {} : { afterSequence: seq }, (v) => {
+				if (v.kind === "snapshot" && v.snapshot) {
+					seq = v.snapshot.snapshotSequence ?? seq;
+					for (const th of v.snapshot.threads ?? []) sink.event({ kind: "state", thread: toState(th) });
+				} else if (v.kind === "thread.updated" && v.thread) {
+					if (typeof v.sequence === "number") seq = v.sequence;
+					sink.event({ kind: "state", thread: toState(v.thread) });
+				}
+			})
+			.then(
+				() => conn.ws.close(),
+				() => conn.ws.close(),
+			);
 		await conn.closed;
 		signal.removeEventListener("abort", onAbort);
 		conn.fail();
@@ -109,8 +133,22 @@ export class T3Link {
 		const { threads } = await fetchShellSnapshot(this.srv.origin, token);
 		// A record with no id is left out, not fatal: the snapshot is never complete, so a missing record is never read as anything,
 		// and a snapshot that answered keeps a hold that names no server unknown (hold-reconcile.ts threadViewAcross).
-		const readable = threads.filter((th) => isObject(th) && (typeof th.id === "string" || typeof th.id === "number") && String(th.id) !== "");
-		return { complete: false, threads: readable.map((th) => { const t = toState(th); return { id: t.id, archived: t.archived, settled: t.settled, pendingRequestId: t.pendingRequestId, status: t.status }; }) };
+		const readable = threads.filter(
+			(th) => isObject(th) && (typeof th.id === "string" || typeof th.id === "number") && String(th.id) !== "",
+		);
+		return {
+			complete: false,
+			threads: readable.map((th) => {
+				const t = toState(th);
+				return {
+					id: t.id,
+					archived: t.archived,
+					settled: t.settled,
+					pendingRequestId: t.pendingRequestId,
+					status: t.status,
+				};
+			}),
+		};
 	}
 
 	/** One thread's projection over the watcher's socket, checked against the shape the reads expect: anything else throws. */
@@ -122,7 +160,9 @@ export class T3Link {
 		lastMessage: async (threadId) => {
 			if (!this.rpc) return "";
 			const p = await this.projection(threadId);
-			const last = [...(p.turnItems ?? [])].reverse().find((i) => i.type === "assistant_message" && i.status === "completed");
+			const last = [...(p.turnItems ?? [])]
+				.reverse()
+				.find((i) => i.type === "assistant_message" && i.status === "completed");
 			return String(last?.text ?? "");
 		},
 		runningSubagents: async (threadId) => {
@@ -159,7 +199,12 @@ export class T3Link {
 			const p = await this.projection(threadId);
 			return lookOf(p.runs ?? [], p.turnItems ?? []);
 		},
-		instruction: (threadId) => readWhenConnected(Boolean(this.rpc), threadId, historyGet(this.srv.origin, () => this.token())).catch((e) => failedRead(String(e).slice(0, 200))),
+		instruction: (threadId) =>
+			readWhenConnected(
+				Boolean(this.rpc),
+				threadId,
+				historyGet(this.srv.origin, () => this.token()),
+			).catch((e) => failedRead(String(e).slice(0, 200))),
 	};
 }
 
@@ -170,6 +215,10 @@ export class T3Link {
  */
 export function waitingOf(raw: unknown, threadId: string): WaitingRead {
 	let p: Projection;
-	try { p = checkProjection(raw); } catch (e) { return { ok: false, reason: (e as Error).message }; }
+	try {
+		p = checkProjection(raw);
+	} catch (e) {
+		return { ok: false, reason: (e as Error).message };
+	}
 	return readCards(p.turnItems, threadId);
 }

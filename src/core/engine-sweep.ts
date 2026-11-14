@@ -10,7 +10,17 @@ import type { Outbox } from "./deliver.ts";
 import type { Log } from "./log.ts";
 import { evaluateSource, recordEvaluation, type Evaluation } from "./source.ts";
 import type { Store } from "./store.ts";
-import { type BusyFact, configuredSources, renderSweepPrompt, runawaySource, SWEEP_MS, sweepAction, sweepClock, sweepMessage, type SweepClock } from "./sweep.ts";
+import {
+	type BusyFact,
+	configuredSources,
+	renderSweepPrompt,
+	runawaySource,
+	SWEEP_MS,
+	sweepAction,
+	sweepClock,
+	sweepMessage,
+	type SweepClock,
+} from "./sweep.ts";
 
 export type SweepDeps = {
 	store: Store;
@@ -47,7 +57,11 @@ export function createSweep({ store, log, outbox, conf, privateFile, sweepPrompt
 		try {
 			// Read before anything is consumed, and a broken record counts as here, which grants nothing.
 			let away = false;
-			try { away = Boolean(readAfk(store)); } catch (e) { log("sweep-afk-unreadable", { error: String(e).slice(0, 200) }); }
+			try {
+				away = Boolean(readAfk(store));
+			} catch (e) {
+				log("sweep-afk-unreadable", { error: String(e).slice(0, 200) });
+			}
 			const busy = (await Promise.all(watchers.map((w) => w.runawayCandidates(now)))).flat();
 			// The sweep is a timer that runs sources; the item system decides what notifies (src/core/source.ts). Running a source
 			// writes nothing. What they found, what notified, the clock and the wake are then ONE transaction (`commit` in
@@ -57,9 +71,20 @@ export function createSweep({ store, log, outbox, conf, privateFile, sweepPrompt
 			outbox.commit(() => {
 				const outcomes = evaluations.map((e) => recordEvaluation(store, e, { now, firstRun: !s.seeded }));
 				const action = sweepAction(outcomes, now - s.lastFullAt);
-				store.state.set(SWEEP_CLOCK, { lastAt: now, lastFullAt: action.wake === "full" ? now : s.lastFullAt, seeded: true } satisfies SweepClock);
-				log("sweep", { wake: action.wake, findings: action.fresh.map((x) => x.item), errored: action.errored, ...(action.shadow.length ? { shadow: action.shadow } : {}) });
-				return action.wake === "none" ? undefined : { message: sweepMessage(action, sweepPrompt(), away), deliveryId: `sweep:${now}`, meta: { kind: "sweep" } };
+				store.state.set(SWEEP_CLOCK, {
+					lastAt: now,
+					lastFullAt: action.wake === "full" ? now : s.lastFullAt,
+					seeded: true,
+				} satisfies SweepClock);
+				log("sweep", {
+					wake: action.wake,
+					findings: action.fresh.map((x) => x.item),
+					errored: action.errored,
+					...(action.shadow.length ? { shadow: action.shadow } : {}),
+				});
+				return action.wake === "none"
+					? undefined
+					: { message: sweepMessage(action, sweepPrompt(), away), deliveryId: `sweep:${now}`, meta: { kind: "sweep" } };
 			});
 		} finally {
 			sweeping = false;

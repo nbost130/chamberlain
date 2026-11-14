@@ -57,7 +57,8 @@ export type ThreadState = {
 };
 
 /** What an adapter hands over: the three fields every backend has, and any of the rest it can fill in. */
-export type ThreadInput = Pick<ThreadState, "id" | "title" | "status"> & Partial<Omit<ThreadState, "id" | "title" | "status">>;
+export type ThreadInput = Pick<ThreadState, "id" | "title" | "status"> &
+	Partial<Omit<ThreadState, "id" | "title" | "status">>;
 
 /** Pure: a thread with every optional field given its neutral value (top-level, no request, nothing open). */
 export const normalizeThread = (t: ThreadInput): ThreadState => ({
@@ -89,9 +90,7 @@ export type WakeKind = "needs_input" | "failed" | "turn_ended";
  * unless the thread already waits on a request). A backend that already knows what happened may emit the event itself.
  * Either way the core debounces, re-checks the newest state and applies its own gates before anything is sent.
  */
-export type ThreadEvent =
-	| { kind: "state"; thread: ThreadInput }
-	| { kind: WakeKind; thread: ThreadInput };
+export type ThreadEvent = { kind: "state"; thread: ThreadInput } | { kind: WakeKind; thread: ThreadInput };
 
 /** What `watch` reports back to the core. */
 export type WatchSink = {
@@ -122,16 +121,31 @@ export type WaitingItem = { type: WaitKind; requestId: string; label: string; qu
  * Everything else is `ok: false` with a reason: a server that is down or not connected now (a `mayBeOffline` server asleep
  * included), a thread the backend cannot find, any error, an answer in a shape the adapter does not expect. `waiting` never rejects.
  */
-export type WaitingRead = { ok: true; cards: WaitingItem[]; resolved?: string[]; ignored?: string[] } | { ok: false; reason: string };
+export type WaitingRead =
+	| { ok: true; cards: WaitingItem[]; resolved?: string[]; ignored?: string[] }
+	| { ok: false; reason: string };
 
 /** Pure: does a value from an adapter keep the `WaitingRead` contract? The core treats anything else as `ok: false`. */
 export function isWaitingRead(r: unknown): r is WaitingRead {
 	if (!r || typeof r !== "object") return false;
 	const o = r as Record<string, unknown>;
 	if (o.ok === false) return typeof o.reason === "string";
-	const strings = (v: unknown) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string" && x !== ""));
-	return o.ok === true && Array.isArray(o.cards) && strings(o.resolved) && strings(o.ignored)
-		&& o.cards.every((c) => !!c && typeof c === "object" && typeof (c as WaitingItem).requestId === "string" && (c as WaitingItem).requestId !== "" && typeof (c as WaitingItem).type === "string");
+	const strings = (v: unknown) =>
+		v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string" && x !== ""));
+	return (
+		o.ok === true &&
+		Array.isArray(o.cards) &&
+		strings(o.resolved) &&
+		strings(o.ignored) &&
+		o.cards.every(
+			(c) =>
+				!!c &&
+				typeof c === "object" &&
+				typeof (c as WaitingItem).requestId === "string" &&
+				(c as WaitingItem).requestId !== "" &&
+				typeof (c as WaitingItem).type === "string",
+		)
+	);
 }
 
 /**
@@ -142,10 +156,24 @@ export function isWaitingRead(r: unknown): r is WaitingRead {
  * Why a run failed, as the backend records it. `class`, `code` and `message` are the backend's own words; src/core/recover.ts reads
  * them in code and never asks a model what kind of failure it was. `interrupted` is true when someone stopped the run: a stop is not an outage.
  */
-export type RunFailure = { runId: string; /** The run's ordinal in its thread: monotonic, so a retry's message id never repeats across stretches. */ ordinal?: number; class?: string; code?: string; message: string; retryable?: boolean; resetAt?: string; interrupted?: boolean };
+export type RunFailure = {
+	runId: string /** The run's ordinal in its thread: monotonic, so a retry's message id never repeats across stretches. */;
+	ordinal?: number;
+	class?: string;
+	code?: string;
+	message: string;
+	retryable?: boolean;
+	resetAt?: string;
+	interrupted?: boolean;
+};
 
 /** What a fresh read of a thread shows, taken right before a ping: its newest run and whether anything is going or waiting. */
-export type RunLook = { latestRunId?: string; latestStatus?: string; /** a run is queued, starting, running or waiting */ active: boolean; /** a card, approval, secret or question is open */ waiting: boolean };
+export type RunLook = {
+	latestRunId?: string;
+	latestStatus?: string /** a run is queued, starting, running or waiting */;
+	active: boolean /** a card, approval, secret or question is open */;
+	waiting: boolean;
+};
 
 export type Inspector = {
 	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
@@ -238,11 +266,28 @@ export type Transcript = {
 // ---- the adapter ---------------------------------------------------------------------------------
 
 /** What a snapshot knows of one thread. */
-export type ThreadFactsRow = { id: string; archived: boolean; settled: boolean; pendingRequestId: string | null; status: string };
+export type ThreadFactsRow = {
+	id: string;
+	archived: boolean;
+	settled: boolean;
+	pendingRequestId: string | null;
+	status: string;
+};
 /** A whole read of an adapter's server. `complete` is false when the answer may be partial, and then it says nothing about a thread it lacks. */
 export type ThreadSnapshot = { complete: boolean; threads: ThreadFactsRow[] };
 
-export type OptionalCapability = "answer" | "listWaiting" | "setTitle" | "transcriptPath" | "inspect" | "send" | "stewardProbe" | "compact" | "snapshot" | "alertDesk" | "handoffInstruction";
+export type OptionalCapability =
+	| "answer"
+	| "listWaiting"
+	| "setTitle"
+	| "transcriptPath"
+	| "inspect"
+	| "send"
+	| "stewardProbe"
+	| "compact"
+	| "snapshot"
+	| "alertDesk"
+	| "handoffInstruction";
 
 /**
  * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
@@ -286,7 +331,12 @@ export interface Adapter {
 	/** Reads of one thread, for building a wake. */
 	readonly inspect?: Inspector;
 	/** Sends a message into a thread, once for one `seed`: the daemon's one ping. Signed as the Steward unless `identity` says otherwise ("daemon": its own retry, which instructs nobody). Used for an option routed straight to its thread and for stalled-thread recovery. */
-	send?(threadId: string, text: string, seed: string, identity?: "steward" | "daemon" | "operator"): Promise<{ ok: boolean; detail: string }>;
+	send?(
+		threadId: string,
+		text: string,
+		seed: string,
+		identity?: "steward" | "daemon" | "operator",
+	): Promise<{ ok: boolean; detail: string }>;
 	/** The Steward's size, stall and compaction state. */
 	stewardProbe?(): StewardProbe;
 	/**
@@ -356,18 +406,47 @@ export type BriefNotes = {
 export type AdapterEntry = { create: AdapterFactory; brief?: (ctx: { repo: string }) => BriefNotes };
 
 /** True when the adapter declares the capability. The type guard says which method is then present. */
-export function has<K extends OptionalCapability>(a: Adapter, cap: K): a is Adapter & Required<Pick<Adapter, CapabilityMethod[K]>> {
+export function has<K extends OptionalCapability>(
+	a: Adapter,
+	cap: K,
+): a is Adapter & Required<Pick<Adapter, CapabilityMethod[K]>> {
 	return a.capabilities.includes(cap);
 }
-type CapabilityMethod = { answer: "answer"; listWaiting: "listWaiting"; setTitle: "setTitle"; transcriptPath: "transcriptPath"; inspect: "inspect"; send: "send"; stewardProbe: "stewardProbe"; compact: "compact"; snapshot: "snapshot"; alertDesk: "alertDesk"; handoffInstruction: "handoffInstruction" };
+type CapabilityMethod = {
+	answer: "answer";
+	listWaiting: "listWaiting";
+	setTitle: "setTitle";
+	transcriptPath: "transcriptPath";
+	inspect: "inspect";
+	send: "send";
+	stewardProbe: "stewardProbe";
+	compact: "compact";
+	snapshot: "snapshot";
+	alertDesk: "alertDesk";
+	handoffInstruction: "handoffInstruction";
+};
 
 /** Pure: what is wrong with an adapter's declaration, or an empty list. Every adapter test (and the fake's) runs it. */
 export function conformance(a: Adapter): string[] {
 	const bad: string[] = [];
 	if (!a.id) bad.push("no id");
-	for (const m of ["watch", "isBusy", "post"] as const) if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
-	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function") bad.push("required capability wake needs ready() and send()");
-	const methods: Record<OptionalCapability, unknown> = { answer: a.answer, listWaiting: a.listWaiting, setTitle: a.setTitle, transcriptPath: a.transcriptPath, inspect: a.inspect, send: a.send, stewardProbe: a.stewardProbe, compact: a.compact, snapshot: a.snapshot, alertDesk: a.alertDesk, handoffInstruction: a.handoffInstruction };
+	for (const m of ["watch", "isBusy", "post"] as const)
+		if (typeof a[m] !== "function") bad.push(`required method ${m} is missing`);
+	if (!a.wake || typeof a.wake.ready !== "function" || typeof a.wake.send !== "function")
+		bad.push("required capability wake needs ready() and send()");
+	const methods: Record<OptionalCapability, unknown> = {
+		answer: a.answer,
+		listWaiting: a.listWaiting,
+		setTitle: a.setTitle,
+		transcriptPath: a.transcriptPath,
+		inspect: a.inspect,
+		send: a.send,
+		stewardProbe: a.stewardProbe,
+		compact: a.compact,
+		snapshot: a.snapshot,
+		alertDesk: a.alertDesk,
+		handoffInstruction: a.handoffInstruction,
+	};
 	for (const [cap, impl] of Object.entries(methods)) {
 		const declared = a.capabilities.includes(cap as OptionalCapability);
 		if (declared && !impl) bad.push(`declares ${cap} but does not implement it`);

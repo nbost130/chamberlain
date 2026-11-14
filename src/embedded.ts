@@ -23,4 +23,9 @@ export const WAKE_PROMPT_FILE: string = wakePrompt;
 /** The Alert Desk's standing prompt template (docs/alert-desk-prompt.md). */
 export const DESK_PROMPT_FILE: string = deskPrompt;
 /** The decision-queue page's static files, by the URL path each is served at. */
-export const STATIC_FILES: Record<string, string> = { "/index.html": indexHtml as unknown as string, "/app.css": appCss, "/app.js": appJs as string, "/inline.js": inlineJs as string };
+export const STATIC_FILES: Record<string, string> = {
+	"/index.html": indexHtml as unknown as string,
+	"/app.css": appCss,
+	"/app.js": appJs as string,
+	"/inline.js": inlineJs as string,
+};

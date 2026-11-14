@@ -14,7 +14,10 @@ import pkg from "../package.json" with { type: "json" };
 
 const ROOT = resolve(import.meta.dir, "..");
 const input = process.argv[2];
-if (!input || !existsSync(input)) { console.error("usage: bun scripts/smoke.ts <binary | chamberlain-<version>-<os>-<arch>.tar.gz>"); process.exit(2); }
+if (!input || !existsSync(input)) {
+	console.error("usage: bun scripts/smoke.ts <binary | chamberlain-<version>-<os>-<arch>.tar.gz>");
+	process.exit(2);
+}
 
 const work = mkdtempSync(join(tmpdir(), "chamberlain-smoke-"));
 const empty = join(work, "empty"); // the working directory of every run: nothing is in it
@@ -33,31 +36,64 @@ if (basename(bin).endsWith(".tar.gz")) {
 
 const port = 40000 + Math.floor(Math.random() * 20000);
 writeFileSync(join(conf, "web.json"), JSON.stringify({ host: "127.0.0.1", port }), { mode: 0o600 });
-const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: work, CHAMBERLAIN_CONF: conf, CHAMBERLAIN_STATE: state, CHAMBERLAIN_T3_STATE_DB: join(work, "no-t3.sqlite") };
+const env: Record<string, string> = {
+	PATH: "/usr/bin:/bin",
+	HOME: work,
+	CHAMBERLAIN_CONF: conf,
+	CHAMBERLAIN_STATE: state,
+	CHAMBERLAIN_T3_STATE_DB: join(work, "no-t3.sqlite"),
+};
 const exec = (...args: string[]) => Bun.spawnSync([bin, ...args], { cwd: empty, env, stdout: "pipe", stderr: "pipe" });
 
 let failed = false;
 const ok = (what: string) => console.log(`ok   ${what}`);
-const bad = (what: string, detail = "") => { failed = true; console.log(`FAIL ${what}${detail ? `\n       ${detail.split("\n").join("\n       ")}` : ""}`); };
+const bad = (what: string, detail = "") => {
+	failed = true;
+	console.log(`FAIL ${what}${detail ? `\n       ${detail.split("\n").join("\n       ")}` : ""}`);
+};
 const check = (what: string, cond: boolean, detail = "") => (cond ? ok(what) : bad(what, detail));
 
 try {
 	console.log(`binary: ${bin}\ncwd:    ${empty} (empty)\n`);
 
 	const v = exec("--version");
-	check(`--version prints ${pkg.version}`, v.exitCode === 0 && v.stdout.toString().trim() === pkg.version, `exit ${v.exitCode}: ${v.stdout}${v.stderr}`);
+	check(
+		`--version prints ${pkg.version}`,
+		v.exitCode === 0 && v.stdout.toString().trim() === pkg.version,
+		`exit ${v.exitCode}: ${v.stdout}${v.stderr}`,
+	);
 	const h = exec("help");
-	check("help lists every command", h.exitCode === 0 && ["daemon", "web", "ask", "afk", "brief", "debug"].every((c) => h.stdout.toString().includes(c)));
+	check(
+		"help lists every command",
+		h.exitCode === 0 && ["daemon", "web", "ask", "afk", "brief", "debug"].every((c) => h.stdout.toString().includes(c)),
+	);
 	check("an unknown command exits 2", exec("nope").exitCode === 2);
 	// A new Steward needs no checkout: its first message and its wake task's prompt come out of the binary.
 	const start = exec("brief", "start");
-	check("brief start prints the first Steward message with `chamberlain` commands", start.exitCode === 0 && start.stdout.toString().includes("`chamberlain switch-steward <your thread id>`") && !/\{\{|bun /.test(start.stdout.toString()), `exit ${start.exitCode}: ${start.stdout}${start.stderr}`);
+	check(
+		"brief start prints the first Steward message with `chamberlain` commands",
+		start.exitCode === 0 &&
+			start.stdout.toString().includes("`chamberlain switch-steward <your thread id>`") &&
+			!/\{\{|bun /.test(start.stdout.toString()),
+		`exit ${start.exitCode}: ${start.stdout}${start.stderr}`,
+	);
 	const wake = exec("brief", "wake-prompt");
-	check("brief wake-prompt prints the wake task's prompt", wake.exitCode === 0 && wake.stdout.toString().startsWith("/steward-wake"), `exit ${wake.exitCode}: ${wake.stdout}${wake.stderr}`);
+	check(
+		"brief wake-prompt prints the wake task's prompt",
+		wake.exitCode === 0 && wake.stdout.toString().startsWith("/steward-wake"),
+		`exit ${wake.exitCode}: ${wake.stdout}${wake.stderr}`,
+	);
 	// A diagnostic command under `debug`, and by the old name a prompt written before the grouping still uses.
-	for (const argv of [["debug", "desk-allowlist", "check", "journalctl -n 5"], ["desk-allowlist", "check", "journalctl -n 5"]]) {
+	for (const argv of [
+		["debug", "desk-allowlist", "check", "journalctl -n 5"],
+		["desk-allowlist", "check", "journalctl -n 5"],
+	]) {
 		const d = exec(...argv);
-		check(`\`chamberlain ${argv.slice(0, argv[0] === "debug" ? 2 : 1).join(" ")}\` runs`, d.exitCode === 0 && d.stdout.toString().trim() === "allow", `exit ${d.exitCode}: ${d.stdout}${d.stderr}`);
+		check(
+			`\`chamberlain ${argv.slice(0, argv[0] === "debug" ? 2 : 1).join(" ")}\` runs`,
+			d.exitCode === 0 && d.stdout.toString().trim() === "allow",
+			`exit ${d.exitCode}: ${d.stdout}${d.stderr}`,
+		);
 	}
 
 	// The page, from the embedded files, and a question asked by another process shows up on it.
@@ -66,27 +102,68 @@ try {
 		const reader = page.stdout.getReader();
 		let out = "";
 		const deadline = Date.now() + 15_000;
-		while (!out.includes("decision queue on") && Date.now() < deadline) { const { value, done } = await reader.read(); if (done) break; out += new TextDecoder().decode(value); }
-		check("web --test starts", out.includes(`http://127.0.0.1:${port}`), out || (await new Response(page.stderr).text()));
+		while (!out.includes("decision queue on") && Date.now() < deadline) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			out += new TextDecoder().decode(value);
+		}
+		check(
+			"web --test starts",
+			out.includes(`http://127.0.0.1:${port}`),
+			out || (await new Response(page.stderr).text()),
+		);
 		const base = `http://127.0.0.1:${port}`;
-		const files: [string, string, string][] = [["/", "index.html", "text/html"], ["/app.css", "app.css", "text/css"], ["/app.js", "app.js", "text/javascript"], ["/inline.js", "inline.js", "text/javascript"]];
+		const files: [string, string, string][] = [
+			["/", "index.html", "text/html"],
+			["/app.css", "app.css", "text/css"],
+			["/app.js", "app.js", "text/javascript"],
+			["/inline.js", "inline.js", "text/javascript"],
+		];
 		for (const [url, file, type] of files) {
 			const r = await fetch(base + url);
 			const body = new Uint8Array(await r.arrayBuffer());
 			const want = new Uint8Array(readFileSync(join(ROOT, "src/web/static", file)));
-			check(`GET ${url} is 200 ${type} and is src/web/static/${file} byte for byte (${body.length} bytes)`, r.status === 200 && (r.headers.get("content-type") ?? "").startsWith(type) && Buffer.compare(body, want) === 0, `status ${r.status}, type ${r.headers.get("content-type")}, ${body.length} bytes vs ${want.length}`);
+			check(
+				`GET ${url} is 200 ${type} and is src/web/static/${file} byte for byte (${body.length} bytes)`,
+				r.status === 200 && (r.headers.get("content-type") ?? "").startsWith(type) && Buffer.compare(body, want) === 0,
+				`status ${r.status}, type ${r.headers.get("content-type")}, ${body.length} bytes vs ${want.length}`,
+			);
 		}
-		const q = JSON.stringify({ kind: "product", title: "Smoke: which colour?", context: "- asked by scripts/smoke.ts", options: [{ label: "Blue" }, { label: "Green" }], thread: "Smoke", server: "main", urgent: false });
+		const q = JSON.stringify({
+			kind: "product",
+			title: "Smoke: which colour?",
+			context: "- asked by scripts/smoke.ts",
+			options: [{ label: "Blue" }, { label: "Green" }],
+			thread: "Smoke",
+			server: "main",
+			urgent: false,
+		});
 		const a = exec("ask", q);
 		const id = a.stdout.toString().match(/\bQ-[a-z0-9]{4,16}\b/)?.[0];
-		check("ask files the question into the scratch state directory", a.exitCode === 0 && id !== undefined, `exit ${a.exitCode}: ${a.stdout}${a.stderr}`);
+		check(
+			"ask files the question into the scratch state directory",
+			a.exitCode === 0 && id !== undefined,
+			`exit ${a.exitCode}: ${a.stdout}${a.stderr}`,
+		);
 		check("ask wrote the database under the scratch state dir", existsSync(join(state, "chamberlain.db")));
-		const queue = (await (await fetch(`${base}/api/queue`)).text());
-		check("the page (another process) reads that question back from the database", id !== undefined && queue.includes(id) && queue.includes("Smoke: which colour?"), queue.slice(0, 300));
-	} finally { page.kill(); await page.exited; }
+		const queue = await (await fetch(`${base}/api/queue`)).text();
+		check(
+			"the page (another process) reads that question back from the database",
+			id !== undefined && queue.includes(id) && queue.includes("Smoke: which colour?"),
+			queue.slice(0, 300),
+		);
+	} finally {
+		page.kill();
+		await page.exited;
+	}
 
 	// The daemon, dry (no wakes sent), with no servers configured: it takes the relay lock, opens the database and stays up.
-	const daemon = Bun.spawn([bin, "daemon"], { cwd: empty, env: { ...env, CHAMBERLAIN_DRY: "1" }, stdout: "pipe", stderr: "pipe" });
+	const daemon = Bun.spawn([bin, "daemon"], {
+		cwd: empty,
+		env: { ...env, CHAMBERLAIN_DRY: "1" },
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	await Bun.sleep(3000);
 	const up = daemon.exitCode === null;
 	daemon.kill();
@@ -97,20 +174,55 @@ try {
 	const brief = exec("brief", "steward", "--mode", "live");
 	const text = brief.stdout.toString();
 	check("brief steward renders", brief.exitCode === 0 && text.length > 1000, `exit ${brief.exitCode}: ${brief.stderr}`);
-	for (const c of ["chamberlain ask '<json>'", "chamberlain afk hold", "chamberlain afk held", "chamberlain decided list 15", "chamberlain ruling", "chamberlain debug peek <server> <threadId>", "chamberlain debug t3x threads|read|respond|send <server>"]) check(`the hand-off teaches \`${c}\``, text.includes(c));
-	check("the hand-off names no `bun ...src/` command and no $bunfs path", !/\bbun \S*\/src\//.test(text) && !text.includes("$bunfs") && !text.includes("~BUN"), (text.match(/.{0,60}(\bbun \S*\/src\/|\$bunfs).{0,60}/) ?? [""])[0]);
+	for (const c of [
+		"chamberlain ask '<json>'",
+		"chamberlain afk hold",
+		"chamberlain afk held",
+		"chamberlain decided list 15",
+		"chamberlain ruling",
+		"chamberlain debug peek <server> <threadId>",
+		"chamberlain debug t3x threads|read|respond|send <server>",
+	])
+		check(`the hand-off teaches \`${c}\``, text.includes(c));
+	check(
+		"the hand-off names no `bun ...src/` command and no $bunfs path",
+		!/\bbun \S*\/src\//.test(text) && !text.includes("$bunfs") && !text.includes("~BUN"),
+		(text.match(/.{0,60}(\bbun \S*\/src\/|\$bunfs).{0,60}/) ?? [""])[0],
+	);
 	const desk = exec("brief", "desk");
-	check("brief desk renders the embedded prompt with `chamberlain ask '{`", desk.exitCode === 0 && desk.stdout.toString().includes("chamberlain ask '{") && desk.stdout.toString().includes("`chamberlain debug desk-allowlist hook`"), `exit ${desk.exitCode}: ${desk.stderr}`);
-	const allow = exec("desk-allowlist", "check", "chamberlain ask '{\"kind\":\"product\"}'");
-	check("desk-allowlist allows `chamberlain ask '<json>'`", allow.exitCode === 0 && allow.stdout.toString().trim() === "allow", `${allow.stdout}${allow.stderr}`);
+	check(
+		"brief desk renders the embedded prompt with `chamberlain ask '{`",
+		desk.exitCode === 0 &&
+			desk.stdout.toString().includes("chamberlain ask '{") &&
+			desk.stdout.toString().includes("`chamberlain debug desk-allowlist hook`"),
+		`exit ${desk.exitCode}: ${desk.stderr}`,
+	);
+	const allow = exec("desk-allowlist", "check", 'chamberlain ask \'{"kind":"product"}\'');
+	check(
+		"desk-allowlist allows `chamberlain ask '<json>'`",
+		allow.exitCode === 0 && allow.stdout.toString().trim() === "allow",
+		`${allow.stdout}${allow.stderr}`,
+	);
 	const held = exec("afk", "held");
 	check("afk held runs", held.exitCode === 0, held.stderr.toString());
 	const logged = exec("decided", "Smoke", "kept the default", "R1: smoke");
-	check("decided logs", logged.exitCode === 0 && exec("decided", "list").stdout.toString().includes("kept the default"));
+	check(
+		"decided logs",
+		logged.exitCode === 0 && exec("decided", "list").stdout.toString().includes("kept the default"),
+	);
 	// The sweep prompt is read by the daemon at run time; it must be inside the binary.
-	const sweep = readFileSync(join(ROOT, "docs/steward-sweep-prompt.md"), "utf8").split("\n").find((l) => l.startsWith("1. ") || l.startsWith("2. "))!.slice(0, 60);
-	check("the sweep prompt is embedded in the binary", Buffer.from(readFileSync(bin)).includes(Buffer.from(sweep)), sweep);
-} finally { rmSync(work, { recursive: true, force: true }); }
+	const sweep = readFileSync(join(ROOT, "docs/steward-sweep-prompt.md"), "utf8")
+		.split("\n")
+		.find((l) => l.startsWith("1. ") || l.startsWith("2. "))!
+		.slice(0, 60);
+	check(
+		"the sweep prompt is embedded in the binary",
+		Buffer.from(readFileSync(bin)).includes(Buffer.from(sweep)),
+		sweep,
+	);
+} finally {
+	rmSync(work, { recursive: true, force: true });
+}
 
 console.log(failed ? "\nsmoke test FAILED" : "\nsmoke test passed");
 process.exit(failed ? 1 : 0);

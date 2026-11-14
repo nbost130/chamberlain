@@ -14,7 +14,12 @@ export type RulingStatus = "in-force" | "proposed" | "retired";
 export type RulingSource = "chat" | "card";
 export type RetiredHow = "retired" | "only this once" | "superseded" | "duplicate" | "expired" | "repeat";
 /** The housekeeping reasons a ruling can leave force for. The database keeps them apart from the page's two (retired_reason, migration 11). */
-export const HOUSEKEEPING: ReadonlySet<RetiredHow> = new Set<RetiredHow>(["superseded", "duplicate", "expired", "repeat"]);
+export const HOUSEKEEPING: ReadonlySet<RetiredHow> = new Set<RetiredHow>([
+	"superseded",
+	"duplicate",
+	"expired",
+	"repeat",
+]);
 /** What a new ruling may carry beyond its words and what it decides. */
 export type RulingOpts = { expires?: string; until?: string; supersedes?: string[] };
 /**
@@ -23,7 +28,12 @@ export type RulingOpts = { expires?: string; until?: string; supersedes?: string
  * A proposal that repeats a ruling already in force changes nothing (`alreadyInForce`): the ids it named that the ruling does not
  * replace are reported in `supersedesNotAdded`, because only the principal's word changes what is in force.
  */
-export type Recorded = Ruling & { duplicate?: true; supersedesAdded?: string[]; alreadyInForce?: true; supersedesNotAdded?: string[] };
+export type Recorded = Ruling & {
+	duplicate?: true;
+	supersedesAdded?: string[];
+	alreadyInForce?: true;
+	supersedesNotAdded?: string[];
+};
 export type RulingChange = { t: string; what: string; from?: string };
 /** The time every function here reads, in epoch milliseconds. Tests pass their own; nothing else changes how time is read. */
 export type Clock = () => number;
@@ -85,7 +95,12 @@ export function updateRulings<T>(store: Store, fn: (list: Ruling[]) => T): T {
 export function stageRulings(store: Store): { list: Ruling[]; commit: () => void } {
 	const list = store.rulings.list();
 	const before = new Map(list.map((r) => [r.id, JSON.stringify(r)]));
-	return { list, commit: () => { for (const r of list) if (before.get(r.id) !== JSON.stringify(r)) store.rulings.save(r); } };
+	return {
+		list,
+		commit: () => {
+			for (const r of list) if (before.get(r.id) !== JSON.stringify(r)) store.rulings.save(r);
+		},
+	};
 }
 
 export const nextId = (list: Ruling[]) => `R${list.reduce((m, r) => Math.max(m, Number(r.id.slice(1)) || 0), 0) + 1}`;
@@ -107,7 +122,13 @@ function realUtc(y: number, mo: number, d: number, h = 0, mi = 0, s = 0): number
 	const t = new Date(0);
 	t.setUTCFullYear(y, mo - 1, d);
 	t.setUTCHours(h, mi, s, 0);
-	const same = t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d && t.getUTCHours() === h && t.getUTCMinutes() === mi && t.getUTCSeconds() === s;
+	const same =
+		t.getUTCFullYear() === y &&
+		t.getUTCMonth() === mo - 1 &&
+		t.getUTCDate() === d &&
+		t.getUTCHours() === h &&
+		t.getUTCMinutes() === mi &&
+		t.getUTCSeconds() === s;
 	return same ? t.getTime() : NaN;
 }
 
@@ -142,7 +163,8 @@ export function expiresProblem(expires: string): string | undefined {
 }
 
 /** Pure: has this ruling's `expires` passed at `nowMs`? A ruling without one never does. One that can't be read counts as passed. */
-export const isExpired = (r: Pick<Ruling, "expires">, nowMs: number = Date.now()) => Boolean(r.expires) && !(expiresAt(r.expires!) > nowMs);
+export const isExpired = (r: Pick<Ruling, "expires">, nowMs: number = Date.now()) =>
+	Boolean(r.expires) && !(expiresAt(r.expires!) > nowMs);
 
 /** A new ruling's options, checked: an unreadable or already-past expiry is refused, so a typo can't be recorded as a ruling. */
 export function checkOpts(o: RulingOpts = {}, nowMs: number = Date.now()): RulingOpts {
@@ -162,14 +184,22 @@ export function checkOpts(o: RulingOpts = {}, nowMs: number = Date.now()): Rulin
 }
 
 /** Pure: words compared as the principal would: case and runs of whitespace do not matter. */
-const sameText = (a: string, b: string) => a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
+const sameText = (a: string, b: string) =>
+	a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
 
 /**
  * The ruling already held with these exact words and this exact decision, if any: one that is still live (proposed or in
  * force, and not expired). A retired or expired ruling can be said again as a new one.
  */
-export function findHeld(list: Ruling[], words: string, decides: string, nowMs: number = Date.now()): Ruling | undefined {
-	return list.find((r) => r.status !== "retired" && !isExpired(r, nowMs) && sameText(r.words, words) && sameText(r.decides, decides));
+export function findHeld(
+	list: Ruling[],
+	words: string,
+	decides: string,
+	nowMs: number = Date.now(),
+): Ruling | undefined {
+	return list.find(
+		(r) => r.status !== "retired" && !isExpired(r, nowMs) && sameText(r.words, words) && sameText(r.decides, decides),
+	);
 }
 
 /** In place: every ruling `r` supersedes leaves force, pointing at `r`. A missing id is an error; one already retired is left as it is. */
@@ -180,7 +210,11 @@ function applySupersedes(list: Ruling[], r: Ruling, nowMs: number) {
 		if (!old) throw Error(`supersedes ${id}: no such ruling`);
 		if (old.id === r.id || old.status === "retired") continue;
 		(old.history ??= []).push({ t, what: `superseded by ${r.id}` });
-		old.status = "retired"; old.retiredAt = t; old.retiredHow = "superseded"; old.supersededBy = r.id; old.retiredWhy = `replaced by ${r.id}`;
+		old.status = "retired";
+		old.retiredAt = t;
+		old.retiredHow = "superseded";
+		old.supersededBy = r.id;
+		old.retiredWhy = `replaced by ${r.id}`;
 	}
 }
 
@@ -191,7 +225,9 @@ const needsPromote = (r: Ruling) => r.status === "proposed" || !r.confirmed;
 function promote(list: Ruling[], r: Ruling, how: string, nowMs: number) {
 	if (!needsPromote(r)) return;
 	(r.history ??= []).push({ t: iso(nowMs), what: how });
-	r.status = "in-force"; r.confirmed = true; r.confirmedAt = iso(nowMs);
+	r.status = "in-force";
+	r.confirmed = true;
+	r.confirmedAt = iso(nowMs);
 	applySupersedes(list, r, nowMs);
 }
 
@@ -215,10 +251,15 @@ function mergeSupersedes(list: Ruling[], held: Ruling, o: RulingOpts, nowMs: num
 	return added;
 }
 
-const repeated = (held: Ruling, added: string[]): Recorded => ({ ...held, duplicate: true as const, ...(added.length ? { supersedesAdded: added } : {}) });
+const repeated = (held: Ruling, added: string[]): Recorded => ({
+	...held,
+	duplicate: true as const,
+	...(added.length ? { supersedesAdded: added } : {}),
+});
 
 function checkSupersedes(list: Ruling[], o: RulingOpts) {
-	for (const id of o.supersedes ?? []) if (!list.some((x) => x.id === id)) throw Error(`supersedes ${id}: no such ruling`);
+	for (const id of o.supersedes ?? [])
+		if (!list.some((x) => x.id === id)) throw Error(`supersedes ${id}: no such ruling`);
 }
 
 /**
@@ -257,7 +298,8 @@ function checkNoCycle(list: Ruling[], held: Ruling, adds: string[]) {
 }
 
 /** The ids `o` names that `held` does not yet supersede. */
-const newSupersedes = (held: Ruling, o: RulingOpts) => (o.supersedes ?? []).filter((id) => !(held.supersedes ?? []).includes(id));
+const newSupersedes = (held: Ruling, o: RulingOpts) =>
+	(o.supersedes ?? []).filter((id) => !(held.supersedes ?? []).includes(id));
 
 // ---- changes ------------------------------------------------------------------------------------
 
@@ -268,7 +310,14 @@ const newSupersedes = (held: Ruling, o: RulingOpts) => (o.supersedes ?? []).filt
  * proposal adds what it names to it (it all waits for the confirm); a repeat of a ruling already in force changes nothing at all
  * (`alreadyInForce`): a proposal is never the principal's word, so it can neither retire a ruling nor change one in force.
  */
-export function propose(store: Store, words: string, decides: string, item?: string, opts?: RulingOpts, clock: Clock = Date.now): Recorded {
+export function propose(
+	store: Store,
+	words: string,
+	decides: string,
+	item?: string,
+	opts?: RulingOpts,
+	clock: Clock = Date.now,
+): Recorded {
 	const nowMs = clock();
 	const o = checkOpts(opts, nowMs);
 	return updateRulings(store, (list) => {
@@ -276,19 +325,60 @@ export function propose(store: Store, words: string, decides: string, item?: str
 		const held = findHeld(list, words, decides, nowMs);
 		if (held?.status === "in-force") {
 			const notAdded = newSupersedes(held, o);
-			return { ...held, duplicate: true as const, alreadyInForce: true as const, ...(notAdded.length ? { supersedesNotAdded: notAdded } : {}) };
+			return {
+				...held,
+				duplicate: true as const,
+				alreadyInForce: true as const,
+				...(notAdded.length ? { supersedesNotAdded: notAdded } : {}),
+			};
 		}
-		if (held) { checkNoCycle(list, held, newSupersedes(held, o)); adopt(held, o, nowMs); return repeated(held, mergeSupersedes(list, held, o, nowMs)); }
-		const r: Ruling = { id: nextId(list), date: today(nowMs), words, decides, source: "card", status: "proposed", confirmed: false, ...(item ? { item } : {}), ...o, history: [{ t: iso(nowMs), what: "proposed by the Steward" }] };
+		if (held) {
+			checkNoCycle(list, held, newSupersedes(held, o));
+			adopt(held, o, nowMs);
+			return repeated(held, mergeSupersedes(list, held, o, nowMs));
+		}
+		const r: Ruling = {
+			id: nextId(list),
+			date: today(nowMs),
+			words,
+			decides,
+			source: "card",
+			status: "proposed",
+			confirmed: false,
+			...(item ? { item } : {}),
+			...o,
+			history: [{ t: iso(nowMs), what: "proposed by the Steward" }],
+		};
 		list.push(r);
 		return r;
 	});
 }
 
 /** Pure: an in-force ruling, confirmed now, under the next free id of `list`. It is not saved and nothing is checked against `list`. */
-export function inForceRuling(list: Ruling[], words: string, decides: string, source: RulingSource, how: string, item?: string, opts?: RulingOpts, nowMs: number = Date.now()): Ruling {
+export function inForceRuling(
+	list: Ruling[],
+	words: string,
+	decides: string,
+	source: RulingSource,
+	how: string,
+	item?: string,
+	opts?: RulingOpts,
+	nowMs: number = Date.now(),
+): Ruling {
 	const t = iso(nowMs);
-	return { id: nextId(list), date: today(nowMs), words, decides, source, status: "in-force", confirmed: true, confirmedAt: t, ...(item ? { item } : {}), ...checkOpts(opts, nowMs), history: [{ t, what: how }] };
+	return {
+		id: nextId(list),
+		date: today(nowMs),
+		words,
+		decides,
+		source,
+		status: "in-force",
+		confirmed: true,
+		confirmedAt: t,
+		...(item ? { item } : {}),
+		...checkOpts(opts, nowMs),
+		history: [{ t, what: how }],
+	};
 }
 
 /**
@@ -297,7 +387,16 @@ export function inForceRuling(list: Ruling[], words: string, decides: string, so
  * restatement supersedes leaves force); otherwise a new one is added. Throws, changing nothing, on a bad option. It saves
  * nothing: the caller saves the list inside its own transaction (updateRulings, or stageRulings and commit).
  */
-export function recordInForce(list: Ruling[], words: string, decides: string, source: RulingSource, how: string, item?: string, opts?: RulingOpts, nowMs: number = Date.now()): Recorded {
+export function recordInForce(
+	list: Ruling[],
+	words: string,
+	decides: string,
+	source: RulingSource,
+	how: string,
+	item?: string,
+	opts?: RulingOpts,
+	nowMs: number = Date.now(),
+): Recorded {
 	const o = checkOpts(opts, nowMs);
 	checkSupersedes(list, o);
 	const held = findHeld(list, words, decides, nowMs);
@@ -319,12 +418,26 @@ export function recordInForce(list: Ruling[], words: string, decides: string, so
  * is put in force instead of being recorded a second time. `opts.supersedes` takes the rulings it replaces out of force in
  * the same write.
  */
-export function addInForce(store: Store, words: string, decides: string, source: RulingSource, how: string, item?: string, opts?: RulingOpts, clock: Clock = Date.now): Recorded {
+export function addInForce(
+	store: Store,
+	words: string,
+	decides: string,
+	source: RulingSource,
+	how: string,
+	item?: string,
+	opts?: RulingOpts,
+	clock: Clock = Date.now,
+): Recorded {
 	const nowMs = clock();
 	return updateRulings(store, (list) => recordInForce(list, words, decides, source, how, item, opts, nowMs));
 }
 
-function change(store: Store, id: string, fn: (r: Ruling) => void, after?: (list: Ruling[], r: Ruling) => void): Ruling {
+function change(
+	store: Store,
+	id: string,
+	fn: (r: Ruling) => void,
+	after?: (list: Ruling[], r: Ruling) => void,
+): Ruling {
 	return updateRulings(store, (list) => {
 		const r = list.find((x) => x.id === id);
 		if (!r) throw Error(`no ruling ${id}`);
@@ -335,66 +448,119 @@ function change(store: Store, id: string, fn: (r: Ruling) => void, after?: (list
 }
 
 /** Confirm from the rulings page: in force, confirmed, optionally with new wording for what it decides. An expired ruling can't be confirmed. */
-export const confirmRuling = (store: Store, id: string, decides?: string, clock: Clock = Date.now) => change(store, id, (r) => {
-	const nowMs = clock();
-	if (r.status === "retired") throw Error(`${id} is retired`);
-	if (isExpired(r, nowMs)) throw Error(`${id} expired on ${r.expires}`);
-	const t = iso(nowMs);
-	if (decides && decides.trim() && decides.trim() !== r.decides) { (r.history ??= []).push({ t, what: "wording edited on the page", from: r.decides }); r.decides = decides.trim(); }
-	(r.history ??= []).push({ t, what: r.status === "proposed" ? "confirmed on the page (was a proposal)" : "confirmed on the page" });
-	r.status = "in-force"; r.confirmed = true; r.confirmedAt = t;
-}, (list, r) => {
-	const c = supersedeCycle(list);
-	if (c) throw Error(`confirming ${id} would put a supersede cycle in force: ${c.join(" → ")}`);
-	applySupersedes(list, r, clock());
-});
+export const confirmRuling = (store: Store, id: string, decides?: string, clock: Clock = Date.now) =>
+	change(
+		store,
+		id,
+		(r) => {
+			const nowMs = clock();
+			if (r.status === "retired") throw Error(`${id} is retired`);
+			if (isExpired(r, nowMs)) throw Error(`${id} expired on ${r.expires}`);
+			const t = iso(nowMs);
+			if (decides && decides.trim() && decides.trim() !== r.decides) {
+				(r.history ??= []).push({ t, what: "wording edited on the page", from: r.decides });
+				r.decides = decides.trim();
+			}
+			(r.history ??= []).push({
+				t,
+				what: r.status === "proposed" ? "confirmed on the page (was a proposal)" : "confirmed on the page",
+			});
+			r.status = "in-force";
+			r.confirmed = true;
+			r.confirmedAt = t;
+		},
+		(list, r) => {
+			const c = supersedeCycle(list);
+			if (c) throw Error(`confirming ${id} would put a supersede cycle in force: ${c.join(" → ")}`);
+			applySupersedes(list, r, clock());
+		},
+	);
 
 /** New wording only. It changes nothing about whether the ruling is in force or confirmed. */
-export const editRuling = (store: Store, id: string, decides: string, clock: Clock = Date.now) => change(store, id, (r) => {
-	if (!decides.trim()) throw Error("empty wording");
-	(r.history ??= []).push({ t: iso(clock()), what: "wording edited on the page", from: r.decides });
-	r.decides = decides.trim();
-});
+export const editRuling = (store: Store, id: string, decides: string, clock: Clock = Date.now) =>
+	change(store, id, (r) => {
+		if (!decides.trim()) throw Error("empty wording");
+		(r.history ??= []).push({ t: iso(clock()), what: "wording edited on the page", from: r.decides });
+		r.decides = decides.trim();
+	});
 
 /**
  * Takes a ruling out of force. The page uses "retired" and "only this once". The housekeeping reasons ("superseded",
  * "duplicate", "expired", "repeat") need `why`; a duplicate also names the ruling `by` it duplicates, and `by` must be
  * another ruling that is still live. The record is never deleted.
  */
-export const retireRuling = (store: Store, id: string, how: RetiredHow, why?: string, by?: string, clock: Clock = Date.now) => change(store, id, (r) => {
-	if (r.status === "retired") return;
-	if (how !== "retired" && how !== "only this once" && !why?.trim()) throw Error(`retiring ${id} as ${how} needs a reason`);
-	if (how === "duplicate" && !by) throw Error(`retiring ${id} as ${how} needs the ruling that replaces it`);
-	const t = iso(clock());
-	(r.history ??= []).push({ t, what: how === "only this once" ? "only this once: settled its case, stands for nothing more" : how === "retired" ? "retired on the page" : `${how}${by ? ` (${by})` : ""}: ${why!.trim()}` });
-	r.status = "retired"; r.retiredAt = t; r.retiredHow = how;
-	if (why?.trim()) r.retiredWhy = why.trim();
-	if (by) r.supersededBy = by;
-}, (list, r) => {
-	if (r.supersededBy && (r.supersededBy === r.id || !list.some((x) => x.id === r.supersededBy && x.status !== "retired"))) throw Error(`retiring ${r.id}: ${r.supersededBy} is not another ruling that is still live`);
-});
+export const retireRuling = (
+	store: Store,
+	id: string,
+	how: RetiredHow,
+	why?: string,
+	by?: string,
+	clock: Clock = Date.now,
+) =>
+	change(
+		store,
+		id,
+		(r) => {
+			if (r.status === "retired") return;
+			if (how !== "retired" && how !== "only this once" && !why?.trim())
+				throw Error(`retiring ${id} as ${how} needs a reason`);
+			if (how === "duplicate" && !by) throw Error(`retiring ${id} as ${how} needs the ruling that replaces it`);
+			const t = iso(clock());
+			(r.history ??= []).push({
+				t,
+				what:
+					how === "only this once"
+						? "only this once: settled its case, stands for nothing more"
+						: how === "retired"
+							? "retired on the page"
+							: `${how}${by ? ` (${by})` : ""}: ${why!.trim()}`,
+			});
+			r.status = "retired";
+			r.retiredAt = t;
+			r.retiredHow = how;
+			if (why?.trim()) r.retiredWhy = why.trim();
+			if (by) r.supersededBy = by;
+		},
+		(list, r) => {
+			if (
+				r.supersededBy &&
+				(r.supersededBy === r.id || !list.some((x) => x.id === r.supersededBy && x.status !== "retired"))
+			)
+				throw Error(`retiring ${r.id}: ${r.supersededBy} is not another ruling that is still live`);
+		},
+	);
 
 // ---- reading ------------------------------------------------------------------------------------
 
 /** Pure: the rulings in force at `nowMs`: status in-force and not past its `expires`. */
-export const inForceNow = (list: Ruling[], nowMs: number = Date.now()) => list.filter((r) => r.status === "in-force" && !isExpired(r, nowMs));
+export const inForceNow = (list: Ruling[], nowMs: number = Date.now()) =>
+	list.filter((r) => r.status === "in-force" && !isExpired(r, nowMs));
 
 /** Pure: the rulings that are still marked in force but whose `expires` has passed. They count for nothing and are left to be retired. */
-export const expiredNow = (list: Ruling[], nowMs: number = Date.now()) => list.filter((r) => r.status === "in-force" && isExpired(r, nowMs));
+export const expiredNow = (list: Ruling[], nowMs: number = Date.now()) =>
+	list.filter((r) => r.status === "in-force" && isExpired(r, nowMs));
 
 /** Pure: the in-force rulings as the hand-off and every wake carry them, each with its ID. An expired one is left out. */
 export function renderInForce(list: Ruling[], nowMs: number = Date.now()): string {
-	return inForceNow(list, nowMs).map((r) => `- ${r.id} (${r.date}): "${r.words}" -> ${r.decides}${r.expires ? ` [expires ${r.expires}]` : ""}${r.until ? ` [until ${r.until}]` : ""}${r.confirmed ? "" : " [unconfirmed: began as a card answer]"}`).join("\n");
+	return inForceNow(list, nowMs)
+		.map(
+			(r) =>
+				`- ${r.id} (${r.date}): "${r.words}" -> ${r.decides}${r.expires ? ` [expires ${r.expires}]` : ""}${r.until ? ` [until ${r.until}]` : ""}${r.confirmed ? "" : " [unconfirmed: began as a card answer]"}`,
+		)
+		.join("\n");
 }
 
 /** Pure: one line naming the rulings past their expiry, so a reader of the hand-off does not act on one from memory. Empty when none. */
 export function renderExpired(list: Ruling[], nowMs: number = Date.now()): string {
 	const e = expiredNow(list, nowMs);
-	return e.length ? `Expired, NOT in force (do not act on them): ${e.map((r) => `${r.id} (expired ${r.expires})`).join(", ")}.` : "";
+	return e.length
+		? `Expired, NOT in force (do not act on them): ${e.map((r) => `${r.id} (expired ${r.expires})`).join(", ")}.`
+		: "";
 }
 
 /** The rulings text for wakes: the in-force rulings with their IDs. Empty when none is in force. */
-export const rulingsText = (store: Store, clock: Clock = Date.now): string => renderInForce(readRulings(store), clock());
+export const rulingsText = (store: Store, clock: Clock = Date.now): string =>
+	renderInForce(readRulings(store), clock());
 
 /** The rulings section of the hand-off: the in-force rulings, then the expired ones by id. */
 export const rulingsBriefText = (store: Store, clock: Clock = Date.now): string => {
@@ -404,13 +570,16 @@ export const rulingsBriefText = (store: Store, clock: Clock = Date.now): string 
 
 export type Citation = { t: string; thread: string; decision: string };
 /** Pure: how often each ruling was cited by ID in the decision log, with the newest citations first. */
-export function citations(decisions: { t: string; thread: string; decision: string; rulingIds?: string[] }[]): Map<string, Citation[]> {
+export function citations(
+	decisions: { t: string; thread: string; decision: string; rulingIds?: string[] }[],
+): Map<string, Citation[]> {
 	const out = new Map<string, Citation[]>();
-	for (const d of decisions) for (const id of d.rulingIds ?? []) {
-		const list = out.get(id) ?? [];
-		list.push({ t: d.t, thread: d.thread, decision: d.decision });
-		out.set(id, list);
-	}
+	for (const d of decisions)
+		for (const id of d.rulingIds ?? []) {
+			const list = out.get(id) ?? [];
+			list.push({ t: d.t, thread: d.thread, decision: d.decision });
+			out.set(id, list);
+		}
 	for (const list of out.values()) list.sort((a, b) => b.t.localeCompare(a.t));
 	return out;
 }

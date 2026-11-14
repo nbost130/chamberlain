@@ -21,8 +21,15 @@ export function createHeartbeat({ store, watchers, failures, mayBeOffline, raise
 	/** Once a minute: write the heartbeat file and turn silent stops into alarms. */
 	function heartbeat() {
 		const states = watchers.map((w) => w.health());
-		store.state.set("heartbeat", { t: new Date().toISOString(), away: Boolean(readAfk(store)), deliveryFailures: failures(), servers: states });
-		for (const s of states) if (!s.connected && s.downMs > 10 * 60_000 && !mayBeOffline(s.name)) raiseAlarm(`disconnected:${s.name}`, alarms.serverDown(s.name, Math.round(s.downMs / 60000)));
+		store.state.set("heartbeat", {
+			t: new Date().toISOString(),
+			away: Boolean(readAfk(store)),
+			deliveryFailures: failures(),
+			servers: states,
+		});
+		for (const s of states)
+			if (!s.connected && s.downMs > 10 * 60_000 && !mayBeOffline(s.name))
+				raiseAlarm(`disconnected:${s.name}`, alarms.serverDown(s.name, Math.round(s.downMs / 60000)));
 	}
 
 	return { beat: heartbeat };

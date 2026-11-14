@@ -33,7 +33,8 @@ export const alarms = {
 	}),
 	sweepFailed: (): AlarmText => ({
 		title: "chamberlain sweep failed",
-		summary: "The daemon's routine sweep threw an error and did not finish, so nothing is checking the threads between wakes.",
+		summary:
+			"The daemon's routine sweep threw an error and did not finish, so nothing is checking the threads between wakes.",
 	}),
 	tokenExpiring: (server: string, ageDays: number, tokenFile: string): AlarmText => ({
 		title: `chamberlain token for ${server} expires soon`,
@@ -49,12 +50,19 @@ export const alarms = {
 		summary: `Wakes are waiting but no ${desk ? "desk wake URL" : "wake URL"} is configured (or readable), so nothing can reach ${desk ? "the Alert Desk" : "the Steward"}. They are kept, no attempt is used, and they go as soon as there is one.`,
 	}),
 	wakeDeadLetters: (desk: boolean, ids: string[], attempts: number): AlarmText => ({
-		title: desk ? "chamberlain stopped sending Alert Desk wakes that were not delivered" : "chamberlain stopped sending wakes that were not delivered",
+		title: desk
+			? "chamberlain stopped sending Alert Desk wakes that were not delivered"
+			: "chamberlain stopped sending wakes that were not delivered",
 		summary: `${ids.length} wake${ids.length === 1 ? " was" : "s were"} attempted ${attempts} times without being delivered and ${ids.length === 1 ? "is" : "are"} not sent again: ${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", ..." : ""}. The Steward may or may not have received them. They are kept. In the chamberlain checkout, "${selfCommand("wakes")} list" shows them, "${selfCommand("wakes")} retry <id>" sends one again (${attempts} more attempts at most) and "${selfCommand("wakes")} cancel <id>" gives it up.`,
 	}),
 	wakeOrphaned: (receiver: string, rows: string[], held: number): AlarmText => {
 		const n = rows.length;
-		const what = [n ? `${n} outbox row${n === 1 ? "" : "s"}` : "", held ? `${held} held wake${held === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+		const what = [
+			n ? `${n} outbox row${n === 1 ? "" : "s"}` : "",
+			held ? `${held} held wake${held === 1 ? "" : "s"}` : "",
+		]
+			.filter(Boolean)
+			.join(" and ");
 		return {
 			title: `chamberlain has wakes for a receiver that is no longer configured: ${receiver}`,
 			summary: `${what} for the receiver "${receiver}" ${n + held === 1 ? "is" : "are"} waiting, but no "${receiver}" receiver is configured any more, so nothing will send ${n + held === 1 ? "it" : "them"}. Nothing is dropped and nothing goes to another receiver. Configure "${receiver}" again to send them${n ? `, or give the rows up: in the chamberlain checkout, "${selfCommand("wakes")} list" shows each row with its receiver and "${selfCommand("wakes")} cancel <id>" cancels one (${rows.slice(0, 5).join(", ")}${n > 5 ? ", ..." : ""})` : ""}.${held ? " A held wake becomes a row only when its receiver is configured." : ""}`,
@@ -69,23 +77,32 @@ export const alarms = {
 // ---- away mode ----------------------------------------------------------------------------------------------
 
 /** The standing-rules line every wake carries while away. */
-export function awayModeLine(a: { enteredAt: string; words: string; expectedReturn?: string; spendNote?: string }): string {
+export function awayModeLine(a: {
+	enteredAt: string;
+	words: string;
+	expectedReturn?: string;
+	spendNote?: string;
+}): string {
 	const back = a.expectedReturn ? ` Expected back ${a.expectedReturn}.` : "";
 	const spend = a.spendNote ? ` Spend: ${a.spendNote}.` : "";
 	return `- AWAY MODE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else). Put it on ${principalPoss()} queue first with \`${selfCommand("ask")} '<json>'\` (add \`"urgent": false\` when it can wait: it is listed below the urgent ones and sends no notification), then hold it for the return brief with \`${selfCommand("afk")} hold ... --item <the Q-id>\`; a hold with no queue item is refused, and so is anything already settled (it prints the answer). Never an FYI. Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by away mode.`;
 }
 
 /** What a sweep wake says when its principal is not away. */
-export const notAwayNote = () => `${principal()} is not away, so away mode does not apply to this sweep. Your decision rights stand. Skip the new-sessions step and start no new sessions.`;
+export const notAwayNote = () =>
+	`${principal()} is not away, so away mode does not apply to this sweep. Your decision rights stand. Skip the new-sessions step and start no new sessions.`;
 
 // ---- wakes --------------------------------------------------------------------------------------------------
 
 /** The head of the sweep wake that asks for a full supervision sweep. */
-export const fullSweepHead = () => "[chamberlain] sweep: time for a full supervision sweep, or a routine check could not run.";
+export const fullSweepHead = () =>
+	"[chamberlain] sweep: time for a full supervision sweep, or a routine check could not run.";
 
 /** The head and the ASK-list instruction of the sweep wake that carries routine findings. */
-export const routineSweepHead = () => "[chamberlain] sweep: the routine checks found the items below. Handle these only; every other routine check came back clear.";
-export const routineSweepAsk = () => `Anything on the ASK list goes to ${principalPoss()} queue first, with \`${selfCommand("ask")} '<json>'\` (add \`"urgent": false\` when it can wait), never to ${principal()} mid-sweep as a message. Hold it only afterwards, with \`${selfCommand("afk")} hold ... --item <the Q-id ask.ts printed>\`; a hold with no queue item is refused, and so is anything already settled.`;
+export const routineSweepHead = () =>
+	"[chamberlain] sweep: the routine checks found the items below. Handle these only; every other routine check came back clear.";
+export const routineSweepAsk = () =>
+	`Anything on the ASK list goes to ${principalPoss()} queue first, with \`${selfCommand("ask")} '<json>'\` (add \`"urgent": false\` when it can wait), never to ${principal()} mid-sweep as a message. Hold it only afterwards, with \`${selfCommand("afk")} hold ... --item <the Q-id ask.ts printed>\`; a hold with no queue item is refused, and so is anything already settled.`;
 
 /** The head of the wake that carries one answer from the page, and the sentence after it. `body` is the answer's lines. */
 export const answerWakeText = (itemId: string, body: string) =>
@@ -104,7 +121,8 @@ export const rightsWake = (forId: string, full: string) =>
 	`[chamberlain] rights: your decision rights and the rulings in force, in full. The next wake (${forId}) was queued for a Steward that may not hold them; where it says they are unchanged, these are the ones it means, and they replace any older copy it carries.\n${full}`;
 
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
-export const threadWakeHead = (kind: string, title: string, what: string) => `[chamberlain] ${kind}: thread "${title}" ${what}.`;
+export const threadWakeHead = (kind: string, title: string, what: string) =>
+	`[chamberlain] ${kind}: thread "${title}" ${what}.`;
 
 /** What happened to a thread, in a wake's first line. */
 export const threadHappened = {

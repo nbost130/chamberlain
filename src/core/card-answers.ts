@@ -19,7 +19,10 @@ export const CARD_ANSWER = "card-answer";
 export const CARD_ANSWER_STALE_MS = 5 * 60_000;
 export const cardAnswerKey = (cardId: string, sig: string) => `${cardId}@${sig}`;
 
-export function reserveCardAnswer(store: Store, o: { cardId: string; sig: string; choice: number; now?: number }): boolean {
+export function reserveCardAnswer(
+	store: Store,
+	o: { cardId: string; sig: string; choice: number; now?: number },
+): boolean {
 	const now = o.now ?? Date.now();
 	const key = cardAnswerKey(o.cardId, o.sig);
 	return store.tx(() => {
@@ -29,12 +32,33 @@ export function reserveCardAnswer(store: Store, o: { cardId: string; sig: string
 			if (!unsettled || now - Date.parse(prior.t) <= CARD_ANSWER_STALE_MS) return false;
 			store.claims.release(CARD_ANSWER, key);
 		}
-		store.items.observe({ source: CARD_ANSWER, kind: "card_answer", dedupKey: key, mode: "silenced", subject: { kind: "card", id: o.cardId }, payload: { cardId: o.cardId, choice: o.choice }, now });
-		return store.claims.claim(CARD_ANSWER, { owner: "page", item: key, deliveryId: `card-answer:${key}`, message: "", t: new Date(now).toISOString(), answer: { choice: o.choice } }).won;
+		store.items.observe({
+			source: CARD_ANSWER,
+			kind: "card_answer",
+			dedupKey: key,
+			mode: "silenced",
+			subject: { kind: "card", id: o.cardId },
+			payload: { cardId: o.cardId, choice: o.choice },
+			now,
+		});
+		return store.claims.claim(CARD_ANSWER, {
+			owner: "page",
+			item: key,
+			deliveryId: `card-answer:${key}`,
+			message: "",
+			t: new Date(now).toISOString(),
+			answer: { choice: o.choice },
+		}).won;
 	});
 }
 /** The answer was sent, or may have been: the card as shown is never sent again from here. */
-export function settleCardAnswer(store: Store, cardId: string, sig: string, patch: Record<string, unknown> = {}, now = Date.now()) {
+export function settleCardAnswer(
+	store: Store,
+	cardId: string,
+	sig: string,
+	patch: Record<string, unknown> = {},
+	now = Date.now(),
+) {
 	store.items.resolve(CARD_ANSWER, cardAnswerKey(cardId, sig), now, patch);
 }
 /** The answer was certainly not sent: the claim goes, and the card can be answered again. */

@@ -52,7 +52,15 @@ export type Question = {
 	createdAt: string;
 };
 
-export type Answer = { choice: number; label: string; note?: string; ruling?: { id: string; decides: string }; by: "page" | "batch"; t: string; deliveryId: string };
+export type Answer = {
+	choice: number;
+	label: string;
+	note?: string;
+	ruling?: { id: string; decides: string };
+	by: "page" | "batch";
+	t: string;
+	deliveryId: string;
+};
 export type QuestionState = Question & {
 	status: "open" | "answered" | "answered-on-card";
 	answer?: Answer;
@@ -78,9 +86,12 @@ export const tagIn = (text: string): string | undefined => text.match(/\[(Q-[a-z
  * ignored wherever it comes from (ask.ts says so on stderr), so none is ever posted late or listed under NOT URGENT.
  */
 export const alwaysUrgent = (q: Pick<Question, "secret" | "tag" | "cardRequest">): boolean =>
-	q.secret === true || (typeof q.cardRequest === "string" && q.cardRequest !== "") || /^\s*(approval|secret)\s*$/i.test(q.tag ?? "");
+	q.secret === true ||
+	(typeof q.cardRequest === "string" && q.cardRequest !== "") ||
+	/^\s*(approval|secret)\s*$/i.test(q.tag ?? "");
 /** Pure: is this item urgent? Absent `urgent` is urgent, and so is every item `alwaysUrgent` names, whatever its field says. */
-export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean => q.urgent !== false || alwaysUrgent(q);
+export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean =>
+	q.urgent !== false || alwaysUrgent(q);
 /** Pure: the item with an `urgent: false` it may not have removed. Every write and every read of a question goes through it. */
 export function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
 	if (q.urgent !== false || !alwaysUrgent(q)) return q;
@@ -97,8 +108,26 @@ export function askQuestion(store: Store, q: Question, now = Date.now()) {
 	const { evidence, ...rest } = withUrgency(q);
 	store.tx(() => {
 		if (store.items.get(QUEUE, q.id)) return;
-		store.items.observe({ source: QUEUE, kind: "question", dedupKey: q.id, mode: "silenced", ...(q.threadId ? { subject: { kind: "thread", id: q.threadId } } : {}), payload: rest, now });
-		if (evidence?.length) store.evidence.put(QUEUE, q.id, evidence.map((e) => ({ type: e.type, ...(e.path ? { name: e.path } : {}), ...(e.url ? { url: e.url } : {}), ...(e.caption ? { caption: e.caption } : {}) })));
+		store.items.observe({
+			source: QUEUE,
+			kind: "question",
+			dedupKey: q.id,
+			mode: "silenced",
+			...(q.threadId ? { subject: { kind: "thread", id: q.threadId } } : {}),
+			payload: rest,
+			now,
+		});
+		if (evidence?.length)
+			store.evidence.put(
+				QUEUE,
+				q.id,
+				evidence.map((e) => ({
+					type: e.type,
+					...(e.path ? { name: e.path } : {}),
+					...(e.url ? { url: e.url } : {}),
+					...(e.caption ? { caption: e.caption } : {}),
+				})),
+			);
 	});
 }
 
@@ -114,16 +143,31 @@ export function questionStates(store: Store): Map<string, QuestionState> {
 		const ev = evidence.get(i.dedupKey);
 		const relay = relays.get(i.dedupKey);
 		// Answered is the claim on its one wake (taken in the same transaction as the answer), or resolved.
-			const answered = claim !== undefined || i.status === "resolved";
+		const answered = claim !== undefined || i.status === "resolved";
 		out.set(i.dedupKey, {
 			// A row stored before the always-urgent rule, or written around askQuestion, is read back urgent all the same.
 			...withUrgency(q),
-			...(ev?.length ? { evidence: ev.map((e): Evidence => ({ type: e.type, ...(e.name ? { path: e.name } : {}), ...(e.url ? { url: e.url } : {}), ...(e.caption ? { caption: e.caption } : {}) })) } : {}),
+			...(ev?.length
+				? {
+						evidence: ev.map(
+							(e): Evidence => ({
+								type: e.type,
+								...(e.name ? { path: e.name } : {}),
+								...(e.url ? { url: e.url } : {}),
+								...(e.caption ? { caption: e.caption } : {}),
+							}),
+						),
+					}
+				: {}),
 			status: i.payload.answeredOnCard === true ? "answered-on-card" : answered ? "answered" : "open",
 			...(claim?.answer ? { answer: claim.answer as Answer } : {}),
 			delivered: i.status === "resolved" && i.payload.answeredOnCard !== true,
-			...(i.status === "acknowledged" && !answered && typeof i.payload.notNowAt === "string" ? { notNowAt: i.payload.notNowAt } : {}),
-			...(relay?.outcome ? { relay: { outcome: relay.outcome, t: relay.t ?? "", ...(relay.detail ? { detail: relay.detail } : {}) } } : {}),
+			...(i.status === "acknowledged" && !answered && typeof i.payload.notNowAt === "string"
+				? { notNowAt: i.payload.notNowAt }
+				: {}),
+			...(relay?.outcome
+				? { relay: { outcome: relay.outcome, t: relay.t ?? "", ...(relay.detail ? { detail: relay.detail } : {}) } }
+				: {}),
 		});
 	}
 	return out;
@@ -144,17 +188,28 @@ export const blockWeight = (blocks?: string) => (blocks ? Number(blocks.match(/\
  * to the end, then only-you first, then what blocks the most, then the oldest.
  */
 export function ranked(items: Iterable<QuestionState>): QuestionState[] {
-	return [...items].filter((i) => i.status === "open").sort((a, b) =>
-		Number(!isUrgent(a)) - Number(!isUrgent(b))
-		|| Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt))
-		|| KIND_RANK[a.kind] - KIND_RANK[b.kind]
-		|| blockWeight(b.blocks) - blockWeight(a.blocks)
-		|| a.createdAt.localeCompare(b.createdAt));
+	return [...items]
+		.filter((i) => i.status === "open")
+		.sort(
+			(a, b) =>
+				Number(!isUrgent(a)) - Number(!isUrgent(b)) ||
+				Number(Boolean(a.notNowAt)) - Number(Boolean(b.notNowAt)) ||
+				KIND_RANK[a.kind] - KIND_RANK[b.kind] ||
+				blockWeight(b.blocks) - blockWeight(a.blocks) ||
+				a.createdAt.localeCompare(b.createdAt),
+		);
 }
 
 /** Pure: what "Accept all recommendations" may answer. Never an only-you item, a secret, or one with no recommendation. */
 export function batchable(i: QuestionState): boolean {
-	return i.status === "open" && i.kind !== "only-you" && !i.secret && i.recommended !== undefined && i.recommended >= 0 && i.recommended < i.options.length;
+	return (
+		i.status === "open" &&
+		i.kind !== "only-you" &&
+		!i.secret &&
+		i.recommended !== undefined &&
+		i.recommended >= 0 &&
+		i.recommended < i.options.length
+	);
 }
 
 /** The wake that carries one answer, in the daemon's `[chamberlain] answer:` shape. Its delivery ID is the item's own. */
@@ -162,7 +217,9 @@ export const answerDeliveryId = (id: string) => `answer:item:${id}`;
 
 /** Why an answer to an item with a thread-routed option still went to the Steward. */
 export type StewardWhy = "steward option" | "custom answer" | "note present" | "ruling saved" | "direct send failed";
-export type AnswerRoute = { direct: true; server: string; threadId: string; relay: string } | { direct: false; why?: StewardWhy };
+export type AnswerRoute =
+	| { direct: true; server: string; threadId: string; relay: string }
+	| { direct: false; why?: StewardWhy };
 /**
  * Pure: where an answer goes. Straight to the item's thread only when they picked a thread-routed option as it stands,
  * with no note and no ruling saved; then the Steward gets no wake. Otherwise the Steward does, and when the item has
@@ -183,10 +240,12 @@ const WHY_TEXT: Record<StewardWhy, string> = {
 	"custom answer": "they gave an answer of their own, not one of the options",
 	"note present": "they left a note, and every note comes to you",
 	"ruling saved": "they saved a ruling with it",
-	"direct send failed": "this option goes straight to the thread, but the direct send to it failed, so relay it yourself",
+	"direct send failed":
+		"this option goes straight to the thread, but the direct send to it failed, so relay it yourself",
 };
 /** For a send that timed out or was cut short: T3 may have taken it, so the Steward checks before sending again. */
-const SEND_UNCERTAIN = "this option goes straight to the thread, but the direct send may or may not have reached the thread: check the thread before re-sending";
+const SEND_UNCERTAIN =
+	"this option goes straight to the thread, but the direct send may or may not have reached the thread: check the thread before re-sending";
 /** Pure: a send detail that leaves open whether T3 took the message (the send's own deadline passed, or a crash cut it short). */
 export const sendUncertain = (detail: string) => /\bsend timed out\b|may or may not have reached/.test(detail);
 /**
@@ -208,7 +267,9 @@ export function threadRelayMessage(i: Question, a: Answer, relay: string): strin
 		`Their choice: ${flat(a.label)}`,
 		a.note ? `Their note: ${a.note}` : "",
 		`What to do: ${relay}`,
-	].filter(Boolean).join("\n");
+	]
+		.filter(Boolean)
+		.join("\n");
 }
 
 export function answerWake(i: Question, a: Answer, why?: StewardWhy): string {
@@ -220,7 +281,9 @@ export function answerWake(i: Question, a: Answer, why?: StewardWhy): string {
 		`thread: ${i.thread}${i.threadId ? ` (${i.server}, ${i.threadId})` : ` (${i.server})`}`,
 		`choice: ${a.choice + 1}. ${a.label}${a.by === "batch" ? " (accepted with every recommendation)" : ""}`,
 		a.note ? `note: ${a.note}` : "note: none",
-		a.ruling ? `ruling: saved as ${a.ruling.id}, in force and confirmed by ${principal()}: ${a.ruling.decides}` : "ruling: none saved; this answer settles this item only",
+		a.ruling
+			? `ruling: saved as ${a.ruling.id}, in force and confirmed by ${principal()}: ${a.ruling.decides}`
+			: "ruling: none saved; this answer settles this item only",
 		...(why ? [`route: to you, not straight to the thread (${why}): ${WHY_TEXT[why]}`] : []),
 		...(why && relay ? [`relay text for this option: ${relay}`] : []),
 	];
@@ -247,7 +310,16 @@ export const PAGE = "page";
  * the page the answer it carries and the ruling it saves. Whoever holds the claim can always send the wake from it,
  * so no crash after the claim can lose the answer.
  */
-export type Claim = { owner: string; item: string; deliveryId: string; message: string; t: string; answer?: Answer; ruling?: Ruling; relay?: ClaimRelay };
+export type Claim = {
+	owner: string;
+	item: string;
+	deliveryId: string;
+	message: string;
+	t: string;
+	answer?: Answer;
+	ruling?: Ruling;
+	relay?: ClaimRelay;
+};
 /**
  * A thread-routed answer: the one message for the item's thread. The claim's `message` is then the Steward's
  * fallback wake, sent only if that send fails or is cut short.
@@ -257,16 +329,29 @@ export type ClaimRelay = { server: string; threadId: string; message: string };
 /** The page's claim: its answer's wake (or its thread message and fallback wake), built whole before the claim is made. */
 export function pageClaim(i: Question, a: Answer, ruling?: Ruling): Claim {
 	const r = answerRoute(i, a);
-	const relay: ClaimRelay | undefined = r.direct ? { server: r.server, threadId: r.threadId, message: threadRelayMessage(i, a, r.relay) } : undefined;
+	const relay: ClaimRelay | undefined = r.direct
+		? { server: r.server, threadId: r.threadId, message: threadRelayMessage(i, a, r.relay) }
+		: undefined;
 	const message = answerWake(i, a, r.direct ? "direct send failed" : r.why);
-	return { owner: PAGE, item: i.id, deliveryId: a.deliveryId, message, t: a.t, answer: a, ...(ruling ? { ruling } : {}), ...(relay ? { relay } : {}) };
+	return {
+		owner: PAGE,
+		item: i.id,
+		deliveryId: a.deliveryId,
+		message,
+		t: a.t,
+		answer: a,
+		...(ruling ? { ruling } : {}),
+		...(relay ? { relay } : {}),
+	};
 }
 
 // ---- the one-wake ledger and the one direct send, over the Store ----------------------------------
 
 /** Takes the question's one wake. The first claim wins across processes (a unique key), and every later claimant gets the winner's. */
-export const claimWake = (store: Store, c: Claim): { won: boolean; claim: Claim } => store.claims.claim(QUEUE, c) as { won: boolean; claim: Claim };
-export const readClaim = (store: Store, itemId: string): Claim | undefined => store.claims.get(QUEUE, itemId) as Claim | undefined;
+export const claimWake = (store: Store, c: Claim): { won: boolean; claim: Claim } =>
+	store.claims.claim(QUEUE, c) as { won: boolean; claim: Claim };
+export const readClaim = (store: Store, itemId: string): Claim | undefined =>
+	store.claims.get(QUEUE, itemId) as Claim | undefined;
 export const wokenBy = (store: Store, itemId: string): string | undefined => readClaim(store, itemId)?.owner;
 export const readClaims = (store: Store): Claim[] => store.claims.list(QUEUE) as Claim[];
 
@@ -278,10 +363,12 @@ export type RelayState = { started: boolean; outcome?: "delivered" | "failed"; d
  */
 export const readRelay = (store: Store, itemId: string): RelayState => store.claims.readRelay(QUEUE, itemId);
 export const startRelay = (store: Store, itemId: string): boolean => store.claims.startRelay(QUEUE, itemId);
-export const finishRelay = (store: Store, itemId: string, outcome: "delivered" | "failed", detail?: string) => store.claims.finishRelay(QUEUE, itemId, outcome, detail);
+export const finishRelay = (store: Store, itemId: string, outcome: "delivered" | "failed", detail?: string) =>
+	store.claims.finishRelay(QUEUE, itemId, outcome, detail);
 
 /** Writes a claim's wake (or the message given, a fallback) as an outbox row. False when the outbox already knows its id. */
-export const enqueueClaim = (store: Store, c: Claim, message = c.message, now = Date.now()): boolean => store.wakes.enqueue({ deliveryId: c.deliveryId, message, queuedAt: now });
+export const enqueueClaim = (store: Store, c: Claim, message = c.message, now = Date.now()): boolean =>
+	store.wakes.enqueue({ deliveryId: c.deliveryId, message, queuedAt: now });
 
 /**
  * The claims a process owns are its wakes, whatever happened to the process that made them. Run at startup and on every heartbeat:
@@ -309,7 +396,10 @@ export async function recoverClaims(o: RecoverOpts): Promise<{ sent: string[] }>
 		if (!o.owns(c.owner)) continue;
 		if (o.store.items.get(QUEUE, c.item)?.status === "resolved") continue;
 		try {
-			if (o.done ? o.done(c) : o.store.wakes.isDelivered(c.deliveryId)) { o.delivered?.(c); continue; }
+			if (o.done ? o.done(c) : o.store.wakes.isDelivered(c.deliveryId)) {
+				o.delivered?.(c);
+				continue;
+			}
 			if (o.store.wakes.known(c.deliveryId)) continue;
 			o.log("claim-recovered", { item: c.item, owner: c.owner, deliveryId: c.deliveryId });
 			await (o.send ? o.send(c) : enqueueClaim(o.store, c));

@@ -19,21 +19,27 @@ type Row = { visibility?: string; sourceThreadId?: string; item?: TurnItem };
 type Page = { items?: Row[]; nextCursor?: string | null; hasMoreHistory?: boolean };
 
 /** Reads over HTTP: T3's history pages have no RPC, and the projection RPC gives no cursor. */
-export const historyGet = (origin: string, readToken: () => string | undefined): HistoryGet => async (path) => {
-	const token = readToken();
-	if (!token) throw Error("no token");
-	const r = await fetch(new URL(path, origin), {
-		headers: { Authorization: `Bearer ${token}`, "x-t3-orchestration-protocol": "2" },
-		signal: AbortSignal.timeout(READ_TIMEOUT_MS),
-	});
-	if (!r.ok) throw Error(`${path.split("?")[0]} returned HTTP ${r.status}`);
-	return r.json();
-};
+export const historyGet =
+	(origin: string, readToken: () => string | undefined): HistoryGet =>
+	async (path) => {
+		const token = readToken();
+		if (!token) throw Error("no token");
+		const r = await fetch(new URL(path, origin), {
+			headers: { Authorization: `Bearer ${token}`, "x-t3-orchestration-protocol": "2" },
+			signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+		});
+		if (!r.ok) throw Error(`${path.split("?")[0]} returned HTTP ${r.status}`);
+		return r.json();
+	};
 
 /** The run that last ended. A newer run may already be queued or running, and it isn't the turn being asked about. */
-const lastEnded = (runs: Run[] = []) => runs.filter((r) => !LIVE.has(String(r.status))).reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
+const lastEnded = (runs: Run[] = []) =>
+	runs
+		.filter((r) => !LIVE.has(String(r.status)))
+		.reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
 /** A retained interrupt request sits at the end of T3's window whatever its age, so it says nothing about where a run began. */
-const runItems = (items: TurnItem[], runId: string) => items.findIndex((i) => i.runId === runId && i.type !== "run_interrupt_request");
+const runItems = (items: TurnItem[], runId: string) =>
+	items.findIndex((i) => i.runId === runId && i.type !== "run_interrupt_request");
 /** The run's first item is in hand once an item before it belongs to something else. */
 const haveRunStart = (items: TurnItem[], runId: string | undefined) => !runId || runItems(items, runId) > 0;
 /**
@@ -60,7 +66,9 @@ export async function readInstruction(threadId: string, get: HistoryGet): Promis
 			if (!cursor || pages === HISTORY_PAGES_MAX) return { items, state: "truncated", byMachine: false };
 			const page = (await get(`${base}/history?cursor=${encodeURIComponent(cursor)}&view=conversation`)) as Page;
 			if (!Array.isArray(page.items)) throw Error("history page had no items");
-			const local = page.items.filter((r) => r.visibility === "local" || r.sourceThreadId === threadId).flatMap((r) => (r.item ? [r.item] : []));
+			const local = page.items
+				.filter((r) => r.visibility === "local" || r.sourceThreadId === threadId)
+				.flatMap((r) => (r.item ? [r.item] : []));
 			items = [...local, ...items];
 			more = page.hasMoreHistory === true;
 			cursor = page.nextCursor;
@@ -72,5 +80,9 @@ export async function readInstruction(threadId: string, get: HistoryGet): Promis
 }
 
 /** HTTP can work while a watcher's socket is down, and then its state is stale, so no socket is a failed read. */
-export const readWhenConnected = async (connected: boolean, threadId: string, get: HistoryGet): Promise<InstructionRead> =>
+export const readWhenConnected = async (
+	connected: boolean,
+	threadId: string,
+	get: HistoryGet,
+): Promise<InstructionRead> =>
 	connected ? readInstruction(threadId, get) : { items: [], state: "failed", error: "not connected", byMachine: false };

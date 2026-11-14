@@ -13,8 +13,21 @@ import { testRelayLock } from "./lock.ts";
 
 export function testRelay(store: Store, wake: WakeTransport, o: Partial<RelayDeps> = {}) {
 	requireTestEnv("testRelay");
-	const relay = createRelay({ store, lock: testRelayLock(store), wake, gate: () => "idle", log: () => {}, alarm: () => {}, retryAfterMs: () => 0, maxAttempts: 3, onDelivered: (id) => recordAnswerDelivered(store, id), ...o });
-	const drain = async () => { for (let i = 0; i < 3 && store.wakes.rows().length + store.wakes.held().length > 0; i++) await relay.pass(); };
+	const relay = createRelay({
+		store,
+		lock: testRelayLock(store),
+		wake,
+		gate: () => "idle",
+		log: () => {},
+		alarm: () => {},
+		retryAfterMs: () => 0,
+		maxAttempts: 3,
+		onDelivered: (id) => recordAnswerDelivered(store, id),
+		...o,
+	});
+	const drain = async () => {
+		for (let i = 0; i < 3 && store.wakes.rows().length + store.wakes.held().length > 0; i++) await relay.pass();
+	};
 	return { relay, drain };
 }
 

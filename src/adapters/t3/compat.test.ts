@@ -8,7 +8,9 @@ describe("compatWarning", () => {
 		expect(compatWarning({ ...ok, serverVersion: T3_TESTED.max })).toBeUndefined();
 	});
 	test("older and newer versions warn, naming the range", () => {
-		expect(compatWarning({ ...ok, serverVersion: "0.0.9" })).toContain(`outside the tested range ${T3_TESTED.min} to ${T3_TESTED.max}`);
+		expect(compatWarning({ ...ok, serverVersion: "0.0.9" })).toContain(
+			`outside the tested range ${T3_TESTED.min} to ${T3_TESTED.max}`,
+		);
 		expect(compatWarning({ ...ok, serverVersion: "0.2.0" })).toContain("T3 0.2.0 is outside");
 		expect(compatWarning({ ...ok, serverVersion: "1.0.0" })).toContain("outside");
 	});
@@ -29,16 +31,23 @@ describe("compatWarning", () => {
 });
 
 describe("readEnvironment", () => {
-	const fake = (status: number, body: unknown) => (async (url: URL | string) => {
-		expect(String(url)).toBe("http://t3.test/.well-known/t3/environment");
-		return new Response(JSON.stringify(body), { status });
-	}) as unknown as typeof fetch;
+	const fake = (status: number, body: unknown) =>
+		(async (url: URL | string) => {
+			expect(String(url)).toBe("http://t3.test/.well-known/t3/environment");
+			return new Response(JSON.stringify(body), { status });
+		}) as unknown as typeof fetch;
 	test("reads the unauthenticated environment document", async () => {
-		expect(await readEnvironment("http://t3.test", fake(200, { serverVersion: "0.1.9", orchestrationProtocolVersion: 2 }))).toEqual({ serverVersion: "0.1.9", orchestrationProtocolVersion: 2 });
+		expect(
+			await readEnvironment("http://t3.test", fake(200, { serverVersion: "0.1.9", orchestrationProtocolVersion: 2 })),
+		).toEqual({ serverVersion: "0.1.9", orchestrationProtocolVersion: 2 });
 	});
 	test("an error status, a non-object body and a network failure are all undefined, never a throw", async () => {
 		expect(await readEnvironment("http://t3.test", fake(500, {}))).toBeUndefined();
 		expect(await readEnvironment("http://t3.test", fake(200, "nope"))).toBeUndefined();
-		expect(await readEnvironment("http://t3.test", (async () => { throw Error("refused"); }) as unknown as typeof fetch)).toBeUndefined();
+		expect(
+			await readEnvironment("http://t3.test", (async () => {
+				throw Error("refused");
+			}) as unknown as typeof fetch),
+		).toBeUndefined();
 	});
 });

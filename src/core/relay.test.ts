@@ -20,26 +20,63 @@ import type { Store } from "./store.ts";
 import { runWakesCli } from "./wakes-cli.ts";
 
 const dirs: string[] = [];
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
-const scratch = () => { const d = mkdtempSync(`${tmpdir()}/chamberlain-relay-`); dirs.push(d); return d; };
+afterEach(() => {
+	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+const scratch = () => {
+	const d = mkdtempSync(`${tmpdir()}/chamberlain-relay-`);
+	dirs.push(d);
+	return d;
+};
 
 /** A world: a store, a clock, a webhook whose answer the test sets, and relays (each a fresh process's) over the same store. */
-function rig(o: { store?: Store; max?: number; rightsNow?: RelayDeps["rightsNow"]; compact?: RelayDeps["compact"] } = {}) {
+function rig(
+	o: { store?: Store; max?: number; rightsNow?: RelayDeps["rightsNow"]; compact?: RelayDeps["compact"] } = {},
+) {
 	const store = o.store ?? memStore();
 	const clock = { t: 1_000_000 };
 	const posts: { id: string; message: string }[] = [];
 	const alarms: string[] = [];
 	const events: { event: string; data?: Record<string, unknown> }[] = [];
-	const w = { ready: true, gate: "idle" as Gate, answer: async (_id: string): Promise<WakeResult> => ({ ok: true, status: 202 }) };
-	const relay = (s: Store = store) => createRelay({
-		store: s, lock: testRelayLock(s), gate: () => w.gate, log: (event, data) => events.push({ event, ...(data ? { data } : {}) }), alarm: (k) => alarms.push(k), now: () => clock.t,
-		maxAttempts: o.max ?? 3, retryAfterMs: () => 1000, ...(o.rightsNow ? { rightsNow: o.rightsNow } : {}), ...(o.compact ? { compact: o.compact } : {}),
-		wake: { ready: () => w.ready, send: async (id, message) => { posts.push({ id, message }); return w.answer(id); } },
-	});
+	const w = {
+		ready: true,
+		gate: "idle" as Gate,
+		answer: async (_id: string): Promise<WakeResult> => ({ ok: true, status: 202 }),
+	};
+	const relay = (s: Store = store) =>
+		createRelay({
+			store: s,
+			lock: testRelayLock(s),
+			gate: () => w.gate,
+			log: (event, data) => events.push({ event, ...(data ? { data } : {}) }),
+			alarm: (k) => alarms.push(k),
+			now: () => clock.t,
+			maxAttempts: o.max ?? 3,
+			retryAfterMs: () => 1000,
+			...(o.rightsNow ? { rightsNow: o.rightsNow } : {}),
+			...(o.compact ? { compact: o.compact } : {}),
+			wake: {
+				ready: () => w.ready,
+				send: async (id, message) => {
+					posts.push({ id, message });
+					return w.answer(id);
+				},
+			},
+		});
 	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t });
-	const sweep = (id: string, thread?: string, kind = "sweep") => outbox.deliver(`text of ${id}`, id, { kind, ...(thread ? { thread } : {}) });
+	const sweep = (id: string, thread?: string, kind = "sweep") =>
+		outbox.deliver(`text of ${id}`, id, { kind, ...(thread ? { thread } : {}) });
 	/** A store whose delivered commit fails: a full disk at the one commit that matters. */
-	const broken: Store = { ...store, wakes: { ...store.wakes, finish: (id, status, now) => { if (status === "delivered") throw Error("SQLITE_FULL: database or disk is full"); return store.wakes.finish(id, status, now); } } };
+	const broken: Store = {
+		...store,
+		wakes: {
+			...store.wakes,
+			finish: (id, status, now) => {
+				if (status === "delivered") throw Error("SQLITE_FULL: database or disk is full");
+				return store.wakes.finish(id, status, now);
+			},
+		},
+	};
 	return { store, clock, posts, alarms, events, w, relay, outbox, sweep, broken, ids: () => posts.map((p) => p.id) };
 }
 
@@ -61,7 +98,10 @@ describe("the relay sends each row with its attempt committed first", () => {
 	test("while the POST is out the row already says one attempt, committed", async () => {
 		const r = rig();
 		let release!: () => void;
-		r.w.answer = () => new Promise((ok) => { release = () => ok({ ok: true }); });
+		r.w.answer = () =>
+			new Promise((ok) => {
+				release = () => ok({ ok: true });
+			});
 		r.outbox.deliver("m", "w1");
 		const pass = r.relay().pass();
 		await Bun.sleep(5);
@@ -73,11 +113,20 @@ describe("the relay sends each row with its attempt committed first", () => {
 
 	test("every outcome counts and none is given back: a timeout, then a refusal, then a 503 use the three attempts, and the row is dead-lettered", async () => {
 		const r = rig();
-		const outcomes = [async (): Promise<WakeResult> => { throw Error("timeout after the webhook may have taken it"); }, async () => ({ ok: false, error: "connection refused" }), async () => ({ ok: false, status: 503 })];
+		const outcomes = [
+			async (): Promise<WakeResult> => {
+				throw Error("timeout after the webhook may have taken it");
+			},
+			async () => ({ ok: false, error: "connection refused" }),
+			async () => ({ ok: false, status: 503 }),
+		];
 		r.w.answer = () => outcomes[r.posts.length - 1]!();
 		r.outbox.deliver("m", "w1");
 		const relay = r.relay();
-		for (let i = 0; i < 6; i++) { await relay.pass(); r.clock.t += 1001; }
+		for (let i = 0; i < 6; i++) {
+			await relay.pass();
+			r.clock.t += 1001;
+		}
 		expect(r.ids()).toEqual(["w1", "w1", "w1"]);
 		expect(r.store.wakes.find("w1")).toMatchObject({ status: "dead_letter", attempts: 3 });
 		expect(r.alarms).toContain("wake-dead-letter");
@@ -141,10 +190,16 @@ describe("what the delivery guarantee says, and what it does not (attempts, the 
 		r.w.answer = async () => ({ ok: false, status: 503 });
 		r.outbox.deliver("m", "w1");
 		const relay = r.relay();
-		for (let i = 0; i < 5; i++) { await relay.pass(); r.clock.t += 1001; }
+		for (let i = 0; i < 5; i++) {
+			await relay.pass();
+			r.clock.t += 1001;
+		}
 		expect(r.posts).toHaveLength(3);
 		expect(runWakesCli(r.store, ["retry", "w1"], () => {})).toBe(0);
-		for (let i = 0; i < 5; i++) { await relay.pass(); r.clock.t += 1001; }
+		for (let i = 0; i < 5; i++) {
+			await relay.pass();
+			r.clock.t += 1001;
+		}
 		expect(r.posts).toHaveLength(6);
 		expect(r.store.wakes.find("w1")).toMatchObject({ status: "dead_letter", attempts: 3 });
 	});
@@ -152,7 +207,12 @@ describe("what the delivery guarantee says, and what it does not (attempts, the 
 	test("sends are sequential: a stuck send delays the row behind it until the call returns (pickup latency is conditional)", async () => {
 		const r = rig();
 		let release!: () => void;
-		r.w.answer = (id) => (id === "first" ? new Promise((ok) => { release = () => ok({ ok: true }); }) : Promise.resolve({ ok: true }));
+		r.w.answer = (id) =>
+			id === "first"
+				? new Promise((ok) => {
+						release = () => ok({ ok: true });
+					})
+				: Promise.resolve({ ok: true });
 		r.outbox.deliver("m", "first");
 		r.outbox.deliver("m", "second");
 		const relay = r.relay();
@@ -171,7 +231,11 @@ describe("what the delivery guarantee says, and what it does not (attempts, the 
 	test("order is insertion order with backoff skips, not strict: a later row is delivered before an earlier one that is paused", async () => {
 		const r = rig();
 		const accepted: string[] = [];
-		r.w.answer = async (id) => { const ok = id === "later" || r.clock.t > 1_001_000; if (ok) accepted.push(id); return { ok }; };
+		r.w.answer = async (id) => {
+			const ok = id === "later" || r.clock.t > 1_001_000;
+			if (ok) accepted.push(id);
+			return { ok };
+		};
 		r.outbox.deliver("m", "earlier");
 		r.outbox.deliver("m", "later");
 		const relay = r.relay();
@@ -199,10 +263,22 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 	test("however many passes run while the commit fails, one POST; the commit lands when it can", async () => {
 		const r = rig();
 		let full = true;
-		const store: Store = { ...r.store, wakes: { ...r.store.wakes, finish: (id, s, now) => { if (full && s === "delivered") throw Error("SQLITE_FULL"); return r.store.wakes.finish(id, s, now); } } };
+		const store: Store = {
+			...r.store,
+			wakes: {
+				...r.store.wakes,
+				finish: (id, s, now) => {
+					if (full && s === "delivered") throw Error("SQLITE_FULL");
+					return r.store.wakes.finish(id, s, now);
+				},
+			},
+		};
 		r.outbox.deliver("m", "w1");
 		const relay = r.relay(store);
-		for (let i = 0; i < 5; i++) { await relay.pass(); r.clock.t += 60_000; }
+		for (let i = 0; i < 5; i++) {
+			await relay.pass();
+			r.clock.t += 60_000;
+		}
 		expect(r.ids()).toEqual(["w1"]);
 		expect(r.store.wakes.find("w1")!.status).toBe("pending");
 		full = false;
@@ -216,9 +292,13 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 		const s = openStore(path, { busyMs: 1 });
 		const raw = new Database(path);
 		const r = rig({ store: s });
-		r.w.answer = async () => { raw.exec("BEGIN IMMEDIATE"); return { ok: true }; };
+		r.w.answer = async () => {
+			raw.exec("BEGIN IMMEDIATE");
+			return { ok: true };
+		};
 		r.outbox.deliver("m", "row");
-		r.sweep("ba"); r.sweep("bb");
+		r.sweep("ba");
+		r.sweep("bb");
 		const relay = r.relay();
 		// The row's POST takes the lock, so its delivered commit fails; the digest cannot even count an attempt, so it is not POSTed.
 		await relay.pass();
@@ -235,13 +315,17 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 		await relay.pass();
 		expect(r.posts).toHaveLength(2);
 		expect(["ba", "bb"].map((id) => s.wakes.isDelivered(id))).toEqual([true, true]);
-		raw.close(); s.close();
+		raw.close();
+		s.close();
 	});
 
 	test("restart after restart, each accepted and none landing, gives exactly maxAttempts POSTs and then a dead letter", async () => {
 		const r = rig();
 		r.outbox.deliver("x", "cap");
-		for (let i = 0; i < 6; i++) { await r.relay(r.broken).pass(); r.clock.t += 600_001; }
+		for (let i = 0; i < 6; i++) {
+			await r.relay(r.broken).pass();
+			r.clock.t += 600_001;
+		}
 		expect(r.ids()).toEqual(["cap", "cap", "cap"]);
 		expect(r.store.wakes.find("cap")).toMatchObject({ status: "dead_letter", attempts: 3 });
 	});
@@ -259,7 +343,10 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 	test("a clock jump while a POST is out cannot start a second POST: passes are one at a time and the clock decides nothing about who sends", async () => {
 		const r = rig();
 		let release!: () => void;
-		r.w.answer = () => new Promise((ok) => { release = () => ok({ ok: true }); });
+		r.w.answer = () =>
+			new Promise((ok) => {
+				release = () => ok({ ok: true });
+			});
 		r.outbox.deliver("m", "clock");
 		const relay = r.relay();
 		const first = relay.pass();
@@ -277,9 +364,16 @@ describe("an accepted POST whose delivered commit fails is never POSTed again by
 describe("a digest is frozen when it is composed", () => {
 	test("composition binds the held items to one row; an item held later is never added, and a retry sends the same id and text", async () => {
 		const r = rig();
-		r.sweep("a"); r.sweep("b");
+		r.sweep("a");
+		r.sweep("b");
 		let first = true;
-		r.w.answer = async () => { if (first) { first = false; throw Error("timeout"); } return { ok: true }; };
+		r.w.answer = async () => {
+			if (first) {
+				first = false;
+				throw Error("timeout");
+			}
+			return { ok: true };
+		};
 		const relay = r.relay();
 		await relay.pass();
 		expect(r.store.wakes.held()).toEqual([]);
@@ -293,19 +387,28 @@ describe("a digest is frozen when it is composed", () => {
 		expect(p1!.message).not.toContain("text of c");
 		// c went in a row of its own: a and b were never sent under a second id.
 		expect(r.store.wakes.find("c")!.deliveryId).toBe("c");
-		expect(r.posts.filter((p) => p.message.includes("text of a")).map((p) => p.id)).toEqual([digest.deliveryId, digest.deliveryId]);
+		expect(r.posts.filter((p) => p.message.includes("text of a")).map((p) => p.id)).toEqual([
+			digest.deliveryId,
+			digest.deliveryId,
+		]);
 	});
 
 	test("a forced (ceiling) digest that times out is sent again as composed, whoever restarts; it never regroups", async () => {
 		const r = rig();
 		r.w.gate = "busy";
-		r.sweep("a"); r.sweep("b");
+		r.sweep("a");
+		r.sweep("b");
 		const relay = r.relay();
 		relay.audit();
 		await relay.pass();
 		expect(r.posts).toEqual([]);
-		for (let i = 0; i < 5; i++) { r.clock.t += 4 * 60_000; relay.audit(); }
-		r.w.answer = async () => { throw Error("timeout"); };
+		for (let i = 0; i < 5; i++) {
+			r.clock.t += 4 * 60_000;
+			relay.audit();
+		}
+		r.w.answer = async () => {
+			throw Error("timeout");
+		};
 		await relay.pass();
 		r.sweep("c");
 		r.w.answer = async () => ({ ok: true });
@@ -319,8 +422,11 @@ describe("a digest is frozen when it is composed", () => {
 
 	test("a member delivered nowhere else and enqueued again is refused: its binding is for good, and the digest sends its frozen text", async () => {
 		const r = rig();
-		r.sweep("a"); r.sweep("b");
-		r.w.answer = async () => { throw Error("timeout"); };
+		r.sweep("a");
+		r.sweep("b");
+		r.w.answer = async () => {
+			throw Error("timeout");
+		};
 		await r.relay().pass();
 		expect(r.sweep("a")).toBe("known");
 		expect(r.outbox.deliver("again", "a")).toBe("known");
@@ -348,8 +454,11 @@ describe("a digest is frozen when it is composed", () => {
 		const path = `${scratch()}/frozen.db`;
 		const s = openStore(path);
 		const r = rig({ store: s });
-		r.sweep("a"); r.sweep("b");
-		r.w.answer = async () => { throw Error("timeout"); };
+		r.sweep("a");
+		r.sweep("b");
+		r.w.answer = async () => {
+			throw Error("timeout");
+		};
 		await r.relay().pass();
 		r.outbox.deliver("m", "done");
 		r.w.answer = async () => ({ ok: true });
@@ -363,13 +472,17 @@ describe("a digest is frozen when it is composed", () => {
 			"UPDATE outbox_members SET outbox_id = 99 WHERE delivery_id = 'a'",
 			`INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('a', ${s.wakes.find("done")!.id}, 0)`,
 			"UPDATE outbox SET status = 'pending' WHERE delivery_id = 'done'",
-		]) expect(() => raw.exec(sql)).toThrow();
+		])
+			expect(() => raw.exec(sql)).toThrow();
 		raw.exec("PRAGMA foreign_keys = ON");
-		r.w.answer = async () => { throw Error("timeout"); };
+		r.w.answer = async () => {
+			throw Error("timeout");
+		};
 		r.outbox.deliver("m", "live");
 		await r.relay().pass();
 		expect(() => raw.exec("DELETE FROM outbox WHERE delivery_id = 'live'")).toThrow();
-		raw.close(); s.close();
+		raw.close();
+		s.close();
 	});
 });
 
@@ -377,7 +490,10 @@ describe("the operator's retry and cancel", () => {
 	test("retry is refused on a pending row, even one whose POST is out, so it never adds a POST beside a live one", async () => {
 		const r = rig();
 		let release!: () => void;
-		r.w.answer = () => new Promise((ok) => { release = () => ok({ ok: true }); });
+		r.w.answer = () =>
+			new Promise((ok) => {
+				release = () => ok({ ok: true });
+			});
 		r.outbox.deliver("x", "live");
 		const sending = r.relay().pass();
 		await Bun.sleep(5);
@@ -408,8 +524,11 @@ describe("the operator's retry and cancel", () => {
 
 	test("cancelling a digest (by a member's id) keeps a tombstone with its members, and none of them is ever queued or held again", async () => {
 		const r = rig();
-		r.sweep("a"); r.sweep("b");
-		r.w.answer = async () => { throw Error("unknown"); };
+		r.sweep("a");
+		r.sweep("b");
+		r.w.answer = async () => {
+			throw Error("unknown");
+		};
 		await r.relay().pass();
 		expect(runWakesCli(r.store, ["cancel", "a"], () => {})).toBe(0);
 		const row = r.store.wakes.find("a")!;
@@ -426,8 +545,11 @@ describe("the operator's retry and cancel", () => {
 
 	test("a cancelled member is refused after retention prunes its row: cancel, prune, then enqueue and hold are both refused (one row ever, never enqueued again)", async () => {
 		const r = rig();
-		r.sweep("a"); r.sweep("b");
-		r.w.answer = async () => { throw Error("unknown"); };
+		r.sweep("a");
+		r.sweep("b");
+		r.w.answer = async () => {
+			throw Error("unknown");
+		};
 		await r.relay().pass();
 		expect(runWakesCli(r.store, ["cancel", "a"], () => {})).toBe(0);
 		expect(r.store.wakes.prune(Date.now() + 1000)).toBe(1); // retention deletes the row, and the cascade deletes its member bindings
@@ -458,35 +580,61 @@ describe("the operator's retry and cancel", () => {
 			expect(r.sweep("d")).toBe("known");
 			const raw = new Database(path);
 			try {
-				expect(raw.query("SELECT delivery_id, outcome FROM wake_tombstones").all()).toEqual([{ delivery_id: "d", outcome: "delivered" }]);
+				expect(raw.query("SELECT delivery_id, outcome FROM wake_tombstones").all()).toEqual([
+					{ delivery_id: "d", outcome: "delivered" },
+				]);
 				expect(() => raw.exec("DELETE FROM wake_tombstones")).toThrow(/permanent/);
 				expect(() => raw.exec("UPDATE wake_tombstones SET outcome = 'cancelled'")).toThrow(/permanent/);
-			} finally { raw.close(); }
-		} finally { store.close(); }
+			} finally {
+				raw.close();
+			}
+		} finally {
+			store.close();
+		}
 	});
 
 	test("opening a database from before the tombstones backfills one per delivered or cancelled id, digest members included", () => {
 		const path = `${scratch()}/v6.db`;
 		const raw = new Database(path);
 		raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 6)) { raw.exec(m.sql); raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		for (const m of MIGRATIONS.filter((x) => x.version <= 6)) {
+			raw.exec(m.sql);
+			raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
 		raw.exec(`INSERT INTO outbox (id, delivery_id, message, created_at, status, finished_at) VALUES (1, 'dig', 'm', 1, 'cancelled', 5), (2, 'ok', 'm', 1, 'delivered', 6), (3, 'wait', 'm', 1, 'pending', NULL);
 			INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('a', 1, 1), ('b', 1, 1), ('ok', 2, 1), ('wait', 3, 1);`);
 		raw.close();
 		const store = openStore(path);
 		try {
-			expect([...["a", "b", "ok", "wait", "nope"]].map((id) => store.wakes.known(id))).toEqual([true, true, true, true, false]);
+			expect([...["a", "b", "ok", "wait", "nope"]].map((id) => store.wakes.known(id))).toEqual([
+				true,
+				true,
+				true,
+				true,
+				false,
+			]);
 			store.wakes.prune(1e12);
-			expect(["a", "b", "ok", "wait", "nope"].map((id) => store.wakes.known(id))).toEqual([true, true, true, true, false]);
+			expect(["a", "b", "ok", "wait", "nope"].map((id) => store.wakes.known(id))).toEqual([
+				true,
+				true,
+				true,
+				true,
+				false,
+			]);
 			expect(store.wakes.isDelivered("ok")).toBe(true);
 			expect(store.wakes.isDelivered("a")).toBe(false);
-		} finally { store.close(); }
+		} finally {
+			store.close();
+		}
 	});
 
 	test("a cancel while the POST is out stands: the accepted POST does not reopen the row", async () => {
 		const r = rig();
 		let release!: () => void;
-		r.w.answer = () => new Promise((ok) => { release = () => ok({ ok: true }); });
+		r.w.answer = () =>
+			new Promise((ok) => {
+				release = () => ok({ ok: true });
+			});
 		r.outbox.deliver("x", "w1");
 		const sending = r.relay().pass();
 		await Bun.sleep(5);
@@ -519,7 +667,11 @@ describe("the operator's retry and cancel", () => {
 		s.wakes.finish(id, "dead_letter", 5);
 		s.close();
 		const run = async (...args: string[]) => {
-			const p = Bun.spawn([process.execPath, new URL("../wakes.ts", import.meta.url).pathname, ...args], { env: { ...process.env, HOME: dir, CHAMBERLAIN_STATE: state, CHAMBERLAIN_CONF: `${dir}/conf` }, stdout: "pipe", stderr: "pipe" });
+			const p = Bun.spawn([process.execPath, new URL("../wakes.ts", import.meta.url).pathname, ...args], {
+				env: { ...process.env, HOME: dir, CHAMBERLAIN_STATE: state, CHAMBERLAIN_CONF: `${dir}/conf` },
+				stdout: "pipe",
+				stderr: "pipe",
+			});
 			const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
 			return { out, code };
 		};
@@ -531,24 +683,46 @@ describe("the operator's retry and cancel", () => {
 		expect((await run("retry", "stuck-1")).out).toContain("pending again");
 		expect((await run("cancel", "stuck-1")).code).toBe(0);
 		const after = openStore(`${state}/chamberlain.db`);
-		try { expect(after.wakes.rows("all").map((r) => r.status)).toEqual(["cancelled"]); } finally { after.close(); }
+		try {
+			expect(after.wakes.rows("all").map((r) => r.status)).toEqual(["cancelled"]);
+		} finally {
+			after.close();
+		}
 	});
 
 	test("the cap is CHAMBERLAIN_MAX_ATTEMPTS, a positive whole number, else three; a relay built without one reads it", async () => {
 		expect(MAX_ATTEMPTS).toBe(3);
 		expect(maxAttemptsFromEnv({ CHAMBERLAIN_MAX_ATTEMPTS: "5" })).toBe(5);
-		for (const bad of ["0", "-2", "2.5", "many", ""]) expect(maxAttemptsFromEnv({ CHAMBERLAIN_MAX_ATTEMPTS: bad })).toBe(3);
+		for (const bad of ["0", "-2", "2.5", "many", ""])
+			expect(maxAttemptsFromEnv({ CHAMBERLAIN_MAX_ATTEMPTS: bad })).toBe(3);
 		const before = process.env.CHAMBERLAIN_MAX_ATTEMPTS;
 		process.env.CHAMBERLAIN_MAX_ATTEMPTS = "1";
 		try {
 			const store = memStore();
 			const posts: string[] = [];
 			createOutbox({ store, log: () => {} }).deliver("m", "env-1");
-			const relay = createRelay({ store, lock: testRelayLock(store), gate: () => "idle", log: () => {}, alarm: () => {}, wake: { ready: () => true, send: async (id) => { posts.push(id); throw Error("timeout"); } } });
-			await relay.pass(); await relay.pass();
+			const relay = createRelay({
+				store,
+				lock: testRelayLock(store),
+				gate: () => "idle",
+				log: () => {},
+				alarm: () => {},
+				wake: {
+					ready: () => true,
+					send: async (id) => {
+						posts.push(id);
+						throw Error("timeout");
+					},
+				},
+			});
+			await relay.pass();
+			await relay.pass();
 			expect(posts).toEqual(["env-1"]);
 			expect(store.wakes.find("env-1")!.status).toBe("dead_letter");
-		} finally { if (before === undefined) delete process.env.CHAMBERLAIN_MAX_ATTEMPTS; else process.env.CHAMBERLAIN_MAX_ATTEMPTS = before; }
+		} finally {
+			if (before === undefined) delete process.env.CHAMBERLAIN_MAX_ATTEMPTS;
+			else process.env.CHAMBERLAIN_MAX_ATTEMPTS = before;
+		}
 	});
 });
 
@@ -557,7 +731,10 @@ describe("a database from before the one relay (migration 5)", () => {
 		const path = `${scratch()}/old.db`;
 		const raw = new Database(path);
 		raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 5)) { raw.exec(m.sql); raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		for (const m of MIGRATIONS.filter((x) => x.version <= 5)) {
+			raw.exec(m.sql);
+			raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
 		raw.exec(`INSERT INTO outbox (delivery_id, owner, message, queued_at, attempts) VALUES ('p1', 'daemon', 'm', 5, 2);
 			INSERT INTO outbox (delivery_id, owner, message, queued_at, attempts, status, dead_at) VALUES ('d1', 'queue-web', 'm', 6, 3, 'dead_letter', 9);
 			INSERT INTO outbox (delivery_id, owner, message, queued_at) VALUES ('landed', 'daemon', 'm', 7);
@@ -572,14 +749,24 @@ describe("a database from before the one relay (migration 5)", () => {
 			expect(["landed", "old"].map((id) => s.wakes.isDelivered(id))).toEqual([true, true]);
 			expect(s.wakes.held().map((h) => h.deliveryId)).toEqual(["h1"]);
 			const check = new Database(path, { readonly: true });
-			expect(check.query("SELECT name FROM sqlite_master WHERE name IN ('delivery_leases', 'delivered_wakes')").all()).toEqual([]);
+			expect(
+				check.query("SELECT name FROM sqlite_master WHERE name IN ('delivery_leases', 'delivered_wakes')").all(),
+			).toEqual([]);
 			check.close();
-		} finally { s.close(); }
+		} finally {
+			s.close();
+		}
 	});
 });
 
 describe("the relay cannot exist, or send, without the one-relay lock", () => {
-	const base = (store: Store) => ({ store, gate: () => "idle" as Gate, log: () => {}, alarm: () => {}, wake: { ready: () => true, send: async () => ({ ok: true }) } });
+	const base = (store: Store) => ({
+		store,
+		gate: () => "idle" as Gate,
+		log: () => {},
+		alarm: () => {},
+		wake: { ready: () => true, send: async () => ({ ok: true }) },
+	});
 
 	test("createRelay refuses a missing lock, and a look-alike that holdRelayLock did not make, even through a cast", () => {
 		const store = memStore();
@@ -604,7 +791,18 @@ describe("the relay cannot exist, or send, without the one-relay lock", () => {
 		const lock = testRelayLock();
 		const posts: string[] = [];
 		const events: string[] = [];
-		const relay = createRelay({ ...base(store), lock, log: (e) => events.push(e), wake: { ready: () => true, send: async (id) => { posts.push(id); return { ok: true }; } } });
+		const relay = createRelay({
+			...base(store),
+			lock,
+			log: (e) => events.push(e),
+			wake: {
+				ready: () => true,
+				send: async (id) => {
+					posts.push(id);
+					return { ok: true };
+				},
+			},
+		});
 		store.wakes.enqueue({ deliveryId: "w1", message: "m", queuedAt: 1 });
 		lock.release();
 		await relay.pass();
@@ -618,7 +816,17 @@ describe("the relay cannot exist, or send, without the one-relay lock", () => {
 		const store = memStore();
 		const lock = testRelayLock();
 		const sent: [string, string][] = [];
-		const relay = createRelay({ ...base(store), lock, compact: { ready: () => true, send: async (id, message) => { sent.push([id, message]); return { ok: true, status: 202 }; } } });
+		const relay = createRelay({
+			...base(store),
+			lock,
+			compact: {
+				ready: () => true,
+				send: async (id, message) => {
+					sent.push([id, message]);
+					return { ok: true, status: 202 };
+				},
+			},
+		});
 		expect(relay.compactReady()).toBe(true);
 		expect(await relay.compact("compact:t:1")).toEqual({ ok: true, status: 202 });
 		expect(sent).toEqual([["compact:t:1", ""]]);
@@ -630,7 +838,8 @@ describe("the relay cannot exist, or send, without the one-relay lock", () => {
 });
 
 describe("a Steward row that depends on the rights goes only when the durable record shows the Steward there now holds them", () => {
-	const H1 = "a".repeat(64), H2 = "b".repeat(64);
+	const H1 = "a".repeat(64),
+		H2 = "b".repeat(64);
 	const stamp = { steward: "steward-1", hash: H1, at: "2026-11-13T18:00:00.000Z" };
 	const BLOCK = "Decision rights (standing rules):\nmerge green PRs";
 	/** The Steward and rights there are now, which the test moves, and how often the relay asked. */
@@ -640,11 +849,29 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		const rightsNow: RelayDeps["rightsNow"] = async () => {
 			asked.n++;
 			const now = { ...st };
-			return { ...now, wake: (forId: string) => ({ message: `[chamberlain] rights for ${forId}\n${now.hash ? BLOCK : "unreadable"}`, ...(now.hash ? { stamp: { ...(now.steward ? { steward: now.steward } : {}), ...(now.session ? { session: now.session } : {}), hash: now.hash, at: "now", used: 10, full: true as const } } : {}) }) };
+			return {
+				...now,
+				wake: (forId: string) => ({
+					message: `[chamberlain] rights for ${forId}\n${now.hash ? BLOCK : "unreadable"}`,
+					...(now.hash
+						? {
+								stamp: {
+									...(now.steward ? { steward: now.steward } : {}),
+									...(now.session ? { session: now.session } : {}),
+									hash: now.hash,
+									at: "now",
+									used: 10,
+									full: true as const,
+								},
+							}
+						: {}),
+				}),
+			};
 		};
 		const r = rig({ rightsNow, ...(o.max ? { max: o.max } : {}) });
 		const record = () => r.store.state.get(RIGHTS_SENT_KEY) as Record<string, unknown> | undefined;
-		const firstFor = (row: string) => r.store.wakes.rows("all").filter((w) => w.deliveryId.startsWith(`${row}:rights-first:`));
+		const firstFor = (row: string) =>
+			r.store.wakes.rows("all").filter((w) => w.deliveryId.startsWith(`${row}:rights-first:`));
 		const key = () => rightsStateKey(st);
 		return { ...r, st, asked, record, firstFor, key };
 	}
@@ -657,7 +884,12 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.posts[0]!.message).toBe(withDeliveryId(`[chamberlain] rights for w1\n${BLOCK}`, F));
 		expect(r.posts[1]!.message).toBe(withDeliveryId("pointer", "w1"));
 		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", message: "pointer", attempts: 1 });
-		expect(r.store.wakes.find(F)).toMatchObject({ status: "delivered", kind: "rights", attempts: 1, rights: [{ steward: "steward-1", session: "s1", hash: H1, at: "now", used: 10, full: true }] });
+		expect(r.store.wakes.find(F)).toMatchObject({
+			status: "delivered",
+			kind: "rights",
+			attempts: 1,
+			rights: [{ steward: "steward-1", session: "s1", hash: H1, at: "now", used: 10, full: true }],
+		});
 		expect(r.record()).toEqual({ steward: "steward-1", session: "s1", hash: H1, at: "now", used: 10, epoch: 0 });
 		expect(r.events.find((e) => e.event === "rights-first")?.data).toMatchObject({ deliveryId: "w1", first: F });
 		await r.relay().pass();
@@ -731,12 +963,21 @@ describe("a Steward row that depends on the rights goes only when the durable re
 			q3: `Decision rights: the same as in the first item of this digest above, and still in force.\n${block}`,
 		};
 		r.w.gate = "busy";
-		Object.entries(texts).forEach(([id, text], i) => r.outbox.deliver(text, id, { kind: "turn_ended", thread: `t${i}`, rights: [{ ...stamp, session: "s1", full: true }] }));
+		Object.entries(texts).forEach(([id, text], i) =>
+			r.outbox.deliver(text, id, {
+				kind: "turn_ended",
+				thread: `t${i}`,
+				rights: [{ ...stamp, session: "s1", full: true }],
+			}),
+		);
 		r.w.gate = "idle";
 		await r.relay().pass();
 		expect(r.posts).toHaveLength(1);
-		for (const text of Object.values(texts)) expect(r.posts[0]!.message).toContain(`===\n${text}\n\n`.replace(/\n\n$/, ""));
-		const items = r.posts[0]!.message.split(/\n\n(?==== item )/).slice(1).map((b) => b.slice(b.indexOf("===\n") + 4).replace(/\ndelivery id: .*$/, ""));
+		for (const text of Object.values(texts))
+			expect(r.posts[0]!.message).toContain(`===\n${text}\n\n`.replace(/\n\n$/, ""));
+		const items = r.posts[0]!.message.split(/\n\n(?==== item )/)
+			.slice(1)
+			.map((b) => b.slice(b.indexOf("===\n") + 4).replace(/\ndelivery id: .*$/, ""));
 		expect(items).toEqual(Object.values(texts));
 	});
 
@@ -762,7 +1003,8 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		const r = world({ max: 1 });
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		r.outbox.deliver("pointer", "w2", { kind: "needs_input", rights: [stamp] });
-		const F1 = rightsFirstId("w1", r.key()), G1 = rightsFirstId("w2", r.key());
+		const F1 = rightsFirstId("w1", r.key()),
+			G1 = rightsFirstId("w2", r.key());
 		r.w.answer = async () => ({ ok: false, status: 503 });
 		await r.relay().pass();
 		expect(r.store.wakes.find(F1)?.status).toBe("dead_letter");
@@ -793,7 +1035,13 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		const r = world();
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		const F = rightsFirstId("w1", r.key());
-		r.store.wakes.enqueue({ deliveryId: F, message: "rights", queuedAt: r.clock.t, kind: "rights", rights: [{ steward: "steward-1", session: "s1", hash: H1, full: true }] });
+		r.store.wakes.enqueue({
+			deliveryId: F,
+			message: "rights",
+			queuedAt: r.clock.t,
+			kind: "rights",
+			rights: [{ steward: "steward-1", session: "s1", hash: H1, full: true }],
+		});
 		expect(await r.relay().pass()).toEqual([F, "w1"]);
 		expect(r.ids()).toEqual([F, "w1"]);
 		expect(r.record()).toEqual({ steward: "steward-1", session: "s1", hash: H1, epoch: 0 });
@@ -817,8 +1065,24 @@ describe("a Steward row that depends on the rights goes only when the durable re
 	test("the record is written in the transaction that marks the row delivered: when that commit fails, neither exists", async () => {
 		const r = world();
 		r.outbox.deliver("block", "w1", { kind: "needs_input", rights: [{ ...stamp, session: "s1", full: true }] });
-		const refusing: Store = { ...r.store, state: { ...r.store.state, set: () => { throw Error("SQLITE_FULL: database or disk is full"); } } };
-		const relay = createRelay({ store: refusing, lock: testRelayLock(refusing), gate: () => "idle", log: () => {}, alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async () => ({ ok: true, status: 202 }) } });
+		const refusing: Store = {
+			...r.store,
+			state: {
+				...r.store.state,
+				set: () => {
+					throw Error("SQLITE_FULL: database or disk is full");
+				},
+			},
+		};
+		const relay = createRelay({
+			store: refusing,
+			lock: testRelayLock(refusing),
+			gate: () => "idle",
+			log: () => {},
+			alarm: () => {},
+			maxAttempts: 3,
+			wake: { ready: () => true, send: async () => ({ ok: true, status: 202 }) },
+		});
 		await relay.pass();
 		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 1 });
 		expect(r.record()).toBeUndefined();
@@ -841,7 +1105,13 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		const r = world();
 		r.store.state.set(RIGHTS_SENT_KEY, { steward: "steward-1", session: "s1", hash: H1 });
 		const old = rightsFirstId("gone", rightsStateKey({ steward: "steward-1", session: "s0", hash: H1 }));
-		r.store.wakes.enqueue({ deliveryId: old, message: "old rights", queuedAt: r.clock.t, kind: "rights", rights: [{ steward: "steward-1", session: "s0", hash: H1, full: true }] });
+		r.store.wakes.enqueue({
+			deliveryId: old,
+			message: "old rights",
+			queuedAt: r.clock.t,
+			kind: "rights",
+			rights: [{ steward: "steward-1", session: "s0", hash: H1, full: true }],
+		});
 		await r.relay().pass();
 		expect(r.posts).toEqual([]);
 		expect(r.store.wakes.find(old)?.status).toBe("cancelled");
@@ -864,7 +1134,11 @@ describe("a Steward row that depends on the rights goes only when the durable re
 	});
 
 	test("a check that throws sends nothing on this pass and uses no attempt", async () => {
-		const r = rig({ rightsNow: async () => { throw Error("transcript unreadable"); } });
+		const r = rig({
+			rightsNow: async () => {
+				throw Error("transcript unreadable");
+			},
+		});
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		await r.relay().pass();
 		expect(r.posts).toEqual([]);
@@ -887,7 +1161,15 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 	const H1 = "a".repeat(64);
 	/** A pointer composed under epoch 0, and full stamps composed under a given epoch. */
 	const pointer = { steward: "steward-1", session: "s1", hash: H1, at: "t0", epoch: 0 };
-	const fullAt = (epoch: number) => ({ steward: "steward-1", session: "s1", hash: H1, at: "t0", used: 10, full: true as const, epoch });
+	const fullAt = (epoch: number) => ({
+		steward: "steward-1",
+		session: "s1",
+		hash: H1,
+		at: "t0",
+		used: 10,
+		full: true as const,
+		epoch,
+	});
 	/**
 	 * One Steward (steward-1, session s1, rights H1) and a compaction target. The prerequisite's stamp carries the epoch it is composed under, read
 	 * from the database as the engine does. Every POST, wakes and compactions alike, goes into one ordered list (`ids`).
@@ -895,25 +1177,44 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 	function world(o: { store?: Store; compactFails?: { value: boolean } } = {}) {
 		const store = o.store ?? memStore();
 		const rightsNow: RelayDeps["rightsNow"] = async () => ({
-			steward: "steward-1", session: "s1", hash: H1,
+			steward: "steward-1",
+			session: "s1",
+			hash: H1,
 			wake: (forId: string) => ({ message: `[chamberlain] rights for ${forId}`, stamp: fullAt(rightsEpoch(store)) }),
 		});
 		const compact: RelayDeps["compact"] = {
 			ready: () => true,
-			send: async (id) => { if (o.compactFails?.value) throw Error("killed between the epoch bump and the compaction POST"); r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; },
+			send: async (id) => {
+				if (o.compactFails?.value) throw Error("killed between the epoch bump and the compaction POST");
+				r.posts.push({ id, message: "" });
+				return { ok: true, status: 202 };
+			},
 		};
 		const r = rig({ store, rightsNow, compact });
 		const record = () => r.store.state.get(RIGHTS_SENT_KEY) as Record<string, unknown> | undefined;
-		const prereq = (row: string, epoch: number) => rightsFirstId(row, rightsStateKey({ steward: "steward-1", session: "s1", hash: H1, epoch }));
+		const prereq = (row: string, epoch: number) =>
+			rightsFirstId(row, rightsStateKey({ steward: "steward-1", session: "s1", hash: H1, epoch }));
 		/** The full-block row F, whose POST the test holds open until it calls `release`. */
 		function fullInFlight() {
-			let release!: () => void, started = false;
-			const open = new Promise<void>((res) => { release = res; });
-			r.w.answer = async (id) => { if (id === "F") { started = true; await open; } return { ok: true, status: 202 }; };
+			let release!: () => void,
+				started = false;
+			const open = new Promise<void>((res) => {
+				release = res;
+			});
+			r.w.answer = async (id) => {
+				if (id === "F") {
+					started = true;
+					await open;
+				}
+				return { ok: true, status: 202 };
+			};
 			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
 			return { release, started: () => started };
 		}
-		const until = async (ok: () => boolean) => { for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(5); expect(ok()).toBe(true); };
+		const until = async (ok: () => boolean) => {
+			for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(5);
+			expect(ok()).toBe(true);
+		};
 		return { ...r, record, prereq, fullInFlight, until };
 	}
 
@@ -933,14 +1234,38 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 		expect(r.ids()).toEqual(["F", "compact:steward-1:1", r.prereq("P", 1), "P"]);
 		expect(r.store.wakes.find("F")?.status).toBe("delivered");
 		expect(r.record()).toMatchObject({ hash: H1, epoch: 1 });
-		expect(r.events.find((e) => e.event === "rights-invalidated")?.data).toMatchObject({ reason: "compaction", epoch: 1 });
+		expect(r.events.find((e) => e.event === "rights-invalidated")?.data).toMatchObject({
+			reason: "compaction",
+			epoch: 1,
+		});
 	});
 
 	test("a full block whose delivered commit lands only after the bump (owed across the compaction) is marked delivered and writes nothing", async () => {
 		const r = world();
 		r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
 		// F is accepted but its delivered commit fails: the relay owes it. The compaction goes, then the commit lands on the next pass.
-		const relay = createRelay({ store: r.broken, lock: testRelayLock(r.broken), gate: () => "idle", log: (event, data) => r.events.push({ event, ...(data ? { data } : {}) }), alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } }, compact: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } } });
+		const relay = createRelay({
+			store: r.broken,
+			lock: testRelayLock(r.broken),
+			gate: () => "idle",
+			log: (event, data) => r.events.push({ event, ...(data ? { data } : {}) }),
+			alarm: () => {},
+			maxAttempts: 3,
+			wake: {
+				ready: () => true,
+				send: async (id) => {
+					r.posts.push({ id, message: "" });
+					return { ok: true, status: 202 };
+				},
+			},
+			compact: {
+				ready: () => true,
+				send: async (id) => {
+					r.posts.push({ id, message: "" });
+					return { ok: true, status: 202 };
+				},
+			},
+		});
 		await relay.pass();
 		await relay.compact("compact:steward-1:1");
 		expect(r.store.wakes.find("F")?.status).toBe("pending");
@@ -948,7 +1273,11 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 		await relay.pass();
 		expect(r.store.wakes.find("F")?.status).toBe("delivered");
 		expect(r.record()).toEqual({ epoch: 1 });
-		expect(r.events.find((e) => e.event === "rights-full-stale")?.data).toMatchObject({ deliveryId: "F", epoch: 0, current: 1 });
+		expect(r.events.find((e) => e.event === "rights-full-stale")?.data).toMatchObject({
+			deliveryId: "F",
+			epoch: 0,
+			current: 1,
+		});
 		expect(r.ids()).toEqual(["F", "compact:steward-1:1"]);
 	});
 
@@ -992,7 +1321,21 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 			const r = world({ store: fileStore() });
 			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
 			// The dying relay: F accepted, its commit never made, the process gone before the compaction's job ran.
-			const dying = createRelay({ store: r.broken, lock: testRelayLock(r.broken), gate: () => "idle", log: () => {}, alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } } });
+			const dying = createRelay({
+				store: r.broken,
+				lock: testRelayLock(r.broken),
+				gate: () => "idle",
+				log: () => {},
+				alarm: () => {},
+				maxAttempts: 3,
+				wake: {
+					ready: () => true,
+					send: async (id) => {
+						r.posts.push({ id, message: "" });
+						return { ok: true, status: 202 };
+					},
+				},
+			});
 			await dying.pass();
 			expect(r.store.wakes.find("F")).toMatchObject({ status: "pending", attempts: 1 });
 			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
@@ -1038,14 +1381,39 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 		test("after the bump, with F's delivered commit still owed (crash before it landed): the restart re-sends F, which writes nothing, and P gets a prerequisite", async () => {
 			const r = world({ store: fileStore() });
 			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
-			const dying = createRelay({ store: r.broken, lock: testRelayLock(r.broken), gate: () => "idle", log: () => {}, alarm: () => {}, maxAttempts: 3, wake: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } }, compact: { ready: () => true, send: async (id) => { r.posts.push({ id, message: "" }); return { ok: true, status: 202 }; } } });
+			const dying = createRelay({
+				store: r.broken,
+				lock: testRelayLock(r.broken),
+				gate: () => "idle",
+				log: () => {},
+				alarm: () => {},
+				maxAttempts: 3,
+				wake: {
+					ready: () => true,
+					send: async (id) => {
+						r.posts.push({ id, message: "" });
+						return { ok: true, status: 202 };
+					},
+				},
+				compact: {
+					ready: () => true,
+					send: async (id) => {
+						r.posts.push({ id, message: "" });
+						return { ok: true, status: 202 };
+					},
+				},
+			});
 			await dying.pass();
 			await dying.compact("compact:steward-1:1");
 			expect(r.record()).toEqual({ epoch: 1 });
 			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
 			await r.relay().pass();
 			expect(r.ids()).toEqual(["F", "compact:steward-1:1", "F", r.prereq("P", 1), "P"]);
-			expect(r.events.find((e) => e.event === "rights-full-stale")?.data).toMatchObject({ deliveryId: "F", epoch: 0, current: 1 });
+			expect(r.events.find((e) => e.event === "rights-full-stale")?.data).toMatchObject({
+				deliveryId: "F",
+				epoch: 0,
+				current: 1,
+			});
 		});
 
 		test("after the compaction POST was accepted: the restart reads epoch 1 and no record, and P gets a prerequisite", async () => {

@@ -32,7 +32,9 @@ describe("stewardBrief", () => {
 	});
 	test("an expired ruling the section names is carried as given", () => {
 		const rulings = `${base.rulings}\nExpired, NOT in force (do not act on them): R2 (expired 2026-11-20).`;
-		expect(stewardBrief({ ...base, rulings })).toContain("Expired, NOT in force (do not act on them): R2 (expired 2026-11-20).");
+		expect(stewardBrief({ ...base, rulings })).toContain(
+			"Expired, NOT in force (do not act on them): R2 (expired 2026-11-20).",
+		);
 	});
 	test("carries the operating rules", () => {
 		expect(stewardBrief(base)).toContain("Use timeout, not gtimeout.");
@@ -49,9 +51,24 @@ describe("stewardBrief", () => {
 		expect(plain).not.toContain("t3_");
 		expect(plain).toContain("Otherwise read the end of the thread with your own tools.");
 		expect(plain).toContain("Every server the daemon watches:");
-		const notes = { threads: "pane threads", server: "workspace", readThread: "run `peek <id>`", cardGuard: ", so `ack` stays off it.", reachIntro: "Reach a workspace with `ws`:", reachOutro: "Fallback: `wsx`." };
+		const notes = {
+			threads: "pane threads",
+			server: "workspace",
+			readThread: "run `peek <id>`",
+			cardGuard: ", so `ack` stays off it.",
+			reachIntro: "Reach a workspace with `ws`:",
+			reachOutro: "Fallback: `wsx`.",
+		};
 		const b = stewardBrief({ ...base, notes });
-		for (const x of ["You run Ada's pane threads", "watches every workspace", "Otherwise run `peek <id>`.", "so `ack` stays off it.", "Reach a workspace with `ws`:", "Fallback: `wsx`."]) expect(b).toContain(x);
+		for (const x of [
+			"You run Ada's pane threads",
+			"watches every workspace",
+			"Otherwise run `peek <id>`.",
+			"so `ack` stays off it.",
+			"Reach a workspace with `ws`:",
+			"Fallback: `wsx`.",
+		])
+			expect(b).toContain(x);
 	});
 	test("without a principalName it speaks of the operator", () => {
 		const b = stewardBrief({ ...base, principal: undefined });
@@ -69,7 +86,8 @@ describe("stewardBrief", () => {
 		expect(b).toContain("Mode: LIVE");
 		expect(b).not.toContain("SANDBOX");
 	});
-	test("tells the Steward it is permanent and to write things down", () => expect(stewardBrief(base)).toContain("You are permanent"));
+	test("tells the Steward it is permanent and to write things down", () =>
+		expect(stewardBrief(base)).toContain("You are permanent"));
 	test("points at the ledgers instead of copying them, by absolute path", () => {
 		const b = stewardBrief(base);
 		expect(b).toContain("decisions-thread");
@@ -94,7 +112,9 @@ describe("stewardBrief", () => {
 		expect(stewardBrief({ ...base, predecessor: undefined })).not.toContain("Predecessor");
 	});
 	test("flags a servers.json with no local server", () => {
-		expect(stewardBrief({ ...base, environments: [{ name: "laptop", environmentId: "x" }] })).toContain("No environment");
+		expect(stewardBrief({ ...base, environments: [{ name: "laptop", environmentId: "x" }] })).toContain(
+			"No environment",
+		);
 	});
 	test("carries nothing from a private setup", () => {
 		expect(stewardBrief(base)).not.toMatch(/bors|gate-check|breaker/i);
@@ -103,8 +123,16 @@ describe("stewardBrief", () => {
 
 describe("brief fragments", () => {
 	// Explicit modes: the umask may be 002 (a user-private group), which would make brief.d 0775 and a fragment 0664, both refused.
-	const conf = () => { const d = mkdtempSync(`${tmpdir()}/brief-d-`); mkdirSync(`${d}/brief.d`); chmodSync(`${d}/brief.d`, 0o755); return d; };
-	const put = (d: string, name: string, text: string) => { writeFileSync(`${d}/brief.d/${name}`, text); chmodSync(`${d}/brief.d/${name}`, 0o644); };
+	const conf = () => {
+		const d = mkdtempSync(`${tmpdir()}/brief-d-`);
+		mkdirSync(`${d}/brief.d`);
+		chmodSync(`${d}/brief.d`, 0o755);
+		return d;
+	};
+	const put = (d: string, name: string, text: string) => {
+		writeFileSync(`${d}/brief.d/${name}`, text);
+		chmodSync(`${d}/brief.d/${name}`, 0o644);
+	};
 
 	test("no brief.d is no fragments, and no warning", () => {
 		const warned: string[] = [];
@@ -139,7 +167,8 @@ describe("brief fragments", () => {
 		const warned: string[] = [];
 		expect(loadBriefFragments(d, (m) => warned.push(m))).toEqual(["real"]);
 		expect(warned.length).toBe(4);
-		for (const n of ["20-link.md", "30-notes.txt", "40-backup.md~", "50-dir.md"]) expect(warned.some((w) => w.includes(n))).toBe(true);
+		for (const n of ["20-link.md", "30-notes.txt", "40-backup.md~", "50-dir.md"])
+			expect(warned.some((w) => w.includes(n))).toBe(true);
 		expect(warned.find((w) => w.includes("20-link.md"))).toContain("symlink");
 	});
 
@@ -164,7 +193,11 @@ describe("brief fragments", () => {
 			expect(warned[0]).toContain(`${d}/brief.d`);
 			expect(warned[0]).toContain("symlink");
 		});
-		for (const [mode, why] of [[0o775, "group-writable"], [0o757, "world-writable"], [0o777, "group- and world-writable"]] as const) {
+		for (const [mode, why] of [
+			[0o775, "group-writable"],
+			[0o757, "world-writable"],
+			[0o777, "group- and world-writable"],
+		] as const) {
 			test(`a brief.d with mode ${mode.toString(8)} is refused: ${why}`, () => {
 				const d = conf();
 				put(d, "10.md", "x\n");
@@ -202,11 +235,19 @@ describe("brief fragments", () => {
 			expect(warned[1]).toContain("world-writable");
 		});
 		test("the check itself: owner, kind and write bits, for a file and a directory", () => {
-			const st = (o: { mode: number; uid?: number; file?: boolean; dir?: boolean; link?: boolean }) => ({ mode: o.mode, uid: o.uid ?? me, isFile: () => Boolean(o.file), isDirectory: () => Boolean(o.dir), isSymbolicLink: () => Boolean(o.link) });
+			const st = (o: { mode: number; uid?: number; file?: boolean; dir?: boolean; link?: boolean }) => ({
+				mode: o.mode,
+				uid: o.uid ?? me,
+				isFile: () => Boolean(o.file),
+				isDirectory: () => Boolean(o.dir),
+				isSymbolicLink: () => Boolean(o.link),
+			});
 			expect(authorityProblem(st({ mode: 0o100600, file: true }), "file", me)).toBeUndefined();
 			expect(authorityProblem(st({ mode: 0o100644, file: true }), "file", me)).toBeUndefined();
 			expect(authorityProblem(st({ mode: 0o40755, dir: true }), "directory", me)).toBeUndefined();
-			expect(authorityProblem(st({ mode: 0o100644, file: true, uid: me + 7 }), "file", me)).toBe(`owned by uid ${me + 7}, not ${me}`);
+			expect(authorityProblem(st({ mode: 0o100644, file: true, uid: me + 7 }), "file", me)).toBe(
+				`owned by uid ${me + 7}, not ${me}`,
+			);
 			expect(authorityProblem(st({ mode: 0o100620, file: true }), "file", me)).toContain("group-writable");
 			expect(authorityProblem(st({ mode: 0o100602, file: true }), "file", me)).toContain("world-writable");
 			expect(authorityProblem(st({ mode: 0o120777, link: true }), "file", me)).toContain("symlink");
@@ -219,7 +260,11 @@ describe("brief fragments", () => {
 			chmodSync(`${d}/brief.d`, 0o300);
 			const warned: string[] = [];
 			let fragments: string[] = ["unset"];
-			try { fragments = loadBriefFragments(d, (m) => warned.push(m)); } finally { chmodSync(`${d}/brief.d`, 0o755); }
+			try {
+				fragments = loadBriefFragments(d, (m) => warned.push(m));
+			} finally {
+				chmodSync(`${d}/brief.d`, 0o755);
+			}
 			expect(fragments).toEqual([]);
 			expect(warned).toHaveLength(1);
 			expect(warned[0]).toContain(`${d}/brief.d`);
@@ -232,7 +277,11 @@ describe("brief fragments", () => {
 			chmodSync(`${d}/brief.d`, 0o600);
 			const warned: string[] = [];
 			let fragments: string[] = ["unset"];
-			try { fragments = loadBriefFragments(d, (m) => warned.push(m)); } finally { chmodSync(`${d}/brief.d`, 0o755); }
+			try {
+				fragments = loadBriefFragments(d, (m) => warned.push(m));
+			} finally {
+				chmodSync(`${d}/brief.d`, 0o755);
+			}
 			expect(fragments).toEqual([]);
 			expect(warned).toHaveLength(1);
 			expect(warned[0]).toContain(`${d}/brief.d/10.md`);
@@ -253,7 +302,11 @@ describe("brief fragments", () => {
 			const d = conf();
 			put(d, "10.md", "ok\n");
 			expect(statSync(`${d}/brief.d`).mode & 0o777).toBe(0o755);
-			expect(loadBriefFragments(d, () => { throw Error("no warning expected"); })).toEqual(["ok"]);
+			expect(
+				loadBriefFragments(d, () => {
+					throw Error("no warning expected");
+				}),
+			).toEqual(["ok"]);
 		});
 	});
 
@@ -266,7 +319,9 @@ describe("brief fragments", () => {
 
 	test("fragments go before an Open work at hand-over section", () => {
 		const brief = `# You are the Steward\n\nbody\n\n${OPEN_WORK_HEADING}\n\n- thread x waits on Ada\n`;
-		expect(withFragments(brief, ["## Landing", "## Repo"])).toBe(`# You are the Steward\n\nbody\n\n## Landing\n\n## Repo\n\n${OPEN_WORK_HEADING}\n\n- thread x waits on Ada\n`);
+		expect(withFragments(brief, ["## Landing", "## Repo"])).toBe(
+			`# You are the Steward\n\nbody\n\n## Landing\n\n## Repo\n\n${OPEN_WORK_HEADING}\n\n- thread x waits on Ada\n`,
+		);
 		expect(withFragments("# A\n\nbody\n", ["## F"])).toBe("# A\n\nbody\n\n## F");
 	});
 });

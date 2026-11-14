@@ -22,7 +22,19 @@
  *   compact-invalidated  inside the relay's compaction job: the rights epoch is bumped and the record dropped (committed), and the
  *                    compaction request has not been sent.
  */
-export const CRASH_STEPS = ["before-commit", "committed", "notified", "enqueued", "composed", "rights-first-queued", "attempt-begun", "attempt-counted", "accepted", "delivered", "compact-invalidated"] as const;
+export const CRASH_STEPS = [
+	"before-commit",
+	"committed",
+	"notified",
+	"enqueued",
+	"composed",
+	"rights-first-queued",
+	"attempt-begun",
+	"attempt-counted",
+	"accepted",
+	"delivered",
+	"compact-invalidated",
+] as const;
 export type CrashStep = (typeof CRASH_STEPS)[number];
 
 export function crashPoint(step: CrashStep) {

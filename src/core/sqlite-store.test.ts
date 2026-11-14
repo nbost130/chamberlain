@@ -10,11 +10,28 @@ import type { Challenge, Store } from "./store.ts";
 const open: Store[] = [];
 const dirs: string[] = [];
 afterEach(() => {
-	for (const s of open.splice(0)) { try { s.close(); } catch { /* closed */ } }
+	for (const s of open.splice(0)) {
+		try {
+			s.close();
+		} catch {
+			/* closed */
+		}
+	}
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
-const mem = () => { const s = openStore(":memory:"); open.push(s); return s; };
-const file = () => { const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`); dirs.push(d); const path = `${d}/chamberlain.db`; const s = openStore(path); open.push(s); return { s, path, d }; };
+const mem = () => {
+	const s = openStore(":memory:");
+	open.push(s);
+	return s;
+};
+const file = () => {
+	const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
+	dirs.push(d);
+	const path = `${d}/chamberlain.db`;
+	const s = openStore(path);
+	open.push(s);
+	return { s, path, d };
+};
 const raw = (path: string) => new Database(path);
 
 describe("opening the database", () => {
@@ -27,7 +44,9 @@ describe("opening the database", () => {
 		const s = openStore(path);
 		open.push(s);
 		// The connection's own pragmas: a second handle sees them set.
-		expect(() => s.claims.claim("queue", { owner: "page", item: "Q-none", deliveryId: "d", message: "m", t: "t" })).toThrow(/no item/);
+		expect(() =>
+			s.claims.claim("queue", { owner: "page", item: "Q-none", deliveryId: "d", message: "m", t: "t" }),
+		).toThrow(/no item/);
 	});
 
 	test("migrations are recorded, and reopening applies nothing twice", () => {
@@ -36,7 +55,9 @@ describe("opening the database", () => {
 		const again = openStore(path);
 		open.push(again);
 		const db = raw(path);
-		expect(db.query("SELECT version, name FROM migrations ORDER BY version").all()).toEqual(MIGRATIONS.map((m) => ({ version: m.version, name: m.name })));
+		expect(db.query("SELECT version, name FROM migrations ORDER BY version").all()).toEqual(
+			MIGRATIONS.map((m) => ({ version: m.version, name: m.name })),
+		);
 		db.close();
 	});
 
@@ -46,7 +67,10 @@ describe("opening the database", () => {
 		const path = `${d}/v0.1.1.db`;
 		const db = raw(path);
 		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 7)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		for (const m of MIGRATIONS.filter((x) => x.version <= 7)) {
+			db.exec(m.sql);
+			db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
 		db.exec(`INSERT INTO outbox (id, delivery_id, message, created_at) VALUES (1, 'w1', 'm', 1);
 			INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('w1', 1, 1);
 			INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h1', 'held', 2, 'turn');`);
@@ -62,7 +86,8 @@ describe("opening the database", () => {
 	});
 
 	test("an upgrade marks every undelivered, unstamped Steward wake legacy whatever its text, and never touches the text", () => {
-		const OLD = "Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
+		const OLD =
+			"Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
 		const legacy = [{ hash: "", legacy: "unstamped" as const }];
 		for (const version of [7, 8, 9]) {
 			const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
@@ -70,18 +95,36 @@ describe("opening the database", () => {
 			const path = `${d}/v${version}.db`;
 			const db = raw(path);
 			db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-			for (const m of MIGRATIONS.filter((x) => x.version <= version)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
-			const rows: [string, string, string][] = [["p1", `a\n${OLD}\nb`, "pending"], ["plain", "Decision rights (standing rules):\nmerge green PRs", "pending"], ["dl", "x", "dead_letter"], ["done", `x\n${OLD}`, "delivered"], ["gone", `x\n${OLD}`, "cancelled"]];
+			for (const m of MIGRATIONS.filter((x) => x.version <= version)) {
+				db.exec(m.sql);
+				db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+			}
+			const rows: [string, string, string][] = [
+				["p1", `a\n${OLD}\nb`, "pending"],
+				["plain", "Decision rights (standing rules):\nmerge green PRs", "pending"],
+				["dl", "x", "dead_letter"],
+				["done", `x\n${OLD}`, "delivered"],
+				["gone", `x\n${OLD}`, "cancelled"],
+			];
 			rows.forEach(([id, message, status], i) => {
-				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status) VALUES (?, ?, ?, 1, ?)").run(i + 1, id, message, status);
+				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status) VALUES (?, ?, ?, 1, ?)").run(
+					i + 1,
+					id,
+					message,
+					status,
+				);
 				db.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES (?, ?, 1)").run(id, i + 1);
 			});
 			db.exec("INSERT INTO held_wakes (delivery_id, message, queued_at, kind) VALUES ('h-plain', 'held', 2, 'turn')");
 			// From schema 8, a wake can be for another receiver (the desk): never the Steward's, so never marked.
 			if (version >= 8) {
-				db.query("INSERT INTO outbox (id, delivery_id, message, created_at, status, receiver) VALUES (9, 'desk-row', ?, 1, 'pending', 'desk')").run(`x\n${OLD}`);
+				db.query(
+					"INSERT INTO outbox (id, delivery_id, message, created_at, status, receiver) VALUES (9, 'desk-row', ?, 1, 'pending', 'desk')",
+				).run(`x\n${OLD}`);
 				db.query("INSERT INTO outbox_members (delivery_id, outbox_id, queued_at) VALUES ('desk-row', 9, 1)").run();
-				db.exec("INSERT INTO held_wakes (delivery_id, message, queued_at, kind, receiver) VALUES ('h-desk', 'held', 2, 'turn', 'desk')");
+				db.exec(
+					"INSERT INTO held_wakes (delivery_id, message, queued_at, kind, receiver) VALUES ('h-desk', 'held', 2, 'turn', 'desk')",
+				);
 			}
 			db.close();
 			const s = openStore(path);
@@ -89,7 +132,10 @@ describe("opening the database", () => {
 			const stamps = (id: string) => s.wakes.find(id)?.rights;
 			expect([stamps("p1"), stamps("plain"), stamps("dl")]).toEqual([legacy, legacy, legacy]);
 			expect([stamps("done"), stamps("gone"), stamps("desk-row")]).toEqual([undefined, undefined, undefined]);
-			expect(Object.fromEntries(s.wakes.held().map((h) => [h.deliveryId, h.rights]))).toEqual({ "h-plain": legacy, ...(version >= 8 ? { "h-desk": undefined } : {}) });
+			expect(Object.fromEntries(s.wakes.held().map((h) => [h.deliveryId, h.rights]))).toEqual({
+				"h-plain": legacy,
+				...(version >= 8 ? { "h-desk": undefined } : {}),
+			});
 			// The text itself is never touched: rows stay immutable, only the stamp column is set, and the freeze trigger is back.
 			expect(s.wakes.find("p1")?.message).toBe(`a\n${OLD}\nb`);
 			const after = raw(path);
@@ -104,9 +150,15 @@ describe("opening the database", () => {
 		const path = `${d}/v9.db`;
 		const db = raw(path);
 		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 9)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
+		for (const m of MIGRATIONS.filter((x) => x.version <= 9)) {
+			db.exec(m.sql);
+			db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
 		const stamp = [{ steward: "s1", session: "x", hash: "h", at: "2026-11-13T18:00:00.000Z" }];
-		db.query("INSERT INTO outbox (id, delivery_id, message, created_at, rights_for) VALUES (1, 'w', ?, 1, ?)").run("Decision rights and rulings unchanged since 2026-11-13T18:00:00.000Z and still in force; your hand-off (steward-brief.md) has them.", JSON.stringify(stamp));
+		db.query("INSERT INTO outbox (id, delivery_id, message, created_at, rights_for) VALUES (1, 'w', ?, 1, ?)").run(
+			"Decision rights and rulings unchanged since 2026-11-13T18:00:00.000Z and still in force; your hand-off (steward-brief.md) has them.",
+			JSON.stringify(stamp),
+		);
 		db.close();
 		const s = openStore(path);
 		open.push(s);
@@ -119,11 +171,44 @@ describe("opening the database", () => {
 		const path = `${d}/v10.db`;
 		const db = raw(path);
 		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
-		const ins = db.query("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-		ins.run("R1", 1, "2026-11-01", "w1", "d1", "chat", "in-force", 1, "2026-11-01T09:00:00.000Z", null, null, null, '[{"t":"x","what":"stated"}]');
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) {
+			db.exec(m.sql);
+			db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
+		const ins = db.query(
+			"INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, confirmed_at, retired_at, retired_how, item, history) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		);
+		ins.run(
+			"R1",
+			1,
+			"2026-11-01",
+			"w1",
+			"d1",
+			"chat",
+			"in-force",
+			1,
+			"2026-11-01T09:00:00.000Z",
+			null,
+			null,
+			null,
+			'[{"t":"x","what":"stated"}]',
+		);
 		ins.run("R2", 2, "2026-11-02", "w2", "d2", "card", "proposed", 0, null, null, null, "Q-abc12", "[]");
-		ins.run("R10", 10, "2026-11-03", "w3", "d3", "card", "retired", 1, "2026-11-03T09:00:00.000Z", "2026-11-04T09:00:00.000Z", "only this once", null, "[]");
+		ins.run(
+			"R10",
+			10,
+			"2026-11-03",
+			"w3",
+			"d3",
+			"card",
+			"retired",
+			1,
+			"2026-11-03T09:00:00.000Z",
+			"2026-11-04T09:00:00.000Z",
+			"only this once",
+			null,
+			"[]",
+		);
 		const before = db.query("SELECT * FROM rulings ORDER BY seq").all() as Record<string, unknown>[];
 		db.close();
 		const s = openStore(path);
@@ -135,15 +220,43 @@ describe("opening the database", () => {
 		// Every old column is as it was; the new ones are NULL.
 		const rows = after.query("SELECT * FROM rulings ORDER BY seq").all() as Record<string, unknown>[];
 		expect(rows.map((r) => Object.fromEntries(Object.keys(before[0]!).map((k) => [k, r[k]])))).toEqual(before);
-		for (const r of rows) for (const k of ["retired_why", "superseded_by", "supersedes", "expires", "until_event"]) expect(r[k]).toBeNull();
+		for (const r of rows)
+			for (const k of ["retired_why", "superseded_by", "supersedes", "expires", "until_event"]) expect(r[k]).toBeNull();
 		after.close();
-		expect(s.rulings.list().map((r) => [r.id, r.status, r.confirmed, r.retiredHow, r.item])).toEqual([["R1", "in-force", true, undefined, undefined], ["R2", "proposed", false, undefined, "Q-abc12"], ["R10", "retired", true, "only this once", undefined]]);
+		expect(s.rulings.list().map((r) => [r.id, r.status, r.confirmed, r.retiredHow, r.item])).toEqual([
+			["R1", "in-force", true, undefined, undefined],
+			["R2", "proposed", false, undefined, "Q-abc12"],
+			["R10", "retired", true, "only this once", undefined],
+		]);
 		// The new reasons and fields are accepted now, and an unknown reason still is not.
-		s.rulings.save({ ...s.rulings.list()[0]!, status: "retired", retiredHow: "duplicate", retiredWhy: "twice", supersededBy: "R2", expires: "2026-12-01", supersedes: ["R10"] });
-		expect(s.rulings.list()[0]).toMatchObject({ retiredHow: "duplicate", retiredWhy: "twice", supersededBy: "R2", expires: "2026-12-01", supersedes: ["R10"] });
+		s.rulings.save({
+			...s.rulings.list()[0]!,
+			status: "retired",
+			retiredHow: "duplicate",
+			retiredWhy: "twice",
+			supersededBy: "R2",
+			expires: "2026-12-01",
+			supersedes: ["R10"],
+		});
+		expect(s.rulings.list()[0]).toMatchObject({
+			retiredHow: "duplicate",
+			retiredWhy: "twice",
+			supersededBy: "R2",
+			expires: "2026-12-01",
+			supersedes: ["R10"],
+		});
 		expect(() => s.rulings.save({ ...s.rulings.list()[0]!, retiredHow: "bogus" as never })).toThrow();
 		// Ids and order are unchanged: the next id continues after the highest.
-		s.rulings.save({ id: "R11", date: "d", words: "w", decides: "d", source: "chat", status: "in-force", confirmed: true, history: [] });
+		s.rulings.save({
+			id: "R11",
+			date: "d",
+			words: "w",
+			decides: "d",
+			source: "chat",
+			status: "in-force",
+			confirmed: true,
+			history: [],
+		});
 		expect(s.rulings.list().map((r) => r.id)).toEqual(["R1", "R2", "R10", "R11"]);
 	});
 
@@ -154,24 +267,49 @@ describe("opening the database", () => {
 		const db = raw(path);
 		db.exec("PRAGMA foreign_keys = ON");
 		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
-		db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w1', 'd1', 'chat', 'in-force', 1, '[]'), ('R2', 2, 'd', 'w2', 'd2', 'card', 'proposed', 0, '[]')");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) {
+			db.exec(m.sql);
+			db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
+		db.exec(
+			"INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w1', 'd1', 'chat', 'in-force', 1, '[]'), ('R2', 2, 'd', 'w2', 'd2', 'card', 'proposed', 0, '[]')",
+		);
 		db.exec("CREATE INDEX rulings_by_words ON rulings (words)");
 		db.exec("CREATE TABLE ruling_audit (n INTEGER PRIMARY KEY, id TEXT, what TEXT)");
-		db.exec("CREATE TRIGGER rulings_audit AFTER UPDATE OF status ON rulings BEGIN INSERT INTO ruling_audit (id, what) VALUES (NEW.id, NEW.status); END");
-		db.exec("CREATE TABLE ruling_notes (n INTEGER PRIMARY KEY, ruling TEXT NOT NULL REFERENCES rulings (id) ON DELETE CASCADE, note TEXT)");
+		db.exec(
+			"CREATE TRIGGER rulings_audit AFTER UPDATE OF status ON rulings BEGIN INSERT INTO ruling_audit (id, what) VALUES (NEW.id, NEW.status); END",
+		);
+		db.exec(
+			"CREATE TABLE ruling_notes (n INTEGER PRIMARY KEY, ruling TEXT NOT NULL REFERENCES rulings (id) ON DELETE CASCADE, note TEXT)",
+		);
 		db.exec("INSERT INTO ruling_notes (ruling, note) VALUES ('R1', 'first'), ('R1', 'second'), ('R2', 'third')");
 		db.close();
 		const s = openStore(path);
 		open.push(s);
 		const after = raw(path);
 		expect((after.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v).toBe(LATEST_MIGRATION);
-		expect(after.query("SELECT name FROM sqlite_master WHERE name IN ('rulings_by_words', 'rulings_audit') ORDER BY name").all()).toEqual([{ name: "rulings_audit" }, { name: "rulings_by_words" }]);
-		expect(after.query("SELECT ruling, note FROM ruling_notes ORDER BY n").all()).toEqual([{ ruling: "R1", note: "first" }, { ruling: "R1", note: "second" }, { ruling: "R2", note: "third" }]);
+		expect(
+			after
+				.query("SELECT name FROM sqlite_master WHERE name IN ('rulings_by_words', 'rulings_audit') ORDER BY name")
+				.all(),
+		).toEqual([{ name: "rulings_audit" }, { name: "rulings_by_words" }]);
+		expect(after.query("SELECT ruling, note FROM ruling_notes ORDER BY n").all()).toEqual([
+			{ ruling: "R1", note: "first" },
+			{ ruling: "R1", note: "second" },
+			{ ruling: "R2", note: "third" },
+		]);
 		// The child's foreign key still points at rulings, and the added trigger still fires.
-		expect(after.query("SELECT \"table\" AS t FROM pragma_foreign_key_list('ruling_notes')").all()).toEqual([{ t: "rulings" }]);
+		expect(after.query("SELECT \"table\" AS t FROM pragma_foreign_key_list('ruling_notes')").all()).toEqual([
+			{ t: "rulings" },
+		]);
 		after.close();
-		s.rulings.save({ ...s.rulings.list()[0]!, status: "retired", retiredHow: "superseded", retiredWhy: "replaced by R2", supersededBy: "R2" });
+		s.rulings.save({
+			...s.rulings.list()[0]!,
+			status: "retired",
+			retiredHow: "superseded",
+			retiredWhy: "replaced by R2",
+			supersededBy: "R2",
+		});
 		const again = raw(path);
 		expect(again.query("SELECT id, what FROM ruling_audit").all()).toEqual([{ id: "R1", what: "retired" }]);
 		expect(again.query("SELECT COUNT(*) AS n FROM ruling_notes").get()).toEqual({ n: 3 });
@@ -186,12 +324,20 @@ describe("opening the database", () => {
 			const path = `${d}/v${version}r.db`;
 			const db = raw(path);
 			db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-			for (const m of MIGRATIONS.filter((x) => x.version <= version)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
-			db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, retired_at, retired_how, history) VALUES ('R1', 1, 'd', 'w1', 'd1', 'chat', 'in-force', 1, NULL, NULL, '[]'), ('R2', 2, 'd', 'w2', 'd2', 'card', 'retired', 1, 't', 'only this once', '[]')");
+			for (const m of MIGRATIONS.filter((x) => x.version <= version)) {
+				db.exec(m.sql);
+				db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+			}
+			db.exec(
+				"INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, retired_at, retired_how, history) VALUES ('R1', 1, 'd', 'w1', 'd1', 'chat', 'in-force', 1, NULL, NULL, '[]'), ('R2', 2, 'd', 'w2', 'd2', 'card', 'retired', 1, 't', 'only this once', '[]')",
+			);
 			db.close();
 			const s = openStore(path);
 			open.push(s);
-			expect(s.rulings.list().map((r) => [r.id, r.status, r.retiredHow])).toEqual([["R1", "in-force", undefined], ["R2", "retired", "only this once"]]);
+			expect(s.rulings.list().map((r) => [r.id, r.status, r.retiredHow])).toEqual([
+				["R1", "in-force", undefined],
+				["R2", "retired", "only this once"],
+			]);
 			const base = s.rulings.list()[0]!;
 			for (const how of ["retired", "only this once", "superseded", "duplicate", "expired", "repeat"] as const) {
 				s.rulings.save({ ...base, status: "retired", retiredHow: how, retiredWhy: "why" });
@@ -203,14 +349,36 @@ describe("opening the database", () => {
 
 	test("the database itself holds retired_reason to its four values, and only on a row retired_how 'retired'", () => {
 		const { s, path } = file();
-		s.rulings.save({ id: "R1", date: "d", words: "w", decides: "d", source: "chat", status: "in-force", confirmed: true, history: [] });
+		s.rulings.save({
+			id: "R1",
+			date: "d",
+			words: "w",
+			decides: "d",
+			source: "chat",
+			status: "in-force",
+			confirmed: true,
+			history: [],
+		});
 		s.close();
 		const db = raw(path);
-		expect(() => db.exec("UPDATE rulings SET retired_how = 'retired', retired_reason = 'bogus' WHERE id = 'R1'")).toThrow(/retired_reason/);
-		expect(() => db.exec("UPDATE rulings SET retired_how = 'only this once', retired_reason = 'duplicate' WHERE id = 'R1'")).toThrow(/retired_reason/);
-		expect(() => db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, retired_how, retired_reason) VALUES ('R2', 2, 'd', 'w', 'd', 'chat', 'retired', 1, NULL, 'expired')")).toThrow(/retired_reason/);
-		db.exec("UPDATE rulings SET status = 'retired', retired_how = 'retired', retired_reason = 'repeat' WHERE id = 'R1'");
-		expect(db.query("SELECT retired_how, retired_reason FROM rulings").get()).toEqual({ retired_how: "retired", retired_reason: "repeat" });
+		expect(() =>
+			db.exec("UPDATE rulings SET retired_how = 'retired', retired_reason = 'bogus' WHERE id = 'R1'"),
+		).toThrow(/retired_reason/);
+		expect(() =>
+			db.exec("UPDATE rulings SET retired_how = 'only this once', retired_reason = 'duplicate' WHERE id = 'R1'"),
+		).toThrow(/retired_reason/);
+		expect(() =>
+			db.exec(
+				"INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, retired_how, retired_reason) VALUES ('R2', 2, 'd', 'w', 'd', 'chat', 'retired', 1, NULL, 'expired')",
+			),
+		).toThrow(/retired_reason/);
+		db.exec(
+			"UPDATE rulings SET status = 'retired', retired_how = 'retired', retired_reason = 'repeat' WHERE id = 'R1'",
+		);
+		expect(db.query("SELECT retired_how, retired_reason FROM rulings").get()).toEqual({
+			retired_how: "retired",
+			retired_reason: "repeat",
+		});
 		db.close();
 	});
 
@@ -220,8 +388,13 @@ describe("opening the database", () => {
 		const path = `${d}/v10b.db`;
 		const db = raw(path);
 		db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) { db.exec(m.sql); db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name); }
-		db.exec("INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w', 'd', 'chat', 'in-force', 1, '[]')");
+		for (const m of MIGRATIONS.filter((x) => x.version <= 10)) {
+			db.exec(m.sql);
+			db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+		}
+		db.exec(
+			"INSERT INTO rulings (id, seq, date, words, decides, source, status, confirmed, history) VALUES ('R1', 1, 'd', 'w', 'd', 'chat', 'in-force', 1, '[]')",
+		);
 		// A leftover trigger of the same name makes the migration fail part-way, after its columns are added.
 		db.exec("CREATE TRIGGER rulings_retired_reason_update AFTER UPDATE ON rulings BEGIN SELECT 1; END");
 		db.close();
@@ -237,10 +410,14 @@ describe("opening the database", () => {
 		const { s, path } = file();
 		s.close();
 		const db = raw(path);
-		db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, 'from the future', 'now')").run(LATEST_MIGRATION + 1);
+		db.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, 'from the future', 'now')").run(
+			LATEST_MIGRATION + 1,
+		);
 		db.close();
 		expect(() => openStore(path)).toThrow(DatabaseTooNewError);
-		expect(() => openStore(path)).toThrow(new RegExp(`migration ${LATEST_MIGRATION + 1}.*understands up to ${LATEST_MIGRATION}.*newer Chamberlain`));
+		expect(() => openStore(path)).toThrow(
+			new RegExp(`migration ${LATEST_MIGRATION + 1}.*understands up to ${LATEST_MIGRATION}.*newer Chamberlain`),
+		);
 	});
 
 	test("foreign keys are enforced: a row cannot point at an item that does not exist", () => {
@@ -256,11 +433,21 @@ describe("opening the database", () => {
 describe("transactions", () => {
 	test("a throw rolls back everything the function did, and nested ones roll back alone", () => {
 		const s = mem();
-		expect(() => s.tx(() => { s.state.set("a", 1); throw Error("boom"); })).toThrow("boom");
+		expect(() =>
+			s.tx(() => {
+				s.state.set("a", 1);
+				throw Error("boom");
+			}),
+		).toThrow("boom");
 		expect(s.state.get("a")).toBeUndefined();
 		s.tx(() => {
 			s.state.set("outer", 1);
-			expect(() => s.tx(() => { s.state.set("inner", 1); throw Error("no"); })).toThrow("no");
+			expect(() =>
+				s.tx(() => {
+					s.state.set("inner", 1);
+					throw Error("no");
+				}),
+			).toThrow("no");
 			s.state.set("after", 1);
 		});
 		expect([s.state.get("outer"), s.state.get("inner"), s.state.get("after")]).toEqual([1, undefined, 1]);
@@ -274,13 +461,23 @@ describe("transactions", () => {
 });
 
 describe("items: observe, the repeat policy and the lifecycle", () => {
-	const obs = (s: Store, o: Partial<Parameters<Store["items"]["observe"]>[0]> = {}) => s.items.observe({ source: "sweep:disk", kind: "finding", dedupKey: "disk-low", ...o });
+	const obs = (s: Store, o: Partial<Parameters<Store["items"]["observe"]>[0]> = {}) =>
+		s.items.observe({ source: "sweep:disk", kind: "finding", dedupKey: "disk-low", ...o });
 
 	test("a new item is triggered, notifies once under the default policy, and a second sighting does not notify again", () => {
 		const s = mem();
 		const a = obs(s, { now: 100, subject: { kind: "pr", id: "42" }, payload: { text: "disk" } });
 		expect(a).toMatchObject({ created: true, notify: true, wouldNotify: false });
-		expect(a.item).toMatchObject({ status: "triggered", mode: "live", firstSeen: 100, lastSeen: 100, notificationCount: 1, nextNotificationAt: null, subject: { kind: "pr", id: "42" }, payload: { text: "disk" } });
+		expect(a.item).toMatchObject({
+			status: "triggered",
+			mode: "live",
+			firstSeen: 100,
+			lastSeen: 100,
+			notificationCount: 1,
+			nextNotificationAt: null,
+			subject: { kind: "pr", id: "42" },
+			payload: { text: "disk" },
+		});
 		const b = obs(s, { now: 200 });
 		expect(b).toMatchObject({ created: false, notify: false });
 		expect(b.item).toMatchObject({ firstSeen: 100, lastSeen: 200, notificationCount: 1, payload: { text: "disk" } });
@@ -332,7 +529,12 @@ describe("items: observe, the repeat policy and the lifecycle", () => {
 		expect(obs(s, { mode: "shadow", repeat: policy, now: 0 })).toMatchObject({ notify: false, wouldNotify: true });
 		expect(obs(s, { mode: "shadow", repeat: policy, now: 1000 })).toMatchObject({ notify: false, wouldNotify: true });
 		const logged = s.items.get("sweep:disk", "disk-low")!;
-		expect(logged).toMatchObject({ status: "triggered", notificationCount: 0, nextNotificationAt: null, shadowNotificationCount: 2 });
+		expect(logged).toMatchObject({
+			status: "triggered",
+			notificationCount: 0,
+			nextNotificationAt: null,
+			shadowNotificationCount: 2,
+		});
 		// Going live: the first real notification is count 1 now, not a continuation of two would-be ones.
 		const live = obs(s, { mode: "live", repeat: policy, now: 1100 });
 		expect(live).toMatchObject({ notify: true, wouldNotify: false });
@@ -341,7 +543,11 @@ describe("items: observe, the repeat policy and the lifecycle", () => {
 
 	test("mode silenced tracks the item and never notifies or would-notify", () => {
 		const s = mem();
-		expect(obs(s, { mode: "silenced", now: 1 })).toMatchObject({ notify: false, wouldNotify: false, item: { notificationCount: 0, shadowNotificationCount: 0 } });
+		expect(obs(s, { mode: "silenced", now: 1 })).toMatchObject({
+			notify: false,
+			wouldNotify: false,
+			item: { notificationCount: 0, shadowNotificationCount: 0 },
+		});
 		expect(obs(s, { mode: "silenced", now: 2 }).item.lastSeen).toBe(2);
 	});
 
@@ -352,14 +558,22 @@ describe("items: observe, the repeat policy and the lifecycle", () => {
 		expect(obs(s, { repeat: repeatEvery(10), now: 50 }).notify).toBe(false);
 		expect(s.items.patch("sweep:disk", "disk-low", { b: 2 })?.payload).toEqual({ a: 1, note: "seen", b: 2 });
 		const done = s.items.resolve("sweep:disk", "disk-low", 60, { how: "fixed" })!;
-		expect(done).toMatchObject({ status: "resolved", resolvedAt: 60, notificationCount: 1, payload: { a: 1, note: "seen", b: 2, how: "fixed" } });
+		expect(done).toMatchObject({
+			status: "resolved",
+			resolvedAt: 60,
+			notificationCount: 1,
+			payload: { a: 1, note: "seen", b: 2, how: "fixed" },
+		});
 		expect(s.items.resolve("sweep:disk", "disk-low", 99)?.resolvedAt).toBe(60);
 		expect(s.items.resolve("sweep:disk", "nope")).toBeUndefined();
 	});
 
 	test("prune deletes old resolved items, but not the queue's", () => {
 		const s = mem();
-		for (const source of ["sweep:x", "queue"]) { s.items.observe({ source, kind: "k", dedupKey: "a", now: 1 }); s.items.resolve(source, "a", 2); }
+		for (const source of ["sweep:x", "queue"]) {
+			s.items.observe({ source, kind: "k", dedupKey: "a", now: 1 });
+			s.items.resolve(source, "a", 2);
+		}
 		s.items.observe({ source: "sweep:x", kind: "k", dedupKey: "live", now: 1 });
 		expect(s.items.prune(1000)).toBe(1);
 		expect(s.items.list().map((i) => `${i.source}/${i.dedupKey}`)).toEqual(["queue/a", "sweep:x/live"]);
@@ -379,7 +593,15 @@ describe("items: observe, the repeat policy and the lifecycle", () => {
 });
 
 describe("claims: the one-wake ledger", () => {
-	const claim = (o: Partial<Parameters<Store["claims"]["claim"]>[1]> = {}) => ({ owner: "page", item: "Q-aaaa1", deliveryId: "answer:item:Q-aaaa1", message: "the wake", t: "2026-11-12T10:00:00.000Z", answer: { choice: 0 }, ...o });
+	const claim = (o: Partial<Parameters<Store["claims"]["claim"]>[1]> = {}) => ({
+		owner: "page",
+		item: "Q-aaaa1",
+		deliveryId: "answer:item:Q-aaaa1",
+		message: "the wake",
+		t: "2026-11-12T10:00:00.000Z",
+		answer: { choice: 0 },
+		...o,
+	});
 
 	test("the first claim wins and the item itself is untouched; every later claimant gets the winner's back", () => {
 		const s = mem();
@@ -387,7 +609,10 @@ describe("claims: the one-wake ledger", () => {
 		const first = s.claims.claim("queue", claim());
 		const second = s.claims.claim("queue", claim({ owner: "daemon", deliveryId: "other", message: "another" }));
 		expect(first.won).toBe(true);
-		expect(second).toMatchObject({ won: false, claim: { owner: "page", deliveryId: "answer:item:Q-aaaa1", message: "the wake", answer: { choice: 0 } } });
+		expect(second).toMatchObject({
+			won: false,
+			claim: { owner: "page", deliveryId: "answer:item:Q-aaaa1", message: "the wake", answer: { choice: 0 } },
+		});
 		expect(s.items.get("queue", "Q-aaaa1")?.status).toBe("triggered");
 		expect(s.claims.get("queue", "Q-aaaa1")?.message).toBe("the wake");
 		expect(s.claims.list("queue")).toHaveLength(1);
@@ -395,7 +620,8 @@ describe("claims: the one-wake ledger", () => {
 
 	test("a delivery id taken by another item is an error, never a quietly lost claim", () => {
 		const s = mem();
-		for (const k of ["Q-aaaa1", "Q-bbbb2"]) s.items.observe({ source: "queue", kind: "question", dedupKey: k, mode: "silenced" });
+		for (const k of ["Q-aaaa1", "Q-bbbb2"])
+			s.items.observe({ source: "queue", kind: "question", dedupKey: k, mode: "silenced" });
 		s.claims.claim("queue", claim());
 		expect(() => s.claims.claim("queue", claim({ item: "Q-bbbb2" }))).toThrow(/UNIQUE/);
 		expect(s.claims.get("queue", "Q-bbbb2")).toBeUndefined();
@@ -405,7 +631,12 @@ describe("claims: the one-wake ledger", () => {
 	test("a claim made inside a transaction that rolls back leaves no claim", () => {
 		const s = mem();
 		s.items.observe({ source: "queue", kind: "question", dedupKey: "Q-aaaa1", mode: "silenced" });
-		expect(() => s.tx(() => { s.claims.claim("queue", claim()); throw Error("crash before commit"); })).toThrow();
+		expect(() =>
+			s.tx(() => {
+				s.claims.claim("queue", claim());
+				throw Error("crash before commit");
+			}),
+		).toThrow();
 		expect(s.claims.get("queue", "Q-aaaa1")).toBeUndefined();
 		expect(s.items.get("queue", "Q-aaaa1")?.status).toBe("triggered");
 	});
@@ -425,8 +656,14 @@ describe("claims: the one-wake ledger", () => {
 	test("evidence rows point at files and come back in order", () => {
 		const s = mem();
 		s.items.observe({ source: "queue", kind: "question", dedupKey: "Q-aaaa1" });
-		s.evidence.put("queue", "Q-aaaa1", [{ type: "image", name: "a.png", caption: "before" }, { type: "link", url: "https://example.com/x" }]);
-		expect(s.evidence.list("queue", "Q-aaaa1")).toEqual([{ type: "image", name: "a.png", caption: "before" }, { type: "link", url: "https://example.com/x" }]);
+		s.evidence.put("queue", "Q-aaaa1", [
+			{ type: "image", name: "a.png", caption: "before" },
+			{ type: "link", url: "https://example.com/x" },
+		]);
+		expect(s.evidence.list("queue", "Q-aaaa1")).toEqual([
+			{ type: "image", name: "a.png", caption: "before" },
+			{ type: "link", url: "https://example.com/x" },
+		]);
 		s.evidence.put("queue", "Q-aaaa1", []);
 		expect(s.evidence.list("queue", "Q-aaaa1")).toEqual([]);
 	});
@@ -440,7 +677,17 @@ describe("wakes: the outbox and the held store", () => {
 		expect(s.wakes.hold({ deliveryId: "a", message: "m", queuedAt: 2 })).toBe(false);
 		expect(s.wakes.hold({ deliveryId: "h1", message: "m", queuedAt: 3, kind: "sweep" })).toBe(true);
 		expect(s.wakes.enqueue({ deliveryId: "h1", message: "m", queuedAt: 3 })).toBe(false);
-		expect(s.wakes.rows()).toMatchObject([{ deliveryId: "a", message: "m", kind: "turn_ended", thread: "t", status: "pending", attempts: 0, members: [{ deliveryId: "a", queuedAt: 1, kind: "turn_ended", thread: "t" }] }]);
+		expect(s.wakes.rows()).toMatchObject([
+			{
+				deliveryId: "a",
+				message: "m",
+				kind: "turn_ended",
+				thread: "t",
+				status: "pending",
+				attempts: 0,
+				members: [{ deliveryId: "a", queuedAt: 1, kind: "turn_ended", thread: "t" }],
+			},
+		]);
 		expect(s.wakes.held()).toEqual([{ deliveryId: "h1", message: "m", queuedAt: 3, kind: "sweep" }]);
 		expect([s.wakes.known("a"), s.wakes.known("h1"), s.wakes.known("nope")]).toEqual([true, true, false]);
 	});
@@ -449,14 +696,28 @@ describe("wakes: the outbox and the held store", () => {
 		const s = mem();
 		s.wakes.hold({ deliveryId: "h1", message: "a", queuedAt: 1 });
 		s.wakes.hold({ deliveryId: "h2", message: "b", queuedAt: 2 });
-		expect(() => s.wakes.compose(5, () => { throw Error("crash"); })).toThrow();
+		expect(() =>
+			s.wakes.compose(5, () => {
+				throw Error("crash");
+			}),
+		).toThrow();
 		expect(s.wakes.held().map((h) => h.deliveryId)).toEqual(["h1", "h2"]);
-		const row = s.wakes.compose(5, (held) => ({ deliveryId: "digest:x", message: held.map((h) => h.message).join("+"), folded: 0, members: held.map((h) => h.deliveryId), kind: "digest" }))!;
+		const row = s.wakes.compose(5, (held) => ({
+			deliveryId: "digest:x",
+			message: held.map((h) => h.message).join("+"),
+			folded: 0,
+			members: held.map((h) => h.deliveryId),
+			kind: "digest",
+		}))!;
 		expect(row).toMatchObject({ deliveryId: "digest:x", message: "a+b", createdAt: 5, status: "pending" });
 		expect(row.members.map((m) => m.deliveryId)).toEqual(["h1", "h2"]);
 		expect(s.wakes.held()).toEqual([]);
 		expect(s.wakes.find("h2")!.id).toBe(row.id);
-		expect(s.wakes.compose(6, () => { throw Error("never called"); })).toBeUndefined();
+		expect(
+			s.wakes.compose(6, () => {
+				throw Error("never called");
+			}),
+		).toBeUndefined();
 	});
 
 	test("attempts count only on a pending row; finish, retry and cancel move only the states they name", () => {
@@ -480,7 +741,8 @@ describe("wakes: the outbox and the held store", () => {
 
 	test("prune deletes delivered and cancelled rows finished before the cut, and no other", () => {
 		const s = mem();
-		for (const id of ["old", "new", "dead", "pending", "gone"]) s.wakes.enqueue({ deliveryId: id, message: "m", queuedAt: 1 });
+		for (const id of ["old", "new", "dead", "pending", "gone"])
+			s.wakes.enqueue({ deliveryId: id, message: "m", queuedAt: 1 });
 		const row = (id: string) => s.wakes.find(id)!.id;
 		s.wakes.finish(row("old"), "delivered", 1);
 		s.wakes.finish(row("new"), "delivered", 100);
@@ -501,7 +763,9 @@ describe("events, state, rulings, butlers, away, decisions", () => {
 		s.events.append({ t: "2026-11-12T10:00:00.000Z", event: "fire", src: "queue-web", thread: "t1" });
 		s.events.append({ t: "2026-11-12T11:00:00.000Z", event: "delivered", deliveryId: "d", queuedAt: 5 });
 		s.events.append({ t: "2026-11-12T12:00:00.000Z", event: "alarm", dedupKey: "k" });
-		expect(s.events.query({ events: ["delivered"] })).toEqual([{ t: "2026-11-12T11:00:00.000Z", event: "delivered", deliveryId: "d", queuedAt: 5 }]);
+		expect(s.events.query({ events: ["delivered"] })).toEqual([
+			{ t: "2026-11-12T11:00:00.000Z", event: "delivered", deliveryId: "d", queuedAt: 5 },
+		]);
 		expect(s.events.query({ since: "2026-11-12T10:30:00.000Z" }).map((e) => e.event)).toEqual(["delivered", "alarm"]);
 		expect(s.events.query({ src: "queue-web" })[0]).toMatchObject({ event: "fire", thread: "t1" });
 		expect(s.events.count({ events: ["fire", "alarm"] })).toBe(2);
@@ -526,11 +790,24 @@ describe("events, state, rulings, butlers, away, decisions", () => {
 
 	test("rulings round trip with their history, and an id is unique", () => {
 		const s = mem();
-		const r = { id: "R3", date: "2026-11-12", words: "w", decides: "d", source: "chat" as const, status: "in-force" as const, confirmed: true, confirmedAt: "t", history: [{ t: "t", what: "x" }] };
+		const r = {
+			id: "R3",
+			date: "2026-11-12",
+			words: "w",
+			decides: "d",
+			source: "chat" as const,
+			status: "in-force" as const,
+			confirmed: true,
+			confirmedAt: "t",
+			history: [{ t: "t", what: "x" }],
+		};
 		s.rulings.save(r);
 		s.rulings.save({ ...r, id: "R10", decides: "later" });
 		s.rulings.save({ ...r, decides: "edited" });
-		expect(s.rulings.list().map((x) => [x.id, x.decides])).toEqual([["R3", "edited"], ["R10", "later"]]);
+		expect(s.rulings.list().map((x) => [x.id, x.decides])).toEqual([
+			["R3", "edited"],
+			["R10", "later"],
+		]);
 		expect(s.rulings.list()[0]).toEqual({ ...r, decides: "edited" });
 	});
 
@@ -548,8 +825,18 @@ describe("events, state, rulings, butlers, away, decisions", () => {
 		const s = mem();
 		expect(s.away.current()).toBeUndefined();
 		s.away.enter({ enteredAt: "2026-11-12T10:00:00.000Z", words: "back at five" });
-		s.away.enter({ enteredAt: "2026-11-12T11:00:00.000Z", words: "later", expectedReturn: "tomorrow", spendNote: "none" });
-		expect(s.away.current()).toEqual({ enteredAt: "2026-11-12T11:00:00.000Z", words: "later", expectedReturn: "tomorrow", spendNote: "none" });
+		s.away.enter({
+			enteredAt: "2026-11-12T11:00:00.000Z",
+			words: "later",
+			expectedReturn: "tomorrow",
+			spendNote: "none",
+		});
+		expect(s.away.current()).toEqual({
+			enteredAt: "2026-11-12T11:00:00.000Z",
+			words: "later",
+			expectedReturn: "tomorrow",
+			spendNote: "none",
+		});
 		expect(s.away.exit("x")?.words).toBe("later");
 		expect(s.away.current()).toBeUndefined();
 		expect(s.away.exit("y")).toBeUndefined();
@@ -559,18 +846,31 @@ describe("events, state, rulings, butlers, away, decisions", () => {
 		const s = mem();
 		s.decisions.append({ t: "1", thread: "a", decision: "d", ruling: "R1: why", rulingIds: ["R1"], ref: null });
 		s.decisions.append({ t: "2", thread: "b", decision: "e", ruling: "free text", ref: "x" });
-		expect(s.decisions.list()).toEqual([{ t: "1", thread: "a", decision: "d", ruling: "R1: why", rulingIds: ["R1"], ref: null }, { t: "2", thread: "b", decision: "e", ruling: "free text", ref: "x" }]);
+		expect(s.decisions.list()).toEqual([
+			{ t: "1", thread: "a", decision: "d", ruling: "R1: why", rulingIds: ["R1"], ref: null },
+			{ t: "2", thread: "b", decision: "e", ruling: "free text", ref: "x" },
+		]);
 	});
 });
 
 describe("confirmation challenges", () => {
-	const c = (over: Partial<Challenge> = {}): Challenge => ({ tokenHash: "h1", cardId: "C-1", sig: "s", choice: 0, sessionHash: "sess", issuedAt: 100, expiresAt: 160, ...over });
+	const c = (over: Partial<Challenge> = {}): Challenge => ({
+		tokenHash: "h1",
+		cardId: "C-1",
+		sig: "s",
+		choice: 0,
+		sessionHash: "sess",
+		issuedAt: 100,
+		expiresAt: 160,
+		...over,
+	});
 	const want = { cardId: "C-1", sig: "s", choice: 0, sessionHash: "sess" };
 	test("consumed once, and only for exactly what it was issued for; a refusal changes nothing", () => {
 		const s = openStore(":memory:");
 		s.challenges.issue(c());
 		expect(s.challenges.consume("nope", want, 120)).toBe("unknown");
-		for (const bad of [{ cardId: "C-2" }, { sig: "t" }, { choice: 1 }, { sessionHash: "other" }]) expect(s.challenges.consume("h1", { ...want, ...bad }, 120)).toBe("mismatch");
+		for (const bad of [{ cardId: "C-2" }, { sig: "t" }, { choice: 1 }, { sessionHash: "other" }])
+			expect(s.challenges.consume("h1", { ...want, ...bad }, 120)).toBe("mismatch");
 		expect(s.challenges.consume("h1", want, 160)).toBe("expired");
 		expect(s.challenges.consume("h1", want, 159)).toBe("ok");
 		expect(s.challenges.consume("h1", want, 159)).toBe("used");
@@ -619,7 +919,12 @@ describe("the sequence (migration 12): durable and monotonic, never the clock", 
 	test("a value taken inside a transaction that rolls back is not kept: the next one is not lower than any committed value", () => {
 		const s = openStore(":memory:");
 		s.sequence.next();
-		expect(() => s.tx(() => { s.sequence.next(); throw Error("abort"); })).toThrow("abort");
+		expect(() =>
+			s.tx(() => {
+				s.sequence.next();
+				throw Error("abort");
+			}),
+		).toThrow("abort");
 		expect(s.sequence.next()).toBe(2);
 		s.close();
 	});

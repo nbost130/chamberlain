@@ -13,16 +13,16 @@ const ENDED = new Set(["completed", "idle", "interrupted"]);
  * and a key of thread and previous status alone swallowed the second one (2026-11-13). A backend that names no run keeps the
  * old key, which is the best it can do.
  */
-export const failureKey = (next: ThreadState, prev: ThreadState): string => (next.latestRunId ? `${next.id}:failed:${next.latestRunId}:${prev.status}` : `${next.id}:failed:${prev.status}`);
+export const failureKey = (next: ThreadState, prev: ThreadState): string =>
+	next.latestRunId ? `${next.id}:failed:${next.latestRunId}:${prev.status}` : `${next.id}:failed:${prev.status}`;
 
 /** Transitions worth a wake. `prev` undefined means first sighting: nothing fires. */
-export function decide(
-	prev: ThreadState | undefined,
-	next: ThreadState,
-	exclude: ReadonlySet<string>,
-): Candidate[] {
+export function decide(prev: ThreadState | undefined, next: ThreadState, exclude: ReadonlySet<string>): Candidate[] {
 	if (exclude.has(next.id) || next.archived || next.settled || next.snoozed) return [];
-	if (!prev) return next.pendingRequestId ? [{ kind: "needs_input", thread: next, key: `${next.id}:input:${next.pendingRequestId}` }] : [];
+	if (!prev)
+		return next.pendingRequestId
+			? [{ kind: "needs_input", thread: next, key: `${next.id}:input:${next.pendingRequestId}` }]
+			: [];
 	const out: Candidate[] = [];
 	const topLevel = next.parentThreadId === null;
 	if (next.pendingRequestId && next.pendingRequestId !== prev.pendingRequestId)
@@ -45,7 +45,11 @@ export const OPERATOR_ONLY_KINDS = new Set(["approval_request", "secret_request"
  * hold: while away, every waiting item is one only the human can clear, so the daemon records it
  * for the return brief instead of waking anyone.
  */
-export function routeNeedsInput(items: WaitItem[], hasPendingRequest: boolean, away: boolean): "wake" | "hold" | "skip-empty" {
+export function routeNeedsInput(
+	items: WaitItem[],
+	hasPendingRequest: boolean,
+	away: boolean,
+): "wake" | "hold" | "skip-empty" {
 	if (!items.length) return hasPendingRequest ? "wake" : "skip-empty";
 	if (away && items.every((i) => OPERATOR_ONLY_KINDS.has(i.type))) return "hold";
 	return "wake";
@@ -60,9 +64,14 @@ export function looksLikeStall(text: string): boolean {
 		.join("\n")
 		.trim();
 	if (!body) return false;
-	const wait = /\b(when|once|after)\b[^.\n]{0,80}\b(finish(es)?|pass(es|ed)?|complete[sd]?|done|ready)\b[^.\n]{0,40}\b(i'?ll|i will|we'?ll)\b|\b(stays?|keeps?|remains?) (working|running|parked) until\b/i.test(body.slice(-900));
+	const wait =
+		/\b(when|once|after)\b[^.\n]{0,80}\b(finish(es)?|pass(es|ed)?|complete[sd]?|done|ready)\b[^.\n]{0,40}\b(i'?ll|i will|we'?ll)\b|\b(stays?|keeps?|remains?) (working|running|parked) until\b/i.test(
+			body.slice(-900),
+		);
 	if (wait) return true;
-	return /\b(starts? next|next up|(i'?ll|i will|we'?ll) (now |next )?(start|begin|proceed|build|move on)|will (now )?(start|begin) (next|now)|now (starting|building|moving on))\b/i.test(body.slice(-900));
+	return /\b(starts? next|next up|(i'?ll|i will|we'?ll) (now |next )?(start|begin|proceed|build|move on)|will (now )?(start|begin) (next|now)|now (starting|building|moving on))\b/i.test(
+		body.slice(-900),
+	);
 }
 
 /**
@@ -86,13 +95,32 @@ export function looksLikeAsk(text: string): boolean {
 	if (!body) return false;
 	if (/❓\s*OPEN/i.test(body)) return true;
 	const tail = body.slice(-500);
-	if (/\b(tell me when|let me know|say if|say the word|want me to|shall i|should i|your call|do you want|awaiting your|waiting (?:on|for) your|until you (?:decide|answer|confirm|say))\b/i.test(tail)) return true;
+	if (
+		/\b(tell me when|let me know|say if|say the word|want me to|shall i|should i|your call|do you want|awaiting your|waiting (?:on|for) your|until you (?:decide|answer|confirm|say))\b/i.test(
+			tail,
+		)
+	)
+		return true;
 	// A /goal proposal waits for an answer ("Submit the /goal block as-is, edit it, or say 'no goal'") but ends on no question mark.
 	if (/\bsubmit the \/goal\b|\bsay ['"‘’“”]?no goal\b/i.test(tail)) return true;
-	return /\?\s*$/m.test(tail.split("\n").filter((l) => l.trim()).slice(-2).join("\n"));
+	return /\?\s*$/m.test(
+		tail
+			.split("\n")
+			.filter((l) => l.trim())
+			.slice(-2)
+			.join("\n"),
+	);
 }
 
-export type TurnItem = { type?: string; id?: string; runId?: string; text?: string; createdBy?: string; creationSource?: string; updatedAt?: string };
+export type TurnItem = {
+	type?: string;
+	id?: string;
+	runId?: string;
+	text?: string;
+	createdBy?: string;
+	creationSource?: string;
+	updatedAt?: string;
+};
 /**
  * The id of the Steward's message when that is the thread's latest instruction. Machine deliveries (a PR
  * update, a card answer, a delegate's result) arrive with source "server" and instruct nobody, so they are
@@ -103,7 +131,9 @@ export type TurnItem = { type?: string; id?: string; runId?: string; text?: stri
 export function stewardInstruction(items: TurnItem[]): string | undefined {
 	for (const i of [...items].reverse()) {
 		if (i.type !== "user_message" || i.creationSource === "server") continue;
-		return i.createdBy === "agent" && i.creationSource === "mcp" && /^Steward\b/.test((i.text ?? "").trimStart()) ? i.id : undefined;
+		return i.createdBy === "agent" && i.creationSource === "mcp" && /^Steward\b/.test((i.text ?? "").trimStart())
+			? i.id
+			: undefined;
 	}
 	return undefined;
 }
@@ -127,7 +157,8 @@ export function reportStillDue(after: ThreadState, oldCards: ReadonlySet<string>
 }
 
 /** Machine deliveries instruct nobody, so they are never the latest instruction. */
-export const lastInstruction = (items: TurnItem[]) => [...items].reverse().find((i) => i.type === "user_message" && i.creationSource !== "server");
+export const lastInstruction = (items: TurnItem[]) =>
+	[...items].reverse().find((i) => i.type === "user_message" && i.creationSource !== "server");
 /** Pure: the thread's latest instruction is the principal's own, from within this window. They are driving it, so its turns are not a runaway. */
 export function principalWroteWithin(items: TurnItem[], now: number, windowMs: number): boolean {
 	const last = lastInstruction(items);
@@ -139,7 +170,11 @@ export const REPORT_WAKES_MAX = 3;
  * Pure: the report wake these items may use, when their latest instruction came from the Steward. A machine's turn
  * spends none of the three, but it can carry the real final report, so it gets one wake of its own per instruction.
  */
-export function reportKey(items: TurnItem[], byMachine: boolean, notified: { has(key: string): boolean }): string | undefined {
+export function reportKey(
+	items: TurnItem[],
+	byMachine: boolean,
+	notified: { has(key: string): boolean },
+): string | undefined {
 	const id = stewardInstruction(items);
 	if (!id) return undefined;
 	if (byMachine) return notified.has(`report:${id}:machine`) ? undefined : `report:${id}:machine`;
@@ -161,7 +196,9 @@ export function idleKey(items: TurnItem[], now: number): string | undefined {
 
 /** Pure: how the wake names the open work. */
 export const idleWorkLine = (openPrs: number[], commits: number) =>
-	openPrs.length ? `open PR ${openPrs.map((n) => `#${n}`).join(", ")}` : `${commits} unmerged commit${commits === 1 ? "" : "s"} on its branch and no open PR`;
+	openPrs.length
+		? `open PR ${openPrs.map((n) => `#${n}`).join(", ")}`
+		: `${commits} unmerged commit${commits === 1 ? "" : "s"} on its branch and no open PR`;
 
 /** True when the Steward's context has passed the limit and no compaction was sent in the cooldown. */
 export function needsCompact(usedTokens: number | undefined, limit: number, coolingDown: boolean): boolean {
@@ -173,10 +210,19 @@ export function needsCompact(usedTokens: number | undefined, limit: number, cool
  * What the Steward was last delivered of its rights (the durable `rights-sent` record): the hash, its context size then (raised every minute),
  * when the full text went out, and the Steward thread and session it went to (absent in a record written before they were kept).
  */
-export type RightsSent = { hash: string; used?: number; at?: string; steward?: string; session?: string; /** The rights epoch it was written under (rights-sent.ts, `rightsEpoch`); absent is 0. */ epoch?: number };
+export type RightsSent = {
+	hash: string;
+	used?: number;
+	at?: string;
+	steward?: string;
+	session?: string /** The rights epoch it was written under (rights-sent.ts, `rightsEpoch`); absent is 0. */;
+	epoch?: number;
+};
 /** The one line a wake carries when the rights and rulings have not changed since the full text went out at `at`. The hand-off holds them. */
-export const rightsUnchanged = (at?: string) => `Decision rights and rulings unchanged since ${at ?? "your last wake"} and still in force; your hand-off (steward-brief.md) has them.`;
-export const rightsUnreadable = () => `Decision rights: the daemon could not read them on this wake. Take no action on anything on the ASK list: put it on ${principalPoss()} queue with ask, and hold it only with --item.`;
+export const rightsUnchanged = (at?: string) =>
+	`Decision rights and rulings unchanged since ${at ?? "your last wake"} and still in force; your hand-off (steward-brief.md) has them.`;
+export const rightsUnreadable = () =>
+	`Decision rights: the daemon could not read them on this wake. Take no action on anything on the ASK list: put it on ${principalPoss()} queue with ask, and hold it only with --item.`;
 /** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
 /**
@@ -192,7 +238,12 @@ export function rightsInFull(sent: RightsSent | undefined, hash: string, used: n
 /** The waiting questions and their options as plain text, clipped to what a wake should carry. */
 export function questionText(questions: import("./adapter.ts").WaitQuestion[], max = 1200): string {
 	const text = questions
-		.map((q) => [q.question ?? "", ...(q.options ?? []).map((o) => `- ${o.label ?? ""}${o.description ? `: ${o.description.slice(0, 120)}` : ""}`)].join("\n"))
+		.map((q) =>
+			[
+				q.question ?? "",
+				...(q.options ?? []).map((o) => `- ${o.label ?? ""}${o.description ? `: ${o.description.slice(0, 120)}` : ""}`),
+			].join("\n"),
+		)
 		.join("\n\n");
 	return text.length > max ? `${text.slice(0, max)}…` : text;
 }

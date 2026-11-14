@@ -11,8 +11,15 @@ export const SCHEMA_VERSION = 2;
  */
 
 export class SchemaTooNewError extends Error {
-	constructor(readonly what: string, readonly found: number, readonly supported: number = SCHEMA_VERSION, unit = "schemaVersion") {
-		super(`${what} has ${unit} ${found}, but this Chamberlain understands up to ${supported}. It was written by a newer Chamberlain: upgrade this install (or restore the file from a backup). Refusing to read or write it.`);
+	constructor(
+		readonly what: string,
+		readonly found: number,
+		readonly supported: number = SCHEMA_VERSION,
+		unit = "schemaVersion",
+	) {
+		super(
+			`${what} has ${unit} ${found}, but this Chamberlain understands up to ${supported}. It was written by a newer Chamberlain: upgrade this install (or restore the file from a backup). Refusing to read or write it.`,
+		);
 		this.name = "SchemaTooNewError";
 	}
 }
@@ -20,7 +27,8 @@ export class SchemaTooNewError extends Error {
 /** The version a parsed record claims: a missing field is 0 (unversioned). Throws for a newer, negative or non-integer one. */
 export function versionOf(what: string, found: unknown): number {
 	if (found === undefined) return 0;
-	if (typeof found !== "number" || !Number.isInteger(found) || found < 0) throw Error(`${what}: schemaVersion must be a non-negative integer, got ${JSON.stringify(found)}`);
+	if (typeof found !== "number" || !Number.isInteger(found) || found < 0)
+		throw Error(`${what}: schemaVersion must be a non-negative integer, got ${JSON.stringify(found)}`);
 	return found;
 }
 
@@ -32,4 +40,7 @@ export function checkVersion(what: string, found: unknown): number {
 }
 
 /** A record with the current version written first. */
-export const stamp = <T extends object>(o: T): T & { schemaVersion: number } => ({ schemaVersion: SCHEMA_VERSION, ...o });
+export const stamp = <T extends object>(o: T): T & { schemaVersion: number } => ({
+	schemaVersion: SCHEMA_VERSION,
+	...o,
+});

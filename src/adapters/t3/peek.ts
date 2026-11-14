@@ -10,7 +10,15 @@ import { connect } from "./rpc.ts";
 import { readServers } from "../../core/servers.ts";
 import { t3Server } from "./server.ts";
 
-type Item = { type?: string; status?: string; text?: string; createdBy?: string; creationSource?: string; updatedAt?: string; title?: string };
+type Item = {
+	type?: string;
+	status?: string;
+	text?: string;
+	createdBy?: string;
+	creationSource?: string;
+	updatedAt?: string;
+	title?: string;
+};
 const WHO = (): Record<string, string> => ({ user_message: principal(), assistant_message: "thread" });
 
 /** Pure: who said what last, oldest first, plus any card still waiting. */
@@ -31,7 +39,10 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	const servers = readServers(CONF) ?? [];
 	const found = servers.find((s) => s.name === server);
 	const srv = found && t3Server(found);
-	if (!srv || !threadId) { console.error(`usage: peek <${servers.map((s) => s.name).join("|")}> <threadId> [messages] [chars]`); process.exit(2); }
+	if (!srv || !threadId) {
+		console.error(`usage: peek <${servers.map((s) => s.name).join("|")}> <threadId> [messages] [chars]`);
+		process.exit(2);
+	}
 	const rpc = await connect(srv.origin, readFileSync(`${CONF}/${srv.tokenFile}`, "utf8").trim());
 	const p = (await rpc.request("orchestration.getThreadProjection", { threadId })) as { turnItems?: Item[] };
 	console.log(peekLines(p.turnItems ?? [], Number(n) || 3, Number(chars) || 400).join("\n"));

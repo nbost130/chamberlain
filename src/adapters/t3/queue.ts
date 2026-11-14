@@ -6,21 +6,35 @@ import { Database } from "bun:sqlite";
 import type { Gate } from "../../core/hold.ts";
 
 export const STALL_MS = Number(process.env.CHAMBERLAIN_STALL_MS ?? 20 * 60_000);
-export type StewardQueue = { queued: number; /** Turns the Steward is working on right now. Optional so a literal built without it still reads as none. */ running?: number; oldestQueuedAt?: string; compactPending: boolean; lastActivityAt?: string; openCardSince?: string };
+export type StewardQueue = {
+	queued: number /** Turns the Steward is working on right now. Optional so a literal built without it still reads as none. */;
+	running?: number;
+	oldestQueuedAt?: string;
+	compactPending: boolean;
+	lastActivityAt?: string;
+	openCardSince?: string;
+};
 
 const RUNS = `select r.status as status, r.requested_at as requested_at,
 	(select json_extract(m.payload_json, '$.text') from orchestration_v2_projection_messages m where m.message_id = json_extract(r.payload_json, '$.userMessageId')) as text
 	from orchestration_v2_projection_runs r where r.thread_id = ? and r.status in ('queued', 'starting', 'preparing', 'running') order by r.ordinal`;
-const LAST_START = "select max(json_extract(payload_json, '$.startedAt')) as started from orchestration_v2_projection_runs where thread_id = ?";
+const LAST_START =
+	"select max(json_extract(payload_json, '$.startedAt')) as started from orchestration_v2_projection_runs where thread_id = ?";
 /** A turn item changing is the Steward at work: none moved in the whole 2026-11-07 stall. Queued wakes are user messages, so they don't count. */
-const LAST_ITEM = "select max(updated_at) as moved from orchestration_v2_projection_turn_items where thread_id = ? and type != 'user_message'";
+const LAST_ITEM =
+	"select max(updated_at) as moved from orchestration_v2_projection_turn_items where thread_id = ? and type != 'user_message'";
 /** Only a card raised in the latest turn can hold the Steward. An older unresolved request is an orphan, and must not stop compaction for good. */
-const OPEN_CARD = "select min(created_at) as since from orchestration_v2_projection_runtime_requests where thread_id = ? and resolved_at is null and created_at >= ?";
+const OPEN_CARD =
+	"select min(created_at) as since from orchestration_v2_projection_runtime_requests where thread_id = ? and resolved_at is null and created_at >= ?";
 
 /** Undefined when the database can't be read. The caller treats that as unknown, never as a clear queue. */
 export function readStewardQueue(dbPath: string, threadId: string): StewardQueue | undefined {
 	let db: Database;
-	try { db = new Database(dbPath, { readonly: true }); } catch { return undefined; }
+	try {
+		db = new Database(dbPath, { readonly: true });
+	} catch {
+		return undefined;
+	}
 	try {
 		const runs = db.query(RUNS).all(threadId) as { status: string; requested_at: string; text: string | null }[];
 		const queued = runs.filter((r) => r.status === "queued");
@@ -69,6 +83,13 @@ export function compactBlocked(q: StewardQueue, now: number, stallMs = STALL_MS)
 export function stallAlarm(q: StewardQueue, now: number): { title: string; summary: string } {
 	const minutes = Math.round((now - Date.parse(q.oldestQueuedAt as string)) / 60_000);
 	const wakes = `${q.queued} wake${q.queued === 1 ? "" : "s"} queued, the oldest for ${minutes} minutes`;
-	if (q.openCardSince) return { title: "The Steward is stopped on a card in its own thread", summary: `${wakes}. Answer the open card in the Steward thread and it will carry on. Nothing is supervising threads until then.` };
-	return { title: "The Steward has stopped taking wakes", summary: `${wakes}, and nothing in its thread has moved in that time. Nothing is supervising threads until it does. Open the Steward thread to see what its current turn is doing.` };
+	if (q.openCardSince)
+		return {
+			title: "The Steward is stopped on a card in its own thread",
+			summary: `${wakes}. Answer the open card in the Steward thread and it will carry on. Nothing is supervising threads until then.`,
+		};
+	return {
+		title: "The Steward has stopped taking wakes",
+		summary: `${wakes}, and nothing in its thread has moved in that time. Nothing is supervising threads until it does. Open the Steward thread to see what its current turn is doing.`,
+	};
 }

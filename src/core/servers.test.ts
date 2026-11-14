@@ -31,7 +31,8 @@ describe("parseServers", () => {
 		expect(() => parseServers(null)).toThrow("need");
 		expect(() => parseServers([main])).toThrow("need");
 	});
-	test("refuses a newer schema", () => expect(() => parseServers({ schemaVersion: 3, servers: [main] })).toThrow("newer Chamberlain"));
+	test("refuses a newer schema", () =>
+		expect(() => parseServers({ schemaVersion: 3, servers: [main] })).toThrow("newer Chamberlain"));
 });
 
 describe("readServers", () => {
