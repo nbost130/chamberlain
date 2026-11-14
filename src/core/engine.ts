@@ -7,12 +7,13 @@
  */
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { closeHeldForCard, mandateLine, readAfk } from "./afk.ts";
+import { closeHeldForCard, readAfk } from "./afk.ts";
 import { cardWaitOf, holdCard, reconcileCardHolds, trackUnverified, unverifiedAlarm, type CardThreadRead } from "./card-hold.ts";
 import type { Question } from "./questions.ts";
 import { reconcileItemHolds, reconcileRefHolds, takeSnapshots, type GhRead } from "./hold-reconcile.ts";
 import { has, normalizeThread, type Adapter, type Inspector, type ThreadEvent, type ThreadState, type WaitingItem, type WaitingRead, isWaitingRead } from "./adapter.ts";
 import { alertCommand, compactTokens, PrincipalPoss, principal, selfCommand } from "./config.ts";
+import { alarms, awayModeLine, threadHappened, threadWakeHead, type AlarmText } from "./messages.ts";
 import { NOTIFICATION_LOG, repeatEvery } from "./notification.ts";
 import { createOutbox } from "./deliver.ts";
 import { createRelay, type RelayDeps } from "./relay.ts";
@@ -125,6 +126,8 @@ export function createEngine(d: EngineDeps) {
 
 	/** Dead-man alarms: a silent stop must become a loud one. An alarm is an item that re-notifies every 6 hours while it keeps being raised. */
 	const ALARM_REPEAT = repeatEvery(TOKEN_ALARM_WINDOW_MS);
+	/** Raises an alarm whose words are in messages.ts. */
+	const raiseAlarm = (key: string, a: AlarmText) => alarm(key, a.title, a.summary);
 	function alarm(key: string, title: string, summary: string) {
 		if (!store.items.observe({ source: "alarm", kind: "alarm", dedupKey: key, repeat: ALARM_REPEAT, payload: { title } }).notify) return;
 		log("alarm", { key, title });
@@ -325,7 +328,7 @@ export function createEngine(d: EngineDeps) {
 						idleWork: (th, r) => this.idleWork(th, r),
 					}).finally(() => this.quietUntil.delete(live.id));
 					if (!settled.wake) { log(settled.event, { server: this.srv.name, threadId: live.id }); return; }
-					if (settled.oldCard) waitNote = "It also has an older open card, which already had its own wake.";
+					if (settled.oldCard) waitNote = "It also has an older open question card, which already had its own wake.";
 					if (settled.running) waitNote = [waitNote, `It still has ${settled.running} background task${settled.running === 1 ? "" : "s"} running after a long wait.`].filter(Boolean).join(" ");
 					idleLine = settled.work;
 					stalled = false;
@@ -382,16 +385,16 @@ export function createEngine(d: EngineDeps) {
 				if (h.note) waitNote = h.note;
 				if (h.what) failedWhat = h.what;
 			}
-			const what = { needs_input: "is waiting for your answer or approval", failed: failedWhat, turn_ended: stalled ? "ended its turn on a promise of next work and is now idle (stalled)" : idleLine ? `went idle with work still open: ${idleLine}` : reported ? "finished a turn on the work you sent it and has gone quiet" : "finished and handed a question back" }[c.kind];
+			const what = { needs_input: threadHappened.needsInput, failed: failedWhat, turn_ended: stalled ? threadHappened.stalled : idleLine ? threadHappened.idle(idleLine) : reported ? threadHappened.finished : threadHappened.handedBack }[c.kind];
 			const afk = readAfk(store);
 			const session = await stewardSession();
-			const rights = wakeRights(afk ? mandateLine(afk) : "", { session });
+			const rights = wakeRights(afk ? awayModeLine(afk) : "", { session });
 			// Stamped with the Steward it was composed for. A pointer makes the relay check the durable record before every attempt (rightsNow); a
 			// full block writes the record when the row is delivered, in the same transaction.
 			const steward = privateFile("steward-thread");
 			const stamp = rights.record ? (rights.full ? fullStamp(rights.record, steward, session) : rightsStamp(rights.record, steward, session)) : undefined;
 			const message = [
-				`[chamberlain] ${c.kind}: thread "${clip(live.title, 80)}" ${what}.`,
+				threadWakeHead(c.kind, clip(live.title, 80), what!),
 				waitNote,
 				this.adapter.serverLine?.() ?? defaultServerLine(this.srv),
 				`threadId: ${live.id}  ${live.parentThreadId ? `(child of ${live.parentThreadId})` : "(top-level)"}`,
@@ -420,7 +423,7 @@ export function createEngine(d: EngineDeps) {
 				// A card hold and its question close only when a read of the thread shows that card's own item, matched on (server,
 				// request ID), in a terminal status: the card reconciler does that read now. The Steward's own holds on the thread close here, as before.
 				try {
-					const closed = closeHeldForCard(store, this.srv.name, next.id, "The card or approval left its thread: answered or withdrawn there (closed by the daemon).");
+					const closed = closeHeldForCard(store, this.srv.name, next.id, "The question card or approval left its thread: answered or withdrawn there (closed by the daemon).");
 					if (closed) log("held-closed", { server: this.srv.name, threadId: next.id, closed });
 				} catch (e) { log("held-close-error", { server: this.srv.name, threadId: next.id, error: String(e) }); }
 				void cardReconcileTick();
@@ -489,7 +492,7 @@ export function createEngine(d: EngineDeps) {
 	async function raise(a: NonNullable<Outcome["ask"]>) {
 		log(a.why === "breaker" ? "recover-breaker-alarm" : "recover-ask", { kind: a.kind, count: a.count });
 		if (d.ask) await d.ask(a.item).catch((e) => log("recover-ask-failed", { error: String(e).slice(0, 200) }));
-		else if (a.why === "breaker") alarm(`recover-breaker:${a.kind}`, `chamberlain: ${a.count} "${a.kind}" failures in ${Math.round(timing.breakerWindowMs / 60_000)} minutes`, "Automatic retries are stopped until ten quiet minutes pass.");
+		else if (a.why === "breaker") raiseAlarm(`recover-breaker:${a.kind}`, alarms.recoverBreaker(a.kind, a.count, Math.round(timing.breakerWindowMs / 60_000)));
 	}
 	const judge = d.judge ?? createJudge({ config: () => { const r = readJudgeConfig(conf); if (r.error) log("judge-config-error", { error: r.error }); return r.config; }, log });
 	// The judge's backend is an explicit setting (judge.json), with no default. Without one, recovery still retries once, and a second failure
@@ -528,7 +531,7 @@ export function createEngine(d: EngineDeps) {
 	function wakeRights(mandate: string, o: { full?: boolean; session?: string | undefined } = {}): { text: string; record?: RightsSent; full?: boolean } {
 		const rules = rightsRules();
 		if (rules === undefined) {
-			alarm("rights-unreadable", "chamberlain cannot read the decision rights", "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.");
+			raiseAlarm("rights-unreadable", alarms.rightsUnreadable());
 			return { text: [rightsUnreadable(), mandate].filter(Boolean).join("\n") };
 		}
 		const id = privateFile("steward-thread");
@@ -594,7 +597,7 @@ export function createEngine(d: EngineDeps) {
 		// A 202 only means queued. This is the check that the Steward is actually working through them.
 		// One failed read is the backend busy. A run of them means both checks here can no longer see, and that must not be silent.
 		queueReadFailures = p.readable ? 0 : queueReadFailures + 1;
-		if (queueReadFailures >= QUEUE_READ_FAILURES_MAX) alarm("steward-queue-unreadable", "chamberlain can't read the Steward's queue", `${queueReadFailures} reads in a row have failed, so a stalled Steward would go unnoticed and no compaction will be sent. The backend's database may have changed.`);
+		if (queueReadFailures >= QUEUE_READ_FAILURES_MAX) raiseAlarm("steward-queue-unreadable", alarms.queueUnreadable(queueReadFailures));
 		if (p.stalled) alarm("steward-stalled", p.stalled.title, p.stalled.summary);
 		if (!needsCompact(used, COMPACT_AT, Date.now() - lastCompactAt < COMPACT_COOLDOWN_MS)) return;
 		const blocked = p.compactBlocked;
@@ -602,7 +605,7 @@ export function createEngine(d: EngineDeps) {
 		compactHeldFor = blocked;
 		if (blocked) return;
 		lastCompactAt = Date.now();
-		if (!relay.compactReady()) { alarm("steward-compact", "chamberlain cannot compact the Steward", `The Steward's context is ${used} tokens and no compaction target is configured.`); return; }
+		if (!relay.compactReady()) { raiseAlarm("steward-compact", alarms.compactUnavailable(used)); return; }
 		// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
 		// here, before the job runs, let a full block already in flight land after and restore it.
 		log("fire", { server: "steward", kind: "compact", threadId: id, used });
@@ -655,7 +658,7 @@ export function createEngine(d: EngineDeps) {
 	function heartbeat() {
 		const states = watchers.map((w) => w.health());
 		store.state.set("heartbeat", { t: new Date().toISOString(), away: Boolean(readAfk(store)), deliveryFailures: relay.failures(), servers: states });
-		for (const s of states) if (!s.connected && s.downMs > 10 * 60_000 && !d.servers.find((x) => x.server.name === s.name)?.server.mayBeOffline) alarm(`disconnected:${s.name}`, `chamberlain lost ${s.name}`, `The watcher has not been connected to the ${s.name} server for ${Math.round(s.downMs / 60000)} minutes. Threads there are unwatched.`);
+		for (const s of states) if (!s.connected && s.downMs > 10 * 60_000 && !d.servers.find((x) => x.server.name === s.name)?.server.mayBeOffline) raiseAlarm(`disconnected:${s.name}`, alarms.serverDown(s.name, Math.round(s.downMs / 60000)));
 	}
 
 	const ask = d.ask;
@@ -744,7 +747,7 @@ export function createEngine(d: EngineDeps) {
 				try { drainAlertDesk({ store, outbox, inbox: inboxPath(process.env, process.env.HOME ?? ""), conf, now: d.relay?.now?.() ?? Date.now(), canDeliver: !DRY && deskLane.wake.ready(), log }); } catch (e) { log("alert-desk-error", { error: String(e).slice(0, 200) }); alarm("alert-desk", "chamberlain alert desk failed", "The Alert Desk drain threw an error and did not finish, so alerts are not reaching the desk thread this round. Its inbox keeps them."); }
 			}
 			if (!DRY && healthTick) checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
-			checks.push(sweepTick().catch((e) => { log("sweep-error", { error: String(e) }); alarm("sweep", "chamberlain sweep failed", "The daemon's routine sweep threw an error and did not finish, so nothing is checking the threads between wakes."); }));
+			checks.push(sweepTick().catch((e) => { log("sweep-error", { error: String(e) }); raiseAlarm("sweep", alarms.sweepFailed()); }));
 		}
 		await Promise.all(checks);
 	}

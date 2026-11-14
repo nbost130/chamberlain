@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import type { Transcript } from "./adapter.ts";
+import { handoffWake } from "./messages.ts";
 import type { Store } from "./store.ts";
 
 export const HEALTH_CONFIG = {
@@ -123,8 +124,7 @@ export function readHealth(store: Store): Health | undefined {
 /** The delivery id of a session's hand-off wake. The outbox knows an id for good (pending, delivered or dead-lettered), so one session is told once. */
 export const handoffDeliveryId = (session: string) => `steward-handoff:${session}`;
 /** The wake that starts the hand-off itself. `instruction` is the adapter's words for how the Steward starts one on its backend (`Adapter.handoffInstruction`). */
-export const handoffWakeMessage = (h: Health, instruction: string) =>
-	`[chamberlain] steward-handoff: your quality signals have slipped (format slips or repeat reads past their limits), and compaction does not fix that. ${instruction} This hand-off starts by itself from the daemon's health check: do not ask first.\n${h.report}`;
+export const handoffWakeMessage = (h: Health, instruction: string) => handoffWake(instruction, h.report);
 
 /**
  * One daemon owns this tick. A HAND OFF verdict starts the hand-off itself when the adapter can say how (`handoff`: it queues the hand-off

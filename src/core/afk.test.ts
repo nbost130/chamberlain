@@ -4,15 +4,16 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { askQuestion, type Question } from "./questions.ts";
 import { tmpdir } from "node:os";
-import { appendHeld, brief, briefMarkdown, cleanRef, closeHeld, closeHeldForCard, closeHeldForItem, fyiReason, heldId, heldOpen, mandateLine, noteHeld, readAfk, type Afk, type Held } from "./afk.ts";
+import { appendHeld, brief, briefMarkdown, cleanRef, closeHeld, closeHeldForCard, closeHeldForItem, fyiReason, heldId, heldOpen, noteHeld, readAfk, type Afk, type Held } from "./afk.ts";
+import { awayModeLine } from "./messages.ts";
 import { openStore } from "./sqlite-store.ts";
 import { dbPath } from "./store.ts";
 
 const a: Afk = { enteredAt: "2026-11-01T12:45:00.000Z", words: "keep everything moving", expectedReturn: "2026-11-01T20:00:00Z" };
 
-describe("mandateLine", () => {
+describe("awayModeLine", () => {
 	test("carries his words, the hold rule and the never-pre-authorized limits", () => {
-		const m = mandateLine(a);
+		const m = awayModeLine(a);
 		expect(m).toContain("keep everything moving");
 		expect(m).toContain("Hold-for-return");
 		expect(m).toContain("never pre-authorized");

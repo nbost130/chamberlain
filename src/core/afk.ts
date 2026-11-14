@@ -29,7 +29,8 @@
  * the prose: only the `item` field links a hold to an answer, so a hold with no item closes through its refs or by `close`.
  */
 import { createHash } from "node:crypto";
-import { principal, principalPoss, selfCommand } from "./config.ts";
+import { principal, selfCommand } from "./config.ts";
+import { awayModeLine } from "./messages.ts";
 import { defaultStore } from "./default-store.ts";
 import { startup } from "./migrate.ts";
 import { closeCardByHand } from "./card-hold.ts";
@@ -80,13 +81,6 @@ export const HELD = "held";
 
 /** The record, or undefined when not away. */
 export const readAfk = (store: Store): Afk | undefined => store.away.current();
-
-/** The standing-rules line every wake carries while away. */
-export function mandateLine(a: Afk): string {
-	const back = a.expectedReturn ? ` Expected back ${a.expectedReturn}.` : "";
-	const spend = a.spendNote ? ` Spend: ${a.spendNote}.` : "";
-	return `- AFK MANDATE (${principal()}, since ${a.enteredAt}): "${a.words}"${back}${spend} Standing until ${principalPoss()} next genuine message. Hold-for-return: anything on the ASK list waits (take the safe default or let the thread work on something else). Put it on ${principalPoss()} queue first with \`${selfCommand("ask")} '<json>'\` (add \`"urgent": false\` when it can wait: it is listed below the urgent ones and sends no notification), then hold it for the return brief with \`${selfCommand("afk")} hold ... --item <the Q-id>\`; a hold with no queue item is refused, and so is anything already settled (it prints the answer). Never an FYI. Command approvals and secret requests are ${principalPoss()}: the daemon holds them itself, so none wakes you. Merges only synchronous, pinned to a green reviewed head, never red. Destructive, irreversible and security-sensitive actions are never pre-authorized by this mandate.`;
-}
 
 /** A short stable handle for a held entry. */
 export const heldId = (h: Held) => createHash("sha256").update([h.t, h.server ?? "", h.thread, h.requestId ?? "", h.what].join("\n")).digest("hex").slice(0, 8);
@@ -214,7 +208,7 @@ export function main(argv: string[] = process.argv.slice(2)) {
 		console.log("away since", a.enteredAt);
 	} else if (cmd === "status") {
 		const a = readAfk(store);
-		console.log(a ? mandateLine(a) : "not away");
+		console.log(a ? awayModeLine(a) : "not away");
 		const beat = store.state.get("heartbeat");
 		console.log("heartbeat:", beat ? JSON.stringify(beat) : "none");
 	} else if (cmd === "hold") {

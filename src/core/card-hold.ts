@@ -62,11 +62,11 @@ export function cardQuestion(w: CardWait, id: string, createdAt: string): Questi
 		context: [
 			`- Thread: ${clip(flat(w.thread), 120)} (on ${flat(w.server)})`,
 			`- It asks for: ${k.asks}${w.label ? `: ${clip(flat(w.label), 100)}` : ""}`,
-			"- Act on the card itself, in its thread. This question and its hold close only when the card does; answering here closes nothing.",
+			"- Act on the question card itself, in its thread. This question and its hold close only when the card does; answering here closes nothing.",
 			...(secret ? ["- The value never goes through this queue."] : []),
 		].join("\n"),
 		// Neither option says the card was handled: the page refuses an answer to a pointer, and only the card resolving closes it.
-		options: [{ label: "Open the card in its thread" }, { label: "Leave the card waiting" }],
+		options: [{ label: "Open the question card in its thread" }, { label: "Leave the question card waiting" }],
 		thread: clip(flat(w.thread), 80), server: w.server, threadId: w.threadId, tag: k.tag,
 		...(secret ? { secret: true } : {}),
 		cardRequest: w.requestId,
@@ -273,7 +273,7 @@ export function unverifiedAlarm(u: Unverified & { since: number }, closeCommand:
 	const hours = Math.max(0, Math.round((Date.now() - u.since) / 3_600_000));
 	return {
 		key: cardAlarmKey(c),
-		title: `chamberlain cannot see a held card on ${c.server}`,
+		title: `chamberlain cannot see a held question card on ${c.server}`,
 		summary: [
 			`Card hold ${c.holds.length ? c.holds.map((h) => h.id).join(", ") : "(none open; its pointer question only)"} for ${c.server} request ${c.requestId}${c.threadId ? ` in thread ${c.threadId}` : ""} has shown no evidence (not seen waiting, not seen resolved) for about ${hours} hours: ${u.reason}.`,
 			"Nothing closes it on its own. Check the card in its thread; once it is resolved, withdrawn or its thread is gone, close it by hand:",

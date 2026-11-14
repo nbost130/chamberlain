@@ -9,9 +9,10 @@
  * events table records `synthetic-wake-queued`. (An earlier version POSTed straight to the webhook, beside whatever the relay had in flight.)
  */
 import { readFileSync } from "node:fs";
-import { mandateLine, readAfk } from "../../core/afk.ts";
+import { readAfk } from "../../core/afk.ts";
 import { CONF, selfCommand } from "../../core/config.ts";
 import { defaultStore } from "../../core/default-store.ts";
+import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
 import { createOutbox } from "../../core/deliver.ts";
 import { makeLog } from "../../core/log.ts";
 import { readServers } from "../../core/servers.ts";
@@ -30,9 +31,9 @@ export function main(argv: string[] = process.argv.slice(2)) {
 	if (!srv) throw Error(`no server ${name} in servers.json`);
 	const store = defaultStore();
 	const afk = readAfk(store);
-	const rights = [readFileSync(`${CONF}/decision-rights.md`, "utf8").trim(), rulingsText(store).trim(), afk ? mandateLine(afk) : ""].filter(Boolean).join("\n");
+	const rights = [readFileSync(`${CONF}/decision-rights.md`, "utf8").trim(), rulingsText(store).trim(), afk ? awayModeLine(afk) : ""].filter(Boolean).join("\n");
 	const message = [
-		`[chamberlain] needs_input: thread "${title}" is waiting for your answer or approval.`,
+		threadWakeHead("needs_input", title, threadHappened.needsInput),
 		waitNote,
 		t3ServerLine(srv),
 		`threadId: ${threadId}  (top-level)`,

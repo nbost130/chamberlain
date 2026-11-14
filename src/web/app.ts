@@ -176,11 +176,11 @@ export function createApp(d: AppDeps) {
 			}
 			const i = state().get(id);
 			if (!i) return { status: 404, body: { error: "no such item" } };
-			if (i.status !== "open") return { status: 409, body: { error: i.status === "answered" ? "already answered" : "already answered on its card in T3" } };
+			if (i.status !== "open") return { status: 409, body: { error: i.status === "answered" ? "already answered" : "already answered on its question card in T3" } };
 			if (i.secret) return { status: 400, body: { error: "a secret is entered in its own thread, never on this page" } };
 			// A card pointer closes only when its card does. An answer here would take it off the queue (and its hold off the ledger) while the
 			// card still waits, so it is refused, and the refusal says where to act.
-			if (i.cardRequest) return { status: 409, body: { error: "this question points to a card waiting in its thread: act on the card itself; this question and its hold close only when the card does" } };
+			if (i.cardRequest) return { status: 409, body: { error: "this question points to a question card waiting in its thread: act on the card itself; this question and its hold close only when the card does" } };
 			if (!Number.isInteger(body.choice) || body.choice < 0 || body.choice >= i.options.length) return { status: 400, body: { error: "choose one of the options" } };
 			const note = typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 4000) : undefined;
 			const label = i.options[body.choice]!.label;
@@ -191,7 +191,7 @@ export function createApp(d: AppDeps) {
 			const expiryProblem = decides && i.proposedExpires ? expiresProblem(i.proposedExpires) : undefined;
 			if (expiryProblem) return { status: 400, body: { error: `the proposed ruling's expiry ${expiryProblem}: save it without a ruling, or write a new one` } };
 			if (decides && i.proposedExpires && isExpired({ expires: i.proposedExpires }, clock())) return { status: 400, body: { error: `the proposed ruling expired on ${i.proposedExpires}: save it without a ruling, or write a new one` } };
-			const taken = (owner: string) => ({ status: 409, body: { error: owner === PAGE ? "already answered" : "already answered on its card in T3" } });
+			const taken = (owner: string) => ({ status: 409, body: { error: owner === PAGE ? "already answered" : "already answered on its question card in T3" } });
 			const held = wokenBy(d.store, i.id);
 			if (held !== undefined) return taken(held);
 			// Every refusal comes before the claim, and a refused answer writes nothing. The claim, the answer, the ruling it saves and
@@ -284,7 +284,7 @@ export function createApp(d: AppDeps) {
 		if (!body || typeof body !== "object") return fail(400, "expected a JSON body");
 		if (parts[1] === "cards" && parts[2] && (parts[3] === "answer" || parts[3] === "confirm") && parts.length === 4) {
 			// Approvals and cards are answered on the full page only (see inlineVerdict); this is the second lock on the same door.
-			if (inline) return fail(403, "refused: cards and approvals are answered on the full page, not in an inline frame");
+			if (inline) return fail(403, "refused: question cards and approvals are answered on the full page, not in an inline frame");
 			if (!d.mirror) return fail(404, "not found");
 			const id = parts[2];
 			const b = body as { choice?: unknown; sig?: unknown; challenge?: unknown };

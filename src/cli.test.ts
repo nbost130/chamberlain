@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../package.json" with { type: "json" };
-import { mandateLine } from "./core/afk.ts";
+import { awayModeLine } from "./core/messages.ts";
 import { stewardBrief, type BriefInput } from "./core/brief.ts";
 import { COMMANDS, DEBUG_COMMANDS, REPO, selfArgv, selfCommand, setCompiled, type CommandName } from "./core/config.ts";
 import { sweepMessage, type SweepAction } from "./core/sweep.ts";
@@ -57,7 +57,7 @@ describe("every prompt-embedded command, rendered both ways", () => {
 	/** A failed check names the missing string, not the whole hand-off. */
 	const has = (out: string, s: string) => expect(out.includes(s), `missing: ${s}`).toBe(true);
 	const action = { wake: "routine", fresh: [{ key: "check:a", text: "a thing" }] } as unknown as SweepAction;
-	const render = () => [stewardBrief(brief()), sweepMessage(action, "BODY"), mandateLine(afk)].join("\n");
+	const render = () => [stewardBrief(brief()), sweepMessage(action, "BODY"), awayModeLine(afk)].join("\n");
 
 	test("from source they name `bun .../src/....ts`", () => {
 		const out = render();

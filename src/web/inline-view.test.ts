@@ -190,7 +190,7 @@ test("a mirrored card or approval is shown read-only: no option to pick, no butt
 	const dq = run(() => ({ items: [], cards: [q, qc] }), { calls });
 	await settle();
 	expect(dq.textContent).toContain("Approvals and goals are answered on the full queue page, never here.");
-	expect(dq.textContent).toContain("Answer this card on the full queue page.");
+	expect(dq.textContent).toContain("Answer this question card on the full queue page.");
 	// The command is still shown exactly, so it can be read; but nothing here can approve it.
 	expect(dq.all((e) => e.tag === "pre").map((e) => e.textContent)).toEqual(["rm -rf build"]);
 	expect(dq.all((e) => e.tag === "input")).toHaveLength(0);

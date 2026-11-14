@@ -165,7 +165,7 @@ function queueRecords(store: Store): SettledRecord[] {
 	for (const q of questionStates(store).values()) {
 		if (q.status === "open") continue;
 		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
-		const answer = q.status === "answered-on-card" ? "answered on its card" : `answered "${q.answer?.label ?? "?"}"${q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : ""}${q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : ""}`;
+		const answer = q.status === "answered-on-card" ? "answered on its question card" : `answered "${q.answer?.label ?? "?"}"${q.answer?.note ? ` (${oneLine(q.answer.note, 70)})` : ""}${q.answer?.ruling ? `, saved ${q.answer.ruling.id}` : ""}`;
 		out.push({ source: "queue", date, id: q.id, answer, title: q.title, text: `${q.title}\n${q.context ?? ""}\n${q.blocks ?? ""}`, thread: q.thread });
 	}
 	return out;

@@ -8,6 +8,7 @@
  * sending are relay.ts's.
  */
 import { createHash } from "node:crypto";
+import { digestHead } from "./messages.ts";
 import type { HeldItem, HoldClock, WakeMeta } from "./store.ts";
 
 export type { HeldItem, HoldClock, WakeMeta };
@@ -52,7 +53,7 @@ export function composeWake(items: HeldItem[], now: number): { deliveryId: strin
 	const folded = sorted.length - kept.length;
 	const members = sorted.map((i) => i.deliveryId);
 	const deliveryId = `digest:${createHash("sha1").update([...members].sort().join("\n")).digest("hex").slice(0, 16)}`;
-	const head = `[chamberlain] digest: ${sorted.length} wake${sorted.length === 1 ? "" : "s"} were held while you were busy and arrive together as this one wake, oldest first. Treat each item below as its own wake; each keeps its delivery ID, and if one reaches you twice the second is a repeat.${folded ? ` ${folded} earlier wake${folded === 1 ? "" : "s"} about the same thread and kind ${folded === 1 ? "was" : "were"} folded into the latest, which is all that is kept.` : ""}`;
+	const head = digestHead(sorted.length, folded);
 	// Each item's text goes in exactly as it was queued: nothing in it is searched or replaced, a repeated rights block included (it costs
 	// tokens, never correctness).
 	const blocks = kept.map((i, n) => {

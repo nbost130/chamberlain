@@ -44,7 +44,7 @@ export function reconcileItemHolds(store: Store, now = new Date()): { closed: nu
 		const resolvedAt = store.items.get(QUEUE, id)?.resolvedAt;
 		if (q.status === "answered-on-card") {
 			const t = resolvedAt ? new Date(resolvedAt).toISOString() : undefined;
-			return { t, how: `Answered in its card${t ? ` at ${t.slice(0, 16)}Z` : ""}` };
+			return { t, how: `Answered in its question card${t ? ` at ${t.slice(0, 16)}Z` : ""}` };
 		}
 		const t = q.answer?.t;
 		return { t, how: `Answered${q.answer ? ` "${q.answer.label}"` : ""} on the queue${t ? ` at ${t.slice(0, 16)}Z` : ""}` };

@@ -6,7 +6,8 @@
  */
 import { randomBytes } from "node:crypto";
 import type { Store } from "./store.ts";
-import { principal, Principal } from "./config.ts";
+import { principal } from "./config.ts";
+import { answerWakeText } from "./messages.ts";
 import type { Ruling } from "./rulings.ts";
 
 export type Kind = "only-you" | "product" | "ruling" | "idea";
@@ -223,7 +224,7 @@ export function answerWake(i: Question, a: Answer, why?: StewardWhy): string {
 		...(why ? [`route: to you, not straight to the thread (${why}): ${WHY_TEXT[why]}`] : []),
 		...(why && relay ? [`relay text for this option: ${relay}`] : []),
 	];
-	return `[chamberlain] answer: ${Principal()} answered decision-queue item ${i.id} on the queue page. These are their choices, from the page's record. One wake carries each item; if this item ID reaches you twice, the second is a repeat:\n<<<\n${lines.join("\n")}\n>>>`;
+	return answerWakeText(i.id, lines.join("\n"));
 }
 
 /** Records that an answer's wake delivered: the question is resolved. Idempotent; anything that isn't an answer's delivery ID is ignored. */

@@ -5,6 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { RIGHTS_MARKER, rightsInFull, rightsUnchanged, type RightsSent } from "./decide.ts";
+import { rightsWake } from "./messages.ts";
 import type { RightsStamp, Store } from "./store.ts";
 
 export const RIGHTS_SENT_KEY = "rights-sent";
@@ -149,5 +150,4 @@ export const rightsFirstKey = (deliveryId: string) => /:rights-first:([0-9a-f]{1
  * Pure: the standalone wake that goes ahead of a row that depends on rights the record does not show the Steward holds. It carries the full
  * block (`full`: the block, or the unreadable notice) and names the row that follows; that row is then sent exactly as it was queued.
  */
-export const rightsFirstMessage = (forId: string, full: string) =>
-	`[chamberlain] rights: your decision rights and the rulings in force, in full. The next wake (${forId}) was queued for a Steward that may not hold them; where it says they are unchanged, these are the ones it means, and they replace any older copy it carries.\n${full}`;
+export const rightsFirstMessage = rightsWake;

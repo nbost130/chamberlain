@@ -6,6 +6,7 @@
 import { statSync } from "node:fs";
 import type { AdapterEnv, Inspector, RunFailure, WaitingRead, WatchSink } from "../../core/adapter.ts";
 import { failedRead } from "../../core/history.ts";
+import { alarms } from "../../core/messages.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { historyGet, readWhenConnected } from "./history.ts";
 import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
@@ -42,7 +43,7 @@ export class T3Link {
 	private checkTokenAge() {
 		try {
 			const ageDays = (Date.now() - statSync(`${this.env.conf}/${this.srv.tokenFile}`).mtimeMs) / 86_400_000;
-			if (ageDays > TOKEN_MAX_AGE_DAYS) this.env.alarm(`token:${this.srv.name}`, `chamberlain token for ${this.srv.name} expires soon`, `The ${this.srv.name} read token is ${Math.round(ageDays)} days old and tokens last 30 days. Mint a new one into ${this.srv.tokenFile} before it lapses, or the watcher goes blind there.`);
+			if (ageDays > TOKEN_MAX_AGE_DAYS) { const a = alarms.tokenExpiring(this.srv.name, Math.round(ageDays), this.srv.tokenFile); this.env.alarm(`token:${this.srv.name}`, a.title, a.summary); }
 		} catch { /* a missing file already fails the session loudly */ }
 	}
 
