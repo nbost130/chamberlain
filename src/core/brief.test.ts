@@ -121,6 +121,15 @@ describe("stewardBrief", () => {
 	});
 });
 
+describe("stewardBrief: the away record", () => {
+	test("with no away record it says the principal is not marked away, by the input's name or the configured one", () => {
+		expect(stewardBrief({ ...base, afk: undefined })).toContain("## Away record\n\nAda is not marked away.");
+		expect(stewardBrief({ ...base, afk: undefined, principal: undefined })).toMatch(
+			/## Away record\n\n.+ is not marked away\./,
+		);
+	});
+});
+
 describe("brief fragments", () => {
 	// Explicit modes: the umask may be 002 (a user-private group), which would make brief.d 0775 and a fragment 0664, both refused.
 	const conf = () => {
@@ -170,6 +179,15 @@ describe("brief fragments", () => {
 		for (const n of ["20-link.md", "30-notes.txt", "40-backup.md~", "50-dir.md"])
 			expect(warned.some((w) => w.includes(n))).toBe(true);
 		expect(warned.find((w) => w.includes("20-link.md"))).toContain("symlink");
+	});
+
+	test("a brief.d that cannot be examined at all (its parent is a file) is ignored with one warning naming the error", () => {
+		const d = mkdtempSync(`${tmpdir()}/brief-enotdir-`);
+		writeFileSync(`${d}/conf`, "x");
+		const warned: string[] = [];
+		expect(loadBriefFragments(`${d}/conf`, (m) => warned.push(m))).toEqual([]);
+		expect(warned).toHaveLength(1);
+		expect(warned[0]).toStartWith(`brief.ts: ignoring ${d}/conf/brief.d: `);
 	});
 
 	test("a brief.d that is not a directory is ignored with a warning", () => {
