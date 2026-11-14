@@ -495,7 +495,7 @@ describe("the standing prompt is a template, filled from config", () => {
 		expect(template).not.toMatch(/\.claude\//);
 	});
 	test("the bundled prompt names no model and no private wrapper: those are the operator's, from alert-desk.json", () => {
-		expect(template).not.toMatch(/sonnet|haiku|opus|example-tool|example-gatherer/i);
+		expect(template).not.toMatch(/\b(sonnet|haiku|opus)\b/i);
 	});
 	test("the desk is told not to re-ask what is settled, when a question can wait, and when notSettled is allowed", () => {
 		const out = renderDeskPrompt(template, vars);

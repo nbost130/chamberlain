@@ -3,7 +3,7 @@ import { memStore } from "../testing/store.ts";
 import { formatButlers, liveButlers, readButlers, startButler, stopButler } from "./butler.ts";
 
 const T = (s: string) => new Date(`2026-11-11T${s}Z`);
-const f = { thread: "thr-1", machine: "remote", model: "claude-haiku-5-5", scope: "watch 10 PRs and report the green ones" };
+const f = { thread: "thr-1", machine: "remote", model: "small-model", scope: "watch 10 PRs and report the green ones" };
 
 describe("butler ledger", () => {
 	test("start records one butler and returns it, with a generated id when none is given", () => {
@@ -17,13 +17,13 @@ describe("butler ledger", () => {
 	test("stop marks a butler and rewrites nothing else; list shows the live ones, --all shows both", () => {
 		const store = memStore();
 		startButler(store, { ...f, id: "B-one" }, T("10:00:00"));
-		startButler(store, { ...f, id: "B-two", machine: "laptop", model: "claude-sonnet-5-5" }, T("10:05:00"));
+		startButler(store, { ...f, id: "B-two", machine: "laptop", model: "large-model" }, T("10:05:00"));
 		const r = stopButler(store, "B-one", "list empty", T("11:00:00"));
 		expect(r).toMatchObject({ already: false, butler: { id: "B-one", stopped: "2026-11-11T11:00:00.000Z", reason: "list empty" } });
 		expect(liveButlers(store).map((b) => b.id)).toEqual(["B-two"]);
 		expect(readButlers(store).map((b) => [b.id, b.stopped])).toEqual([["B-one", "2026-11-11T11:00:00.000Z"], ["B-two", undefined]]);
 		const text = formatButlers(liveButlers(store), T("11:05:00").getTime());
-		expect(text).toContain("B-two\tlive 60m\tlaptop\tclaude-sonnet-5-5\tthread thr-1");
+		expect(text).toContain("B-two\tlive 60m\tlaptop\tlarge-model\tthread thr-1");
 		expect(formatButlers([])).toBe("no butlers");
 	});
 

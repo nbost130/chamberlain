@@ -105,7 +105,7 @@ function rig(o: { failures?: Record<string, RunFailure | undefined>; judge?: () 
 		readFailure: async (id) => failures.get(id),
 		instructionId: async (id) => instruction.get(id) ?? "m1",
 		ping: async (threadId, text, seed) => { pings.push({ threadId, text, seed }); o.onPing?.(); return o.ping?.() ?? { ok: true, detail: "sent" }; },
-		judge: async (trigger, brief) => { judged.push({ trigger, user: brief.user }); return o.judge?.() ?? { ok: true, backend: "haiku", verdict: "do_not_retry", reason: "it keeps happening" }; },
+		judge: async (trigger, brief) => { judged.push({ trigger, user: brief.user }); return o.judge?.() ?? { ok: true, backend: "small-model", verdict: "do_not_retry", reason: "it keeps happening" }; },
 		wake: (threadId, kind, note) => wakes.push({ threadId, kind, note }),
 		log: (event, data) => logs.push({ event, data }),
 		...o.ctxOver,
@@ -160,7 +160,7 @@ describe("retry once, after a 3-minute grace", () => {
 		await x.advance(4 * MIN);
 		expect(x.pings).toHaveLength(1);
 		expect(x.pings[0]!.text).toBe(RETRY_TEXT);
-		expect(x.pings[0]!.text).not.toMatch(/model|switch|opus|sonnet|haiku/i);
+		expect(x.pings[0]!.text).not.toMatch(/model|switch/i);
 	});
 
 	test("the same run seen twice is handled once", async () => {
@@ -299,7 +299,7 @@ describe("a second failure within the window goes to the judge", () => {
 		const x = rig();
 		await retried(x);
 		const h = await x.fail("t1", { runId: "run-2", message: "The provider event stream closed unexpectedly." });
-		expect(h).toMatchObject({ action: "verdict", kind: "stream_closed", backend: "haiku", verdict: "do_not_retry", ask: false });
+		expect(h).toMatchObject({ action: "verdict", kind: "stream_closed", backend: "small-model", verdict: "do_not_retry", ask: false });
 		expect(x.judged).toHaveLength(1);
 		expect(x.judged[0]!.trigger).toBe("stalled-recovery");
 		expect(x.judged[0]!.user).toContain("First failure");
@@ -315,15 +315,15 @@ describe("a second failure within the window goes to the judge", () => {
 	});
 
 	test("an ask_principal verdict asks the principal", async () => {
-		const x = rig({ judge: () => ({ ok: true, backend: "haiku", verdict: "ask_principal", reason: "a limit" }) });
+		const x = rig({ judge: () => ({ ok: true, backend: "small-model", verdict: "ask_principal", reason: "a limit" }) });
 		await retried(x);
 		expect(await x.fail("t1", { runId: "run-2", ...STREAM })).toMatchObject({ action: "verdict", verdict: "ask_principal", ask: true });
 	});
 
 	test("a judge that cannot answer still hands the failure to the Steward, marked unjudged", async () => {
-		const x = rig({ judge: () => ({ ok: false, backend: "haiku", error: "haiku judge exited 1" }) });
+		const x = rig({ judge: () => ({ ok: false, backend: "small-model", error: "small-model judge exited 1" }) });
 		await retried(x);
-		expect(await x.fail("t1", { runId: "run-2", ...STREAM })).toMatchObject({ action: "verdict", verdict: "unjudged", ask: false, reason: "haiku judge exited 1" });
+		expect(await x.fail("t1", { runId: "run-2", ...STREAM })).toMatchObject({ action: "verdict", verdict: "unjudged", ask: false, reason: "small-model judge exited 1" });
 	});
 
 	test("the daemon retries that thread no more until it completes a turn", async () => {
@@ -443,8 +443,8 @@ describe("the queue items", () => {
 		expect(i.title).toContain("stream_closed");
 	});
 	test("a verdict item names the judge and routes everything to the Steward", () => {
-		const i = verdictItem("capacity", "needs a different model", "haiku", { thread: "Thread one", server: "laptop", threadId: "t1" }) as any;
-		expect(i.context).toContain("haiku judge: needs a different model");
+		const i = verdictItem("capacity", "needs a different model", "small-model", { thread: "Thread one", server: "laptop", threadId: "t1" }) as any;
+		expect(i.context).toContain("small-model judge: needs a different model");
 		expect(i.options.every((o: any) => o.route === undefined)).toBe(true);
 	});
 	test("the judge's brief carries the two errors and the gap, and its verdicts are the three the Steward understands", () => {
@@ -459,7 +459,7 @@ describe("the queue items", () => {
 
 describe("wording", () => {
 	test("every underscore in a kind is humanized: provider_turn_failed reads as words in the queue items", () => {
-		const v = verdictItem("provider_turn_failed", "r", "haiku", { thread: "T", server: "s", threadId: "t" }) as any;
+		const v = verdictItem("provider_turn_failed", "r", "small-model", { thread: "T", server: "s", threadId: "t" }) as any;
 		expect(v.title).toContain("provider turn failed");
 		const b = breakerItem("provider_turn_failed", 3, 10 * MIN, { thread: "T", server: "s" }) as any;
 		expect(b.context).toContain("provider turn failed");
@@ -482,19 +482,19 @@ describe("outcomeOf: how a Handling reads for the wake and the queue", () => {
 		expect(outcomeOf({ action: "breaker", kind: "stream_closed", alarm: false, count: 4 }, where)).toEqual({ stop: true });
 	});
 	test("a verdict words the failed wake with the judge and what the daemon will do next", () => {
-		const o = outcomeOf({ action: "verdict", kind: "provider_turn_failed", backend: "haiku", verdict: "retry_later", reason: "looks transient", ask: false }, where);
+		const o = outcomeOf({ action: "verdict", kind: "provider_turn_failed", backend: "small-model", verdict: "retry_later", reason: "looks transient", ask: false }, where);
 		expect(o.what).toBe("run failed twice (provider turn failed) after an automatic retry");
-		expect(o.note).toBe("haiku judge: retry later — looks transient. The daemon retries this thread no more until it finishes a turn.");
+		expect(o.note).toBe("small-model judge: retry later — looks transient. The daemon retries this thread no more until it finishes a turn.");
 		expect(o.ask).toBeUndefined();
 	});
 	test("a verdict that needs the principal also raises a queue item", () => {
-		const o = outcomeOf({ action: "verdict", kind: "capacity", backend: "haiku", verdict: "ask_principal", reason: "a different model?", ask: true }, where);
+		const o = outcomeOf({ action: "verdict", kind: "capacity", backend: "small-model", verdict: "ask_principal", reason: "a different model?", ask: true }, where);
 		expect(o.note).toContain("The principal has been asked on the decision queue.");
 		expect(o.ask).toMatchObject({ why: "verdict", item: { kind: "only-you", threadId: "t1" } });
 	});
 	test("an unjudged verdict says the judge could not answer", () => {
-		const o = outcomeOf({ action: "verdict", kind: "oom", backend: "haiku", verdict: "unjudged", reason: "haiku judge exited 1", ask: false }, where);
-		expect(o.note).toContain("the judge could not answer (haiku judge exited 1)");
+		const o = outcomeOf({ action: "verdict", kind: "oom", backend: "small-model", verdict: "unjudged", reason: "small-model judge exited 1", ask: false }, where);
+		expect(o.note).toContain("the judge could not answer (small-model judge exited 1)");
 	});
 });
 

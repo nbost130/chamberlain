@@ -15,7 +15,7 @@ const MONITOR = "/opt/monitor/report.ts";
 const MORNING = [
 	`bun ${MONITOR} heartbeat --json`,
 	`bun ${MONITOR} list --limit <N> --json`,
-	`docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= <N>\\nOutputFormat: csv\\n' | lq"`,
+	`docker exec -u svc db1 sh -lc "printf 'SELECT time, host, state FROM events WHERE time >= <N>\\n' | query"`,
 ];
 /**
  * A wrapper only one install has, declared the way alert-desk.json's `commandShapes` declares it. Nothing of the kind is built in.
@@ -63,16 +63,16 @@ describe("the approved shapes are accepted", () => {
 		"git diff 'HEAD~1' -- src/gateway/alertmanager.ts",
 		"docker ps -a",
 		"docker ps --format '{{.Names}} {{.Status}}'",
-		"docker logs --tail 100 mc-paper",
-		"docker inspect --format '{{.State.Status}} {{.RestartCount}}' mc-paper",
-		"docker inspect -f '{{.Config.Image}}' mc-paper",
-		"docker inspect --format='{{.State.Status}}' mc-paper",
+		"docker logs --tail 100 web-app",
+		"docker inspect --format '{{.State.Status}} {{.RestartCount}}' web-app",
+		"docker inspect -f '{{.Config.Image}}' web-app",
+		"docker inspect --format='{{.State.Status}}' web-app",
 		"journalctl -u a.service -n 50 | head -n 20",
-		"docker logs --tail 500 mc-paper | tail -n 40",
+		"docker logs --tail 500 web-app | tail -n 40",
 		"journalctl -u a.service | wc -l",
 		`bun ${MONITOR} heartbeat --json`,
 		`bun ${MONITOR} list --limit 1000 --json`,
-		`docker exec -u svc db1 bash -lc "printf 'GET log\\nColumns: time host_name service_description state plugin_output\\nFilter: class = 3\\nFilter: time >= 1731400000\\nOutputFormat: csv\\n' | lq"`,
+		`docker exec -u svc db1 sh -lc "printf 'SELECT time, host, state FROM events WHERE time >= 1731400000\\n' | query"`,
 		`${ASK} '{"kind":"product","title":"Restart a.service?","options":[{"label":"yes"},{"label":"no"}]}'`,
 	])("%s", (cmd) => allowed(cmd));
 });
@@ -90,16 +90,16 @@ describe("each widened argument is refused", () => {
 		refused("git status --porcelain=v1 -z");
 	});
 	test("docker inspect needs a --format and cannot reach Config.Env", () => {
-		expect(refused("docker inspect mc-paper")).toContain("--format is required");
-		for (const f of ["{{.Config.Env}}", "{{json .Config}}", "{{json .}}", "{{.}}", "{{.Config}}", "{{range .Config.Env}}{{.}}{{end}}", "{{index .Config.Env 0}}", "{{.Config.Cmd}}", "{{ .Config.Env }}", "{{.State.Status}}{{.Config.Env}}", "{{.Env}}", "{{println .Config.Env}}"]) refused(`docker inspect --format '${f}' mc-paper`);
-		refused("docker inspect -f '{{.Config.Env}}' mc-paper");
-		refused("docker inspect --format={{.Config.Env}} mc-paper");
-		refused("docker inspect --size --format '{{.State.Status}}' mc-paper");
+		expect(refused("docker inspect web-app")).toContain("--format is required");
+		for (const f of ["{{.Config.Env}}", "{{json .Config}}", "{{json .}}", "{{.}}", "{{.Config}}", "{{range .Config.Env}}{{.}}{{end}}", "{{index .Config.Env 0}}", "{{.Config.Cmd}}", "{{ .Config.Env }}", "{{.State.Status}}{{.Config.Env}}", "{{.Env}}", "{{println .Config.Env}}"]) refused(`docker inspect --format '${f}' web-app`);
+		refused("docker inspect -f '{{.Config.Env}}' web-app");
+		refused("docker inspect --format={{.Config.Env}} web-app");
+		refused("docker inspect --size --format '{{.State.Status}}' web-app");
 	});
 	test("docker ps --format cannot use json or unlisted fields; other docker verbs are refused", () => {
 		refused("docker ps --format '{{json .}}'");
 		refused("docker ps --format '{{.Labels}}'");
-		for (const c of ["docker exec mc-paper env", "docker run alpine", "docker restart mc-paper", "docker rm mc-paper", "docker cp mc-paper:/x /tmp/x", "docker logs -f mc-paper", "docker logs", "docker stop x"]) refused(c);
+		for (const c of ["docker exec web-app env", "docker run alpine", "docker restart web-app", "docker rm web-app", "docker cp web-app:/x /tmp/x", "docker logs -f web-app", "docker logs", "docker stop x"]) refused(c);
 	});
 	test("systemctl cat and show are refused, and so is every mutating verb", () => {
 		expect(refused("systemctl cat monitor.service")).toContain("cat");
@@ -128,8 +128,8 @@ describe("each widened argument is refused", () => {
 	test("the exact shapes cannot be extended", () => {
 		refused(`bun ${MONITOR} list --limit 1000 --json; id`);
 		refused(`bun ${MONITOR} list --limit 1000 --json --out /tmp/x`);
-		refused(`docker exec -u svc db1 bash -lc "printf 'GET log\\nFilter: time >= 1731400000\\n' | lq; id"`);
-		refused(`docker exec -u svc db1 bash -lc "id"`);
+		refused(`docker exec -u svc db1 sh -lc "printf 'SELECT time FROM events WHERE time >= 1731400000\\n' | query; id"`);
+		refused(`docker exec -u svc db1 sh -lc "id"`);
 		refused(`${ASK} '{}' ; id`);
 		refused(`${ASK} 'a' 'b'`);
 		refused(`${ASK} "{}"`);
@@ -140,29 +140,29 @@ describe("the whole argument list is parsed: a flag given twice is refused, in a
 	const SAFE = "'{{.Name}}'", ENV = "'{{.Config.Env}}'", JSON_ALL = "'{{json .}}'";
 	test("a repeated --format cannot smuggle a second, unsafe one", () => {
 		for (const c of [
-			`docker inspect --format ${SAFE} --format ${ENV} mc-paper`,
-			`docker inspect --format ${ENV} --format ${SAFE} mc-paper`,
-			`docker inspect --format ${SAFE} --format ${JSON_ALL} mc-paper`,
-			`docker inspect mc-paper --format ${SAFE} --format ${ENV}`,
+			`docker inspect --format ${SAFE} --format ${ENV} web-app`,
+			`docker inspect --format ${ENV} --format ${SAFE} web-app`,
+			`docker inspect --format ${SAFE} --format ${JSON_ALL} web-app`,
+			`docker inspect web-app --format ${SAFE} --format ${ENV}`,
 		]) refused(c);
 	});
 	test("mixed -f, --format and --format= forms are refused whichever order", () => {
 		for (const c of [
-			`docker inspect -f ${SAFE} --format ${ENV} mc-paper`,
-			`docker inspect -f ${SAFE} --format=${ENV} mc-paper`,
-			`docker inspect --format=${SAFE} -f ${ENV} mc-paper`,
-			`docker inspect --format ${SAFE} -f ${ENV} mc-paper`,
-			`docker inspect --format=${SAFE} --format=${ENV} mc-paper`,
-			`docker inspect -f ${ENV} -f ${SAFE} mc-paper`,
+			`docker inspect -f ${SAFE} --format ${ENV} web-app`,
+			`docker inspect -f ${SAFE} --format=${ENV} web-app`,
+			`docker inspect --format=${SAFE} -f ${ENV} web-app`,
+			`docker inspect --format ${SAFE} -f ${ENV} web-app`,
+			`docker inspect --format=${SAFE} --format=${ENV} web-app`,
+			`docker inspect -f ${ENV} -f ${SAFE} web-app`,
 		]) refused(c);
 		// Two flags that are each fine are still two flags.
-		expect(refused(`docker inspect -f ${SAFE} -f ${SAFE} mc-paper`)).toContain("more than once");
-		expect(refused(`docker inspect --format ${SAFE} --format=${SAFE} mc-paper`)).toContain("more than once");
+		expect(refused(`docker inspect -f ${SAFE} -f ${SAFE} web-app`)).toContain("more than once");
+		expect(refused(`docker inspect --format ${SAFE} --format=${SAFE} web-app`)).toContain("more than once");
 	});
 	test("{{json .}} and the other whole-document forms are refused as the one format", () => {
-		for (const f of [JSON_ALL, "'{{json .Config}}'", "'{{.}}'", "'{{.Config}}'", "'{{.Config.Env}}'", "'{{printf \"%v\" .Config.Env}}'"]) refused(`docker inspect --format ${f} mc-paper`);
-		refused(`docker inspect --format=${JSON_ALL} mc-paper`);
-		refused(`docker inspect -f ${JSON_ALL} mc-paper`);
+		for (const f of [JSON_ALL, "'{{json .Config}}'", "'{{.}}'", "'{{.Config}}'", "'{{.Config.Env}}'", "'{{printf \"%v\" .Config.Env}}'"]) refused(`docker inspect --format ${f} web-app`);
+		refused(`docker inspect --format=${JSON_ALL} web-app`);
+		refused(`docker inspect -f ${JSON_ALL} web-app`);
 	});
 	test("a flag may be given once on every command: journalctl, systemctl, docker, git, gh", () => {
 		for (const c of [
@@ -251,7 +251,7 @@ describe("the hook's decision per tool", () => {
 		for (const input of [{}, { subagent_type: "general-purpose" }, { subagent_type: "other-agent" }, { subagent_type: `${GATHERER}2` }, { prompt: "x" }]) expect(checkTool("Agent", input, o).ok).toBe(false);
 	});
 	test("with no gatherer configured the Agent tool is refused, whatever it asks to start", () => {
-		for (const name of [GATHERER, "general-purpose", "example-gatherer"]) {
+		for (const name of [GATHERER, "general-purpose", "helper"]) {
 			for (const tool of ["Agent", "Task"]) {
 				const v = checkTool(tool, { subagent_type: name, prompt: "read /var/log/syslog" }, { gatherer: undefined });
 				expect(v.ok).toBe(false);

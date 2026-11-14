@@ -558,7 +558,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 			relay: { retryAfterMs: () => 0, now: () => clock.t },
 			recover: FAST,
 			ask: async (raw) => { asked.push(raw as Record<string, any>); },
-			judge: async (trigger, brief) => { judgeCalls.push({ trigger, brief }); return judged === "fail" ? { ok: false, backend: "haiku", error: "haiku judge exited 1" } : { ok: true, backend: "haiku", ...judged }; },
+			judge: async (trigger, brief) => { judgeCalls.push({ trigger, brief }); return judged === "fail" ? { ok: false, backend: "small-model", error: "small-model judge exited 1" } : { ok: true, backend: "small-model", ...judged }; },
 		});
 		engines.push(engine);
 		void engine.start();
@@ -618,7 +618,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		await x.until("the verdict wake", () => x.fake.wakes.length === 1);
 		const msg = x.fake.wakes[0]!.message;
 		expect(msg).toContain("run failed twice (stream closed) after an automatic retry");
-		expect(msg).toContain("haiku judge: do not retry — it keeps failing");
+		expect(msg).toContain("small-model judge: do not retry — it keeps failing");
 		expect(x.judgeCalls).toHaveLength(1);
 		expect(x.asked).toEqual([]);
 		expect(x.fake.sends).toHaveLength(1);
@@ -641,7 +641,7 @@ describe("stalled-thread recovery, end to end through the fake", () => {
 		await x.until("the retry", () => x.fake.sends.length === 1);
 		x.failRun("t1", "run-2", { ...STREAM, runId: "run-2" });
 		await x.until("the wake", () => x.fake.wakes.length === 1);
-		expect(x.fake.wakes[0]!.message).toContain("the judge could not answer (haiku judge exited 1)");
+		expect(x.fake.wakes[0]!.message).toContain("the judge could not answer (small-model judge exited 1)");
 	});
 
 	test("two failures on different runs both fire a wake (the dedupe key names the run)", async () => {
