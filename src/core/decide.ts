@@ -84,9 +84,26 @@ export function looksLikeStall(text: string): boolean {
 const HANDBACK =
 	/\bhanding (?:it|this|that|them|everything) back\b(?! to (?:the )?steward)|\bremains? held\b|\bheld (?:until|for) your\b|\byour (?:last |latest |previous )?approval (?:only )?covered\b[^.\n]{0,120}\bonly\b|\bneeds? your (?:approval|go-ahead|go ahead|ok|okay)\b|\bbefore (?:live )?activation\b/i;
 
+/**
+ * Go-phrases: a finished turn that waits for the operator's word to start ("say go and I'll start it", "give me the go",
+ * "ready when you are", "on your word"). Read against the whole message tail like HANDBACK, because the line is often only
+ * in a spoken closing line, which the body read below drops. Word-bounded on purpose: "I'll go ahead and run the tests"
+ * and "go to the settings page" are not asks; "go ahead?" and "go-ahead" are.
+ */
+const GO_PHRASE =
+	/\bsay ['"‘’“”]?go\b|\bgive (?:me |us )?the go\b|\bgo-ahead\b|\bgo ahead\s*\?|\bready when you are\b|\bon your word\b/i;
+
+/**
+ * "Want me to ..." and "shall I ..." questions, read against the whole tail like GO_PHRASE: a closing line that is only
+ * "🗣️ Agent: Want me to proceed?" is an ask even though the body read drops that line. The question mark ends it, so a statement
+ * ("there is nothing you want me to do") and "you wanted me to" are not asks.
+ */
+const OFFER_QUESTION = /\b(?:want me to|shall i)\b[^\n?]{0,160}\?/i;
+
 /** True when a finished turn's final message hands a question or decision back to the operator. */
 export function looksLikeAsk(text: string): boolean {
-	if (HANDBACK.test(text.trim().slice(-500))) return true;
+	const whole = text.trim().slice(-500);
+	if (HANDBACK.test(whole) || GO_PHRASE.test(whole) || OFFER_QUESTION.test(whole)) return true;
 	const body = text
 		.split("\n")
 		.filter((l) => !l.trimStart().startsWith("🗣️") && !l.trimStart().startsWith("🧠") && !l.trimStart().startsWith("🤖"))
@@ -110,6 +127,16 @@ export function looksLikeAsk(text: string): boolean {
 			.slice(-2)
 			.join("\n"),
 	);
+}
+
+/**
+ * What a finished turn's last message is: an `ask` (it waits on the operator), a `stall` (it promises work it did not do), or
+ * `plain`. A message that reads as both is an ask: "Say go and I'll start it" promises work only after an answer, so the
+ * stall rule must never take it.
+ */
+export function endKind(text: string): "ask" | "stall" | "plain" {
+	if (looksLikeAsk(text)) return "ask";
+	return looksLikeStall(text) ? "stall" : "plain";
 }
 
 export type TurnItem = {

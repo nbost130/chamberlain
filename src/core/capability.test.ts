@@ -133,7 +133,7 @@ describe("the token", () => {
 			expect([...new Set(outs.map((o) => o.out))], `round ${round}`).toEqual([onDisk]);
 			expect(readdirSync(`${c}/secrets`), `round ${round}`).toEqual([TOKEN_FILE]); // no temporary file is left behind
 		}
-	});
+	}, 60_000); // starts eighty child processes in ten barrier rounds: 5.0 s seen under load, so the 5 s default flakes
 	test("rotating replaces it, 0600, and a running capability follows without a restart", () => {
 		const c = conf();
 		const old = ensureToken(c);

@@ -184,8 +184,35 @@ every sweep until it runs again, and the sweep becomes a full one, because a che
 `"mode": "shadow"` on a check records what it *would* have sent without waking anyone (counted apart from real
 notifications, so going `"live"` starts from a true zero); `"silenced"` tracks only. Findings travel to the Steward as untrusted data. See
 [`examples/sweep-check.sh`](../examples/sweep-check.sh). The daemon also runs one built-in source, threads that keep starting
-turns of their own (a runaway), with no configuration. Any future monitor plugs in the same way, as another source
+turns of their own (a runaway), with no configuration, and one built-in check on its own timer, `idle-parents`, described next. Any future monitor plugs in the same way, as another source
 ([`ARCHITECTURE.md`](ARCHITECTURE.md#the-item-system)).
+
+**`sweep.idleParents`** tunes the built-in `idle-parents` check (item source `check:idle-parents`). It runs on **its own timer**, every
+`intervalMinutes` (default 15), not on the two-hourly routine sweep; the daemon's once-a-minute housekeeping asks whether it is due, and
+the check keeps its own clock in the database, so the schedule survives a restart. Each run lists the top-level threads on every
+configured server that are not a child or subagent thread, not settled, snoozed or archived, have nothing running or open (no card,
+background task, running child, or running subagent the adapter reports), and are `idle` or `completed` with their last message finished more than `thresholdMinutes` ago
+(default 30), whoever started its last turn: a thread that answered the principal's own question and then sat on a half-answer is listed like any other. The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
+Steward gets one wake with a compact list: server, thread id, title, idle minutes and the last message cut to about 300 characters,
+with the threads whose last message asks something (`looksLikeAsk`, so "say go and I'll start it" counts) marked `[ASKING]` and
+first. It is the net under a turn-end wake that missed a thread. A thread is reported once per last message, however many runs pass and however its eligibility moves in between (snoozed, briefly
+running, below the threshold: it comes back unreported only if its last message changed; the item's key is the thread plus a hash of
+that message); a new message makes a new report. It calls no model: the selection is plain
+code (`selectIdleThreads` in `src/core/idle-parents.ts`, which returns plain records).
+
+```json
+{ "sweep": { "idleParents": { "enabled": true, "intervalMinutes": 15, "thresholdMinutes": 30, "maxThreads": 10 } } }
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | `false` turns the check off. |
+| `intervalMinutes` | `15` | A positive number of minutes between runs. The housekeeping tick is once a minute, so a run starts within a minute of when it is due. |
+| `thresholdMinutes` | `30` | A positive number of minutes a thread must have been idle. |
+| `maxThreads` | `10` | The most NEW threads one wake lists, asks first, then the longest idle; the rest are listed on a later run. A thread already reported never counts again. |
+
+A key it does not know is refused. A configured check cannot be named `idle-parents`. The check reads each candidate thread's last
+message, so it needs an adapter whose `inspect` has `lastAssistant` (the T3 adapter does); without it the check lists nothing.
 
 ## State directory `~/.local/state/chamberlain` (`CHAMBERLAIN_STATE`)
 

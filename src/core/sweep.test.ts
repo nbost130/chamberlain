@@ -193,6 +193,7 @@ describe("sweep.json", () => {
 		expect(c).toEqual({
 			schemaVersion: 2,
 			checks: [{ name: "disk", command: ["/usr/bin/df", "-k"], timeoutMs: 5000 }],
+			idleParents: { enabled: true, intervalMinutes: 15, thresholdMinutes: 30, maxThreads: 10 },
 		});
 	});
 	test("a check may be set to shadow or silenced, and an unknown mode is refused", () => {
