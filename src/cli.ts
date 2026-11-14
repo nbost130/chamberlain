@@ -37,7 +37,7 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 /** One line for each subcommand, as `chamberlain help` lists them. */
 const ABOUT: Record<CommandName, string> = {
 	daemon: "run the daemon: watch T3 and wake the Steward",
-	web: "serve the decision-queue page (--test: fixture data, loopback only)",
+	web: "serve the decision-queue page (--test: fixture data, loopback only); web link: print its links with the key; web rotate-token: new key, old links stop",
 	ask: "put one question on the decision queue ('<json>' or - for stdin)",
 	afk: "away mode and the held ledger: enter|status|hold|held|note|close|close-card|brief|exit",
 	decided: "log a self-answer, or list the last ones",

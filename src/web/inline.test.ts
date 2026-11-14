@@ -7,6 +7,7 @@ import { memStore } from "../testing/store.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { askQuestion, recordAnswerDelivered, type Question } from "../core/questions.ts";
 import { createApp } from "./app.ts";
+import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
@@ -40,7 +41,14 @@ function setup() {
 			return new Response(null, { status: 202 });
 		}) as unknown as typeof fetch),
 	);
-	const page = createApp({ store, state, log: () => {}, hosts: [HOST], staticDir: root });
+	const page = createApp({
+		capability: openCapability(),
+		store,
+		state,
+		log: () => {},
+		hosts: [HOST],
+		staticDir: root,
+	});
 	const app = {
 		...page,
 		idle: async () => {
@@ -214,7 +222,15 @@ test("mirrored cards come with the queue and count toward the title, but an inli
 			return { status: 200, body: { ok: true, choice: "A" } };
 		},
 	};
-	const app = createApp({ store: memStore(), state, log: () => {}, hosts: [HOST], staticDir: root, mirror });
+	const app = createApp({
+		capability: openCapability(),
+		store: memStore(),
+		state,
+		log: () => {},
+		hosts: [HOST],
+		staticDir: root,
+		mirror,
+	});
 	const req = (path: string, init: RequestInit = {}) =>
 		app.fetch(
 			new Request(`http://${HOST}${path}`, {

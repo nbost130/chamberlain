@@ -31,6 +31,8 @@ const ICON = {
 
 async function api(path, body) {
 	const r = await fetch(path, body === undefined ? { headers: { accept: "application/json" } } : { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) });
+	// No key, or one that was rotated: the page shell is gated too, so a reload shows the "needs its link" page instead of a half-working one.
+	if (r.status === 401) { location.reload(); throw new Error("this page needs its link"); }
 	let j;
 	try { j = await r.json(); } catch (e) { throw new Error(r.ok ? `unreadable reply: ${e.message}` : `HTTP ${r.status}`); }
 	if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);

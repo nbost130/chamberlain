@@ -21,6 +21,7 @@ import {
 import { openStore } from "../core/sqlite-store.ts";
 import { dbPath } from "../core/store.ts";
 import { createApp } from "./app.ts";
+import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
@@ -63,7 +64,14 @@ function world(status: () => number = () => 202) {
 	function page(daemon = true) {
 		const own = store();
 		const { drain } = testRelay(own, wake);
-		const ui = createApp({ store: own, state, log: () => {}, hosts: [HOST], staticDir: root });
+		const ui = createApp({
+			capability: openCapability(),
+			store: own,
+			state,
+			log: () => {},
+			hosts: [HOST],
+			staticDir: root,
+		});
 		const app = {
 			...ui,
 			idle: async () => {

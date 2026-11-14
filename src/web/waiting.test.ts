@@ -13,6 +13,7 @@ import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts"
 import { recordingWake } from "../testing/wake.ts";
 import { createApp } from "./app.ts";
 import { createWaiting, threadSender, type ServerAdapter } from "./waiting.ts";
+import { openCapability } from "../testing/capability.ts";
 
 const card = (over: Partial<WaitingCard> = {}): WaitingCard => ({
 	id: "C-aaaaaaaaaaaa",
@@ -276,6 +277,7 @@ describe("the page over an adapter without send: a thread-routed answer falls ba
 		const { wake, accepted } = recordingWake();
 		const { drain } = testRelay(store, wake);
 		const app = createApp({
+			capability: openCapability(),
 			store,
 			state,
 			log: () => {},

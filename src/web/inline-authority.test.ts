@@ -11,6 +11,7 @@ import { askQuestion, getQuestion, readClaim, type Question } from "../core/ques
 import { readRulings } from "../core/rulings.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp, inlineVerdict } from "./app.ts";
+import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
@@ -84,7 +85,15 @@ function setup() {
 			return { status: 200, body: { ok: true, choice: "A" } };
 		},
 	};
-	const app = createApp({ store, state: `${root}/state`, log: () => {}, hosts: [HOST], staticDir: root, mirror });
+	const app = createApp({
+		capability: openCapability(),
+		store,
+		state: `${root}/state`,
+		log: () => {},
+		hosts: [HOST],
+		staticDir: root,
+		mirror,
+	});
 	const send = (method: string, path: string, o: { origin?: string; body?: unknown } = {}) => {
 		const headers: Record<string, string> = { host: HOST };
 		if (o.origin) headers.origin = o.origin;

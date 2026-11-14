@@ -12,6 +12,7 @@ import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";
 import { createWaiting } from "./waiting.ts";
+import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3790";
@@ -51,6 +52,7 @@ async function setup(cards: WaitingCard[] = [card({})]) {
 	await mirror.poll();
 	const store = memStore();
 	const app = createApp({
+		capability: openCapability(),
 		store,
 		state: `${root}/state`,
 		log: () => {},

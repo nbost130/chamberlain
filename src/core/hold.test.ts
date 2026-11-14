@@ -17,6 +17,7 @@ import { testRelayLock } from "../testing/lock.ts";
 import { RIGHTS_MARKER } from "./decide.ts";
 import { composeWake, HOLD_CEILING_MS, observe, type Gate, type HeldItem } from "./hold.ts";
 import { createApp } from "../web/app.ts";
+import { openCapability } from "../testing/capability.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const MIN = 60_000;
@@ -344,7 +345,14 @@ describe("the queue page's answers", () => {
 	});
 	const HOST = "127.0.0.1:3790";
 	function page(x: ReturnType<typeof world>) {
-		const app = createApp({ store: x.store(), state: x.root, log: () => {}, hosts: [HOST], staticDir: x.root });
+		const app = createApp({
+			capability: openCapability(),
+			store: x.store(),
+			state: x.root,
+			log: () => {},
+			hosts: [HOST],
+			staticDir: x.root,
+		});
 		const answer = async (id: string, choice: number) => {
 			const r = await app.fetch(
 				new Request(`http://${HOST}/api/items/${id}/answer`, {

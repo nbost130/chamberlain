@@ -63,7 +63,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		watch: (sink, signal) => link.watch(sink, signal),
 		wake,
 		isBusy,
-		post: async (item, opts) => postCard(item, env.conf, opts.queueUrl),
+		post: async (item, opts) => postCard(item, env.conf, opts.queueUrl, opts.capability),
 		answer: waiting.answer,
 		listWaiting: waiting.listWaiting,
 		// The rename needs the operate token the page grants (web.json) and the Decisions thread's id; without either it reports why.

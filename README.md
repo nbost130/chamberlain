@@ -68,7 +68,9 @@ chamberlain debug synthetic-wake       # queues one wake; the running daemon sen
 ```
 
 To watch without sending anything first, run `CHAMBERLAIN_DRY=1 CHAMBERLAIN_VERBOSE=1 chamberlain daemon`. The page where you answer the
-Steward's questions is `chamberlain web`; [docs/CONFIGURATION.md](docs/CONFIGURATION.md) says how to set it up.
+Steward's questions is `chamberlain web`; [docs/CONFIGURATION.md](docs/CONFIGURATION.md) says how to set it up. The page serves nothing without its
+key (a random token made on first start): `chamberlain web link` prints the link to open once on each of your devices, and
+[docs/web-access.md](docs/web-access.md) covers rotating it and upgrading an install that had no key.
 
 ## How a wake travels
 
@@ -118,6 +120,7 @@ nobody is woken. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the layers, an
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | `config.json`, `secrets/`, the state directory, environment variables and commands |
 | [docs/config-migration.md](docs/config-migration.md) | Upgrading from the file-per-setting layout: where every old file and variable went |
 | [docs/SECURITY.md](docs/SECURITY.md) | What the daemon and the page can do, and what they refuse |
+| [docs/web-access.md](docs/web-access.md) | The page's key: getting a link, rotating it, and upgrading an install that had none |
 | [docs/DELIVERY.md](docs/DELIVERY.md) | The outbox, the relay, retries and dead letters |
 | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) | The T3 versions it is tested against, what it relies on, known limits |
 | [docs/alert-desk.md](docs/alert-desk.md) | The optional desk that explains your monitoring alerts |

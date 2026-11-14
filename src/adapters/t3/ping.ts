@@ -221,12 +221,23 @@ export function t3Cli(): string {
 }
 
 /** Sends one message to a thread with the T3 CLI on this machine. The text goes on stdin, never into a command line. */
-export function pingViaCli(threadId: string, text: string, cli: () => string = t3Cli): PingResult {
+export function pingViaCli(
+	threadId: string,
+	text: string,
+	cli: () => string = t3Cli,
+	/** Applied to the CLI's whole output BEFORE it is cut to 300 characters: a cut inside a secret would leave part of it standing. */
+	scrub: (output: string) => string = (s) => s,
+): PingResult {
 	const r = Bun.spawnSync([cli(), "thread", "send", threadId, "-"], {
 		stdin: Buffer.from(text),
 		stdout: "pipe",
 		stderr: "pipe",
 		timeout: 60_000,
 	});
-	return { ok: r.exitCode === 0, detail: (r.stdout.toString() + r.stderr.toString()).trim().slice(0, 300) };
+	return {
+		ok: r.exitCode === 0,
+		detail: scrub(r.stdout.toString() + r.stderr.toString())
+			.trim()
+			.slice(0, 300),
+	};
 }

@@ -30,6 +30,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { CONF, STATE } from "./core/config.ts";
+import { readToken } from "./core/capability.ts";
 import { cfg } from "./core/layout.ts";
 import { homeAdapter } from "./adapters/index.ts";
 import { defaultStore } from "./core/default-store.ts";
@@ -267,9 +268,24 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 		return;
 	}
 	const base = queueBase();
-	const inline = base !== undefined && (await queueUp(base));
+	const up = base !== undefined && (await queueUp(base));
+	// The view's links carry the page's key. The page makes it when it starts, so a page that answers has one; one that cannot be read
+	// (a wrong mode) or is missing gets the notice, with the reason on stderr, never a link that would not work.
+	let key: string | undefined;
+	if (up) {
+		try {
+			key = readToken(CONF);
+		} catch (e) {
+			console.error(
+				`the page's key could not be read (${String((e as Error).message).slice(0, 120)}); posting a notice instead of the view`,
+			);
+		}
+		if (!key)
+			console.error("the page has no key yet: run `chamberlain web link`; posting a notice instead of the view");
+	}
+	const inline = up && key !== undefined;
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });
-	const card = await adapter.post(item, { queueUrl: inline ? base : undefined });
+	const card = await adapter.post(item, { queueUrl: inline ? base : undefined, capability: inline ? key : undefined });
 	if (!card.ok) {
 		console.error(`${item.id} is on the queue page, but the question did not post: ${card.detail}`);
 		process.exit(1);

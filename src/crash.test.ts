@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { ensureToken } from "./core/capability.ts";
 import { CRASH_STEPS } from "./core/crash.ts";
 import { withDeliveryId } from "./core/deliver.ts";
 import { askQuestion, getQuestion, readClaim, type Question } from "./core/questions.ts";
@@ -101,6 +102,8 @@ async function world(id: string) {
 	secret(`${conf}/read-token`, "not-a-token");
 	const port = await freePort();
 	secret(`${conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port }));
+	// The page's capability token, made before the page starts (it would make one itself): every request to the page must hold it.
+	const key = ensureToken(conf);
 	// The test's own connection: the same file the children use, read and written alongside them (WAL).
 	const store = openStore(dbPath(state));
 	stores.push(store);
@@ -133,7 +136,7 @@ async function world(id: string) {
 			await Bun.sleep(25);
 		}
 	};
-	return { root, conf, state, port, env, store, events, spawn, until };
+	return { root, conf, state, port, key, env, store, events, spawn, until };
 }
 type World = Awaited<ReturnType<typeof world>>;
 
@@ -203,7 +206,7 @@ describe("page path: the real queue server dies answering a real request, and th
 		const host = `127.0.0.1:${w.port}`;
 		const r = await fetch(`http://${host}/api/items/${ID}/answer`, {
 			method: "POST",
-			headers: { host, "content-type": "application/json", "x-decision-queue": "1" },
+			headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
 			body: JSON.stringify(body),
 		}).then(
 			(x) => x.status,
@@ -220,7 +223,7 @@ describe("page path: the real queue server dies answering a real request, and th
 		const host = `127.0.0.1:${w.port}`;
 		const status = await fetch(`http://${host}/api/items/${ID}/answer`, {
 			method: "POST",
-			headers: { host, "content-type": "application/json", "x-decision-queue": "1" },
+			headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
 			body: JSON.stringify({ choice }),
 		}).then((x) => x.status);
 		p.kill();
@@ -678,7 +681,7 @@ describe("an answer is never held: the real page writes it and the real daemon s
 			const host = `127.0.0.1:${w.port}`;
 			const r = await fetch(`http://${host}/api/items/${ID}/answer`, {
 				method: "POST",
-				headers: { host, "content-type": "application/json", "x-decision-queue": "1" },
+				headers: { host, "content-type": "application/json", "x-decision-queue": "1", "x-decision-token": w.key },
 				body: JSON.stringify({ choice: 0 }),
 			});
 			expect(r.status).toBe(200);

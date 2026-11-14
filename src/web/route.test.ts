@@ -26,6 +26,7 @@ import { dbPath } from "../core/store.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { createApp } from "./app.ts";
 import type { SendToThread } from "./waiting.ts";
+import { openCapability } from "../testing/capability.ts";
 
 const HOST = "127.0.0.1:3790";
 const dirs: string[] = [];
@@ -76,6 +77,7 @@ function setup(
 		return r;
 	};
 	const page = createApp({
+		capability: openCapability(),
 		store,
 		state,
 		log: (event, data) => logs.push({ event, data }),
