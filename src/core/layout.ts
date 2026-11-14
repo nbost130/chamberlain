@@ -25,15 +25,20 @@
  * This module imports nothing from config.ts (which imports it), so it takes the config directory as an argument and defaults it the same way.
  */
 import {
+	closeSync,
 	existsSync,
+	fsyncSync,
 	lstatSync,
 	mkdirSync,
+	openSync,
 	readFileSync,
 	readdirSync,
 	renameSync,
 	statSync,
 	writeFileSync,
+	writeSync,
 } from "node:fs";
+import { dirname } from "node:path";
 import { authorityProblem, isPrivateFile, modeText } from "./private.ts";
 import { SchemaTooNewError, checkVersion } from "./schema.ts";
 import { parseSettings, parseSettledMatch } from "./settings-parse.ts";
@@ -193,12 +198,40 @@ export function readConfigFile(conf = DEFAULT_CONF): Record<string, unknown> | u
 	}
 }
 
-/** Writes config.json whole: through a temporary file and a rename, mode 0600. The caller holds the config directory's lock. */
+/** Flushes a directory's entries (a rename, a new file) to disk, so a power loss cannot keep a later step and lose an earlier one. Best effort where a filesystem refuses. */
+export function syncDir(dir: string): void {
+	try {
+		const fd = openSync(dir, "r");
+		try {
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		// EMPTY_CATCH_OK: a filesystem that cannot sync a directory has nothing more to give; the rename itself still happened.
+	}
+}
+
+/** Writes a file through a temporary file that is flushed to disk before the rename, then flushes the directory. Mode 0600. */
+export function writeFileDurable(path: string, text: string): void {
+	const tmp = `${path}.tmp-${process.pid}`;
+	const fd = openSync(tmp, "w", 0o600);
+	try {
+		writeSync(fd, text);
+		fsyncSync(fd);
+	} finally {
+		closeSync(fd);
+	}
+	renameSync(tmp, path);
+	syncDir(dirname(path));
+}
+
+/** Writes config.json whole: through a flushed temporary file and a rename, mode 0600. The caller holds the config directory's lock. */
 export function writeConfigFile(conf: string, doc: Record<string, unknown>): void {
-	const p = `${conf}/${CONFIG_FILE}`;
-	const tmp = `${p}.tmp-${process.pid}`;
-	writeFileSync(tmp, `${JSON.stringify({ schemaVersion: CONFIG_SCHEMA_VERSION, ...doc }, null, 2)}\n`, { mode: 0o600 });
-	renameSync(tmp, p);
+	writeFileDurable(
+		`${conf}/${CONFIG_FILE}`,
+		`${JSON.stringify({ schemaVersion: CONFIG_SCHEMA_VERSION, ...doc }, null, 2)}\n`,
+	);
 }
 
 // ---- the legacy files ----------------------------------------------------------------------------------
@@ -379,11 +412,13 @@ export function oldFileState(conf: string, name: string, secret: boolean): OldSt
 /** The old names present at their old place that Chamberlain will never read, because the migration moved them. */
 export function reappearedFiles(conf: string): string[] {
 	const out = Object.keys(NON_SECRET_HOME).filter((n) => oldFileState(conf, n, false) === "reappeared");
+	const marked = migratedNames(conf);
 	try {
 		for (const e of readdirSync(conf, { withFileTypes: true }))
 			if (
 				(e.isFile() || e.isSymbolicLink()) &&
-				SECRET_FILE.test(e.name) &&
+				!Object.hasOwn(NON_SECRET_HOME, e.name) &&
+				(SECRET_FILE.test(e.name) || marked.has(e.name)) && // a secret by its name, or by what the migration moved (a token file called credential.md)
 				oldFileState(conf, e.name, true) === "reappeared"
 			)
 				out.push(e.name);
@@ -451,6 +486,11 @@ export function configValue(conf: string, key: string): Legacy | undefined {
 	if (doc && Object.hasOwn(doc, key)) return doc[key] === null ? undefined : { value: doc[key], file: CONFIG_FILE };
 	const old = legacyValue(conf, key);
 	if (old) deprecated(conf, old.file, key, `config.json "${key}"`);
+	if (!old && !doc) {
+		// A migration may have written config.json between the two reads above: look once more before saying there is nothing.
+		const again = readConfigFile(conf);
+		if (again && Object.hasOwn(again, key) && again[key] !== null) return { value: again[key], file: CONFIG_FILE };
+	}
 	return old;
 }
 /** Just the value. */
@@ -464,6 +504,10 @@ export function thread(conf: string, member: ThreadKey): string | undefined {
 	if (isObject(t) && Object.hasOwn(t, member)) return typeof t[member] === "string" ? (t[member] as string) : undefined;
 	const old = legacyThread(conf, member);
 	if (old) deprecated(conf, LEGACY_THREAD_FILES[member], `threads.${member}`, `config.json "threads.${member}"`);
+	if (!old && !doc) {
+		const again = readConfigFile(conf)?.threads;
+		if (isObject(again) && typeof again[member] === "string") return again[member] as string; // a migration finished between the two reads
+	}
 	return old;
 }
 
@@ -529,7 +573,11 @@ export function readSecret(conf: string, name: string): string | undefined {
 	if (!insideSecrets(name)) return undefined; // a name that climbs out of the directory (`..`, an absolute path) names no secret
 	const v = tryRead(`${conf}/${SECRETS_DIR}/${name}`);
 	if (v !== null) return v;
-	if (!readable(conf, name, true)) return undefined; // moved by the migration: the old name is never read
+	if (!readable(conf, name, true)) {
+		// Moved by the migration (the old name is never read), or moved while we looked: once more in secrets/, where it is now.
+		const moved = tryRead(`${conf}/${SECRETS_DIR}/${name}`);
+		return moved === null ? undefined : moved;
+	}
 	const old = tryRead(`${conf}/${name}`);
 	if (old === null) return undefined;
 	deprecated(conf, name, `secrets/${name}`, `${SECRETS_DIR}/${name}`);

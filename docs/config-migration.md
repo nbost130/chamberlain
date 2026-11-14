@@ -117,10 +117,12 @@ A script that read `steward-thread` should run `chamberlain config get threads.s
 
 - **`chamberlain config get <key>`** prints one value, for a script: `config get threads.steward`, `config get web.port`, `config get stallMs`. A string prints bare, anything else as JSON; an unset key prints nothing, says so on stderr and exits 1.
   It **refuses a secret** (a name like `wake-url` or `laptop-token`, or anything under `secrets`): secrets are files in `secrets/`, read by the program that needs them.
-- **`chamberlain config revert [--dry-run]`** puts the old layout back so an older build starts again: every `<name>.migrated` is renamed back, each moved secret goes back to its old name (date kept),
-  the three thread files are written from `config.json`'s **current** thread ids (so a Steward switch since the migration does not bring a retired Steward back), and `config.json` is renamed `config.json.reverted`.
-  Anything written at an old name in the meantime is set aside as `<name>.reappeared`, never overwritten. It is idempotent (a second run prints `nothing to revert`) and a crash at any step leaves every value readable.
-  Settings edited in `config.json` after the migration are not carried back into the old files, and `secrets/web-token` (a secret with no old name) stays where it is.
+- **`chamberlain config revert [--dry-run]`** puts the old layout back so an older build starts again: the newest `<name>.migrated` of each file is renamed back, each moved secret goes back to its old name (date kept),
+  the three thread files are written from `config.json`'s **current** thread ids (so a Steward switch since the migration does not bring a retired Steward back; a thread set to `null` stays none),
+  and `config.json` is renamed `config.json.reverted`. **Nothing is ever replaced.** Anything already at a name revert needs is set aside under a free name first:
+  `<name>.reappeared` (written after the migration), `<name>.pre-revert` (a thread file that `config.json`'s current id replaces), `<name>.earlier` (an older archive).
+  It is idempotent (a second run prints `nothing to revert`), a crash at any step leaves every value readable, and it also moves back a secret that a migration crashed after moving.
+  Settings edited in `config.json` after the migration are not carried back into the old files (revert says so; they are in `config.json.reverted`), and `secrets/web-token` (a secret with no old name) stays where it is.
 
 ## How to check that it worked
 

@@ -47,6 +47,7 @@ import { readServers } from "./servers.ts";
 import { readSweepConfig } from "./sweep.ts";
 import { readConfig, readOperator } from "./alert-desk.ts";
 import { loadConfig } from "../web/config.ts";
+import { readSettings } from "./config.ts";
 
 const dirs: string[] = [];
 const fresh = () => {
@@ -457,6 +458,17 @@ describe("config.json is checked when it is read", () => {
 		expect(() => readConfigFile(conf)).toThrow("threads");
 		write(conf, "{ not json");
 		expect(() => readConfigFile(conf)).toThrow("not valid JSON");
+	});
+	test("settledMatch is checked as settings.json checked it: unknown keys and wrong types are refused", () => {
+		const conf = fresh();
+		write(conf, { schemaVersion: 1, settledMatch: { titleOverlap: "no" } });
+		expect(() => readConfigFile(conf)).toThrow("titleOverlap");
+		write(conf, { schemaVersion: 1, settledMatch: { ignoreWords: ["a", ""] } });
+		expect(() => readConfigFile(conf)).toThrow("ignoreWords");
+		write(conf, { schemaVersion: 1, settledMatch: { colour: 1 } });
+		expect(() => readConfigFile(conf)).toThrow("unknown keys: colour");
+		write(conf, { schemaVersion: 1, settledMatch: { titleOverlap: false, ignoreWords: [" acme "] } });
+		expect(readSettings(conf).settledMatch).toEqual({ titleOverlap: false, ignoreWords: ["acme"] }); // trimmed
 	});
 	test("a newer schemaVersion is refused, never guessed at", () => {
 		const conf = fresh();

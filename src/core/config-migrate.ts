@@ -26,7 +26,6 @@ import {
 	rmSync,
 	statSync,
 	utimesSync,
-	writeFileSync,
 } from "node:fs";
 import type { Stats } from "node:fs";
 import { dirname } from "node:path";
@@ -50,7 +49,9 @@ import {
 	readConfigFile,
 	reappeared,
 	reappearedFiles,
+	syncDir,
 	writeConfigFile,
+	writeFileDurable,
 	type ScalarKey,
 	type ThreadKey,
 } from "./layout.ts";
@@ -77,6 +78,22 @@ const STAYS = [
 	"brief.d",
 	"daemon.env",
 ];
+
+/** Written before the first secret moves and removed once config.json is on disk: it names the secrets a crashed run may have moved. */
+const JOURNAL = ".config-migrating";
+
+/** The secrets the journal names that are now in secrets/ and gone from their old name: moved by a run that crashed before it wrote config.json. */
+function movedBeforeCrash(conf: string): string[] {
+	try {
+		const j = JSON.parse(readFileSync(`${conf}/${JOURNAL}`, "utf8")) as { secrets?: unknown };
+		return (Array.isArray(j.secrets) ? j.secrets : []).filter(
+			(n): n is string =>
+				typeof n === "string" && existsSync(`${conf}/${SECRETS_DIR}/${n}`) && !existsSync(`${conf}/${n}`),
+		);
+	} catch {
+		return []; // no journal, or one that is not readable: nothing to add
+	}
+}
 
 export type Plan = {
 	/** The document config.json would hold after the migration. */
@@ -203,7 +220,7 @@ export function planMigration(conf: string): Plan {
 
 	try {
 		const p = `${conf}/settings.json`;
-		if (existsSync(p) && isPrivateFile(statSync(p))) {
+		if (oldFileState(conf, "settings.json", false) === "usable" && isPrivateFile(statSync(p))) {
 			const known = new Set([
 				"schemaVersion",
 				"principalName",
@@ -341,7 +358,9 @@ export function planMigration(conf: string): Plan {
 	);
 	for (const f of Object.keys(NON_SECRET_HOME)) if (oldFileState(conf, f, false) === "pending") fileNames.add(f);
 	plan.renames = [...fileNames];
-	const moved = plan.secrets.filter((s) => s.action === "move").map((s) => s.name);
+	// Secrets an earlier run moved before it crashed (the journal names them): they belong in the list too, so `revert` can move them back.
+	const earlier = movedBeforeCrash(conf);
+	const moved = [...plan.secrets.filter((s) => s.action === "move").map((s) => s.name), ...earlier];
 	if (plan.added.length + moved.length + plan.renames.length > 0) {
 		const m = isObject(doc.migrated) ? doc.migrated : {};
 		const had = Array.isArray(m.files) ? (m.files as string[]) : [];
@@ -367,7 +386,8 @@ export function planMigration(conf: string): Plan {
 function legacyThreadId(conf: string, member: ThreadKey): string | undefined {
 	const name = LEGACY_THREAD_FILES[member];
 	const p = `${conf}/${name}`;
-	if (!existsSync(p)) return undefined;
+	// Only a file that was never migrated: one a migration moved and something wrote again is never read, here or anywhere.
+	if (oldFileState(conf, name, false) !== "usable") return undefined;
 	const st = statSync(p);
 	if (!isPrivateFile(st))
 		throw Error(`${name} must be a private regular file with mode exactly 0600 (it is ${modeText(st.mode)})`);
@@ -398,10 +418,13 @@ function freeMigratedName(conf: string, f: string): string {
  */
 function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 	let changed = false;
-	const moves = plan.secrets.filter((s) => s.action === "move");
+	// A symlink is resolved first: if it points at another secret, that secret must still be where it points when the link's content is read.
+	const linkFirst = (n: string) => (lstatSync(`${conf}/${n}`).isSymbolicLink() ? 0 : 1);
+	const moves = plan.secrets.filter((s) => s.action === "move").sort((a, b) => linkFirst(a.name) - linkFirst(b.name));
 	if (moves.length) {
 		ensureSecretsDir(conf);
 		chmodSync(`${conf}/${SECRETS_DIR}`, 0o700);
+		writeFileDurable(`${conf}/${JOURNAL}`, `${JSON.stringify({ secrets: moves.map((m) => m.name) })}\n`);
 	}
 	for (const s of moves) {
 		const from = `${conf}/${s.name}`;
@@ -424,9 +447,14 @@ function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 		changed = true;
 		after(`secret:${s.name}`);
 	}
+	if (moves.length) {
+		syncDir(`${conf}/${SECRETS_DIR}`);
+		syncDir(conf);
+	}
 	if (plan.writeConfig) {
 		parseConfigDoc(plan.config);
-		writeConfigFile(conf, plan.config);
+		writeConfigFile(conf, plan.config); // flushed, then the directory: config.json is on disk before any file is set aside
+		rmSync(`${conf}/${JOURNAL}`, { force: true });
 		changed = true;
 		after("config");
 	}
@@ -437,6 +465,7 @@ function apply(conf: string, plan: Plan, after: AfterStep = () => {}): boolean {
 		changed = true;
 		after(`rename:${f}`);
 	}
+	if (plan.renames.length) syncDir(conf);
 	return changed;
 }
 
@@ -499,32 +528,57 @@ export function setThread(conf: string, member: ThreadKey, id: string): void {
 // ---- revert ----------------------------------------------------------------------------------------------
 
 export type RevertReport = {
-	/** What was put back, as lines for the operator: `restored <file>`, `moved secrets/<name> back to <name>`. */
+	/** What was put back, as lines for the operator: `restore <file>`, `move secrets/<name> back to <name>`. */
 	done: string[];
+	/** Things to know that are not failures. */
+	notes: string[];
 	/** What could not be, and why. */
 	problems: string[];
 	skipped?: string;
 };
 
-const writeAtomic = (path: string, text: string) => {
-	const tmp = `${path}.tmp-${process.pid}`;
-	writeFileSync(tmp, text, { mode: 0o600 });
-	renameSync(tmp, path);
+/** `base` if nothing is there, else `base.1`, `base.2`, ...: a name that never replaces a file. */
+function freeName(conf: string, base: string): string {
+	let n = base;
+	for (let i = 1; existsSync(`${conf}/${n}`) || isLink(`${conf}/${n}`); i++) n = `${base}.${i}`;
+	return n;
+}
+const isLink = (p: string) => {
+	try {
+		lstatSync(p);
+		return true;
+	} catch {
+		return false;
+	}
 };
+/** The newest `config.json.reverted[.N]` (the highest N), if any: a revert that crashed after setting config.json aside left it. */
+function latestReverted(conf: string): string | undefined {
+	let best: { name: string; n: number } | undefined;
+	try {
+		for (const e of readdirSync(conf)) {
+			const m = /^config\.json\.reverted(?:\.(\d+))?$/.exec(e);
+			if (m && (!best || Number(m[1] ?? 0) >= best.n)) best = { name: e, n: Number(m[1] ?? 0) };
+		}
+	} catch {
+		// EMPTY_CATCH_OK: an unreadable directory has no reverted file to find.
+	}
+	return best?.name;
+}
 
 /**
- * Puts the old layout back so an older build starts again: every `<name>.migrated` is renamed back, the three thread files are written from
- * config.json's CURRENT values (a Steward switch since the migration must not bring a retired Steward back), each moved secret goes back to its
- * old name, and config.json is renamed `config.json.reverted`. Idempotent: a second run finds nothing to do. The order keeps every value readable
- * at every crash point: the files come back while config.json still serves them, config.json goes next (the files are then read as the old
- * layout), and the secrets go last (a secret is read from secrets/ until its rename, and from its old name after it). A `config.json.reverted`
- * left by a run that stopped after that step still says which secrets were moved.
+ * Puts the old layout back so an older build starts again: the newest `<name>.migrated` of each file is renamed back, the three thread files are
+ * written from config.json's CURRENT values (a Steward switch since the migration must not bring a retired Steward back; a thread set to null stays
+ * none), each moved secret goes back to its old name, and config.json is renamed `config.json.reverted`. Nothing is ever replaced: anything already at
+ * a name that revert needs is set aside under a free name first (`.reappeared`, `.pre-revert`, `.earlier`). Idempotent: a second run finds nothing to
+ * do. The order keeps every value readable at every crash point: the files come back while config.json still serves them, config.json goes next (the
+ * files are then read as the old layout), and the secrets go last (a secret is read from secrets/ until its rename, and from its old name after it). A
+ * `config.json.reverted` left by a run that stopped after that step still says which secrets were moved: the newest one is read.
  */
 export function revertLayout(
 	conf: string,
 	o: { dryRun?: boolean; waitMs?: number; afterStep?: AfterStep } = {},
 ): RevertReport {
-	const report: RevertReport = { done: [], problems: [] };
+	const report: RevertReport = { done: [], notes: [], problems: [] };
 	let lock: { release(): void } | undefined;
 	if (!o.dryRun) {
 		try {
@@ -545,93 +599,110 @@ export function revertLayout(
 		fn();
 		after(step);
 	};
+	/** Sets whatever is at `name` aside under a free name, so the next step can use `name`. */
+	const setAside = (name: string, suffix: string, why: string) => {
+		if (!isLink(`${conf}/${name}`)) return;
+		const to = freeName(conf, `${name}${suffix}`);
+		act(`${why}: set ${name} aside as ${to}`, () => renameSync(`${conf}/${name}`, `${conf}/${to}`), `aside:${name}`);
+	};
 	try {
 		const live = readConfigFile(conf);
-		const reverted = `${conf}/${CONFIG_FILE}.reverted`;
 		let source: Record<string, unknown> | undefined = live;
-		if (!source && existsSync(reverted)) {
-			try {
-				source = JSON.parse(readFileSync(reverted, "utf8")) as Record<string, unknown>;
-			} catch {
-				report.problems.push("config.json.reverted is not readable: the moved secrets cannot be listed from it");
+		if (!source) {
+			const reverted = latestReverted(conf);
+			if (reverted) {
+				try {
+					source = JSON.parse(readFileSync(`${conf}/${reverted}`, "utf8")) as Record<string, unknown>;
+				} catch {
+					report.problems.push(`${reverted} is not readable: the moved secrets cannot be listed from it`);
+				}
 			}
 		}
-		const marker =
-			isObject(source?.migrated) && Array.isArray((source!.migrated as { files?: unknown }).files)
-				? (source!.migrated as { files: unknown[] }).files.filter((x): x is string => typeof x === "string")
-				: [];
-		const threads = isObject(source?.threads) ? (source!.threads as Record<string, unknown>) : {};
+		// The moved secrets: config.json's list, plus any a crashed migration moved before it wrote config.json (its journal names them).
+		const marker = [
+			...(isObject(source?.migrated) && Array.isArray((source?.migrated as { files?: unknown }).files)
+				? (source?.migrated as { files: unknown[] }).files.filter((x): x is string => typeof x === "string")
+				: []),
+			...movedBeforeCrash(conf),
+		];
+		const rawThreads = source?.threads;
 
-		// 1. every <name>.migrated back to <name>
+		// 1. the newest <name>.migrated of each non-secret file back to <name>; older archives are kept as <name>.earlier
 		let entries: string[] = [];
 		try {
 			entries = readdirSync(conf);
 		} catch {
 			// EMPTY_CATCH_OK: an unreadable config directory has nothing to restore; the lock above would have failed first.
 		}
-		for (const e of entries.filter((n) => /\.migrated(\.\d+)?$/.test(n)).sort()) {
-			const base = e.replace(/\.migrated(\.\d+)?$/, "");
-			if (!Object.hasOwn(NON_SECRET_HOME, base) && !SECRET_FILE.test(base)) continue;
-			if (SECRET_FILE.test(base)) continue; // a symlink secret set aside: handled with the secrets, below
-			if (existsSync(`${conf}/${base}`)) {
-				// Something wrote the old name after the migration. It is kept, set aside, never lost.
+		const archives = new Map<string, { entry: string; n: number }[]>();
+		for (const e of entries) {
+			const m = /^(.+)\.migrated(?:\.(\d+))?$/.exec(e);
+			if (m && Object.hasOwn(NON_SECRET_HOME, m[1]!))
+				archives.set(m[1]!, [...(archives.get(m[1]!) ?? []), { entry: e, n: Number(m[2] ?? 0) }]);
+		}
+		let restoredSettings = false;
+		for (const [base, list] of [...archives].sort(([a], [b]) => (a < b ? -1 : 1))) {
+			list.sort((a, b) => a.n - b.n);
+			const newest = list.pop()!;
+			for (const older of list) setAside(older.entry, ".earlier", "an earlier archive");
+			setAside(base, ".reappeared", "written after the migration");
+			act(`restore ${base}`, () => renameSync(`${conf}/${newest.entry}`, `${conf}/${base}`), `restore:${base}`);
+			if (!Object.hasOwn(LEGACY_THREAD_FILES_BY_NAME, base)) restoredSettings = true;
+		}
+		// 2. the thread files carry config.json's current values (only while config.json is live: after it is aside, the old layout is in charge)
+		if (live) {
+			for (const [member, file] of Object.entries(LEGACY_THREAD_FILES)) {
+				const t = rawThreads === null ? null : isObject(rawThreads) ? rawThreads[member] : undefined;
+				const p = `${conf}/${file}`;
+				if (t === null) {
+					setAside(file, ".pre-revert", `config.json says threads.${member} is none`);
+					continue;
+				}
+				if (typeof t !== "string" || !t.trim()) continue;
+				const now = existsSync(p) ? readFileSync(p, "utf8").trim() : undefined;
+				if (now === t) continue;
+				if (now !== undefined) setAside(file, ".pre-revert", `config.json's current threads.${member} replaces it`);
 				act(
-					`keep the file now at ${base} as ${base}.reappeared, then restore ${base}`,
-					() => renameSync(`${conf}/${base}`, `${conf}/${base}.reappeared`),
-					`aside:${base}`,
+					`write ${file} from config.json's current threads.${member}`,
+					() => writeFileDurable(p, `${t}\n`),
+					`thread:${file}`,
 				);
 			}
-			act(`restore ${base}`, () => renameSync(`${conf}/${e}`, `${conf}/${base}`), `restore:${base}`);
-		}
-		// 2. the thread files carry config.json's current values
-		for (const [member, file] of Object.entries(LEGACY_THREAD_FILES)) {
-			if (!live) break; // a second run, after config.json is aside: the old layout is in charge now and its files are not touched
-			const id = threads[member];
-			if (typeof id !== "string" || !id.trim()) continue;
-			const p = `${conf}/${file}`;
-			const now = existsSync(p) ? readFileSync(p, "utf8").trim() : undefined;
-			if (now === id) continue;
-			act(
-				`write ${file} from config.json's current threads.${member}`,
-				() => writeAtomic(p, `${id}\n`),
-				`thread:${file}`,
-			);
 		}
 		// 3. config.json goes aside: the restored files are now the layout
 		if (live) {
-			let to = reverted;
-			for (let i = 1; existsSync(to); i++) to = `${reverted}.${i}`;
-			act(
-				`rename config.json to ${to.slice(conf.length + 1)}`,
-				() => renameSync(`${conf}/${CONFIG_FILE}`, to),
-				"config",
-			);
+			const to = freeName(conf, `${CONFIG_FILE}.reverted`);
+			act(`rename ${CONFIG_FILE} to ${to}`, () => renameSync(`${conf}/${CONFIG_FILE}`, `${conf}/${to}`), "config");
+			if (restoredSettings)
+				report.notes.push(
+					`settings edited in config.json since the migration are NOT in the restored files; they are in ${to}`,
+				);
 		}
 		// 4. each moved secret back to its old name
 		for (const name of marker) {
 			if (Object.hasOwn(NON_SECRET_HOME, name)) continue;
 			const inSecrets = `${conf}/${SECRETS_DIR}/${name}`;
-			if (!existsSync(inSecrets)) continue;
-			const old = `${conf}/${name}`;
-			if (lstatSync(inSecrets).isSymbolicLink()) continue;
-			if (existsSync(old) || existsSync(`${conf}/${name}${MIGRATED_SUFFIX}`)) {
-				act(
-					`set aside what is at ${name} as ${name}.reappeared`,
-					() => {
-						if (existsSync(old)) renameSync(old, `${old}.reappeared`);
-						else rmSync(`${conf}/${name}${MIGRATED_SUFFIX}`, { force: true }); // the link a symlinked secret left
-					},
-					`aside:${name}`,
-				);
-			}
-			act(`move ${SECRETS_DIR}/${name} back to ${name}`, () => renameSync(inSecrets, old), `secret:${name}`);
+			if (!isLink(inSecrets) || lstatSync(inSecrets).isSymbolicLink()) continue;
+			setAside(name, ".reappeared", "written after the migration");
+			setAside(`${name}${MIGRATED_SUFFIX}`, ".earlier", "the link a symlinked secret left");
+			act(
+				`move ${SECRETS_DIR}/${name} back to ${name}`,
+				() => renameSync(inSecrets, `${conf}/${name}`),
+				`secret:${name}`,
+			);
 		}
+		if (!would && existsSync(`${conf}/${JOURNAL}`)) rmSync(`${conf}/${JOURNAL}`, { force: true });
 		if (!report.done.length && !live) report.done.push("nothing to revert");
+		if (!would && report.done.length) syncDir(conf);
 	} finally {
 		lock?.release();
 	}
 	return report;
 }
+
+const LEGACY_THREAD_FILES_BY_NAME: Record<string, true> = Object.fromEntries(
+	Object.values(LEGACY_THREAD_FILES).map((f) => [f, true as const]),
+);
 
 /**
  * What the daemon and the page do at every start. A config directory with old files and no config.json is migrated, with one `config-migrated`

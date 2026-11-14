@@ -212,6 +212,18 @@ try {
 		shown.exitCode === 0 && shown.stdout.toString().includes("config.json  present"),
 		`exit ${shown.exitCode}: ${shown.stdout}${shown.stderr}`,
 	);
+	const got = exec("config", "get", "web.port");
+	check(
+		"config get web.port prints the port",
+		got.exitCode === 0 && got.stdout.toString().trim() === String(port),
+		`exit ${got.exitCode}: ${got.stdout}${got.stderr}`,
+	);
+	const refused = exec("config", "get", "wake-url");
+	check(
+		"config get refuses a secret, with exit 1 and nothing on stdout",
+		refused.exitCode === 1 && refused.stdout.toString() === "",
+		`exit ${refused.exitCode}: ${refused.stdout}`,
+	);
 	const dry = exec("config", "migrate", "--dry-run");
 	check(
 		"config migrate --dry-run finds nothing to do",
