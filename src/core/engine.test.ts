@@ -857,6 +857,39 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 			expect(r.fake.wakes).toHaveLength(1);
 		});
 
+		test("a parent with a running subagent that only the inspector knows of gets no finding and no wake (a review finding)", async () => {
+			const { r, ago, runs } = idleRig();
+			r.fake.threads.set("parent", { lastAssistant: ago(90, "Handed the work to a subagent."), subagents: 1 });
+			r.fake.emit({ kind: "state", thread: thread("parent", "idle") });
+			await r.quiet();
+			await r.engine.tick();
+			await r.quiet();
+			expect(runs()).toBe(1);
+			expect(r.fake.wakes).toEqual([]);
+			expect(r.store.items.list({ source: "check:idle-parents" })).toEqual([]);
+			// When the subagent finishes, the same parent is reported at its next run.
+			r.fake.threads.set("parent", { lastAssistant: ago(90, "Handed the work to a subagent."), subagents: 0 });
+			r.clock.t += 16 * 60_000;
+			await r.engine.tick();
+			await r.until("the wake", () => r.fake.wakes.length === 1);
+			expect(r.fake.wakes[0]!.message).toContain("threadId parent)");
+		});
+
+		test("a thread snoozed for one run and back with the same last message is not reported a second time (a review finding)", async () => {
+			const { r, ago, seen, pass } = idleRig();
+			seen("a", "idle", {}, ago(120, "Say go and I'll start it."));
+			await r.quiet();
+			await r.engine.tick();
+			await r.until("the first wake", () => r.fake.wakes.length === 1);
+			for (const snoozed of [true, false, true, false]) {
+				pass(16);
+				r.fake.emit({ kind: "state", thread: thread("a", "idle", { snoozed }) });
+				await r.engine.tick();
+			}
+			await r.quiet();
+			expect(r.fake.wakes).toHaveLength(1);
+		});
+
 		test("the interval and the threshold are configurable", async () => {
 			const { r, ago, seen, runs, pass } = idleRig({ idleParents: { intervalMinutes: 5, thresholdMinutes: 100 } });
 			seen("old", "idle", {}, ago(130, "Old news."));

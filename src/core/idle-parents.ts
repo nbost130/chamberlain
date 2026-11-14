@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import type { LastAssistant, ThreadState } from "./adapter.ts";
 import { looksLikeAsk } from "./decide.ts";
 import type { Finding, ItemSource } from "./source.ts";
+import type { Store } from "./store.ts";
 
 export const IDLE_PARENTS = "idle-parents";
 /** The item source name: the same `check:<name>` form every routine check has. */
@@ -104,6 +105,11 @@ export type IdleThreadSource = {
 	threads: Iterable<ThreadState>;
 	/** Running children of a thread (their completion wakes it, so it is not idle). */
 	liveChildren(threadId: string): number;
+	/**
+	 * Subagents the thread itself runs, which its own projection knows and the thread table does not (the turn-end path asks the same:
+	 * Inspector.runningSubagents). A thread with any running is not idle. Absent: the adapter cannot say.
+	 */
+	runningSubagents?: (threadId: string) => Promise<number>;
 	/** Absent: this adapter's threads cannot be read, so none is selected. */
 	lastAssistant?: (threadId: string) => Promise<LastAssistant | undefined>;
 	/** Called once for a thread whose read threw. */
@@ -146,6 +152,7 @@ export async function selectIdleThreads(
 		}
 		const one = async (th: ThreadState) => {
 			try {
+				if (src.runningSubagents && (await src.runningSubagents(th.id)) > 0) return;
 				const last = await read(th.id);
 				const at = last ? Date.parse(last.at) : Number.NaN;
 				if (!last || !Number.isFinite(at)) return;
@@ -185,31 +192,43 @@ export const idleKey = (t: Pick<IdleThread, "server" | "threadId" | "lastMessage
 export const idleText = (t: IdleThread) =>
 	`${t.looksLikeAsk ? "[ASKING] " : ""}thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`;
 
-/** What the check already holds as open items: a key and the text it last carried. */
-export type PriorFinding = { dedupKey: string; text: string };
+/** What the check holds as items, open or resolved: a key, the text it last carried, and whether it has resolved. */
+export type PriorFinding = { dedupKey: string; text: string; resolved?: boolean };
+
+/** The check's items as `PriorFinding`s: every one, because a thread that came back after a resolve was already reported. */
+export const idlePrior = (store: Pick<Store, "items">): PriorFinding[] =>
+	store.items.list({ source: IDLE_PARENTS_SOURCE }).map((i) => ({
+		dedupKey: i.dedupKey,
+		text: String(i.payload.text ?? i.dedupKey),
+		resolved: i.status === "resolved",
+	}));
 
 /**
- * Pure: the findings for a selection. The cap limits the NEW threads only, in the selection's order: a thread already open (`prior`)
- * is always returned, or the item system would resolve it and report it again when it came back. A thread the selection could not
- * read keeps what it had.
+ * Pure: the findings for a selection. A thread is reported once per last message, however its eligibility moves: a key the check has an
+ * item for, resolved or not, was already reported, so it never counts against the cap, and one that comes back after a resolve (it was
+ * snoozed, or briefly running) is marked `alreadyReported` and returns acknowledged, not as news. The cap limits the NEW threads only,
+ * in the selection's order. A thread the selection could not read keeps the open finding it had.
  */
 export function idleParentFindings(
 	sel: IdleSelection,
 	cfg: Pick<IdleParentsConfig, "maxThreads">,
 	prior: readonly PriorFinding[] = [],
 ): Finding[] {
-	const open = new Set(prior.map((p) => p.dedupKey));
+	const known = new Set(prior.map((p) => p.dedupKey));
 	let fresh = 0;
 	const out: Finding[] = [];
 	for (const t of sel.threads) {
 		const dedupKey = idleKey(t);
-		if (!open.has(dedupKey) && ++fresh > cfg.maxThreads) continue;
-		out.push({ dedupKey, text: idleText(t) });
+		const seen = known.has(dedupKey);
+		if (!seen && ++fresh > cfg.maxThreads) continue;
+		out.push({ dedupKey, text: idleText(t), ...(seen ? { alreadyReported: true } : {}) });
 	}
 	const have = new Set(out.map((f) => f.dedupKey));
 	for (const u of sel.unreadable) {
 		const stem = `${u.server}:${u.threadId}:`;
-		for (const p of prior) if (p.dedupKey.startsWith(stem) && !have.has(p.dedupKey)) out.push({ ...p });
+		for (const p of prior)
+			if (p.dedupKey.startsWith(stem) && !p.resolved && !have.has(p.dedupKey))
+				out.push({ dedupKey: p.dedupKey, text: p.text });
 	}
 	return out;
 }

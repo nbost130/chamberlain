@@ -5,7 +5,7 @@
  * restart. No model call is made (src/core/idle-parents.ts). Split out of createEngine (src/core/engine.ts), like the sweep.
  */
 import type { Outbox } from "./deliver.ts";
-import { IDLE_PARENTS_SOURCE, idleParentsSource, selectIdleThreads, type IdleThreadSource } from "./idle-parents.ts";
+import { idleParentsSource, idlePrior, selectIdleThreads, type IdleThreadSource } from "./idle-parents.ts";
 import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
 import { evaluateSource, recordEvaluation } from "./source.ts";
@@ -43,10 +43,7 @@ export function createIdleParents({ store, log, outbox, conf, sources, skip, now
 			const source = idleParentsSource({
 				cfg,
 				select: () => selectIdleThreads(sources(), at, { thresholdMinutes: cfg.thresholdMinutes, skip: skip() }),
-				prior: () =>
-					store.items
-						.list({ source: IDLE_PARENTS_SOURCE, status: ["triggered", "acknowledged"] })
-						.map((i) => ({ dedupKey: i.dedupKey, text: String(i.payload.text ?? i.dedupKey) })),
+				prior: () => idlePrior(store),
 			});
 			// Reading writes nothing. What was found, the clock and the wake are then one transaction, as in the sweep: a crash between
 			// recording a thread as reported and queueing its wake would lose the report for good.

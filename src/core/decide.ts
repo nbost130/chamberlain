@@ -93,10 +93,17 @@ const HANDBACK =
 const GO_PHRASE =
 	/\bsay ['"‘’“”]?go\b|\bgive (?:me |us )?the go\b|\bgo-ahead\b|\bgo ahead\s*\?|\bready when you are\b|\bon your word\b/i;
 
+/**
+ * "Want me to ..." and "shall I ..." questions, read against the whole tail like GO_PHRASE: a closing line that is only
+ * "🗣️ Agent: Want me to proceed?" is an ask even though the body read drops that line. The question mark ends it, so a statement
+ * ("there is nothing you want me to do") and "you wanted me to" are not asks.
+ */
+const OFFER_QUESTION = /\b(?:want me to|shall i)\b[^\n?]{0,160}\?/i;
+
 /** True when a finished turn's final message hands a question or decision back to the operator. */
 export function looksLikeAsk(text: string): boolean {
 	const whole = text.trim().slice(-500);
-	if (HANDBACK.test(whole) || GO_PHRASE.test(whole)) return true;
+	if (HANDBACK.test(whole) || GO_PHRASE.test(whole) || OFFER_QUESTION.test(whole)) return true;
 	const body = text
 		.split("\n")
 		.filter((l) => !l.trimStart().startsWith("🗣️") && !l.trimStart().startsWith("🧠") && !l.trimStart().startsWith("🤖"))

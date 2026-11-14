@@ -309,6 +309,7 @@ export function createEngine(d: EngineDeps) {
 				connected: this.connected,
 				threads: this.states.values(),
 				liveChildren: (id) => this.liveChildren(id),
+				...(this.inspect ? { runningSubagents: (id: string) => this.inspect!.runningSubagents(id) } : {}),
 				...(this.inspect?.lastAssistant ? { lastAssistant: (id) => this.inspect!.lastAssistant!(id) } : {}),
 				readFailed: (threadId, e) =>
 					log("read-failed", {

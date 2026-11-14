@@ -540,7 +540,7 @@ describe("a drain pass", () => {
 			expect(new Set(r.wakes()).size).toBe(N);
 			expect(r.wakes()).toHaveLength(N);
 			expect(existsSync(retired)).toBe(false);
-		});
+		}, 60_000); // heavy by design (3600 large events, three passes): 5.6 s seen under load, so the 5 s default flakes
 		test("a retired file that ends in a torn line is finished and deleted", () => {
 			const r = rig(noCap);
 			const retired = retire(r, `${line({ at: T0 - 1000, family: "fa", title: "a" })}{"v":1,"family":"torn`);

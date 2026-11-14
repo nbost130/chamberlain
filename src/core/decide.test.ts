@@ -171,6 +171,30 @@ describe("looksLikeAsk go-phrases", () => {
 	});
 });
 
+describe("looksLikeAsk: a want-me-to question said only in the spoken closing line", () => {
+	test("is an ask, and endKind says so (a review finding)", () => {
+		for (const t of [
+			"Done.\n🗣️ Agent: Want me to proceed?",
+			"Done.\n\n🗣️ Agent: [steady] The fix is in. Do you want me to open the PR?",
+			"Built.\n\n🗣️ Shall I merge it?",
+		]) {
+			expect(looksLikeAsk(t)).toBe(true);
+			expect(endKind(t)).toBe("ask");
+		}
+	});
+	test("an ordinary closing line is still not an ask", () => {
+		for (const t of [
+			"All done and verified.\n\n🗣️ Agent: Done?",
+			"Done.\n\n🗣️ Agent: Finished; there is nothing you want me to do.",
+			"Done.\n\n🗣️ Agent: You wanted me to fix it, and I did.",
+			"Done.\n\n🗣️ Agent: Report is with the Steward.",
+		]) {
+			expect(looksLikeAsk(t)).toBe(false);
+			expect(endKind(t)).toBe("plain");
+		}
+	});
+});
+
 describe("endKind: an ask beats a stall", () => {
 	test("'say go and I'll start it' matches the stall rule alone, and is classed an ask", () => {
 		const t = "The endpoint is not built yet. Say go and I'll start it.";

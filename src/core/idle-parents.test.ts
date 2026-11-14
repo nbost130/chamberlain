@@ -7,6 +7,7 @@ import {
 	IDLE_PARENTS_SOURCE,
 	excerptOf,
 	idleKey,
+	idlePrior,
 	idleParentCandidate,
 	idleParentFindings,
 	idleParentsSource,
@@ -31,7 +32,13 @@ const last = (id: string, minutesIdle: number, text = "All done."): LastAssistan
 /** A source of threads: each entry is a thread and its last message; `bad` threads throw when read. */
 function source(
 	entries: { th: ThreadInput; last?: LastAssistant; bad?: boolean }[],
-	o: { server?: string; connected?: boolean; children?: Record<string, number>; noRead?: boolean } = {},
+	o: {
+		server?: string;
+		connected?: boolean;
+		children?: Record<string, number>;
+		subagents?: Record<string, number | Error>;
+		noRead?: boolean;
+	} = {},
 ): IdleThreadSource & { failures: string[] } {
 	const failures: string[] = [];
 	const byId = new Map(entries.map((e) => [e.th.id, e]));
@@ -49,6 +56,15 @@ function source(
 						return e.last;
 					},
 				}),
+		...(o.subagents
+			? {
+					runningSubagents: async (id: string) => {
+						const n = o.subagents![id] ?? 0;
+						if (n instanceof Error) throw n;
+						return n;
+					},
+				}
+			: {}),
 		readFailed: (id) => failures.push(id),
 		failures,
 	};
@@ -223,6 +239,16 @@ describe("selectIdleThreads: the one selection, as plain records", () => {
 		});
 		expect(down).toEqual({ threads: [], unreadable: [{ server: "main", threadId: "a" }] });
 	});
+	test("a parent with running subagents the inspector reports (and the thread table does not) is not idle (a review finding)", async () => {
+		const src = source([idle("busy", 90), idle("free", 90), idle("unsure", 90)], {
+			subagents: { busy: 2, unsure: Error("projection failed") },
+		});
+		const r = await selectIdleThreads([src], NOW, { thresholdMinutes: 30 });
+		expect(r.threads.map((t) => t.threadId)).toEqual(["free"]);
+		// A subagent count that cannot be read is unreadable, never "none running".
+		expect(r.unreadable).toEqual([{ server: "main", threadId: "unsure" }]);
+		expect(src.failures).toEqual(["unsure"]);
+	});
 	test("an adapter that cannot read last messages selects nothing", async () => {
 		const r = await selectIdleThreads([source([idle("a", 90)], { noRead: true })], NOW, { thresholdMinutes: 30 });
 		expect(r).toEqual({ threads: [], unreadable: [] });
@@ -302,10 +328,7 @@ describe("through the item system: one report per thread and last message", () =
 			idleParentsSource({
 				cfg,
 				select: async () => sel(threads, unreadable),
-				prior: () =>
-					store.items
-						.list({ source: IDLE_PARENTS_SOURCE, status: ["triggered", "acknowledged"] })
-						.map((i) => ({ dedupKey: i.dedupKey, text: String(i.payload.text) })),
+				prior: () => idlePrior(store),
 			}),
 			{ now: NOW },
 		);
@@ -329,6 +352,27 @@ describe("through the item system: one report per thread and last message", () =
 		await tick(store, [rec("a", 90)]);
 		expect((await tick(store, [], CFG, [{ server: "main", threadId: "a" }])).notified).toEqual([]);
 		expect((await tick(store, [rec("a", 110)])).notified).toEqual([]);
+	});
+	test("a thread that goes ineligible and comes back with the same last message is reported once in all (a review finding)", async () => {
+		const store = memStore();
+		const a = rec("a", 90, "Say go.");
+		// Present, present, away (snoozed), back, away (briefly running), back: one report, not three.
+		const table = [[a], [a], [], [a], [], [a]];
+		const sent: number[] = [];
+		for (const threads of table) sent.push((await tick(store, threads)).notified.length);
+		expect(sent).toEqual([1, 0, 0, 0, 0, 0]);
+		// And a new last message after all that is still news.
+		expect((await tick(store, [rec("a", 20, "Merged.")])).notified).toHaveLength(1);
+	});
+	test("a thread away for a tick does not count against the cap when it returns", async () => {
+		const store = memStore();
+		const cfg = { ...CFG, maxThreads: 1 };
+		const a = rec("a", 200);
+		const b = rec("b", 100);
+		expect(ids(await tick(store, [a], cfg))).toEqual(["a"]);
+		await tick(store, [], cfg);
+		// "a" returns unchanged alongside a new "b": only "b" is news, and it fits the cap of one.
+		expect(ids(await tick(store, [a, b], cfg))).toEqual(["b"]);
 	});
 	test("with several, asks go first and the cap holds the rest for a later tick, nobody twice", async () => {
 		const store = memStore();

@@ -28,6 +28,11 @@ export type Finding = {
 	maxNotifications?: number;
 	/** Learn it silently when the source runs for the very first time (a standing condition that is not news). */
 	baseline?: boolean;
+	/**
+	 * The source already reported this exact key before. If its item had resolved and the finding comes back, it comes back acknowledged,
+	 * a recurrence of what was already told and not news. Only a built-in source sets it: a configured check's output cannot (parseCheckOutput).
+	 */
+	alreadyReported?: boolean;
 	subject?: Subject;
 };
 
@@ -119,7 +124,7 @@ export function recordEvaluation(
 					dedupKey: f.dedupKey,
 					mode,
 					repeat: repeatPolicyOf(f),
-					baseline: f.baseline === true && o.firstRun === true,
+					baseline: (f.baseline === true && o.firstRun === true) || f.alreadyReported === true,
 					...(f.subject ? { subject: f.subject } : {}),
 					payload: { text: f.text },
 					now,
