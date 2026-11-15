@@ -155,6 +155,12 @@ function dismissWake(i: Question, a: Answer): string {
 	const lines = [
 		...itemLines(i),
 		"dismissed: they said this is already handled or no longer needed. It is not an answer and settles nothing, so no ruling and no precedent. Stop tracking it.",
+		...(i.cardRequest
+			? [
+					"card: its question card was not answered or approved; the card stays in its thread. This item stays closed even if that card later resolves.",
+				]
+			: []),
+		...(i.secret ? ["secret: no secret was entered on the page."] : []),
 		a.note ? `note: ${a.note}` : "note: none",
 	];
 	return dismissedWakeText(i.id, lines.join("\n"));

@@ -1,6 +1,6 @@
 /**
  * The Snoozed tab, continued (see inline-view.snoozed-tab.test.ts): a press in flight survives a redraw, a snoozed note in Waiting follows the item
- * when it is dismissed from the tab, and a secret or a card pointer is offered only what the server will do for it.
+ * when it is dismissed from the tab, and every kind (including a secret or a card pointer) gets Bring back now and Dismiss.
  */
 import { describe, expect, test } from "bun:test";
 import { type El, run, settle } from "../testing/inline-dom.ts";
@@ -124,10 +124,10 @@ describe("what a snoozed row offers depends on what the server will do", () => {
 		["a secret", { secret: true }],
 		["a card pointer", { cardRequest: { requestId: "r" } }],
 	] as const) {
-		test(`${name}: Bring back now and the thread link, and no Dismiss (it is settled in its own thread)`, async () => {
+		test(`${name}: Bring back now, Dismiss and the thread link`, async () => {
 			const dq = run(() => ({ items: [], snoozed: [snoozedItem("Q-snz1", extra)] }), { src: SRC });
 			await settle();
-			expect(rowButtons(dq)).toEqual(["Bring back now"]);
+			expect(rowButtons(dq)).toEqual(["Bring back now", "Dismiss"]);
 			expect(
 				pane(dq, 1)
 					.all((e) => e.tag === "a")

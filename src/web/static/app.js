@@ -167,8 +167,9 @@ const when = (iso) => {
 	return d.toLocaleString([], soon ? { weekday: "short", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 };
 // One row of buttons along an item's bottom edge, wrapping only when the width runs out: first `lead` (the Answer button, a little bigger, and Not
-// now), then the little ones in this order: Open thread, Snooze, Direction, Dismiss. A secret and a card pointer are settled in their own thread, so
-// they get only Not now, the thread link and Snooze. A phone gets the same row (Nathan, 2026-11-15): no separate, larger bar for Answer.
+// now), then the little ones in this order: Open thread, Snooze, Direction, Dismiss. Every kind gets Dismiss (Nathan, 2026-11-15 #68). A secret and a
+// card pointer are answered in their own thread, so they get Not now, the thread link, Snooze and Dismiss, and never Direction. A phone gets the same
+// row (Nathan, 2026-11-15): no separate, larger bar for Answer.
 const NOT_NOW_BTN = '<button type="button" class="btn-ghost lead" data-act="not-now">Not now <span class="kbd">H</span></button>';
 function actionsHtml(i, settles, lead = "") {
 	const link = threadHref(i) ? `<a class="mini" href="${esc(threadHref(i))}">Open thread</a>` : "";
@@ -176,7 +177,9 @@ function actionsHtml(i, settles, lead = "") {
 	const choices = open ? `<div class="snooze-panel" role="group" aria-label="Snooze until">
 		${snoozeChoices(new Date()).map((c) => `<button type="button" class="mini" data-snooze="${c.id}" title="${esc(when(c.at.toISOString()))}">${c.label}</button>`).join("")}
 		<label class="custom">Custom <input type="datetime-local" id="snooze-custom" aria-label="Snooze until a time of your own"></label><button type="button" class="mini" data-act="snooze-custom">Set</button></div>` : "";
-	return `<div class="item-actions" role="group" aria-label="Ways to handle this">${lead}${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button><button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>` : ""}</div>${choices}`;
+	const direction = settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button>` : "";
+	const dismiss = `<button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>`;
+	return `<div class="item-actions" role="group" aria-label="Ways to handle this">${lead}${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${direction}${dismiss}</div>${choices}`;
 }
 function snoozedHtml() {
 	if (!S.snoozed.length) return "";
@@ -242,9 +245,9 @@ function detailHtml() {
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
 		<div class="headline"><h1>${esc(i.title)}</h1>${i.context ? contextHtml(i.context) : ""}</div>`;
 	if (i.cardRequest && !i.secret) {
-		// A card pointer is never answered here: the card is acted on in its own thread, and this question closes only when the card does.
+		// A card pointer is never answered here: the card is acted on in its own thread. Dismiss stops tracking this item without answering the card.
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
-			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
+			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there. Dismiss stops tracking this item and does not answer the card.</span>
 			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			${actionsHtml(i, false, NOT_NOW_BTN)}
 		</section>`;
@@ -302,9 +305,11 @@ async function afterSettle(onItem) {
 	if (onItem) go(next ? `/item/${next.id}` : "/", true);
 }
 // Direction sends the note with no option chosen, so the note is required. Dismiss sends it if there is one. Neither is an answer to the question.
+// A secret and a card pointer may be dismissed (never directed): that stops tracking them and never enters a secret or answers the card.
 async function settleCurrent(kind) {
 	const i = current();
-	if (!i || i.secret || i.cardRequest || S.busy) return;
+	if (!i || S.busy) return;
+	if (kind === "direction" && (i.secret || i.cardRequest)) return;
 	const note = (S.note[i.id] || "").trim();
 	if (kind === "direction" && !note) { toast("Write your direction in the note first. It goes to the Steward with no option chosen.", true); document.getElementById("note")?.focus(); return; }
 	if (kind === "dismiss" && !confirm(`Dismiss “${i.title}”? It leaves the queue and its hold closes. This is not an answer: nothing is settled.`)) return;
@@ -363,16 +368,18 @@ const CARD_KIND = { question: "QUESTION CARD", approval: "APPROVAL", goal: "GOAL
 const confirmable = (c) => c.type === "approval" || c.type === "goal";
 const cardPick = (c) => S.cpick[c.id] ?? (Number.isInteger(c.recommended) ? c.recommended : -1);
 const armedFor = (c) => { const a = S.carm[c.id]; return a && a.choice === cardPick(c) && a.sig === c.sig && a.expiresAt > Date.now() ? a : undefined; };
+// Dismiss on every mirrored kind (Nathan, 2026-11-15 #68 / B2): hides the card from these views only; the thread request stays live.
+const cardDismiss = (c) => `<div class="item-actions" role="group" aria-label="Ways to handle this card"><button type="button" class="mini" data-cact="dismiss" data-cid="${esc(c.id)}" title="Hide from these views; the thread request stays">Dismiss</button></div>`;
 function cardHtml(c) {
 	const head = `<div class="crumbs"><span class="chip ${esc(c.type)}">${esc(CARD_KIND[c.type] || c.type)}</span><span>${esc(c.threadTitle)}</span><span>${esc(c.server)}</span>${threadHref(c) ? `<a class="open" href="${esc(threadHref(c))}">Open thread</a>` : ""}</div>
 		<div class="headline"><h1>${esc(c.header || "Question")}</h1>${c.question ? contextHtml(c.question) : ""}</div>${c.command ? `<pre class="cmd">${esc(c.command)}</pre>` : ""}`;
-	if (!c.answerable) return `<article class="ccard" data-card="${esc(c.id)}">${head}<div class="secret"><span>${esc(c.why || "Answer it in its thread.")}</span></div></article>`;
+	if (!c.answerable) return `<article class="ccard" data-card="${esc(c.id)}">${head}<div class="secret"><span>${esc(c.why || "Answer it in its thread.")}</span></div>${cardDismiss(c)}</article>`;
 	const pick = cardPick(c), armed = armedFor(c);
 	const opts = c.options.map((o, k) => `<label class="opt ${k === pick ? "on" : ""}"><input type="radio" name="copt-${esc(c.id)}" data-cid="${esc(c.id)}" value="${k}" ${k === pick ? "checked" : ""}><span class="txt"><span class="lbl">${esc(o.label)}${k === c.recommended ? '<span class="rec">RECOMMENDED</span>' : ""}</span>${o.detail ? `<span class="det">${esc(o.detail)}</span>` : ""}</span></label>`).join("");
 	const label = pick < 0 ? "Pick an option" : armed ? `Tap again to confirm: ${esc(c.options[pick].label)}` : confirmable(c) ? esc(c.options[pick].label) : `Answer ${esc(c.options[pick].label)}`;
 	return `<article class="ccard" data-card="${esc(c.id)}">${head}<fieldset class="answer"><legend class="legend">YOUR ANSWER</legend>${opts}</fieldset>
 		<div class="buttons"><button type="button" class="btn-answer" data-cact="answer" data-cid="${esc(c.id)}" ${pick < 0 || S.cbusy[c.id] ? "disabled" : ""}>${label}</button></div>
-		${armed ? '<div class="from">This is an approval: it needs this second tap, which expires in a minute. Changing the option cancels it.</div>' : ""}</article>`;
+		${cardDismiss(c)}${armed ? '<div class="from">This is an approval: it needs this second tap, which expires in a minute. Changing the option cancels it.</div>' : ""}</article>`;
 }
 function cardsHtml() {
 	if (!S.cards.length) return "";
@@ -380,7 +387,20 @@ function cardsHtml() {
 }
 async function cardAct(act, id) {
 	if (act === "refresh") { await load(); return; }
-	const c = S.cards.find((x) => x.id === id), choice = c ? cardPick(c) : -1;
+	const c = S.cards.find((x) => x.id === id);
+	if (act === "dismiss") {
+		if (!c || S.cbusy[id]) return;
+		if (!confirm(`Dismiss “${c.header || c.question || "this card"}”? It leaves these views only. The thread request stays live and nothing is answered.`)) return;
+		S.cbusy[id] = true; render();
+		try {
+			await api(`/api/cards/${encodeURIComponent(id)}/dismiss`, {});
+			delete S.carm[id];
+			S.cards = S.cards.filter((x) => x.id !== id);
+			toast("Dismissed from these views. The thread request is unchanged.");
+		} catch (e) { toast(e.message, true); } finally { delete S.cbusy[id]; render(); }
+		return;
+	}
+	const choice = c ? cardPick(c) : -1;
 	if (!c || !c.answerable || choice < 0 || S.cbusy[id]) return;
 	const armed = armedFor(c);
 	S.cbusy[id] = true; render();

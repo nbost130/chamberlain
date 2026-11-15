@@ -7,7 +7,8 @@
  * snoozed item is back on the list the moment its time passes, with no timer and nothing to run: a restart, or a daemon that is
  * down, changes nothing. The daemon's one extra job is the notice: `returnDueSnoozes` runs on its tick and hands back each returned
  * item once, so an urgent one can be shown where the operator reads again. A snooze ends four ways: its time passes, the principal
- * un-snoozes, an answer, direction or dismissal settles the item (the page clears it), or the card behind a pointer resolves.
+ * un-snoozes, an answer, direction or dismissal settles the item (the page clears it; a dismissal may close a secret or a card
+ * pointer without answering its card), or the card behind an open pointer resolves.
  */
 import type { Adapter, PostResult } from "./adapter.ts";
 import { heldForItem, heldId, heldOpen, noteHeld } from "./afk-held.ts";

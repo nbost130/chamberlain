@@ -2,7 +2,8 @@
  * What the VIEW key may do (`secrets/view-key`, the one key a Decisions post carries: a post is copied into the thread). One explicit
  * allowlist, named here and nowhere derived: three reads, a plain answer, the four ways to settle, put off or bring back a question that
  * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), the answer to a QUESTION card waiting in another thread
- * (`CARD_ANSWER_PATH`, below: never an approval, goal, secret or link), and two GETs that are not the API:
+ * (`CARD_ANSWER_PATH`, below: never an approval, goal, secret or link), a view-only dismiss of any mirrored card (`CARD_DISMISS_PATH`: hides
+ * it from the views; never answers or retires the thread request), and two GETs that are not the API:
  *   - `GET /open/<server>/<threadId>`, the "Open the thread" link (a redirect to the thread's app link, made by the linker from the path, never
  *     from the request; it signs nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else; the Decisions
  *     view's thread link is the one link out that carries the key);
@@ -28,7 +29,7 @@ import type { KeyUsed } from "../core/questions.ts";
 export const VIEW_KEY_READS: ReadonlySet<string> = new Set(["/api/queue", "/api/recent", "/api/rulings"]);
 /** The writes the view key may make, each on one queue item: `POST /api/items/<id>/<action>`. */
 export const VIEW_KEY_WRITES = ["answer", "snooze", "unsnooze", "direction", "dismiss"] as const;
-export type ViewKeyWrite = (typeof VIEW_KEY_WRITES)[number];
+type ViewKeyWrite = (typeof VIEW_KEY_WRITES)[number];
 
 /** The one field a view-key answer may carry: the option chosen. Not a note (a note is a Direction, or written on the full page), not a ruling field. */
 export const VIEW_KEY_ANSWER_FIELDS: ReadonlySet<string> = new Set(["choice"]);
@@ -51,24 +52,43 @@ const ITEM_WRITE = new RegExp(`^/api/items/Q-[a-z0-9]{4,16}/(${VIEW_KEY_WRITES.j
  * principal's words. What runs or commits to something (an approval, a goal) stays the full page's, behind its server-checked confirmation.
  */
 const CARD_ANSWER_PATH = /^\/api\/cards\/C-[0-9a-f]{12}\/answer$/;
+/**
+ * `POST /api/cards/<id>/dismiss`: hide a mirrored waiting card from the views only (Nathan, 2026-11-15 #68 / B2). Every kind: approval,
+ * goal, secret, link, question. Never answers or retires the thread request; a new request id shows again.
+ */
+const CARD_DISMISS_PATH = /^\/api\/cards\/C-[0-9a-f]{12}\/dismiss$/;
 /** The kinds of card the view key may answer: a question card. Never an approval or goal (they run or commit to something), a secret or a link. */
 export const VIEW_KEY_CARD_TYPES: ReadonlySet<string> = new Set(["question"]);
 /** The fields a view-key card answer may carry: the option chosen and the card's fingerprint as the view showed it. No confirmation, no note. */
 export const VIEW_KEY_CARD_FIELDS: ReadonlySet<string> = new Set(["choice", "sig"]);
 
+type ViewKeyVerdict =
+	| "read"
+	| "open"
+	| "evidence"
+	| ViewKeyWrite
+	| "card-answer"
+	| "card-dismiss"
+	| "preflight"
+	| "refuse";
+
+/** Pure: the card route on the view key's list, if this pathname is one. */
+function cardVerdict(pathname: string): "card-answer" | "card-dismiss" | undefined {
+	if (CARD_ANSWER_PATH.test(pathname)) return "card-answer";
+	if (CARD_DISMISS_PATH.test(pathname)) return "card-dismiss";
+	return undefined;
+}
+
 /** Pure: a request's route against the view key's list. `preflight` is an OPTIONS for a route on it (it grants nothing and carries no key). */
-export function viewKeyVerdict(
-	method: string,
-	pathname: string,
-): "read" | "open" | "evidence" | ViewKeyWrite | "card-answer" | "preflight" | "refuse" {
+export function viewKeyVerdict(method: string, pathname: string): ViewKeyVerdict {
 	if (method === "GET") {
 		if (VIEW_KEY_READS.has(pathname)) return "read";
 		if (EVIDENCE_PATH.test(pathname)) return "evidence";
 		return OPEN_PATH.test(pathname) ? "open" : "refuse";
 	}
 	const write = ITEM_WRITE.exec(pathname)?.[1] as ViewKeyWrite | undefined;
-	const card = CARD_ANSWER_PATH.test(pathname);
-	if (method === "POST") return write ?? (card ? "card-answer" : "refuse");
+	const card = cardVerdict(pathname);
+	if (method === "POST") return write ?? card ?? "refuse";
 	if (method === "OPTIONS") return VIEW_KEY_READS.has(pathname) || write || card ? "preflight" : "refuse";
 	return "refuse";
 }

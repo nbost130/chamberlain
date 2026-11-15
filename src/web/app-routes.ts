@@ -155,6 +155,17 @@ function unconfirmedRefusal(
 /** One API POST: the request and its URL, the URL's decoded path parts, the parsed JSON body, and who the request is (`Authority`, ./view-key.ts). */
 type Call = { req: Request; url: URL; parts: string[]; body: Record<string, unknown>; authority: Authority };
 
+/** Hide a mirrored card from the views only (same auth path as an item dismiss: mayDo + keyUsed). Never answers the thread request. */
+function dismissCardRoute(ctx: Ctx, id: string, { body, authority }: Pick<Call, "body" | "authority">): Response {
+	if (!mayDo(authority, "dismiss"))
+		return fail(403, "refused: dismiss is done on the full page, not with the key an inline view holds");
+	const dismiss = ctx.d.mirror?.dismiss;
+	if (!dismiss) return fail(404, "not found");
+	const note = typeof body.note === "string" ? body.note : undefined;
+	const r = dismiss(id, { key: keyUsed(authority), note, now: ctx.d.now?.() });
+	return json(r.body, r.status);
+}
+
 async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "confirm"): Promise<Response> {
 	const { req, body, authority } = call;
 	const { d } = ctx;
@@ -250,6 +261,8 @@ const pathParts = (pathname: string) =>
 /** The POST routes. `body` is the parsed JSON object. */
 async function apiPost(ctx: Ctx, call: Call): Promise<Response> {
 	const { url, parts, body, authority } = call;
+	if (parts[1] === "cards" && parts[2] && parts[3] === "dismiss" && parts.length === 4)
+		return dismissCardRoute(ctx, parts[2], call);
 	if (parts[1] === "cards" && parts[2] && (parts[3] === "answer" || parts[3] === "confirm") && parts.length === 4)
 		return cardsRoute(ctx, call, parts[2], parts[3]);
 	if (parts[1] === "items" && parts[2] && parts[3] === "answer") {

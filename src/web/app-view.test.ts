@@ -90,7 +90,7 @@ test("a refused answer shows the server's reason and starts over; a question car
 	expect(p.calls.find((c) => c.path.includes("aaaaaaaaaaaa"))!.body).toEqual({ choice: 0, sig: "sig-1" });
 });
 
-test("a secret or a link request is shown with where to answer it, and nothing to tap", async () => {
+test("a secret or a link request is shown with where to answer it, and Dismiss (never Answer)", async () => {
 	const p = await cardPage(
 		[
 			{
@@ -107,6 +107,7 @@ test("a secret or a link request is shown with where to answer it, and nothing t
 	);
 	expect(p.app.innerHTML).toContain("a secret is entered in its own thread");
 	expect(p.app.innerHTML).not.toContain('data-cact="answer"');
+	expect(p.app.innerHTML).toContain('data-cact="dismiss"');
 });
 
 test("(a) a non-urgent question is listed below every urgent one, under NOT URGENT, and says so", async () => {

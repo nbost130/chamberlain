@@ -68,7 +68,7 @@ describe("links out of the view", () => {
 			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
 		]);
 	});
-	test("a secret or a card pointer, answered in its thread, links to that thread and can be snoozed in place, nothing more", async () => {
+	test("a secret or a card pointer, answered in its thread, links to that thread and can be snoozed or dismissed in place", async () => {
 		const base = { ...item("x"), open: "/open/mac/t2" };
 		for (const extra of [{ secret: true }, { cardRequest: { requestId: "r" } }]) {
 			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
@@ -76,7 +76,7 @@ describe("links out of the view", () => {
 			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([
 				["Open the thread", "http://queue.test/open/mac/t2?k=KEY"],
 			]);
-			expect(buttons(dq)).toEqual(["Snooze", "▾"]);
+			expect(buttons(dq)).toEqual(["Snooze", "▾", "Dismiss"]);
 		}
 	});
 	test("no /open path, no thread link: never a raw t3-thread:// or other custom-scheme href, which the frame cannot open", async () => {
@@ -181,7 +181,7 @@ describe("a secret question whose secret box has closed", () => {
 		expect(dq.textContent).toContain("Request expired. Its secret box is closed: ask the thread to reopen it.");
 		expect(dq.textContent).not.toContain("A secret is entered in its own thread");
 		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread"]);
-		expect(buttons(dq)).toEqual(["Snooze", "▾"]);
+		expect(buttons(dq)).toEqual(["Snooze", "▾", "Dismiss"]);
 		expect(dq.all((e) => e.tag === "button" && e.className === "dq-go")).toEqual([]);
 	});
 	test("an open box, an unknown state or any other value reads as before", async () => {

@@ -210,7 +210,7 @@ describe("direction: a note and no option", () => {
 		expect(String(s.store.items.get(HELD, h)?.payload.how)).toContain("direction, no option chosen");
 	});
 
-	test("ends a snooze, and is refused twice, for a secret and for a card pointer", async () => {
+	test("ends a snooze; a secret and a card pointer may be dismissed but never directed", async () => {
 		const s = setup();
 		askQuestion(s.store, question("Q-aaaa"));
 		askQuestion(s.store, question("Q-sec1", { secret: true, options: [] }));
@@ -220,12 +220,12 @@ describe("direction: a note and no option", () => {
 		expect(s.store.items.get(QUEUE, "Q-aaaa")?.payload.snoozedUntil).toBeUndefined();
 		expect((await s.post("Q-aaaa", "direction", { note: "again" })).status).toBe(409);
 		expect(wakes(s)).toHaveLength(1);
-		const before = world(s.store);
-		for (const id of ["Q-sec1", "Q-ptr1"])
-			for (const route of ["direction", "dismiss"] as const) {
-				const r = await s.post(id, route, { note: "x" });
-				expect([id, route, r.status >= 400]).toEqual([id, route, true]);
-			}
-		expect(world(s.store)).toBe(before);
+		for (const id of ["Q-sec1", "Q-ptr1"]) {
+			const directed = await s.post(id, "direction", { note: "x" });
+			expect([id, directed.status >= 400]).toEqual([id, true]);
+		}
+		expect((await s.post("Q-sec1", "dismiss", {})).status).toBe(200);
+		expect((await s.post("Q-ptr1", "dismiss", {})).status).toBe(200);
+		expect(wakes(s)).toHaveLength(3);
 	});
 });

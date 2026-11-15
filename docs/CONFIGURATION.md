@@ -170,7 +170,8 @@ directory ([`examples/brief.d/`](../examples/brief.d/)), and `chamberlain brief 
 | `publicBase` | An `https://` base (for example from `tailscale serve`) used in inline views when T3 is loaded over https. |
 
 **Snooze, Direction and Dismiss.** Every question on the queue page has a quiet row of small buttons along its bottom edge: Open thread (the link that used to
-sit with the crumbs), Snooze, Direction and Dismiss. A secret and a card pointer, which are settled in their own thread, get only the thread link and Snooze.
+sit with the crumbs), Snooze, Direction and Dismiss. Every kind gets Dismiss, including a secret and a card pointer. A secret and a card pointer are answered in
+their own thread, so they get the thread link, Snooze and Dismiss, and never Direction: dismissing them stops tracking the item and never enters a secret or answers the card.
 
 - **Snooze** offers 1 hour, later today, tomorrow morning, next week and a time of your own, as T3's thread snooze does. The page works each out in the browser's own
   time zone and sends an absolute time (within a year). A snoozed question leaves the active list for the **Snoozed** tab (beside Waiting in the Decisions view, with a count), with when each

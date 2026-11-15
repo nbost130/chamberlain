@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { obsFor } from "../core/log.ts";
-import { getQuestion } from "../core/questions.ts";
+import { askQuestion, getQuestion } from "../core/questions.ts";
 import { readClaim } from "../core/questions-claim.ts";
 import { readRulings } from "../core/rulings.ts";
 import { dataOf } from "../testing/obs.ts";
@@ -28,6 +28,8 @@ describe("the allowlist is one explicit list", () => {
 		// the route's shape only: which kinds of card it may answer is view-key-cards.test.ts (a question card, never an approval, goal, secret or link)
 		expect(viewKeyVerdict("POST", "/api/cards/C-0123456789ab/answer")).toBe("card-answer");
 		expect(viewKeyVerdict("OPTIONS", "/api/cards/C-0123456789ab/answer")).toBe("preflight");
+		expect(viewKeyVerdict("POST", "/api/cards/C-0123456789ab/dismiss")).toBe("card-dismiss");
+		expect(viewKeyVerdict("OPTIONS", "/api/cards/C-0123456789ab/dismiss")).toBe("preflight");
 		for (const [m, p] of [
 			["POST", "/api/items/Q-abcd/not-now"],
 			["POST", "/api/accept-all"],
@@ -147,6 +149,43 @@ for (const [label, origin] of [
 			await s.app.idle();
 			expect(getQuestion(s.store, "Q-abcd")).toMatchObject({ status: "dismissed" });
 			expect(readClaim(s.store, "Q-abcd")?.answer).toMatchObject({ kind: "dismissed", key: "view" });
+		});
+		test("a secret and a card pointer are dismissed with the view key too (#68)", async () => {
+			const s = setup();
+			const base = {
+				context: "x",
+				recommended: 0,
+				thread: "t",
+				server: "main",
+				createdAt: "2026-11-09T10:00:00.000Z",
+			} as const;
+			askQuestion(s.store, {
+				id: "Q-secr",
+				kind: "only-you",
+				title: "sudo password",
+				options: [],
+				secret: true,
+				...base,
+			});
+			askQuestion(s.store, {
+				id: "Q-card",
+				kind: "only-you",
+				title: "Approve deploy",
+				options: [{ label: "Leave it" }],
+				cardRequest: "req-1",
+				...base,
+			});
+			expect((await s.send("POST", "/api/items/Q-secr/dismiss", h(s), {})).status).toBe(200);
+			expect((await s.send("POST", "/api/items/Q-card/dismiss", h(s), {})).status).toBe(200);
+			await s.app.idle();
+			expect(getQuestion(s.store, "Q-secr")).toMatchObject({ status: "dismissed" });
+			expect(getQuestion(s.store, "Q-card")).toMatchObject({ status: "dismissed" });
+			expect(readClaim(s.store, "Q-secr")?.answer).toMatchObject({ kind: "dismissed", key: "view" });
+			expect(readClaim(s.store, "Q-card")?.answer).toMatchObject({ kind: "dismissed", key: "view" });
+			expect(s.logs.filter((l) => l.event === "dismissed")).toMatchObject([
+				{ id: "Q-secr", key: "view" },
+				{ id: "Q-card", key: "view" },
+			]);
 		});
 		test("the answer's ledger row says the view key too, and a ruling field is still refused", async () => {
 			const s = setup();
