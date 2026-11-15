@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CFG, NOW, rec, sel } from "../testing/core-idle-parents-fixtures.ts";
 import { memStore } from "../testing/store.ts";
-import type { Classified } from "./classifier/classify.ts";
 import { createOutbox } from "./deliver.ts";
 import { createIdleParents } from "./engine-idle.ts";
 import {
@@ -243,12 +242,14 @@ describe("C: wait tag in idle text and beside classifier tags", () => {
 		expect(idleText(rec("c", 100, PILOT_C))).toContain("[WAITING:");
 	});
 
-	test("live escalate keeps [WAITING: …] beside the classifier tag (Sol P2)", () => {
-		const t = rec("b", 400, PILOT_B, "omar");
-		const c: Classified = { action: "escalate", reasons: [{ id: "asks_decision", p: 0.98 }] };
-		const text = classifiedText(t, c);
-		expect(text).toContain("[ESCALATE");
-		expect(text).toContain("[WAITING:");
-		expect(text).toContain("holding until");
+	test("live escalate and nudge keep [WAITING: …] beside the classifier tag (Sol P2)", () => {
+		const hold = "I am holding until you send the SHA.";
+		const t = rec("b", 400, hold, "omar");
+		for (const action of ["escalate", "nudge"] as const) {
+			const text = classifiedText(t, { action, reasons: [{ id: "asks_decision", p: 0.98 }] });
+			expect(text).toContain(`[${action.toUpperCase()}`);
+			expect(text).toContain("[WAITING:");
+			expect(text).toContain("you send the SHA");
+		}
 	});
 });
