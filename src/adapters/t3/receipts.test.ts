@@ -175,6 +175,16 @@ describe("receipts D1–D6 and fail-closed association", () => {
 		t3.close();
 	});
 
+	test("M3: mismatched fence tokens fail closed", () => {
+		expect(lastFencedDeliveryId("Delivery id: <webhook-data-A>R</webhook-data-B>")).toBeUndefined();
+	});
+
+	test("M3: exact content is not trimmed; missing outer line fails closed", () => {
+		expect(lastFencedDeliveryId("Delivery id: <webhook-data-H> R </webhook-data-H>")).toBe(" R ");
+		expect(lastFencedDeliveryId("seen R somewhere without a fence")).toBeUndefined();
+		expect(lastFencedDeliveryId("Delivery id: <webhook-data-H>R</webhook-data-H>")).toBe("R");
+	});
+
 	test("template drift: missing outer Delivery-id line fails closed (no receipt)", () => {
 		const root = scratch();
 		const t3 = fakeT3(`${root}/t3.sqlite`);

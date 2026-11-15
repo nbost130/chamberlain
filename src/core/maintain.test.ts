@@ -12,6 +12,12 @@ describe("maintain", () => {
 		deliveredRow(s, "old", NOW);
 		deliveredRow(s, "new", NOW);
 		deliveredRow(s, "ancient", NOW - 31 * DAY);
+		// Ancient Steward delivery is forgettable only once ledgered unrecoverable (B2 retention).
+		s.steward.insertLedger({
+			outboxId: s.wakes.find("ancient")!.id,
+			gen: 1,
+			origin: "unrecoverable",
+		});
 		// An old wake record that was never resolved, a recent one, an old resolved finding, and an old answered question.
 		s.items.observe({ source: "notification-log", kind: "sent", dedupKey: "old-key", now: NOW - ITEM_KEEP_MS - DAY });
 		s.items.observe({ source: "notification-log", kind: "sent", dedupKey: "new-key", now: NOW - DAY });

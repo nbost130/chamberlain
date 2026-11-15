@@ -3,7 +3,6 @@
  * Each guarantee fails when its enforcing line is removed (see mutation table in build report).
  */
 import { describe, expect, test } from "bun:test";
-import { lastFencedDeliveryId } from "../adapters/t3/receipts.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { useStewardSwitchFixtures } from "../testing/steward-switch-fixtures.ts";
 import { createRelay } from "./relay.ts";
@@ -220,18 +219,5 @@ describe("M2: steward-switch-unacknowledged alarm (G1/G2)", () => {
 		checkSwitchNotice(s, (k) => alarms.push(k), clock.t + SWITCH_NOTICE_STALL_MS * 2, SWITCH_NOTICE_STALL_MS);
 		// g1→g2 notice is retired; only current (g2→g3) notice matters, and it is not yet delivered.
 		expect(alarms).toEqual([]);
-	});
-});
-
-describe("M3: fence parsing fails closed", () => {
-	test("mismatched fence tokens fail closed", () => {
-		expect(lastFencedDeliveryId("Delivery id: <webhook-data-A>R</webhook-data-B>")).toBeUndefined();
-	});
-
-	test("exact content is not trimmed; missing outer line fails closed", () => {
-		// No trim: padded fenced content is the exact id string, not "R".
-		expect(lastFencedDeliveryId("Delivery id: <webhook-data-H> R </webhook-data-H>")).toBe(" R ");
-		expect(lastFencedDeliveryId("seen R somewhere without a fence")).toBeUndefined();
-		expect(lastFencedDeliveryId("Delivery id: <webhook-data-H>R</webhook-data-H>")).toBe("R");
 	});
 });
