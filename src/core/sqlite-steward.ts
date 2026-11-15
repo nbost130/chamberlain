@@ -129,6 +129,20 @@ function ledgerApi(c: Db) {
 				d.origin,
 			);
 		},
+		/** Rewrite origin (remediation of pre-v2 rows wrongly ledgered as adopted/unrecoverable by v0.4.0). */
+		setLedgerOrigin: (outboxId: number, origin: StewardOrigin) => {
+			c.run("UPDATE steward_deliveries SET origin = ? WHERE outbox_id = ?", origin, outboxId);
+		},
+		/** Gen-0 ledger rows at or below the historical watermark that are not yet adopted-historical. */
+		gen0NeedingHistorical: (hi: number) =>
+			c
+				.all(
+					`SELECT outbox_id FROM steward_deliveries
+					 WHERE gen = 0 AND outbox_id <= ? AND origin IN ('adopted', 'unrecoverable')
+					 ORDER BY outbox_id`,
+					hi,
+				)
+				.map((r) => r.outbox_id as number),
 		receiptFor: (outboxId: number) => {
 			const r = c.one("SELECT * FROM steward_receipts WHERE outbox_id = ?", outboxId);
 			return r ? toReceipt(r) : undefined;
@@ -199,6 +213,11 @@ function transfersApi(c: Db) {
 		},
 		itemsOfTransfer: (fromGen: number) =>
 			c.all("SELECT * FROM transfer_items WHERE from_gen = ? ORDER BY orig_outbox_id", fromGen).map(toItem),
+		/** Drop a transfer item and its held wake (historical remediation). Idempotent. */
+		dropTransferItem: (itemId: string) => {
+			c.run("DELETE FROM held_wakes WHERE delivery_id = ?", itemId);
+			c.run("DELETE FROM transfer_items WHERE item_id = ?", itemId);
+		},
 	};
 }
 
@@ -221,7 +240,7 @@ function attemptApi(c: Db) {
 					`SELECT o.id FROM outbox o
 					 JOIN steward_deliveries d ON d.outbox_id = o.id
 					 WHERE o.status = 'delivered' AND o.receiver IS NULL
-					   AND d.origin != 'unrecoverable'
+					   AND d.origin NOT IN ('unrecoverable', 'adopted-historical')
 					   AND NOT EXISTS (SELECT 1 FROM steward_receipts r WHERE r.outbox_id = o.id)
 					   AND NOT EXISTS (
 					     SELECT 1 FROM transfer_items ti

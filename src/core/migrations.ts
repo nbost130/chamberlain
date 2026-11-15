@@ -548,6 +548,33 @@ CREATE TABLE transfer_items (
 ALTER TABLE outbox ADD COLUMN attempt_gen INTEGER;
 `,
 	},
+	{
+		version: 16,
+		name: "historical adoption origin and pre-v2 outbox watermark",
+		sql: `
+-- #67: pre-v2 delivered Steward rows must settle as adopted-historical (no transfer replay). SQLite cannot widen a CHECK in place, so
+-- rebuild steward_deliveries. Nothing else references that table. The durable boundary is the max Steward delivered outbox id that still
+-- has attempt_gen NULL when this migration runs: on a fresh 0.3.x→v2 open that is every pre-upgrade delivered row; on a database that already
+-- ran 0.4.0 it is those same originals (transfer:* dead-letters are not delivered). adoptPass reads steward.adopt.historical_hi and never
+-- recomputes it, so a later late-land row above the watermark still takes the transfer path (F2).
+CREATE TABLE steward_deliveries_v16 (
+	outbox_id INTEGER PRIMARY KEY REFERENCES outbox (id) ON DELETE CASCADE,
+	gen INTEGER NOT NULL,
+	origin TEXT NOT NULL CHECK (origin IN ('live', 'adopted', 'unrecoverable', 'adopted-historical'))
+);
+INSERT INTO steward_deliveries_v16 (outbox_id, gen, origin) SELECT outbox_id, gen, origin FROM steward_deliveries;
+DROP TABLE steward_deliveries;
+ALTER TABLE steward_deliveries_v16 RENAME TO steward_deliveries;
+INSERT INTO state (key, value, updated_at)
+SELECT 'steward.adopt.historical_hi',
+	CAST(COALESCE((
+		SELECT MAX(id) FROM outbox
+		WHERE receiver IS NULL AND status = 'delivered' AND attempt_gen IS NULL
+	), 0) AS TEXT),
+	CAST(strftime('%s', 'now') AS INTEGER) * 1000
+WHERE NOT EXISTS (SELECT 1 FROM state WHERE key = 'steward.adopt.historical_hi');
+`,
+	},
 ];
 
 const lastMigration = MIGRATIONS.at(-1);

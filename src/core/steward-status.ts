@@ -2,6 +2,7 @@
 
 import { isDischarged } from "./steward-discharge.ts";
 import { currentGen, maxGen } from "./steward-gens.ts";
+import { isSettledOrigin } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 
 export type StatusLine = string;
@@ -21,7 +22,7 @@ export function stewardStatus(store: Store, id?: string): StatusLine[] {
 	}
 	const undischarged = store.wakes.rows("delivered", null).filter((r) => {
 		const led = store.steward.ledger(r.id);
-		if (!led || led.origin === "unrecoverable") return false;
+		if (!led || isSettledOrigin(led.origin)) return false;
 		return !isDischarged(store, r.id);
 	});
 	lines.push(`undischarged Steward deliveries: ${undischarged.length}`);

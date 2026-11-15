@@ -47,7 +47,12 @@ export function recoverSteward(d: RecoverDeps): RecoverCounts {
 		transfersHeld: xfer.held + adopt.transferItems,
 		mirrors,
 	};
-	d.log("steward-recovered", { ...counts });
-	if (adopt.unrecoverable) d.log("steward-adopted", { unrecoverable: adopt.unrecoverable, adopted: adopt.adopted });
+	d.log("steward-recovered", { ...counts, historical: adopt.historical, notice: adopt.notice });
+	if (adopt.unrecoverable || adopt.historical)
+		d.log("steward-adopted", {
+			unrecoverable: adopt.unrecoverable,
+			historical: adopt.historical,
+			adopted: adopt.adopted,
+		});
 	return counts;
 }

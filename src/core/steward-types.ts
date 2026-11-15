@@ -5,7 +5,14 @@
 
 import { finalSendMessage } from "./deliver.ts";
 
-export type StewardOrigin = "live" | "adopted" | "unrecoverable";
+export type StewardOrigin = "live" | "adopted" | "unrecoverable" | "adopted-historical";
+
+/** Origins that are settled without a receipt or transfer (retention/status/evidence skip them). */
+export const isSettledOrigin = (origin: StewardOrigin): boolean =>
+	origin === "unrecoverable" || origin === "adopted-historical";
+
+/** State key: max pre-v2 Steward delivered outbox id (migration 16). Rows at or below are historical. */
+export const HISTORICAL_ADOPT_HI_KEY = "steward.adopt.historical_hi";
 export type SwitchPhase = "preparing" | "committed" | "mirrored" | "aborted";
 export type ReceiptKind = "t3-run" | "operator";
 
