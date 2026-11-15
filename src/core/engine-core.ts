@@ -9,6 +9,7 @@ import type { createOutbox } from "./deliver.ts";
 import type { createIdleParents } from "./engine-idle.ts";
 import { type deskLaneOf, type EngineDeps, type EngineTiming, TOKEN_ALARM_WINDOW_MS } from "./engine-support.ts";
 import type { createSweep } from "./engine-sweep.ts";
+import type { createUndelivered } from "./engine-undelivered.ts";
 import type { Watcher } from "./engine-watcher.ts";
 import type { Gate } from "./hold.ts";
 import { takeSnapshots } from "./hold-threads.ts";
@@ -54,6 +55,7 @@ export abstract class CoreBase {
 	protected abstract readonly stewardCheck: () => Promise<void>;
 	protected abstract readonly sweep: ReturnType<typeof createSweep>;
 	protected abstract readonly idleParents: ReturnType<typeof createIdleParents>;
+	protected abstract readonly undelivered: ReturnType<typeof createUndelivered>;
 	protected abstract readonly heartbeat: () => void;
 	protected abstract readonly healthTick: (() => Promise<unknown>) | undefined;
 	protected abstract readonly usageTick: (() => Promise<unknown>) | undefined;

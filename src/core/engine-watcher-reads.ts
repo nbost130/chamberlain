@@ -11,6 +11,7 @@ import type { IdleThreadSource } from "./idle-select.ts";
 import type { Log } from "./log.ts";
 import type { ServerEntry } from "./servers.ts";
 import { BUSY_TURNS, type BusyFact, commitsAhead, SWEEP_MS } from "./sweep.ts";
+import type { UndeliveredSource } from "./undelivered.ts";
 
 /** One configured server's thread table, debounce timers, connection and resume state. */
 export class WatcherReads {
@@ -71,6 +72,28 @@ export class WatcherReads {
 					what: "last assistant message",
 					error: String(e).slice(0, 200),
 				}),
+		};
+	}
+
+	/** This server as a source for the undelivered-message check (src/core/undelivered.ts). */
+	undeliveredSource(): UndeliveredSource {
+		const latestRun = this.inspect?.latestRun;
+		return {
+			server: this.srv.name,
+			connected: this.connected,
+			threads: this.states.values(),
+			...(latestRun
+				? {
+						latestRun: (id: string) => latestRun.call(this.inspect, id),
+						readFailed: (threadId: string, e: unknown) =>
+							this.log("read-failed", {
+								server: this.srv.name,
+								threadId,
+								what: "latest run",
+								error: String(e).slice(0, 200),
+							}),
+					}
+				: {}),
 		};
 	}
 

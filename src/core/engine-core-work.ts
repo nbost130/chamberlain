@@ -10,6 +10,7 @@ import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createIdleParents } from "./engine-idle.ts";
 import { createStewardCheck } from "./engine-steward.ts";
 import { clip, closeCardCommand } from "./engine-support.ts";
+import { createUndelivered } from "./engine-undelivered.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "./hold-reconcile.ts";
 import { obsFor } from "./log.ts";
 import { alarms } from "./messages.ts";
@@ -39,6 +40,18 @@ export abstract class CoreWork extends CoreRights {
 		}).check;
 	}
 
+	/** Thread ids that are never idle parents or undelivered targets: Steward, decisions, desk, exclude. */
+	protected chamberlainSkip(): Set<string> {
+		return new Set(
+			[
+				...this.EXCLUDE,
+				this.privateFile("steward-thread"),
+				this.privateFile("decisions-thread"),
+				this.privateFile("desk-thread"),
+			].filter((x): x is string => Boolean(x)),
+		);
+	}
+
 	// Its own timer, apart from the routine sweep's. Threads that are Chamberlain's own, or the operator's exclude list, are never idle parents.
 	protected makeIdleParents() {
 		const { d } = this;
@@ -48,17 +61,22 @@ export abstract class CoreWork extends CoreRights {
 			outbox: this.outbox,
 			conf: this.conf,
 			sources: () => this.watchers.map((w) => w.idleSource()),
-			skip: () =>
-				new Set(
-					[
-						...this.EXCLUDE,
-						this.privateFile("steward-thread"),
-						this.privateFile("decisions-thread"),
-						this.privateFile("desk-thread"),
-					].filter((x): x is string => Boolean(x)),
-				),
+			skip: () => this.chamberlainSkip(),
 			...(d.relay?.now ? { now: d.relay.now } : {}),
 			...(d.classifierProvider ? { provider: d.classifierProvider } : {}),
+		});
+	}
+
+	protected makeUndelivered() {
+		const { d } = this;
+		return createUndelivered({
+			store: this.store,
+			log: this.log,
+			outbox: this.outbox,
+			conf: this.conf,
+			sources: () => this.watchers.map((w) => w.undeliveredSource()),
+			skip: () => this.chamberlainSkip(),
+			...(d.relay?.now ? { now: d.relay.now } : {}),
 		});
 	}
 
@@ -242,6 +260,11 @@ export abstract class CoreWork extends CoreRights {
 		if (usageTick)
 			checks.push(usageTick().catch((e) => log("steward-usage-error", { error: String(e).slice(0, 200) })));
 		checks.push(this.idleParents.tick().catch((e) => log("idle-parents-error", { error: String(e).slice(0, 200) })));
+		checks.push(
+			this.undelivered
+				.tick()
+				.catch((e: unknown) => log("undelivered-message-error", { error: String(e).slice(0, 200) })),
+		);
 		checks.push(
 			this.sweep.tick().catch((e) => {
 				log("sweep-error", { error: String(e) });

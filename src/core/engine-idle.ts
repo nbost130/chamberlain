@@ -1,37 +1,52 @@
 /**
- * The idle-parents timer: on its own schedule (`sweep.idleParents.intervalMinutes`, default 15), not the routine sweep's, list the top-level
- * threads that finished and went quiet, and wake the Steward once with the ones not yet reported at their last message. The engine's
- * once-a-minute housekeeping calls `tick`; the check's own clock decides whether it is due, so the schedule is the check's and survives a
- * restart. With the classifier off (the default) no model call is made (src/core/idle-parents.ts); with it on, the selection is classified
- * between the read and the findings (src/core/classifier/classify.ts). Split out of createEngine (src/core/engine.ts), like the sweep.
+ * The idle-parents timer: on its own schedule (`sweep.idleParents.intervalMinutes`, default 15), list the top-level
+ * threads that finished and went quiet, and wake the Steward once with the ones due (first report or a `repeatHours`
+ * re-raise). When `threads.steward` changes, open idle findings are resolved and re-queued as one digest for the new Steward
+ * (uncapped, including persisted findings for servers that cannot be reread), in the same outbox commit as the wake.
  */
+import { heldOpen } from "./afk-held.ts";
 import { type ClassifyDeps, classifyIdle } from "./classifier/classify.ts";
 import type { Outbox } from "./deliver.ts";
-import { DIGEST_PREFIX, idleParentsSource, idlePrior } from "./idle-parents.ts";
+import {
+	DIGEST_PREFIX,
+	idleParentsSource,
+	idlePrior,
+	openIdleParents,
+	resolveOpenIdleParents,
+} from "./idle-parents.ts";
 import { type IdleThreadSource, selectIdleThreads } from "./idle-select.ts";
+import { thread as stewardThread } from "./layout.ts";
 import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
 import { evaluateSource, recordEvaluation } from "./source.ts";
 import type { Store } from "./store.ts";
-import { fenced, idleParentsConfig } from "./sweep.ts";
+import { fencedFindings, idleParentsConfig } from "./sweep.ts";
 
 const IDLE_CLOCK = "idle-parents-clock";
+const STEWARD_STATE = "idle-parents-steward";
 export type IdleClock = { lastAt: number };
+type StewardState = { threadId: string };
 
 export type IdleParentsDeps = {
 	store: Store;
 	log: Log;
 	outbox: Outbox;
-	/** The config directory: where `sweep.idleParents` is read from, on every tick, so an edit takes hold at once. */
 	conf: string;
-	/** The watchers, as sources of threads to select from. */
 	sources: () => readonly IdleThreadSource[];
-	/** The thread ids that are never idle parents: the Steward, the decisions thread, the Alert Desk, the exclude list. */
 	skip: () => ReadonlySet<string>;
 	now?: () => number;
-	/** The classifier's provider. Default: the one the config names (tests pass a fake). */
 	provider?: ClassifyDeps["provider"];
 };
+
+/** Thread ids the Steward has an open hold for: idle-parents stays quiet on those. */
+function heldThreadIds(store: Store): Set<string> {
+	const ids = new Set<string>();
+	for (const h of heldOpen(store)) {
+		const id = h.threadId ?? h.ref?.threadId;
+		if (id) ids.add(id);
+	}
+	return ids;
+}
 
 export function createIdleParents({
 	store,
@@ -44,62 +59,84 @@ export function createIdleParents({
 	provider,
 }: IdleParentsDeps) {
 	let running = false;
-	/** Runs the check when its own interval has passed since it last ran. Never throws into the caller's other checks. */
 	async function tick(): Promise<void> {
 		if (running) return;
 		const cfg = idleParentsConfig(conf);
 		if (!cfg.enabled) return;
 		const at = now();
-		const prior = store.state.get<Partial<IdleClock>>(IDLE_CLOCK);
-		if (typeof prior?.lastAt === "number" && at - prior.lastAt < cfg.intervalMinutes * 60_000) return;
+		const priorClock = store.state.get<Partial<IdleClock>>(IDLE_CLOCK);
+		if (typeof priorClock?.lastAt === "number" && at - priorClock.lastAt < cfg.intervalMinutes * 60_000) return;
 		running = true;
 		try {
-			const source = idleParentsSource({
-				cfg,
-				select: () => selectIdleThreads(sources(), at, { thresholdMinutes: cfg.thresholdMinutes, skip: skip() }),
-				prior: () => idlePrior(store),
-				...(cfg.classifier.provider === "none"
-					? {}
-					: {
-							classify: async (threads) => ({
-								mode: cfg.classifier.mode,
-								day: new Date(at).toISOString().slice(0, 10),
-								byKey: await classifyIdle(threads, cfg.classifier, {
-									store,
-									conf,
-									log,
-									now: at,
-									...(provider ? { provider } : {}),
-								}),
-							}),
-						}),
-			});
-			// Reading writes nothing but the classifier's cache (thread_dispositions), which no notification depends on. What was found, the
-			// clock and the wake are then one transaction, as in the sweep: a crash between recording a thread as reported and queueing its
-			// wake would lose the report for good.
-			const evaluation = await evaluateSource(source);
-			outbox.commit(() => {
-				const outcome = recordEvaluation(store, evaluation, { now: at });
-				store.state.set(IDLE_CLOCK, { lastAt: at } satisfies IdleClock);
-				log("idle-parents", {
-					reported: outcome.notified.length,
-					...(outcome.ok ? {} : { error: outcome.error }),
-				});
-				if (!outcome.notified.length) return undefined;
-				const block = outcome.notified.map((i) => `- ${fenced(String(i.payload.text ?? i.dedupKey))}`).join("\n");
-				return {
-					message: idleThreadsWake(
-						outcome.notified.filter((i) => !i.dedupKey.startsWith(DIGEST_PREFIX)).length,
-						block,
-						cfg.classifier.provider !== "none" && cfg.classifier.mode === "live",
-					),
-					deliveryId: `idle-parents:${at}`,
-					meta: { kind: "sweep" },
-				};
-			});
+			await runIdlePass({ store, log, outbox, conf, sources, skip, at, cfg, provider });
 		} finally {
 			running = false;
 		}
 	}
 	return { tick };
+}
+
+type Pass = {
+	store: Store;
+	log: Log;
+	outbox: Outbox;
+	conf: string;
+	sources: () => readonly IdleThreadSource[];
+	skip: () => ReadonlySet<string>;
+	at: number;
+	cfg: ReturnType<typeof idleParentsConfig>;
+	provider?: ClassifyDeps["provider"];
+};
+
+async function runIdlePass(p: Pass): Promise<void> {
+	const { store, log, outbox, conf, sources, skip, at, cfg, provider } = p;
+	const stewardId = stewardThread(conf, "steward") ?? "";
+	const prev = store.state.get<Partial<StewardState>>(STEWARD_STATE);
+	const stewardChanged = Boolean(stewardId && prev?.threadId && prev.threadId !== stewardId);
+	// Snapshot open findings before the commit; resolve + wake share one outbox transaction.
+	const handoff = stewardChanged ? openIdleParents(store) : [];
+	const skipAll = new Set([...skip(), ...heldThreadIds(store)]);
+	const source = idleParentsSource({
+		cfg,
+		select: () => selectIdleThreads(sources(), at, { thresholdMinutes: cfg.thresholdMinutes, skip: skipAll }),
+		prior: () => idlePrior(store),
+		handoff: () => handoff,
+		...(cfg.classifier.provider === "none"
+			? {}
+			: {
+					classify: async (threads) => ({
+						mode: cfg.classifier.mode,
+						day: new Date(at).toISOString().slice(0, 10),
+						byKey: await classifyIdle(threads, cfg.classifier, {
+							store,
+							conf,
+							log,
+							now: at,
+							...(provider ? { provider } : {}),
+						}),
+					}),
+				}),
+	});
+	const evaluation = await evaluateSource(source);
+	outbox.commit(() => {
+		if (stewardChanged) resolveOpenIdleParents(store, at);
+		const outcome = recordEvaluation(store, evaluation, { now: at });
+		store.state.set(IDLE_CLOCK, { lastAt: at } satisfies IdleClock);
+		if (stewardId) store.state.set(STEWARD_STATE, { threadId: stewardId } satisfies StewardState);
+		log("idle-parents", {
+			reported: outcome.notified.length,
+			...(stewardChanged ? { stewardChanged: true } : {}),
+			...(outcome.ok ? {} : { error: outcome.error }),
+		});
+		if (!outcome.notified.length) return undefined;
+		return {
+			message: idleThreadsWake(
+				outcome.notified.filter((i) => !i.dedupKey.startsWith(DIGEST_PREFIX)).length,
+				fencedFindings(outcome.notified),
+				cfg.classifier.provider !== "none" && cfg.classifier.mode === "live",
+			),
+			deliveryId: `idle-parents:${at}`,
+			meta: { kind: "sweep" },
+		};
+	});
 }

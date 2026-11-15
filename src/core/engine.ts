@@ -21,6 +21,7 @@ import {
 	RECOVER_KEY,
 } from "./engine-support.ts";
 import { createSweep } from "./engine-sweep.ts";
+import type { createUndelivered } from "./engine-undelivered.ts";
 import { Watcher } from "./engine-watcher.ts";
 import { createJudge, type Judge, judgeOff, readJudgeConfig } from "./judge.ts";
 import { type Log, logFor, obsFor } from "./log.ts";
@@ -54,6 +55,7 @@ export class Core extends CoreWork {
 	protected readonly stewardCheck: () => Promise<void>;
 	protected readonly sweep: ReturnType<typeof createSweep>;
 	protected readonly idleParents: ReturnType<typeof createIdleParents>;
+	protected readonly undelivered: ReturnType<typeof createUndelivered>;
 	protected readonly heartbeat: () => void;
 	protected readonly healthTick: (() => Promise<unknown>) | undefined;
 	protected readonly usageTick: (() => Promise<unknown>) | undefined;
@@ -99,6 +101,7 @@ export class Core extends CoreWork {
 			watchers: this.watchers,
 		});
 		this.idleParents = this.makeIdleParents();
+		this.undelivered = this.makeUndelivered();
 		this.heartbeat = this.makeHeartbeat();
 		this.healthTick = this.makeHealthTick();
 		this.usageTick = this.makeUsageTick();

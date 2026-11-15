@@ -164,8 +164,10 @@ describe("sweep.json", () => {
 				intervalMinutes: 15,
 				thresholdMinutes: 30,
 				maxThreads: 10,
+				repeatHours: 2,
 				classifier: CLASSIFIER_DEFAULTS,
 			},
+			undelivered: { enabled: true, intervalMinutes: 1, maxDurationSeconds: 10 },
 		});
 	});
 	test("a check may be set to shadow or silenced, and an unknown mode is refused", () => {
@@ -212,7 +214,7 @@ describe("sweep.json, every refusal", () => {
 		refused([{ name: "a".repeat(41), command: ["x"] }], `sweep.json: check 1 ${naming}`);
 		refused(
 			[{ name: "idle-parents", command: ["x"] }],
-			'sweep.json: "idle-parents" is the built-in idle-parents check; tune it with "idleParents", not a check',
+			'sweep.json: "idle-parents" is a built-in check; tune it with "idleParents" or "undelivered", not a check',
 		);
 		refused([{ name: "a", command: "x" }], 'sweep.json: check a needs "command": ["program", "arg", ...]');
 		refused([{ name: "a", command: ["x", 1] }], 'sweep.json: check a needs "command": ["program", "arg", ...]');

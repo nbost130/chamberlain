@@ -64,6 +64,7 @@ export const idle = (id: string, minutesIdle: number, text = "All done.", over: 
 
 export const rec = (id: string, minutesIdle: number, text = "All done.", server = "main"): IdleThread => {
 	const l = last(`m-${id}`, minutesIdle, text);
+	const looksLikeAsk = /go|\?|holding until|waiting (?:on|for)|adapt once|no reply needed while/i.test(text);
 	return {
 		server,
 		threadId: id,
@@ -71,7 +72,7 @@ export const rec = (id: string, minutesIdle: number, text = "All done.", server 
 		idleMinutes: minutesIdle,
 		lastMessage: text,
 		lastMessageHash: messageHash(l),
-		looksLikeAsk: /go|\?/.test(text),
+		looksLikeAsk,
 		previous: { from: "none", text: "" },
 	};
 };

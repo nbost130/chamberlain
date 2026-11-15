@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import type { ThreadState } from "./adapter.ts";
 import type { LastAssistant } from "./adapter-inspect.ts";
 import { looksLikeAsk } from "./decide.ts";
+import { waitClosing } from "./wait-phrases.ts";
 
 /**
  * Pure: can this thread be an idle parent? Top level (no child or subagent), not settled, snoozed or archived, finished
@@ -39,6 +40,8 @@ export type IdleThread = {
 	lastMessage: string;
 	lastMessageHash: string;
 	looksLikeAsk: boolean;
+	/** Who or what a wait-closing names, when the last message is a hold/wait. */
+	waitingOn?: string;
 	previous: { from: "human" | "agent" | "none"; text: string };
 };
 
@@ -126,6 +129,7 @@ async function readIdleThread({ src, read, now, thresholdMinutes, out }: IdleRea
 		if (!last || !Number.isFinite(at)) return;
 		const idleMs = now - at;
 		if (idleMs <= thresholdMinutes * 60_000) return;
+		const waiting = waitClosing(last.text);
 		out.threads.push({
 			server: src.server,
 			threadId: th.id,
@@ -134,6 +138,7 @@ async function readIdleThread({ src, read, now, thresholdMinutes, out }: IdleRea
 			lastMessage: last.text,
 			lastMessageHash: messageHash(last),
 			looksLikeAsk: looksLikeAsk(last.text),
+			...(waiting ? { waitingOn: waiting.awaiting } : {}),
 			previous: last.previous ? { from: last.previous.by, text: last.previous.text } : { from: "none", text: "" },
 		});
 	} catch (e) {

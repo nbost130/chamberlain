@@ -1,5 +1,6 @@
 import type { ThreadState, WakeKind } from "./adapter.ts";
 import { principalPoss } from "./config.ts";
+import { looksLikeWait } from "./wait-phrases.ts";
 
 /** Pure rules: which thread transitions are worth waking the Steward for. They read the normalized ThreadState (adapter.ts). */
 export type { ThreadState } from "./adapter.ts";
@@ -103,7 +104,7 @@ const OFFER_QUESTION = /\b(?:want me to|shall i)\b[^\n?]{0,160}\?/i;
 /** True when a finished turn's final message hands a question or decision back to the operator. */
 export function looksLikeAsk(text: string): boolean {
 	const whole = text.trim().slice(-500);
-	if (HANDBACK.test(whole) || GO_PHRASE.test(whole) || OFFER_QUESTION.test(whole)) return true;
+	if (HANDBACK.test(whole) || GO_PHRASE.test(whole) || OFFER_QUESTION.test(whole) || looksLikeWait(whole)) return true;
 	const body = text
 		.split("\n")
 		.filter((l) => !l.trimStart().startsWith("🗣️") && !l.trimStart().startsWith("🧠") && !l.trimStart().startsWith("🤖"))
@@ -113,13 +114,14 @@ export function looksLikeAsk(text: string): boolean {
 	if (/❓\s*OPEN/i.test(body)) return true;
 	const tail = body.slice(-500);
 	if (
-		/\b(tell me when|let me know|say if|say the word|want me to|shall i|should i|your call|do you want|awaiting your|waiting (?:on|for) your|until you (?:decide|answer|confirm|say))\b/i.test(
+		/\b(tell me when|let me know|say if|say the word|want me to|shall i|should i|your call|do you want|awaiting your|waiting (?:on|for) your|until you (?:decide|answer|confirm|say|send))\b/i.test(
 			tail,
 		)
 	)
 		return true;
 	// A /goal proposal waits for an answer ("Submit the /goal block as-is, edit it, or say 'no goal'") but ends on no question mark.
 	if (/\bsubmit the \/goal\b|\bsay ['"‘’“”]?no goal\b/i.test(tail)) return true;
+	if (looksLikeWait(tail)) return true;
 	return /\?\s*$/m.test(
 		tail
 			.split("\n")
