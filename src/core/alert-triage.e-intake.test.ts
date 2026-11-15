@@ -1,9 +1,12 @@
 /** E: intake (10) plus M5/M6 settlement tests. */
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { line, MIB, min, T0, triageRig } from "../testing/alert-triage-fixtures.ts";
+import { readConfig } from "./alert-desk-config.ts";
 import { CURSOR_KEY, type Cursor } from "./alert-desk-cursor.ts";
+import { readInboxOpts } from "./alert-desk-cursor-opts.ts";
 import { readLines } from "./alert-desk-read.ts";
+import { drainDeskPass } from "./alert-triage-engine.ts";
 
 describe("E intake", () => {
 	test("E1 stale critical, cursor exists", () => {
@@ -156,19 +159,15 @@ describe("E intake", () => {
 			desk: { morningHour: 23, startAt: "beginning", rotateBytes: 100 * MIB },
 		});
 		r.settle(T0);
-		const crit = line({ family: "c-budget", body: "x".repeat(80) });
-		const big = `${"y".repeat(5 * MIB)}\n`;
-		const retired = [];
+		const fams = ["c-ret0", "c-ret1", "c-ret2"];
 		for (let i = 0; i < 3; i++) {
 			const p = `${r.inbox}.ret${i}`;
-			writeFileSync(p, crit + big + crit.trimEnd()); // final critical no trailing nl initially
-			appendFileSync(p, "\n");
-			retired.push(p);
+			writeFileSync(p, `${line({ family: fams[i], body: "x".repeat(80) })}${"y".repeat(3 * MIB)}\n`);
 			const cur = r.store.state.get<Cursor>(CURSOR_KEY)!;
 			cur.retired.push({ path: p, offset: 0, after: T0 });
 			r.store.state.set(CURSOR_KEY, cur);
 		}
-		writeFileSync(r.inbox, "partial".repeat(1000)); // 2MiB-ish partial without needing full 2MiB
+		writeFileSync(r.inbox, `${line({ family: "c-live" })}${"z".repeat(2 * MIB)}\n`);
 		let fetched = 0;
 		const wrap = ((path: string, from: number, final?: boolean) => {
 			const got = readLines(path, from, final);
@@ -177,7 +176,39 @@ describe("E intake", () => {
 		}) as typeof readLines;
 		r.pass(min(1), { read: wrap });
 		expect(fetched).toBeLessThanOrEqual(4 * MIB + 4 * MIB + 1);
-		void retired;
+		const tick1 = new Set(r.obligations().map((o) => o.event.family));
+		expect(tick1.size).toBeGreaterThan(0);
+		r.pass(min(2), { read: wrap });
+		r.pass(min(3), { read: wrap });
+		r.pass(min(4), { read: wrap });
+		const all = new Set(r.obligations().map((o) => o.event.family));
+		for (const f of [...fams, "c-live"]) expect(all.has(f)).toBe(true);
+		expect(all.size).toBe(4);
+	});
+
+	test("E7b inode change at budget boundary keeps critical", () => {
+		const r = triageRig({
+			triage: { enabled: true, rules: [], readBudgetBytes: 8 * MIB },
+			desk: { morningHour: 23, startAt: "beginning", rotateBytes: 100 * MIB },
+		});
+		r.settle(T0);
+		writeFileSync(r.inbox, `${"p".repeat(1001)}\n`);
+		r.pass(min(1));
+		const cur = structuredClone(r.store.state.get<Cursor>(CURSOR_KEY)!);
+		const oldIno = cur.inode;
+		expect(oldIno).toBeGreaterThan(0);
+		// Keep the old file so the replacement cannot reuse its inode number.
+		renameSync(r.inbox, `${r.inbox}.aside`);
+		writeFileSync(r.inbox, `${line({ family: "inode-crit" })}${" ".repeat(2000)}\n`);
+		expect(statSync(r.inbox).ino).not.toBe(oldIno);
+		const cfg = readConfig(r.dir);
+		const first = readInboxOpts({ cur, inbox: r.inbox, now: min(2), cfg, opts: { budget: 1 } });
+		expect(first.events.map((e) => e.family)).not.toContain("inode-crit");
+		expect(cur.offset).toBe(0);
+		expect(cur.inode).toBe(statSync(r.inbox).ino);
+		r.store.state.set(CURSOR_KEY, cur);
+		r.pass(min(3));
+		expect(r.obligations().some((o) => o.event.family === "inode-crit")).toBe(true);
 	});
 
 	test("E8 desk not ready", () => {
@@ -189,32 +220,40 @@ describe("E intake", () => {
 	});
 
 	test("E9 no desk lane", () => {
-		// Exercised at engine level; here alarm path when we simulate via drainDeskPass would need host.
-		// Unit: with triage enabled the no-desk alarm is raised by the engine helper — covered in engine wiring.
-		expect(true).toBe(true);
+		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
+		r.append({ family: "nodesk" });
+		drainDeskPass({
+			store: r.store,
+			outbox: r.outbox,
+			conf: r.dir,
+			DRY: false,
+			deskLane: undefined,
+			log: (event, data) => r.logged.push({ event, ...data }),
+			alarm: (id, title, body) => r.alarms.set(id, { title, body }),
+			clearAlarm: (id) => r.alarms.delete(id),
+			now: () => T0,
+		});
+		expect(r.alarms.has("alert-triage-no-desk")).toBe(true);
+		expect(r.obligations()).toHaveLength(0);
 	});
 
 	test("E10 dry run, flag on", () => {
-		const r = triageRig({
-			triage: { enabled: true, rules: [] },
-			desk: { morningHour: 23, startAt: "beginning" },
-			dry: true,
-		});
+		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
 		r.append({ family: "dry-c" });
-		// Engine dry path returns before drainTriage; unit: call with dry outbox still mutates if we call drainTriage.
-		// Mirror engine: when DRY, nothing is read.
-		const reads: string[] = [];
-		const wrap = ((path: string, from: number, final?: boolean) => {
-			reads.push(path);
-			return readLines(path, from, final);
-		}) as typeof readLines;
-		// Simulate engine DRY guard: do not call drainTriage
-		expect(reads).toHaveLength(0);
-		r.writeTriage({ enabled: true });
-		const r2 = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
-		r2.append({ family: "dry-c" });
-		r2.settle(T0);
-		expect(r2.stewardRows()).toHaveLength(1);
-		void wrap;
+		const before = r.store.state.get(CURSOR_KEY);
+		drainDeskPass({
+			store: r.store,
+			outbox: r.outbox,
+			conf: r.dir,
+			DRY: true,
+			deskLane: { wake: { ready: () => true } },
+			log: (event, data) => r.logged.push({ event, ...data }),
+			alarm: (id, title, body) => r.alarms.set(id, { title, body }),
+			clearAlarm: (id) => r.alarms.delete(id),
+			now: () => T0,
+		});
+		expect(r.logged.some((l) => l.event === "alert-triage-dry")).toBe(true);
+		expect(r.store.state.get(CURSOR_KEY)).toEqual(before);
+		expect(r.obligations()).toHaveLength(0);
 	});
 });

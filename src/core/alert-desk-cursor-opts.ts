@@ -89,8 +89,15 @@ function readLive(ctx: ReadCtx, fetched: { n: number }): Bucket {
 	const main = read(ctx.inbox, start);
 	if (!main) return live;
 	fetched.n += main.fetched;
+	const replaced = ctx.cur.inode !== 0 && ctx.cur.inode !== main.inode;
+	// Inode changed but budget spent: adopt inode at offset 0; do not commit a mid-file tail (B1).
+	if (replaced && fetched.n >= budget) {
+		ctx.cur.inode = main.inode;
+		ctx.cur.offset = 0;
+		return { lines: [], startOff: 0 };
+	}
 	let fresh: ReadLinesResult = main;
-	if (ctx.cur.inode !== 0 && ctx.cur.inode !== main.inode && fetched.n < budget) {
+	if (replaced) {
 		const again = read(ctx.inbox, 0) ?? main;
 		if (again !== main) fetched.n += again.fetched;
 		fresh = again;

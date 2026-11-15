@@ -87,8 +87,8 @@ function freshPayload(a: OpenArgs, ak: string, seq: number): Obligation {
 		rule: a.hit.id,
 		...(a.hit.right ? { right: a.hit.right } : {}),
 		event,
-		firstSeen: a.e.ts,
-		lastSeen: a.e.ts,
+		firstSeen: event.firstSeen,
+		lastSeen: event.lastSeen,
 		folded: 0,
 		readyAt: a.now,
 		missed: 0,
@@ -105,11 +105,12 @@ export function upsertObligation(a: OpenArgs): string {
 		const existing = a.store.items.get(ALERT_TRIAGE, ok);
 		if (existing?.status === "triggered") {
 			const ob = asOb(existing.payload);
-			a.store.items.patch(ALERT_TRIAGE, ok, {
+			const event = prepareEvent(a.e, {
+				firstSeen: ob.firstSeen,
 				lastSeen: a.e.ts,
 				folded: ob.folded + 1,
-				event: prepareEvent(a.e, { firstSeen: ob.firstSeen, lastSeen: a.e.ts, folded: ob.folded + 1 }),
 			});
+			a.store.items.patch(ALERT_TRIAGE, ok, { lastSeen: event.lastSeen, folded: ob.folded + 1, event });
 			return ob.occ;
 		}
 		const payload = freshPayload(a, ak, bumpSeq(a.store, sk, a.now));

@@ -115,17 +115,39 @@ describe("B routing", () => {
 				],
 			}).invalid,
 		).toBe(true);
+		const typo = parseTriageConfig({ enabled: true, typo: 1 });
+		expect(typo.invalid).toBe(true);
+		expect(typo.enabled).toBe(true);
+		expect(typo.rules).toEqual([]);
+		const badMatch = parseTriageConfig({
+			enabled: true,
+			rules: [{ id: "bad", match: { source: 42 }, outcome: "pass-through" }],
+		});
+		expect(badMatch.invalid).toBe(true);
+		expect(badMatch.enabled).toBe(true);
+		expect(parseTriageConfig({ enabled: true, rules: "nope" }).invalid).toBe(true);
 	});
 
 	test("B7 invalid config", () => {
 		const r = triageRig({
-			triage: { enabled: true, rules: [{ id: "bad", match: {}, outcome: "human" }] },
+			triage: { enabled: true, typo: 1 },
 			desk: { morningHour: 23, startAt: "beginning" },
 		});
 		r.append({ family: "x" });
 		r.settle(T0);
 		expect(r.alarms.has("alert-triage-config")).toBe(true);
 		expect(r.stewardRows()).toHaveLength(1);
+		const r2 = triageRig({
+			triage: {
+				enabled: true,
+				rules: [{ id: "bad", match: { source: 42 }, outcome: "pass-through" }],
+			},
+			desk: { morningHour: 23, startAt: "beginning" },
+		});
+		r2.append({ family: "other", source: "unrelated" });
+		r2.settle(T0);
+		expect(r2.alarms.has("alert-triage-config")).toBe(true);
+		expect(r2.obligations()[0]?.rule).toBe("default-critical");
 	});
 
 	test("B8 human critical", () => {

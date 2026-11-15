@@ -81,6 +81,13 @@ export function prepareField(s: string, clip: number, body: boolean): string {
 	return clipField(redactSecrets(stripControls(boundInput(s), body)), clip);
 }
 
+/** Every stored/output timestamp is ISO (or redacted garbage) — never a raw Date.parse-accepted string (B2). */
+function prepareTs(s: string): string {
+	const ms = Date.parse(s);
+	if (Number.isFinite(ms)) return new Date(ms).toISOString();
+	return prepareField(s, 64, false);
+}
+
 export function prepareEvent(e: DeskEvent, times: { firstSeen: string; lastSeen: string; folded: number }): AlertData {
 	return {
 		source: prepareField(e.source, CLIPS.source, false),
@@ -88,8 +95,8 @@ export function prepareEvent(e: DeskEvent, times: { firstSeen: string; lastSeen:
 		title: prepareField(e.title, CLIPS.title, false),
 		body: prepareField(e.body, CLIPS.body, true),
 		severity: e.severity,
-		firstSeen: times.firstSeen,
-		lastSeen: times.lastSeen,
+		firstSeen: prepareTs(times.firstSeen),
+		lastSeen: prepareTs(times.lastSeen),
 		folded: times.folded,
 	};
 }

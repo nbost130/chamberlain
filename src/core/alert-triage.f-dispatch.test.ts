@@ -50,23 +50,33 @@ describe("F dispatch SLA recovery", () => {
 		expect(r.stewardRows()).toHaveLength(4);
 	});
 
-	test("F4 mixed tick", () => {
+	test("F4 mixed tick preserves dueAt order", () => {
 		const r = triageRig({
-			triage: { enabled: true, rules: [], batchPerTick: 3, maxInFlight: 5, ackMinutes: 15 },
+			triage: { enabled: true, rules: [], batchPerTick: 1, maxInFlight: 5, ackMinutes: 15 },
 			desk: { morningHour: 23, startAt: "beginning" },
 		});
 		r.settle(T0);
-		for (const f of ["A", "B", "C"]) r.append({ family: f, at: min(1) });
+		r.append({ family: "A", at: min(1) });
 		r.pass(min(1));
-		expect(r.stewardRows()).toHaveLength(3);
-		// mark delivered with staggered finishedAt so SLA/dead/cancel become due
-		for (const row of r.stewardRows()) {
-			r.store.wakes.finish(row.id, "delivered", min(1));
-		}
-		// force one dead, one cancel via finish then... simplify: redispatch via time
-		for (const f of ["N1", "N2", "N3", "N4"]) r.append({ family: f, at: min(2) });
-		r.pass(min(2) + 15 * 60_000); // SLA due for A,B,C
-		expect(r.stewardRows().length).toBeGreaterThanOrEqual(3);
+		r.append({ family: "B", at: min(2) });
+		r.pass(min(2));
+		const obA = r.obligations().find((o) => o.event.family === "A")!;
+		const obB = r.obligations().find((o) => o.event.family === "B")!;
+		const rowA = r.store.wakes.find(obA.attempts.at(-1)!)!;
+		const rowB = r.store.wakes.find(obB.attempts.at(-1)!)!;
+		// B finished earlier → due sooner (min 2+15) than A (min 5+15)
+		r.store.wakes.finish(rowB.id, "delivered", min(2));
+		r.store.wakes.finish(rowA.id, "delivered", min(5));
+		const n = r.stewardRows().length;
+		r.pass(min(30));
+		expect(r.stewardRows().length).toBe(n + 1);
+		const againB = r.obligations().find((o) => o.event.family === "B")!;
+		expect(againB.ordinal).toBe(obB.ordinal + 1);
+		expect(againB.readyAt).toBe(min(2) + 15 * 60_000);
+		expect(againB.readyAt).toBeLessThan(min(30));
+		const againA = r.obligations().find((o) => o.event.family === "A")!;
+		expect(againA.state).toBe("queued"); // redispatched but waiting on batchPerTick
+		expect(againA.readyAt).toBe(min(5) + 15 * 60_000);
 	});
 
 	test("F5 ack clock from delivery", () => {
@@ -255,10 +265,12 @@ describe("F dispatch SLA recovery", () => {
 		r.settle(T0);
 		r.append({ family: "miss" });
 		r.pass(T0);
+		const n = r.stewardRows().length;
 		const key = r.store.items.list({ source: ALERT_TRIAGE, kind: "obligation" })[0]!.dedupKey;
 		r.store.items.patch(ALERT_TRIAGE, key, { attempts: ["triage:deadbeefdeadbeefdead:0"], state: "sent", slot: true });
 		r.pass(min(1));
-		expect(r.obligations()[0]!.reason === "missing" || r.stewardRows().length >= 1).toBe(true);
+		expect(r.obligations()[0]!.reason).toBe("missing");
+		expect(r.stewardRows().length).toBe(n + 1);
 	});
 
 	test("F15 resolve while pending", () => {

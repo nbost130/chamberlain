@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { triageRig } from "../testing/alert-triage-fixtures.ts";
-import { drainAlertDesk } from "./alert-desk.ts";
 import { ALERT_DESK, DESK_RECEIVER } from "./alert-desk-config.ts";
 import { CURSOR_KEY } from "./alert-desk-cursor.ts";
 import { ALERT_TRIAGE } from "./alert-triage-config.ts";
@@ -32,6 +31,7 @@ function runGolden(triageSection: Record<string, unknown> | "absent") {
 	const r = triageRig({
 		triage: triageSection === "absent" ? { enabled: false } : triageSection,
 		desk: EXPECTED.deskConfig,
+		viaEngine: true,
 	});
 	writeFileSync(join(r.dir, "alert-desk.json"), JSON.stringify(EXPECTED.deskConfig), { mode: 0o600 });
 	chmodSync(join(r.dir, "alert-desk.json"), 0o600);
@@ -107,7 +107,11 @@ describe("A flag off is today", () => {
 	});
 
 	test("A3 flag-off writes no triage state", () => {
-		const r = triageRig({ triage: { enabled: false }, desk: { morningHour: 23, startAt: "beginning" } });
+		const r = triageRig({
+			triage: { enabled: false },
+			desk: { morningHour: 23, startAt: "beginning" },
+			viaEngine: true,
+		});
 		r.append({ severity: "critical" });
 		r.pass(EXPECTED.t0);
 		expect(r.store.items.list({ source: ALERT_TRIAGE })).toEqual([]);
@@ -115,7 +119,11 @@ describe("A flag off is today", () => {
 	});
 
 	test("A4 flag-off still drops a 7h critical", () => {
-		const r = triageRig({ triage: { enabled: false }, desk: { morningHour: 23, startAt: "beginning" } });
+		const r = triageRig({
+			triage: { enabled: false },
+			desk: { morningHour: 23, startAt: "beginning" },
+			viaEngine: true,
+		});
 		r.append({ severity: "critical", at: EXPECTED.t0 - 7 * 3600_000 });
 		r.pass(EXPECTED.t0);
 		expect(r.logged.some((l) => l.event === "alert-desk" && l.stale === 1)).toBe(true);
@@ -123,19 +131,16 @@ describe("A flag off is today", () => {
 	});
 
 	test("A5 flag-off, desk not ready / DRY", () => {
-		const r = triageRig({ triage: { enabled: false }, desk: { morningHour: 23, startAt: "beginning" } });
+		const r = triageRig({
+			triage: { enabled: false },
+			desk: { morningHour: 23, startAt: "beginning" },
+			viaEngine: true,
+			dry: true,
+		});
 		r.append({ severity: "warning" });
 		const before = r.store.state.get(CURSOR_KEY);
-		const res = drainAlertDesk({
-			store: r.store,
-			outbox: r.outbox,
-			inbox: r.inbox,
-			conf: r.dir,
-			now: EXPECTED.t0,
-			canDeliver: false,
-			log: () => {},
-		});
-		expect(res.skipped).toBe("no-desk");
+		r.pass(EXPECTED.t0);
 		expect(r.store.state.get(CURSOR_KEY)).toEqual(before);
+		expect(r.deskHeld()).toHaveLength(0);
 	});
 });

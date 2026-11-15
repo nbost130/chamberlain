@@ -20,7 +20,12 @@ export type Cursor = {
 	/** Inbox files already renamed away, read once more after `after` in case a writer still held the old file. A file leaves this list only in a saved cursor, and is deleted after that. */
 	retired: Retired[];
 	/** Saved BEFORE the inbox is renamed, so a crash at any step of a rotation can be finished: `from` is how far the cursor had read. Also used for flag-on init rename so flag-off recoverRotation can adopt it (M5). */
-	rotating?: { path: string; from: number; inode: number };
+	rotating?: {
+		path: string;
+		from: number;
+		inode: number /** Size at rename; survives crash-before-adoption (M2). */;
+		preInitUntil?: number;
+	};
 	/** True when `rotating` was set by triage init; adoption then stamps preInit on the retired entry. */
 	initAdopt?: boolean;
 };
@@ -72,11 +77,14 @@ export function recoverRotation(cur: Cursor, now: number): boolean {
 		const entry: Retired = { path: r.path, offset: r.from, after: now + 60_000 };
 		if (cur.initAdopt) {
 			entry.preInit = true;
-			try {
-				entry.preInitUntil = statSync(r.path).size;
-			} catch {
-				entry.preInitUntil = r.from;
-			}
+			// Prefer the size saved at rename so a post-crash append is not classed pre-init (M2).
+			if (r.preInitUntil !== undefined) entry.preInitUntil = r.preInitUntil;
+			else
+				try {
+					entry.preInitUntil = statSync(r.path).size;
+				} catch {
+					entry.preInitUntil = r.from;
+				}
 		}
 		cur.retired.push(entry);
 		cur.offset = 0;

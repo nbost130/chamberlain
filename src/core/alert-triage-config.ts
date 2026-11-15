@@ -40,11 +40,7 @@ const TRIAGE_DEFAULTS: TriageConfig = {
 const ID_OK = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const OUTCOMES = new Set<string>(["steward-task", "human", "pass-through"]);
 const RIGHT_SET = new Set<string>(RIGHTS);
-
-function matchField(v: unknown): string | undefined {
-	return typeof v === "string" && v ? v : undefined;
-}
-
+const TOP_KEYS = new Set(["enabled", "rules", "ackMinutes", "batchPerTick", "maxInFlight", "readBudgetBytes"]);
 const RULE_KEYS = new Set(["id", "match", "outcome", "right"]);
 
 function rightOk(outcome: Outcome, right: string | undefined): boolean {
@@ -52,15 +48,26 @@ function rightOk(outcome: Outcome, right: string | undefined): boolean {
 	return right === undefined;
 }
 
+/** Present match fields must be non-empty strings; a number/null becomes match-everything otherwise (B3). */
+function matchField(v: unknown): string | undefined | "bad" {
+	if (v === undefined) return undefined;
+	if (typeof v === "string" && v) return v;
+	return "bad";
+}
+
 function parseMatch(raw: unknown): TriageRule["match"] | "bad" {
-	if (!raw || typeof raw !== "object") return {};
+	if (raw === undefined) return {};
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "bad";
 	const m = raw as Record<string, unknown>;
 	for (const k of Object.keys(m)) if (k !== "source" && k !== "family") return "bad";
-	return { source: matchField(m.source), family: matchField(m.family) };
+	const source = matchField(m.source);
+	const family = matchField(m.family);
+	if (source === "bad" || family === "bad") return "bad";
+	return { ...(source ? { source } : {}), ...(family ? { family } : {}) };
 }
 
 function parseRule(raw: unknown, usedIds: Set<string>): TriageRule | "bad" {
-	if (!raw || typeof raw !== "object") return "bad";
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "bad";
 	const o = raw as Record<string, unknown>;
 	if ([...Object.keys(o)].some((k) => !RULE_KEYS.has(k))) return "bad";
 	if (typeof o.id !== "string" || !ID_OK.test(o.id) || usedIds.has(o.id)) return "bad";
@@ -74,20 +81,23 @@ function parseRule(raw: unknown, usedIds: Set<string>): TriageRule | "bad" {
 	return { id: o.id, match, outcome, ...(right ? { right: right as Right } : {}) };
 }
 
+function invalid(o: Record<string, unknown>): TriageConfig {
+	// Keep explicit enabled so the triage path still runs with empty rules + alarm (B3).
+	return { ...TRIAGE_DEFAULTS, enabled: o.enabled === true, invalid: true };
+}
+
 /** Pure: the triage config from a parsed object. Invalid → empty rules + invalid flag. */
 export function parseTriageConfig(raw: unknown): TriageConfig {
 	if (raw === undefined || raw === null) return { ...TRIAGE_DEFAULTS };
-	if (typeof raw !== "object") return { ...TRIAGE_DEFAULTS, invalid: true };
+	if (typeof raw !== "object" || Array.isArray(raw)) return { ...TRIAGE_DEFAULTS, invalid: true };
 	const o = raw as Record<string, unknown>;
-	for (const k of Object.keys(o))
-		if (!["enabled", "rules", "ackMinutes", "batchPerTick", "maxInFlight", "readBudgetBytes"].includes(k))
-			return { ...TRIAGE_DEFAULTS, invalid: true };
-	const rulesIn = Array.isArray(o.rules) ? o.rules : [];
+	for (const k of Object.keys(o)) if (!TOP_KEYS.has(k)) return invalid(o);
+	if (o.rules !== undefined && !Array.isArray(o.rules)) return invalid(o);
 	const usedIds = new Set<string>();
 	const rules: TriageRule[] = [];
-	for (const r of rulesIn) {
+	for (const r of o.rules ?? []) {
 		const p = parseRule(r, usedIds);
-		if (p === "bad") return { ...TRIAGE_DEFAULTS, enabled: o.enabled === true, invalid: true };
+		if (p === "bad") return invalid(o);
 		rules.push(p);
 	}
 	const num = (k: string, d: number) =>

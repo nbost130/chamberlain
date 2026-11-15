@@ -23,39 +23,51 @@ function slaInterval(cfg: TriageConfig, missed: number): number {
 	return Math.min(cfg.ackMinutes * 60_000 * 2 ** missed, 240 * 60_000);
 }
 
+type Due = { reason: string; dueAt: number };
+
 function rowDue(
 	row: { status: string; finishedAt?: number },
 	now: number,
 	wait: number,
 	kind: string,
-): string | undefined {
+): Due | undefined {
 	if (row.status === "pending" || row.status === "sending") return undefined;
-	if (now >= (row.finishedAt ?? 0) + wait) return kind;
+	const dueAt = (row.finishedAt ?? 0) + wait;
+	if (now >= dueAt) return { reason: kind, dueAt };
 	return undefined;
 }
 
-function dueReason(store: Store, ob: ReturnType<typeof asOb>, now: number, cfg: TriageConfig): string | undefined {
+function dueOf(store: Store, ob: ReturnType<typeof asOb>, now: number, cfg: TriageConfig): Due | undefined {
 	if (ob.state === "acked")
-		return !ob.repeated && Date.parse(ob.lastSeen) - (ob.ackedAt ?? 0) > DAY_MS ? "repeat" : undefined;
+		return !ob.repeated && Date.parse(ob.lastSeen) - (ob.ackedAt ?? 0) > DAY_MS
+			? { reason: "repeat", dueAt: (ob.ackedAt ?? 0) + DAY_MS }
+			: undefined;
 	if (ob.state !== "sent") return undefined;
 	const id = ob.attempts.at(-1);
-	if (!id) return "missing";
+	if (!id) return { reason: "missing", dueAt: now };
 	const row = store.wakes.find(id);
 	if (row?.status === "delivered") return rowDue(row, now, slaInterval(cfg, ob.missed), "sla");
 	if (row?.status === "dead_letter") return rowDue(row, now, slaInterval(cfg, 0), "dead");
 	if (row?.status === "cancelled") return rowDue(row, now, slaInterval(cfg, 0), "cancelled");
 	if (row) return undefined;
-	if (!store.wakes.known(id)) return "missing";
-	return "sla"; // tombstone only → due now
+	if (!store.wakes.known(id)) return { reason: "missing", dueAt: now };
+	return { reason: "sla", dueAt: now }; // tombstone only → due now
 }
 
 export function runSla(c: DispatchCtx): void {
 	for (const item of c.store.items.list({ source: ALERT_TRIAGE, kind: "obligation", status: "triggered" })) {
 		const ob = asOb(item.payload);
-		const reason = dueReason(c.store, ob, c.now, c.cfg);
-		if (!reason) continue;
-		if (reason === "sla") c.store.items.patch(ALERT_TRIAGE, item.dedupKey, { missed: ob.missed + 1 });
-		redispatch({ store: c.store, ok: item.dedupKey, reason, readyAt: c.now, slot: reason !== "repeat" });
+		const due = dueOf(c.store, ob, c.now, c.cfg);
+		if (!due) continue;
+		if (due.reason === "sla") c.store.items.patch(ALERT_TRIAGE, item.dedupKey, { missed: ob.missed + 1 });
+		// readyAt is the deadline, not pass time — preserves due order across redispatches (M4).
+		redispatch({
+			store: c.store,
+			ok: item.dedupKey,
+			reason: due.reason,
+			readyAt: due.dueAt,
+			slot: due.reason !== "repeat",
+		});
 	}
 }
 

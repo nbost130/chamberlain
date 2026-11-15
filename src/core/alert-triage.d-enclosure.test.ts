@@ -1,5 +1,6 @@
 /** D: enclosure and redaction (11). */
 import { describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { T0, triageRig } from "../testing/alert-triage-fixtures.ts";
 import { HOSTILE_FIELDS, SECRET_SHAPES, ZQX } from "../testing/alert-triage-hostile.ts";
 import { ALERT_DATA_SCHEMA, type AlertData, encodeAlertData, parseAlertData, parseWake } from "./alert-data.ts";
@@ -169,9 +170,39 @@ describe("D enclosure and redaction", () => {
 		});
 		r.settle(T0);
 		const ob = r.obligations()[0]!;
-		expect(JSON.stringify(ob.event)).not.toContain("sk-abcdefgh");
+		const blob = JSON.stringify(ob);
+		expect(blob).not.toContain("sk-abcdefgh");
 		expect(ob.event.body).toContain("[redacted:");
 		expect(ob.event.source.length).toBeLessThanOrEqual(120);
 		expect(ob.event.body.length).toBeLessThanOrEqual(1500);
+		for (const { raw } of SECRET_SHAPES) expect(blob).not.toContain(raw.slice(0, 12));
+	});
+
+	test("D12 timestamp comment cannot smuggle a credential", () => {
+		const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
+		const ts = `Fri Nov 13 2026 10:00:00 GMT-0500 (${token})`;
+		writeFileSync(
+			r.inbox,
+			`${JSON.stringify({
+				v: 1,
+				source: "disk-guard",
+				family: "ts-leak",
+				title: "t",
+				body: "b",
+				ts,
+				severity: "critical",
+			})}\n`,
+		);
+		r.settle(T0);
+		const ob = r.obligations()[0]!;
+		const blob = JSON.stringify(ob);
+		expect(blob).not.toContain(token);
+		expect(ob.firstSeen).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(ob.event.firstSeen).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		expect(r.stewardRows()[0]!.message).not.toContain(token);
+		const lines: string[] = [];
+		runTriage(r.store, ["status", ob.occ], (l) => lines.push(l));
+		expect(lines.join("\n")).not.toContain(token);
 	});
 });

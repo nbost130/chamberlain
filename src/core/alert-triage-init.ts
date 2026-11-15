@@ -28,7 +28,7 @@ type InitArgs = {
 
 /**
  * No stored cursor + flag on: rename the live inbox aside using `rotating` (legacy-recoverable, M5),
- * stamp preInitUntil at adoption so lingering-writer appends stay post-init (M6).
+ * stamp preInitUntil at rename (saved before crash) so lingering-writer appends stay post-init (M2/M6).
  */
 export function triageInit(a: InitArgs): void {
 	adoptStrays(a.cur, a.inbox, a.now);
@@ -56,6 +56,12 @@ export function triageInit(a: InitArgs): void {
 		a.save();
 		return;
 	}
+	try {
+		if (a.cur.rotating) a.cur.rotating.preInitUntil = statSync(path).size;
+	} catch {
+		/* size unknown: recovery falls back to live size */
+	}
+	a.save(); // boundary must survive triage-init-renamed (M2)
 	a.crash("triage-init-renamed");
 	recoverRotation(a.cur, a.now);
 	a.save();

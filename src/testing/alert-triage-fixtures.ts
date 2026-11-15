@@ -6,7 +6,8 @@ import { drainAlertDesk } from "../core/alert-desk.ts";
 import { DESK_RECEIVER, type DeskEvent } from "../core/alert-desk-config.ts";
 import { type CrashPoint, CURSOR_KEY } from "../core/alert-desk-cursor.ts";
 import { drainTriage } from "../core/alert-triage.ts";
-import { ALERT_TRIAGE, TRIAGE_WAKE_KIND } from "../core/alert-triage-config.ts";
+import { ALERT_TRIAGE, readTriageConfig, TRIAGE_WAKE_KIND } from "../core/alert-triage-config.ts";
+import { drainDeskPass } from "../core/alert-triage-engine.ts";
 import { asOb, listObligations } from "../core/alert-triage-obligation.ts";
 import { createOutbox } from "../core/deliver.ts";
 import { openStore } from "../core/sqlite-store.ts";
@@ -38,7 +39,15 @@ const ev = (over: Partial<DeskEvent> & { at?: number } = {}): DeskEvent => {
 export const line = (o: Partial<DeskEvent> & { at?: number } = {}) => `${JSON.stringify({ v: 1, ...ev(o) })}\n`;
 
 export function triageRig(
-	opts: { triage?: Record<string, unknown>; desk?: Record<string, unknown>; store?: Store; dry?: boolean } = {},
+	opts: {
+		triage?: Record<string, unknown>;
+		desk?: Record<string, unknown>;
+		store?: Store;
+		dry?: boolean;
+		/** Route through drainDeskPass (flag check + inbox via ALERT_DESK_INBOX). */
+		viaEngine?: boolean;
+		noDesk?: boolean;
+	} = {},
 ) {
 	const dir = mkdtempSync(join(tmpdir(), "alert-triage-"));
 	mkdirSync(dir, { recursive: true });
@@ -57,16 +66,46 @@ export function triageRig(
 		over: { crash?: (p: CrashPoint) => void; read?: Parameters<typeof drainTriage>[0]["read"] } = {},
 	) => {
 		clock.t = now;
-		if (!triage.enabled) {
+		const live = readTriageConfig(dir);
+		const log = (event: string, data?: Record<string, unknown>) => logged.push({ event, ...data });
+		const alarm = (id: string, title: string, body: string) => {
+			alarms.set(id, { title, body });
+		};
+		const clearAlarm = (id: string) => {
+			alarms.delete(id);
+		};
+		// Engine branch (M3): same gate as production drainDeskPass, with a test inbox override.
+		if (opts.viaEngine) {
+			const prev = process.env.ALERT_DESK_INBOX;
+			process.env.ALERT_DESK_INBOX = inbox;
+			try {
+				drainDeskPass({
+					store,
+					outbox,
+					conf: dir,
+					DRY: !!opts.dry,
+					deskLane: opts.noDesk ? undefined : { wake: { ready: () => !opts.dry } },
+					log,
+					alarm,
+					clearAlarm,
+					now: () => clock.t,
+				});
+			} finally {
+				if (prev === undefined) delete process.env.ALERT_DESK_INBOX;
+				else process.env.ALERT_DESK_INBOX = prev;
+			}
+			return { read: 0, woke: 0 };
+		}
+		if (!live.enabled) {
 			return drainAlertDesk({
 				store,
 				outbox,
 				inbox,
 				conf: dir,
 				now,
-				canDeliver: true,
+				canDeliver: !opts.dry,
 				crash: over.crash,
-				log: (event, data) => logged.push({ event, ...data }),
+				log,
 			});
 		}
 		return drainTriage({
@@ -77,13 +116,9 @@ export function triageRig(
 			now,
 			crash: over.crash,
 			read: over.read,
-			log: (event, data) => logged.push({ event, ...data }),
-			alarm: (id, title, body) => {
-				alarms.set(id, { title, body });
-			},
-			clearAlarm: (id) => {
-				alarms.delete(id);
-			},
+			log,
+			alarm,
+			clearAlarm,
 		});
 	};
 	/** One drain. For crash-point tests that control the clock themselves. */
