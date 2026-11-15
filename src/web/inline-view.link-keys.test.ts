@@ -36,15 +36,23 @@ describe("the view's links out", () => {
 		expect(rest.length).toBeGreaterThan(0); // "Open the queue page" at least
 		for (const [text, h] of rest) expect([text, h?.includes(KEY), h?.includes("k=")]).toEqual([text, false, false]);
 	});
-	test("the key on /open is the script's own address key, in the one place: never anywhere but that href's query", async () => {
-		const dq = run(() => ({ items: [threadItem] }), { src: SRC, window: { parent: {} } });
+	test("among links (anchors), only the /open href carries the key, in its query; an evidence image's own `src` carries it as before, and nothing else does", async () => {
+		const withImage = { ...threadItem, evidence: [{ type: "image", path: "shot.png", caption: "a shot" }] };
+		const dq = run(() => ({ items: [withImage] }), { src: SRC, window: { parent: {} } });
 		await settle();
 		expect(hrefs(dq)).toEqual([
 			["Open the thread", `http://queue.test/open/mithrandir/t1?k=${encodeURIComponent(KEY)}`],
 		]);
-		const all = dq.all(() => true);
-		const withKey = all.filter((e) => JSON.stringify([e.href, e.attrs, e.textContent]).includes(KEY));
-		expect(withKey.map((e) => e.tag)).toEqual(["a"]);
+		const carrying = dq.all(
+			(e) =>
+				JSON.stringify([e.href, e.attrs, e.textContent]).includes(KEY) ||
+				String((e as { src?: unknown }).src ?? "").includes(KEY),
+		);
+		expect(carrying.map((e) => e.tag).sort()).toEqual(["a", "img"]);
+		// the evidence image is not a link out, and the server serves evidence to the page's own link or cookie only, so its `?k=` buys nothing (view-key.test.ts)
+		expect(dq.all((e) => e.tag === "img").map((e) => (e as { src?: string }).src)).toEqual([
+			`http://queue.test/evidence/${withImage.id}/shot.png?k=${encodeURIComponent(KEY)}`,
+		]);
 	});
 	test("a view with no key in its address puts none on any link, /open included", async () => {
 		const dq = run(() => ({ items: [threadItem], snoozed: [snoozed] }), {
