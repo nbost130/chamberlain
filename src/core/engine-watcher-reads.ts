@@ -3,9 +3,10 @@ import type { Adapter, ThreadState } from "./adapter.ts";
 import { has } from "./adapter-conformance.ts";
 import type { Inspector } from "./adapter-inspect.ts";
 import { isWaitingRead, type WaitingRead } from "./adapter-waiting.ts";
-import { idleKey, idleWorkLine, principalWroteWithin, stewardInstruction } from "./decide.ts";
+import { type Candidate, idleKey, idleWorkLine, principalWroteWithin, stewardInstruction } from "./decide.ts";
 import type { Core } from "./engine.ts";
 import { clip, NO_HISTORY } from "./engine-support.ts";
+import { endedRunId } from "./handoff.ts";
 import { failedRead, type InstructionRead } from "./history.ts";
 import type { IdleThreadSource } from "./idle-select.ts";
 import type { Log } from "./log.ts";
@@ -126,13 +127,18 @@ export class WatcherReads {
 	}
 
 	/** The thread's latest instruction. A bad read is logged here and says so in its state. An adapter with no history reports none, cleanly. */
-	async instructionRead(threadId: string): Promise<InstructionRead> {
+	async instructionRead(threadId: string, runId?: string): Promise<InstructionRead> {
 		const read = this.inspect
-			? await this.inspect.instruction(threadId).catch((e) => failedRead(String(e).slice(0, 200)))
+			? await this.inspect.instruction(threadId, runId).catch((e) => failedRead(String(e).slice(0, 200)))
 			: NO_HISTORY;
 		if (read.state !== "complete")
 			this.log("instruction-read", { server: this.srv.name, threadId, state: read.state, error: read.error });
 		return read;
+	}
+
+	/** The completed-run id a turn_ended candidate names, when the key carries one. */
+	protected endedRun(c: Candidate): string | undefined {
+		return c.kind === "turn_ended" ? endedRunId(c.key) : undefined;
 	}
 
 	/** Logs a read that failed before its fallback hides it. */
@@ -143,8 +149,8 @@ export class WatcherReads {
 		};
 	}
 
-	protected lastMessage = (threadId: string) =>
-		this.inspect ? this.inspect.lastMessage(threadId) : Promise.resolve("");
+	protected lastMessage = (threadId: string, runId?: string) =>
+		this.inspect ? this.inspect.lastMessage(threadId, runId) : Promise.resolve("");
 	subagents = (threadId: string) => (this.inspect ? this.inspect.runningSubagents(threadId) : Promise.resolve(0));
 
 	/** A card item the adapter skipped is never evidence; it is logged once per thread and reason. */

@@ -163,16 +163,19 @@ sequenceDiagram
 1. **The backend changes.** The adapter turns it into a normalized `ThreadState` and reports it. The core keeps the
    previous state of every thread and finds the transitions worth a wake in `decide.ts`: a request that appeared, a
    thread that went to `waiting`, a top-level run that `failed`, a top-level turn that ended (including when a queued
-   message starts the next run with no idle gap: `LIVE` stays `LIVE` and `latestRunId` advances).
+   message starts the next run with no idle gap: `LIVE` stays `LIVE` and `latestRunId` advances). That handoff wake is
+   admitted only when the named run's status is `completed` and the still-LIVE successor was not human-started; its
+   instruction and final are scoped to that run.
 2. **Settling.** The event waits a moment (2.5 s) and is re-checked on the newest state, so a burst of changes is one
    decision. A clean top-level completion (no running children or subagents, no pending background work) is queued as a
    durable wake after that debounce, with no quiet window: a later human message cannot cancel it. A turn end that still
    has outstanding work waits out a quiet window (3 minutes, `CHAMBERLAIN_REPORT_QUIET_MS`) and that work, in case more
    follows.
-3. **Building the wake.** The engine asks the adapter's `inspect` for the last message, the waiting question and who
-   gave the thread its latest instruction, and builds one message: what happened, the thread, the question or excerpt
-   fenced as untrusted data, and the operator's decision rights. Approvals, secrets and machine links never reach the
-   Steward: while the operator is away they are recorded in the held-for-return ledger, and the page lists them.
+3. **Building the wake.** The engine asks the adapter's `inspect` for the last message (optionally of the named run), the
+   waiting question and who gave the thread its latest instruction, and builds one message: what happened, the thread,
+   the question or excerpt fenced as untrusted data, and the operator's decision rights. Approvals, secrets and machine
+   links never reach the Steward: while the operator is away they are recorded in the held-for-return ledger, and the
+   page lists them.
 4. **Writing it.** `deliver.ts` (`createOutbox().commit`) writes the wake in the **same transaction** as the notification
    decision that made it necessary (which keys were notified, or the sweep's findings and clock): a crash leaves both or neither. A
    wake that may wait (a turn end, the sweep) becomes a **held item** (`held_wakes`); any other becomes a **pending row** at once. An id

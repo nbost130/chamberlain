@@ -44,8 +44,11 @@ export type LastAssistant = {
 };
 
 export type Inspector = {
-	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
-	lastMessage(threadId: string): Promise<string>;
+	/**
+	 * The text of the thread's last finished assistant message, or "" when there is none or it can't be read.
+	 * `runId` keeps the excerpt on that completed run (queued handoff, issue #74).
+	 */
+	lastMessage(threadId: string, runId?: string): Promise<string>;
 	/**
 	 * The thread's last finished assistant message with its own id and the time it finished (ISO), or undefined when there is none.
 	 * The idle-parents sweep check (src/core/idle-parents.ts) reads it. Absent: that check cannot see this adapter's threads.
@@ -55,8 +58,16 @@ export type Inspector = {
 	waiting(threadId: string): Promise<WaitingRead>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
 	runningSubagents(threadId: string): Promise<number>;
-	/** The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means). */
-	instruction(threadId: string): Promise<InstructionRead>;
+	/**
+	 * The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means).
+	 * `runId` scopes the read to that completed run so a later successor cannot replace its report (issue #74).
+	 */
+	instruction(threadId: string, runId?: string): Promise<InstructionRead>;
+	/**
+	 * Every run on the thread (id, ordinal, status), for the handoff gate: a LIVE→LIVE wake only goes when the named run
+	 * completed successfully and the successor was not human-started. Absent: the gate stays open.
+	 */
+	runs?(threadId: string): Promise<{ id?: string; ordinal?: number; status?: string }[]>;
 	/** The newest failed run of the thread and its error. Absent: the adapter cannot say, and stalled-thread recovery stays off for its threads. */
 	failure?(threadId: string): Promise<RunFailure | undefined>;
 	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */

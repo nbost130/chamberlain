@@ -161,6 +161,8 @@ export type TurnItem = {
 	id?: string;
 	runId?: string;
 	text?: string;
+	/** Assistant messages: `completed` when the turn's final text is the one a report should carry. */
+	status?: string;
 	createdBy?: string;
 	creationSource?: string;
 	updatedAt?: string;

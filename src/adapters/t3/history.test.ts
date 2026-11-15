@@ -216,7 +216,7 @@ describe("who started the turn that last ended", () => {
 		).toBe(true);
 		expect((await read([run(1, "completed"), run(2, "running")], [start, note("r2")])).byMachine).toBe(false);
 	});
-	test("a queued next run's prompt does not replace the completed run's instruction or final message", async () => {
+	test("a scoped read keeps the completed run's instruction and final after a successor starts", async () => {
 		const done = {
 			type: "assistant_message",
 			id: "a20",
@@ -225,14 +225,24 @@ describe("who started the turn that last ended", () => {
 			status: "completed",
 		};
 		const nextPrompt: TurnItem = { ...steward, id: "s21", runId: "r21", text: "Steward here. Continue." };
-		const runs = [run(20, "completed"), run(21, "running")];
-		const items: TurnItem[] = [{ ...start, runId: "r20", id: "s20" }, done, nextPrompt];
-		expect(hideNewerLive(items, runs).map((i) => i.id)).toEqual(["s20", "a20"]);
-		expect(stewardInstruction(hideNewerLive(items, runs))).toBe("s20");
-		expect(lastCompletedText([done, nextPrompt], runs)).toBe("head df704346, checks green.");
-		const r = await read(runs, items);
+		const nextDone = {
+			type: "assistant_message",
+			id: "a21",
+			runId: "r21",
+			text: "run 21 final distinct",
+			status: "completed",
+		};
+		const runs = [run(20, "completed"), run(21, "completed")];
+		const items: TurnItem[] = [{ ...start, runId: "r20", id: "s20" }, done, nextPrompt, nextDone];
+		expect(hideNewerLive(items, [run(20, "completed"), run(21, "running")]).map((i) => i.id)).toEqual(["s20", "a20"]);
+		expect(lastCompletedText(items, "r20")).toBe("head df704346, checks green.");
+		expect(lastCompletedText(items, "r21")).toBe("run 21 final distinct");
+		const r = await readInstruction("t", async () => snapshot(runs, items), "r20");
 		expect(stewardInstruction(r.items)).toBe("s20");
 		expect(r.items.some((i) => i.id === "s21")).toBe(false);
+		// Unscoped reads keep the live prompt so ownership checks still see a human successor.
+		const open = await read(runs, items);
+		expect(open.items.some((i) => i.id === "s21")).toBe(true);
 	});
 	test("pages back for a run start that left the window, even with the instruction in hand", async () => {
 		// A steered instruction is in the window, and the notification that started its run is one page back.

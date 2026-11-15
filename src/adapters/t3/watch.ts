@@ -168,10 +168,10 @@ export class T3Link {
 	}
 
 	readonly inspector: Inspector = {
-		lastMessage: async (threadId) => {
+		lastMessage: async (threadId, runId) => {
 			if (!this.rpc) return "";
 			const p = await this.projection(threadId);
-			return lastCompletedText(p.turnItems ?? [], p.runs ?? []);
+			return lastCompletedText(p.turnItems ?? [], runId);
 		},
 		lastAssistant: async (threadId) => {
 			if (!this.rpc) return undefined;
@@ -260,11 +260,17 @@ export class T3Link {
 				})),
 			};
 		},
-		instruction: (threadId) =>
+		runs: async (threadId) => {
+			if (!this.rpc) return [];
+			const p = await this.projection(threadId);
+			return p.runs ?? [];
+		},
+		instruction: (threadId, runId) =>
 			readWhenConnected(
 				Boolean(this.rpc),
 				threadId,
 				historyGet(this.srv.origin, () => this.token()),
+				runId,
 			).catch((e) => failedRead(String(e).slice(0, 200))),
 	};
 }

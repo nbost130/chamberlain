@@ -4,6 +4,7 @@ import { closeHeldForCard, readAfk } from "./afk-held.ts";
 import { type Candidate, decide, LIVE, turnBegan } from "./decide.ts";
 import { clip, type Draft, defaultServerLine, wakeWhat } from "./engine-support.ts";
 import { WatcherDrafts } from "./engine-watcher-draft.ts";
+import { handoffAllowed, interveningCompleted } from "./handoff.ts";
 import { awayModeLine, threadWakeHead } from "./messages.ts";
 import { fullStamp, rightsStamp } from "./rights-sent.ts";
 
@@ -19,8 +20,6 @@ export class Watcher extends WatcherDrafts {
 
 	protected async fireWith(c: Candidate, mine: string[]) {
 		if (this.core.notified.has(c.key)) return;
-		const ended = c.kind === "turn_ended" || c.kind === "failed" ? await this.instructionRead(c.thread.id) : undefined;
-		if (ended) this.countTurn(c.thread, ended);
 		const live = this.states.get(c.thread.id);
 		// Re-check after the debounce: the condition must still hold on the newest state.
 		if (!live || live.archived || live.settled || live.snoozed) return;
@@ -28,6 +27,11 @@ export class Watcher extends WatcherDrafts {
 			this.log("skip-decisions-thread", { kind: c.kind });
 			return;
 		}
+		const runId = this.endedRun(c);
+		if (c.kind === "turn_ended" && runId && !(await this.admitHandoff(live.id, runId, LIVE.has(live.status)))) return;
+		const ended =
+			c.kind === "turn_ended" || c.kind === "failed" ? await this.instructionRead(c.thread.id, runId) : undefined;
+		if (ended) this.countTurn(c.thread, ended);
 		const draft: Draft = {
 			excerpt: "",
 			stalled: false,
@@ -39,6 +43,30 @@ export class Watcher extends WatcherDrafts {
 		};
 		if (!(await this.draftWake({ c, live, draft, mine }, ended))) return;
 		await this.queueWake(c, live, draft, mine);
+	}
+
+	/**
+	 * A named-run handoff wake only goes when that run completed successfully and any still-LIVE successor was not
+	 * human-started. Also schedules completed runs the shell skipped between this run and the live successor.
+	 */
+	protected async admitHandoff(threadId: string, runId: string, stillLive: boolean): Promise<boolean> {
+		const runs = this.inspect?.runs ? await this.inspect.runs(threadId).catch(() => undefined) : undefined;
+		const items = (await this.instructionRead(threadId)).items;
+		const gate = handoffAllowed(runs, items, runId, stillLive);
+		if (gate !== "ok") {
+			this.log(gate, { server: this.srv.name, threadId, runId });
+			return false;
+		}
+		if (stillLive && runs?.length) {
+			for (const id of interveningCompleted(runs, runId)) {
+				const th = this.states.get(threadId);
+				if (!th) continue;
+				const key = `${threadId}:ended:${id}`;
+				if (this.core.notified.has(key) || this.timers.has(key)) continue;
+				this.schedule({ kind: "turn_ended", thread: th, key });
+			}
+		}
+		return true;
 	}
 
 	/** The rights block a wake carries, stamped with the Steward it was composed for. */

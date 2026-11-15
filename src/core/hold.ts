@@ -51,7 +51,18 @@ export function composeWake(
 		};
 	const sorted = [...items].sort((a, b) => a.queuedAt - b.queuedAt);
 	const latest = new Map<string, HeldItem>();
-	const key = (i: HeldItem) => (i.kind && i.thread ? `${i.kind}\u0000${i.thread}` : undefined);
+	/**
+	 * Same thread + kind folds duplicates. A turn_ended key that names a completed run (issue #74) must not fold with
+	 * another run's report: each completed run keeps its own final. Timestamp-only ended keys still fold as before.
+	 */
+	const key = (i: HeldItem) => {
+		if (!i.kind || !i.thread) return undefined;
+		if (i.kind === "turn_ended") {
+			const run = /:ended:([^:]+)/.exec(i.deliveryId)?.[1];
+			if (run && !/^\d{12,}$/.test(run)) return `${i.kind}\u0000${i.thread}\u0000${run}`;
+		}
+		return `${i.kind}\u0000${i.thread}`;
+	};
 	for (const i of sorted) {
 		const k = key(i);
 		if (k) latest.set(k, i);

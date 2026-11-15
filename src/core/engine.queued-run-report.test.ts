@@ -21,11 +21,16 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 			const instrId = `s-${id}-n`;
 			r.fake.threads.set(id, {
 				instruction: {
-					items: [{ ...stewardSigned, id: instrId, text: "Steward here. Gate round 5." }],
+					items: [{ ...stewardSigned, id: instrId, text: "Steward here. Gate round 5.", runId: "run-20" }],
 					state: "complete",
 					byMachine: false,
 				},
 				lastMessage: PLAIN,
+				runMessages: { "run-20": PLAIN },
+				runs: [
+					{ id: "run-20", ordinal: 20, status: "completed" },
+					{ id: "run-21", ordinal: 21, status: "running" },
+				],
 			});
 			r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-20" }) });
 			// Queued run 21 starts with no idle gap (Omar / Pilot C #701). Reverting the decide handoff makes this time out.
@@ -43,8 +48,14 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 		const r = rig({ steward: "steward-1", quietMs: 180_000 });
 		const id = "mcp:idle-gap-no-dup";
 		r.fake.threads.set(id, {
-			instruction: { items: [{ ...stewardSigned, id: "s-gap" }], state: "complete", byMachine: false },
+			instruction: {
+				items: [{ ...stewardSigned, id: "s-gap", runId: "run-1" }],
+				state: "complete",
+				byMachine: false,
+			},
 			lastMessage: PLAIN,
+			runMessages: { "run-1": PLAIN },
+			runs: [{ id: "run-1", ordinal: 1, status: "completed" }],
 		});
 		r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-1" }) });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed", { latestRunId: "run-1" }) });
@@ -59,8 +70,14 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 		const r = rig({ steward: "steward-1", quietMs: 180_000 });
 		const id = "mcp:human-next-run";
 		r.fake.threads.set(id, {
-			instruction: { items: [{ ...stewardSigned, id: "s-human" }], state: "complete", byMachine: false },
+			instruction: {
+				items: [{ ...stewardSigned, id: "s-human", runId: "run-1" }],
+				state: "complete",
+				byMachine: false,
+			},
 			lastMessage: PLAIN,
+			runMessages: { "run-1": PLAIN },
+			runs: [{ id: "run-1", ordinal: 1, status: "completed" }],
 		});
 		r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-1" }) });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed", { latestRunId: "run-1" }) });
@@ -70,10 +87,11 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 		r.fake.threads.set(id, {
 			instruction: {
 				items: [
-					{ ...stewardSigned, id: "s-human" },
+					{ ...stewardSigned, id: "s-human", runId: "run-1" },
 					{
 						type: "user_message",
 						id: "human-1",
+						runId: "run-2",
 						text: "continue?",
 						createdBy: "user",
 						creationSource: "web",
@@ -84,6 +102,11 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 				byMachine: false,
 			},
 			lastMessage: ASK,
+			runMessages: { "run-1": PLAIN, "run-2": ASK },
+			runs: [
+				{ id: "run-1", ordinal: 1, status: "completed" },
+				{ id: "run-2", ordinal: 2, status: "completed" },
+			],
 		});
 		r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-2" }) });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed", { latestRunId: "run-2" }) });

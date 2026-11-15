@@ -30,6 +30,8 @@ export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
  */
 export type FakeThread = {
 	lastMessage?: string;
+	/** Per-run finals when a handoff wake must not pick a later run's text (issue #74). */
+	runMessages?: Record<string, string>;
 	/** What `lastAssistant` reports (id, text, ISO time). Unset: the thread has no finished assistant message. */
 	lastAssistant?: LastAssistant;
 	waiting?: WaitingItem[] /** Request IDs the backend shows in a terminal status: the only thing that closes a card hold. */;
@@ -38,6 +40,8 @@ export type FakeThread = {
 	waitingError?: string;
 	subagents?: number;
 	instruction?: InstructionRead;
+	/** Runs for the handoff gate (completed-only, human-successor suppress). */
+	runs?: { id?: string; ordinal?: number; status?: string }[];
 	failure?: RunFailure;
 	look?: RunLook;
 };
