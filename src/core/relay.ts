@@ -27,7 +27,7 @@
  * that exits before that commit leaves the row pending, and the restart sends it again under the same id, counted like any other attempt.
  */
 import { crashPoint } from "./crash.ts";
-import { maxAttemptsFromEnv, type WakeResult, withDeliveryId } from "./deliver.ts";
+import { finalSendMessage, maxAttemptsFromEnv, type WakeResult } from "./deliver.ts";
 import { HOLD_CEILING_MS } from "./hold.ts";
 import { redactUrls } from "./redact.ts";
 import { audit } from "./relay-audit.ts";
@@ -135,7 +135,7 @@ function sanitizeResult(res: WakeResult): WakeResult {
 async function post(l: Lane, row: OutboxRow, target?: string): Promise<WakeResult> {
 	try {
 		return sanitizeResult(
-			await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId), target ? { target } : undefined),
+			await l.wake.send(row.deliveryId, finalSendMessage(row.message, row.deliveryId), target ? { target } : undefined),
 		);
 	} catch (e) {
 		return { ok: false, error: redactUrls(e instanceof Error ? e.message : String(e)) };

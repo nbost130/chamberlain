@@ -7,7 +7,7 @@ import { ALERT_DATA_SCHEMA, type AlertData, encodeAlertData, parseAlertData, par
 import { boundInput, prepareEvent, prepareField, redactSecrets } from "./alert-data-redact.ts";
 import { runTriage } from "./alert-triage-cli.ts";
 import { wakeText } from "./alert-triage-wake.ts";
-import { withDeliveryId } from "./deliver.ts";
+import { finalSendMessage } from "./deliver.ts";
 
 const sample = (over: Partial<AlertData> = {}): AlertData => ({
 	source: "s",
@@ -77,7 +77,7 @@ describe("D enclosure and redaction", () => {
 			now: T0,
 			waiting: 0,
 		});
-		const sent = withDeliveryId(msg, "triage:0123456789abcdef0123:0");
+		const sent = finalSendMessage(msg, "triage:0123456789abcdef0123:0");
 		const parsed = parseWake(sent);
 		expect(parsed.enclosures).toHaveLength(1);
 		expect(parsed.enclosures[0]).toEqual(event);

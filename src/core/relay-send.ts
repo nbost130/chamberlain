@@ -8,6 +8,7 @@ import { type Ctx, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.
 import { current, findPrerequisite, prerequisiteBlocked, queuePrerequisite } from "./relay-prereq.ts";
 import { loadRightsSent, needsRights, rightsFirstKey, rightsGap, rightsStateKey } from "./rights-sent.ts";
 import { type GenSnapshot, snapshotGen } from "./steward-gens.ts";
+import { encodedSendBytes, exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
 /**
@@ -21,6 +22,11 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	if (!r.d.lock.held()) return [];
 	if (row.attempts >= r.max) {
 		deadLetter(r, l, row, row.attempts);
+		return [];
+	}
+	// Encoded replay bound at the send gate: refuse on finalSendMessage size before rights/CAS/POST (R2).
+	if (exceedsEncodedCap(row.message, row.deliveryId)) {
+		refuseOversized(r, l, row);
 		return [];
 	}
 	// Sample once before any awaited rights work so CAS and POST share the same generation.
@@ -40,6 +46,24 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	const result = await r.post(l, row, snap?.wakeUrl);
 	const posted: Posted = { l, row, n, res: result, before };
 	return result.ok ? accepted(r, posted) : refused(r, posted);
+}
+
+/** Dead-letter an oversized pending row without POSTing; raise the bound alarm once. */
+function refuseOversized(r: Ctx, l: Lane, row: OutboxRow): void {
+	const maxBytes = TRANSFER_DIGEST_MAX_BYTES;
+	if (r.store.wakes.finish(row.id, "dead_letter", r.clock())) {
+		r.d.log("transfer-oversized-dead-letter", {
+			deliveryId: row.deliveryId,
+			bytes: encodedSendBytes(row.message, row.deliveryId),
+			maxBytes,
+		});
+		r.notBefore.delete(row.id);
+		r.owed.delete(row.id);
+		if (!r.reported.has(row.deliveryId)) {
+			r.reported.add(row.deliveryId);
+			raise(r, l.akey("transfer-oversized"), alarms.transferOversized([row.deliveryId], maxBytes));
+		}
+	}
 }
 
 function readSnap(r: Ctx): GenSnapshot | undefined {

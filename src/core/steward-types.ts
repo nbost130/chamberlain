@@ -3,6 +3,8 @@
  * Gen 0 means "legacy, destination unknown" and has no steward_gens row; never present it as a known previous Steward.
  */
 
+import { finalSendMessage } from "./deliver.ts";
+
 export type StewardOrigin = "live" | "adopted" | "unrecoverable";
 export type SwitchPhase = "preparing" | "committed" | "mirrored" | "aborted";
 export type ReceiptKind = "t3-run" | "operator";
@@ -68,6 +70,17 @@ export type ReceiptHit = {
 /** Caps for one transfer/adoption replay digest (V2-M1): overflow stays held and is paced by the gate. */
 export const TRANSFER_DIGEST_MAX_ITEMS = 5;
 export const TRANSFER_DIGEST_MAX_BYTES = 24_000;
+
+/**
+ * True when the final encoded send message (body + delivery-id trailer) exceeds the replay bound.
+ * Always measure via finalSendMessage — the transport POSTs that framing, not the stored body alone.
+ */
+export const exceedsEncodedCap = (message: string, deliveryId: string, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean =>
+	Buffer.byteLength(finalSendMessage(message, deliveryId), "utf8") > maxBytes;
+
+/** UTF-8 size of the final send message (framing included). */
+export const encodedSendBytes = (message: string, deliveryId: string): number =>
+	Buffer.byteLength(finalSendMessage(message, deliveryId), "utf8");
 
 /** How long after the current switch notice is delivered with no counting receipt before the unacknowledged alarm (G1/G2). */
 export const SWITCH_NOTICE_STALL_MS = 20 * 60_000;

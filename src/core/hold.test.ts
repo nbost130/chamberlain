@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { useCoreHoldFixtures } from "../testing/core-hold-fixtures.ts";
 import { fetchWake } from "../testing/wake.ts";
-import { withDeliveryId } from "./deliver.ts";
+import { finalSendMessage } from "./deliver.ts";
 import { composeWake, HOLD_CEILING_MS, observe } from "./hold.ts";
 import { createRelay } from "./relay.ts";
 
@@ -66,7 +66,7 @@ describe("one digest when it goes idle", () => {
 		x.deliver("[chamberlain] turn_ended: B", "turn:B:1", TE("B"));
 		await x.relay().pass();
 		expect(x.w.accepted).toEqual([
-			{ deliveryId: "turn:B:1", message: withDeliveryId("[chamberlain] turn_ended: B", "turn:B:1") },
+			{ deliveryId: "turn:B:1", message: finalSendMessage("[chamberlain] turn_ended: B", "turn:B:1") },
 		]);
 	});
 

@@ -74,7 +74,7 @@ export const alarms = {
 	}),
 	transferOversized: (ids: string[], maxBytes: number): AlarmText => ({
 		title: "chamberlain: Steward transfer exceeds encoded size bound",
-		summary: `${ids.length} transfer item${ids.length === 1 ? "" : "s"} alone exceed the ${maxBytes}-byte encoded replay bound and ${ids.length === 1 ? "was" : "were"} dead-lettered without sending: ${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", ..." : ""}. The frozen payload is kept. Shrink or split the original work, then retry from the wakes CLI.`,
+		summary: `${ids.length} transfer item${ids.length === 1 ? "" : "s"} alone exceed the ${maxBytes}-byte encoded replay bound and ${ids.length === 1 ? "was" : "were"} dead-lettered without sending: ${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", ..." : ""}. The frozen payload is kept. Shrink or split the original work before any retry: retry will not re-arm an oversized payload, and the relay refuses to POST one.`,
 	}),
 };
 
