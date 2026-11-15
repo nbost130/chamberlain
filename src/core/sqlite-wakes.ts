@@ -1,6 +1,7 @@
 /** The wake outbox, held wakes and confirmation challenges. */
 
 import { type Db, type Row, required } from "./sqlite-db.ts";
+import { exceedsEncodedCap } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 import type {
 	Challenge,
@@ -144,12 +145,14 @@ function outboxRows(c: Db, status: OutboxStatus | "all" = "pending", lane?: Lane
 function retryWake(c: Db, id: string): OutboxStatus | undefined {
 	return c.tx(() => {
 		const r = findWake(c, id);
-		if (r?.status === "dead_letter")
-			c.run(
-				"UPDATE outbox SET status = 'pending', attempts = 0, last_attempt_at = NULL, finished_at = NULL WHERE id = ?",
-				r.id,
-			);
-		return r?.status;
+		if (r?.status !== "dead_letter") return r?.status;
+		// Oversized frozen payloads must not re-enter the send path (R2): leave them dead_letter.
+		if (exceedsEncodedCap(r.message)) return r.status;
+		c.run(
+			"UPDATE outbox SET status = 'pending', attempts = 0, last_attempt_at = NULL, finished_at = NULL WHERE id = ?",
+			r.id,
+		);
+		return r.status;
 	});
 }
 

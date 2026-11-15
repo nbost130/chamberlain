@@ -69,5 +69,9 @@ export type ReceiptHit = {
 export const TRANSFER_DIGEST_MAX_ITEMS = 5;
 export const TRANSFER_DIGEST_MAX_BYTES = 24_000;
 
+/** True when a frozen outbox/held payload exceeds the encoded replay bound (UTF-8). */
+export const exceedsEncodedCap = (message: string, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean =>
+	Buffer.byteLength(message, "utf8") > maxBytes;
+
 /** How long after the current switch notice is delivered with no counting receipt before the unacknowledged alarm (G1/G2). */
 export const SWITCH_NOTICE_STALL_MS = 20 * 60_000;
