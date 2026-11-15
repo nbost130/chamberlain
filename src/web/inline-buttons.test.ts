@@ -37,6 +37,7 @@ describe("answer options and always-there actions share one row", () => {
 			"Yes: allow /open for the view key",
 			"No: keep /open full-key only",
 			"Snooze",
+			"▾",
 			"Dismiss",
 			"Direction",
 			"Open the thread",
@@ -85,27 +86,34 @@ describe("answer options and always-there actions share one row", () => {
 	});
 });
 
-describe("the stylesheet makes the options only slightly bigger", () => {
-	const rule = (sel: string) => JS.match(new RegExp(`${sel.replace(/[.()]/g, "\\$&")}\\{([^}]*)\\}`))![1]!;
-	const px = (r: string, prop: string) => Number(new RegExp(`${prop}:(\\d+)px`).exec(r)![1]);
-	test("dq-main is a little bigger than dq-sec (a few px of height, at most 2px of font), not the large size of #56, and long labels wrap inside it", () => {
-		const main = rule(".dq-btn.dq-main");
-		const sec = rule(".dq-btn.dq-sec,.dq-pill.dq-sec");
-		const dh = px(main, "min-height") - px(sec, "min-height");
-		const df = px(main, "font-size") - px(sec, "font-size");
-		expect(dh).toBeGreaterThan(0);
-		expect(dh).toBeLessThanOrEqual(6);
-		expect(df).toBeGreaterThan(0);
-		expect(df).toBeLessThanOrEqual(2);
-		expect(px(main, "min-height")).toBeLessThan(48);
-		expect(main).toContain("white-space:normal");
-		expect(main).toContain("overflow-wrap:anywhere");
-		expect(main).toContain("max-width:100%");
+describe("the stylesheet: one row, one height, the options only a little heavier (Nathan, 2026-11-15, round 2)", () => {
+	const rule = (sel: string) => JS.match(new RegExp(`${sel.replace(/[.()>]/g, "\\$&")}\\{([^}]*)\\}`))![1]!;
+	const px = (r: string, prop: string) => Number(new RegExp(`(?:^|;)${prop}:(\\d+)px`).exec(r)![1]);
+	const every = ".dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn";
+	test("every button in the row (options, actions, thread link) has one fixed height and is one line: no button grows taller than the rest", () => {
+		const r = rule(every);
+		expect(px(r, "height")).toBe(34);
+		expect(r).toContain("white-space:nowrap");
+		expect(r).toContain("text-overflow:ellipsis");
+		expect(r).toContain("max-width:100%");
+		expect(r).toContain("vertical-align:middle");
+		// an option sets no height of its own: it is the row's height
+		expect(rule(".dq-actions>.dq-btn.dq-main")).not.toMatch(/height/);
 	});
-	test("no rule makes an option a whole row on a phone; a touch screen keeps the option a little bigger than the 40px quiet row", () => {
-		expect(JS).not.toMatch(/dq-main\{flex:1 1 100%\}/);
-		expect(JS).toMatch(
-			/@media\(pointer:coarse\)\{\.dq-btn\.dq-sec,\.dq-pill\.dq-sec\{min-height:40px\}\.dq-btn\.dq-main\{min-height:44px\}\}/,
+	test("an option is at most about 10% bigger: 1px more type, heavier weight, 2px more padding", () => {
+		const base = rule(every);
+		const main = rule(".dq-actions>.dq-btn.dq-main");
+		const fs = px(main, "font-size") / px(base, "font-size");
+		expect(fs).toBeGreaterThan(1);
+		expect(fs).toBeLessThanOrEqual(1.1);
+		expect(main).toContain("font-weight:600");
+		expect(main).toContain("padding:0 16px");
+		expect(base).toContain("padding:0 14px");
+		expect(JS).not.toMatch(/dq-main\{[^}]*(min-height:(4[4-9]|5\d)px|font-size:1[5-9]px)/);
+	});
+	test("a touch screen makes every button in the row the same 40px, options included", () => {
+		expect(JS).toContain(
+			"@media(pointer:coarse){.dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn,.dq-snz input{height:40px;line-height:38px}}",
 		);
 	});
 	test("the one row wraps and the tab row stays one row", () => {

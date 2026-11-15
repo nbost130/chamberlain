@@ -1,7 +1,8 @@
 /**
  * What the VIEW key may do (`secrets/view-key`, the one key a Decisions post carries: a post is copied into the thread). One explicit
  * allowlist, named here and nowhere derived: three reads, a plain answer, the four ways to settle, put off or bring back a question that
- * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), and two GETs that are not the API:
+ * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), the answer to a QUESTION card waiting in another thread
+ * (`CARD_ANSWER_PATH`, below: never an approval, goal, secret or link), and two GETs that are not the API:
  *   - `GET /open/<server>/<threadId>`, the "Open the thread" link (a redirect to the thread's app link, made by the linker from the path, never
  *     from the request; it signs nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else; the Decisions
  *     view's thread link is the one link out that carries the key);
@@ -10,8 +11,8 @@
  *     works here too, and it too signs nothing in and sets no cookie. A name the question does not list, another question's folder, a question
  *     the reads do not show, or any path outside the folder is refused (./evidence.ts resolveEvidence, ./app-pages.ts). The Decisions view showed
  *     its evidence this way until 3b28f2b swapped the page key in posts for this one and left evidence off its list.
- * Every other route refuses the view key, whatever its Origin: not-now, batch accept, every ruling action, the question-card and approval routes,
- * one item's own read, pages.
+ * Every other route refuses the view key, whatever its Origin: not-now, batch accept, every ruling action, an approval's or goal's answer and the
+ * confirmation step, one item's own read, pages.
  *
  * Three things use it, and nothing else decides what the view key may do:
  *   - `viewKeyVerdict`: the request's route and method against the list (the origin gate and the key gate in ./app.ts);
@@ -40,19 +41,33 @@ export const EVIDENCE_PATH = /^\/evidence\/Q-[a-z0-9]{4,16}\/[^/]+$/;
 
 const ITEM_WRITE = new RegExp(`^/api/items/Q-[a-z0-9]{4,16}/(${VIEW_KEY_WRITES.join("|")})$`);
 
+/**
+ * `POST /api/cards/<id>/answer`: a card waiting in another thread, answered from the Decisions view. Only a QUESTION card (`VIEW_KEY_CARD_TYPES`),
+ * which takes no confirmation; an approval, a goal proposal, a secret and a machine link are refused to the view key inside the route
+ * (./app-routes.ts cardsRoute), and `/confirm` (the approvals' first step) is not on this list at all. Why this adds no power the view key lacked:
+ * it already answers every Chamberlain question, `only-you` ones included, and a thread-routed option already reaches a thread as the
+ * principal's words; a question card is the same kind of choice, asked in a thread instead of through `chamberlain ask`.
+ */
+export const CARD_ANSWER_PATH = /^\/api\/cards\/C-[0-9a-f]{12}\/answer$/;
+/** The kinds of card the view key may answer: a question card. Never an approval or goal (they run or commit to something), a secret or a link. */
+export const VIEW_KEY_CARD_TYPES: ReadonlySet<string> = new Set(["question"]);
+/** The fields a view-key card answer may carry: the option chosen and the card's fingerprint as the view showed it. No confirmation, no note. */
+export const VIEW_KEY_CARD_FIELDS: ReadonlySet<string> = new Set(["choice", "sig"]);
+
 /** Pure: a request's route against the view key's list. `preflight` is an OPTIONS for a route on it (it grants nothing and carries no key). */
 export function viewKeyVerdict(
 	method: string,
 	pathname: string,
-): "read" | "open" | "evidence" | ViewKeyWrite | "preflight" | "refuse" {
+): "read" | "open" | "evidence" | ViewKeyWrite | "card-answer" | "preflight" | "refuse" {
 	if (method === "GET") {
 		if (VIEW_KEY_READS.has(pathname)) return "read";
 		if (EVIDENCE_PATH.test(pathname)) return "evidence";
 		return OPEN_PATH.test(pathname) ? "open" : "refuse";
 	}
 	const write = ITEM_WRITE.exec(pathname)?.[1] as ViewKeyWrite | undefined;
-	if (method === "POST") return write ?? "refuse";
-	if (method === "OPTIONS") return VIEW_KEY_READS.has(pathname) || write ? "preflight" : "refuse";
+	const card = CARD_ANSWER_PATH.test(pathname);
+	if (method === "POST") return write ?? (card ? "card-answer" : "refuse");
+	if (method === "OPTIONS") return VIEW_KEY_READS.has(pathname) || write || card ? "preflight" : "refuse";
 	return "refuse";
 }
 

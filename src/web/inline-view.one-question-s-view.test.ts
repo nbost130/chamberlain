@@ -67,13 +67,16 @@ describe("one question's view (?item=) and the recent answers know snoozed and d
 	});
 });
 
-test("the view's script posts only to the view key's five writes: answer, snooze, un-snooze, direction, dismiss", () => {
+test("the view's script posts only to the view key's writes: answer, snooze, un-snooze, direction, dismiss on an item, and a question card's answer", () => {
 	const source = readFileSync(new URL("../web/static/inline.js", import.meta.url), "utf8");
-	// the one POST goes to /api/items/<id>/<action>, and every action it is given is on the list in src/web/view-key.ts
+	// the one POST goes through post(): /api/items/<id>/<action>, every action on the list in src/web/view-key.ts, or /api/cards/<id>/answer
 	expect([...source.matchAll(/method:\s*"POST"/g)]).toHaveLength(1);
 	const named = [...source.matchAll(/\b(?:send|act)\("([a-z-]+)"/g)].map((m) => m[1]);
 	expect([...new Set(named)].sort()).toEqual(["answer", "direction", "dismiss", "snooze", "unsnooze"]);
 	expect(named.every((a) => (VIEW_KEY_WRITES as readonly string[]).includes(a!))).toBe(true);
-	expect(source).not.toMatch(/\/(unsnooze|not-now|accept-all|cards\/|confirm)/);
+	// each path with its template parts as "*"
+	const paths = [...source.matchAll(/post\(`([^`]*)`/g)].map((m) => m[1]!.replace(/\$\{[^}]*\}/g, "*"));
+	expect(paths).toEqual(["/api/items/*/*", "/api/cards/*/answer"]);
+	expect(source).not.toMatch(/\/(unsnooze|not-now|accept-all|confirm)\b/);
 	expect(source).not.toMatch(/api\/rulings\/|saveRuling|rulingWording/);
 });

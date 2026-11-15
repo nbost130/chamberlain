@@ -21,6 +21,7 @@ import { type Ctx, cardView, view } from "./app-ctx.ts";
 import { fail, json } from "./app-http.ts";
 import { ITEM_ACTIONS } from "./queue-actions.ts";
 import { type Authority, keyUsed, mayDo } from "./view-key.ts";
+import { viewKeyCardAnswer } from "./view-key-cards.ts";
 import { checkCard, needsConfirmation } from "./waiting.ts";
 
 function rulingsView(ctx: Ctx) {
@@ -157,11 +158,13 @@ type Call = { req: Request; url: URL; parts: string[]; body: Record<string, unkn
 async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "confirm"): Promise<Response> {
 	const { req, body, authority } = call;
 	const { d } = ctx;
-	// Approvals and cards are answered on the full page only (see inlineVerdict); this is the second lock on the same door.
-	if (authority !== "full")
+	// The view key answers a question card (./view-key.ts) and nothing else here; the page key from a frame or with no Origin answers none.
+	// This is the second lock behind the origin and key gates.
+	if (authority === "restricted" || (authority === "view" && step !== "answer"))
 		return fail(403, "refused: question cards and approvals are answered on the full page, not in an inline frame");
 	const { mirror } = d;
 	if (!mirror) return fail(404, "not found");
+	if (authority === "view") return viewKeyCardAnswer(ctx, mirror, id, body);
 	const b = body as CardBody;
 	const card = mirror.list().find((c) => c.id === id);
 	// The session is a random value in a cookie only this page's own requests carry. It is set when the first challenge is asked for.

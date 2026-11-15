@@ -39,7 +39,8 @@ view passes the view key on every call. **It has no dead-end links**: every link
 address, as a phone's in-app browser does (it has no cookie of ours). So it links only to what the view key opens by `?k=`: "Open the thread" (through
 `/open/<server>/<threadId>`, except in T3 Code's phone app, where it is the thread's app link with no key; see [CONFIGURATION.md](CONFIGURATION.md)) and an
 evidence file. It never links to the queue page or an item, which the view key cannot sign a browser in to ("This page needs its link"). A card waiting in
-another thread is answered on itself, in its own thread, where T3 checks who is answering: its one link is "Open the thread to answer". Un-snooze is a tap
+another thread is answered in place when it is a question card (its options are buttons; the view key may answer a question card and nothing else
+of a card's: src/web/view-key.ts); an approval, goal, secret or link card is answered on itself, in its own thread: its one link is "Open the thread to answer". Un-snooze is a tap
 in place. `src/web/inline-links.test.ts` follows every link the view renders, with nothing but the address, and fails on the needs-its-link page. **Evidence in the Decisions view**
 (images, with a link to each at full size, and video) loads with `?k=<view key>`: the server serves the view key a file the question lists and nothing else by it. From 3b28f2b (posts stopped
 carrying the page key) until this was fixed, the view showed "Image evidence shows on the full queue page." in place of every image.
