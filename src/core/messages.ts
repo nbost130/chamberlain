@@ -72,6 +72,10 @@ export const alarms = {
 		title: "chamberlain has wakes it could not deliver",
 		summary: `${count} wake${count === 1 ? " has" : "s have"} waited more than ${hours} hours without reaching ${desk ? "the Alert Desk" : "the Steward"}. They are kept; none is dropped. Is the daemon running, and is the wake URL right?`,
 	}),
+	transferOversized: (ids: string[], maxBytes: number): AlarmText => ({
+		title: "chamberlain: Steward transfer exceeds encoded size bound",
+		summary: `${ids.length} transfer item${ids.length === 1 ? "" : "s"} alone exceed the ${maxBytes}-byte encoded replay bound and ${ids.length === 1 ? "was" : "were"} dead-lettered without sending: ${ids.slice(0, 5).join(", ")}${ids.length > 5 ? ", ..." : ""}. The frozen payload is kept. Shrink or split the original work, then retry from the wakes CLI.`,
+	}),
 };
 
 // ---- away mode ----------------------------------------------------------------------------------------------

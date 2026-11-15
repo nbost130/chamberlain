@@ -4,7 +4,7 @@ import { composeWake, observe } from "./hold.ts";
 import { alarms } from "./messages.ts";
 import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "./rights-sent.ts";
-import { composeTransferBatch } from "./steward-transfer.ts";
+import { composeTransferBatch, deadLetterOversizedTransfers } from "./steward-transfer.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "./store-wakes.ts";
 
 /**
@@ -65,6 +65,9 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
+	if (!store.wakes.held(l.name).length) return;
+	// Oversized solo transfers never enter a batch: dead-letter with alarm before compose (R2).
+	deadLetterOversizedTransfers(r, l, now);
 	if (!store.wakes.held(l.name).length) return;
 	const look = observe(l.look, l.gate(), now, r.ceiling);
 	if (!look.post) return;

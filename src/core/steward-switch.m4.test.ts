@@ -56,6 +56,51 @@ describe("M4: seal, transfer rights, A4, publish ordering", () => {
 		expect(s.steward.transferItemForOrig(1, s.wakes.find("R-a4")!.id)).toBeDefined();
 	});
 
+	test("A4: injected delivered-commit failure — seal blocked until land; then transfer", async () => {
+		const w = confWorld();
+		const clock = fakeClock();
+		const base = memStoreSeeded(w.conf, clock.t);
+		let failLand = true;
+		const s = {
+			...base,
+			wakes: {
+				...base.wakes,
+				finish: (id: number, status: "delivered" | "dead_letter", now: number) => {
+					if (failLand && status === "delivered") throw new Error("injected land fail");
+					return base.wakes.finish(id, status, now);
+				},
+			},
+		};
+		createOutbox({ store: s, log: () => {}, now: () => clock.t }).deliver("in flight", "R-a4-land");
+		const relay = createRelay({
+			store: s,
+			lock: testRelayLock(s),
+			gate: () => "idle",
+			log: () => {},
+			alarm: () => {},
+			now: () => clock.t,
+			wake: { ready: () => true, send: async () => ({ ok: true, status: 202 }) },
+		});
+		await relay.pass();
+		expect(s.wakes.find("R-a4-land")).toMatchObject({ status: "pending", attemptGen: 1 });
+
+		const prep = prepareSwitch(s, w.conf, { toThread: "g2", live: true, now: clock.t });
+		if (!prep.ok) throw new Error(prep.error);
+		writeSwitchRefs(w.conf, prep.id);
+		expect(commitSwitch(s, w.conf, { id: prep.id, live: true, now: clock.t }).ok).toBe(true);
+		transferPass(s, clock.t);
+		expect(s.steward.transfer(1)?.sealedAt).toBeUndefined();
+		expect(s.steward.transferItemForOrig(1, s.wakes.find("R-a4-land")!.id)).toBeUndefined();
+
+		failLand = false;
+		await relay.pass();
+		expect(s.wakes.find("R-a4-land")!.status).toBe("delivered");
+		expect(s.steward.ledger(s.wakes.find("R-a4-land")!.id)?.gen).toBe(1);
+		transferPass(s, clock.t);
+		expect(s.steward.transfer(1)?.sealedAt).toBeDefined();
+		expect(s.steward.transferItemForOrig(1, s.wakes.find("R-a4-land")!.id)).toBeDefined();
+	});
+
 	test("transfer items carry pointer-class rights stamp (needsRights)", () => {
 		const w = confWorld();
 		const s = memStoreSeeded(w.conf);

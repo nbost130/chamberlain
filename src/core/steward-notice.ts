@@ -1,6 +1,7 @@
 /**
  * Switch-notice liveness (design §2.4 / G1–G2): the current generation's notice must gain a
  * counting receipt within SWITCH_NOTICE_STALL_MS or raise steward-switch-unacknowledged.
+ * Pending and dead-letter notices past the deadline also raise (G2 / R3).
  */
 import type { AlarmText } from "./messages.ts";
 import { isDischarged } from "./steward-discharge.ts";
@@ -20,8 +21,9 @@ function currentNoticeTransfer(store: Store) {
 }
 
 /**
- * Raise steward-switch-unacknowledged when the current notice is delivered, aged past stallMs,
- * and still lacks a counting receipt. Retired (non-current) notices are ignored.
+ * Raise steward-switch-unacknowledged when the current notice is past stallMs without a counting receipt.
+ * Deadline is the obligation's creation (queuedAt / openedAt), so pending and dead-letter notices also alarm (G2).
+ * Retired (non-current) notices are ignored.
  */
 export function checkSwitchNotice(
 	store: Store,
@@ -32,10 +34,11 @@ export function checkSwitchNotice(
 	const t = currentNoticeTransfer(store);
 	if (!t) return false;
 	const row = store.wakes.find(t.noticeId);
-	if (row?.status !== "delivered") return false;
-	if (row.finishedAt === undefined) return false;
+	if (!row) return false;
+	if (row.status === "cancelled") return false;
 	if (isDischarged(store, row.id)) return false;
-	if (now - row.finishedAt < stallMs) return false;
+	const start = row.createdAt;
+	if (now - start < stallMs) return false;
 	const a = switchUnacknowledgedAlarm(t.noticeId, Math.round(stallMs / 60_000));
 	alarm("steward-switch-unacknowledged", a.title, a.summary);
 	return true;

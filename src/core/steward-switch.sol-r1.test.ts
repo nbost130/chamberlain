@@ -69,6 +69,32 @@ describe("B2/B3: counting-receipt predicate (discharge, transfer, retention)", (
 	});
 });
 
+describe("R1: one Steward identity for rights decision and prerequisite hash", () => {
+	test("stale mirror: g2 snapshot stamp hash matches g2 rights decision", async () => {
+		const { CoreRights } = await import("./engine-core-rights.ts");
+		const w = confWorld();
+		const s = memStoreSeeded(w.conf);
+		const fake: Record<string, unknown> = {
+			store: s,
+			privateFile: () => "g1",
+			rightsRules: () => "rules",
+			stewardSession: async () => undefined,
+			rightsSent: { get: () => undefined, epoch: () => 0 },
+			probe: () => undefined,
+		};
+		fake.wakeRights = CoreRights.prototype.wakeRights.bind(fake);
+		const now = await (
+			CoreRights.prototype as unknown as {
+				rightsNow: (o?: { steward?: string }) => Promise<{
+					hash?: string;
+					wake: (id: string) => { stamp?: { hash: string } };
+				}>;
+			}
+		).rightsNow.call(fake, { steward: "g2" });
+		expect(now.wake("R").stamp?.hash).toBe(now.hash);
+	});
+});
+
 describe("B1: one-generation snapshot for rights, CAS and transport", () => {
 	test("rights check crossing commit must not POST pointer without rechecking g2 rights", async () => {
 		const w = confWorld();
@@ -143,13 +169,12 @@ describe("B1: one-generation snapshot for rights, CAS and transport", () => {
 	});
 });
 
-describe("M1: encoded byte cap at compose boundary", () => {
-	test("single large multibyte transfer respects encoded byte cap (solo oversized admitted)", () => {
+describe("M1/R2: encoded byte cap — oversized solo refused, never sent", () => {
+	test("single large multibyte transfer is refused (no batch, under-bound guarantee)", () => {
 		const big = "界".repeat(10_000);
 		expect(Buffer.byteLength(big, "utf8")).toBeGreaterThan(TRANSFER_DIGEST_MAX_BYTES);
-		const b = composeTransferBatch([{ deliveryId: "x", message: big, kind: "transfer", queuedAt: 1 }], 1)!;
-		expect(encodedBytes(b.message)).toBe(Buffer.byteLength(big, "utf8"));
-		expect(b.members).toEqual(["x"]);
+		const b = composeTransferBatch([{ deliveryId: "x", message: big, kind: "transfer", queuedAt: 1 }], 1);
+		expect(b).toBeUndefined();
 	});
 
 	test("second item does not join when batch would exceed encoded cap", () => {
@@ -163,6 +188,33 @@ describe("M1: encoded byte cap at compose boundary", () => {
 		)!;
 		expect(b.members).toEqual(["a"]);
 		expect(encodedBytes(b.message)).toBeLessThanOrEqual(TRANSFER_DIGEST_MAX_BYTES);
+	});
+
+	test("oversized transfer is dead-lettered with alarm on compose, never POSTed", async () => {
+		const w = confWorld();
+		const s = memStoreSeeded(w.conf);
+		const big = "界".repeat(10_000);
+		s.wakes.hold({ deliveryId: "transfer:over:g1", message: big, queuedAt: 1, kind: "transfer" });
+		const posts: string[] = [];
+		const alarms: string[] = [];
+		const relay = createRelay({
+			store: s,
+			lock: testRelayLock(s),
+			gate: () => "idle",
+			log: () => {},
+			alarm: (k) => alarms.push(k),
+			wake: {
+				ready: () => true,
+				send: async (id) => {
+					posts.push(id);
+					return { ok: true, status: 202 };
+				},
+			},
+		});
+		await relay.pass();
+		expect(posts).not.toContain("transfer:over:g1");
+		expect(s.wakes.find("transfer:over:g1")?.status).toBe("dead_letter");
+		expect(alarms.some((a) => a.includes("transfer-oversized"))).toBe(true);
 	});
 
 	test("mixed ordinary held wakes do not expand a transfer digest", () => {
@@ -216,8 +268,34 @@ describe("M2: steward-switch-unacknowledged alarm (G1/G2)", () => {
 		s.wakes.finish(s.wakes.find(t1.noticeId)!.id, "delivered", clock.t);
 		switchToG2(s, w.conf, clock.t + 1); // g3 — current notice is g2→g3
 		const alarms: string[] = [];
-		checkSwitchNotice(s, (k) => alarms.push(k), clock.t + SWITCH_NOTICE_STALL_MS * 2, SWITCH_NOTICE_STALL_MS);
-		// g1→g2 notice is retired; only current (g2→g3) notice matters, and it is not yet delivered.
+		// Before the current notice's stall elapses: retired g1 notice must not alarm.
+		checkSwitchNotice(s, (k) => alarms.push(k), clock.t + 1 + SWITCH_NOTICE_STALL_MS - 1, SWITCH_NOTICE_STALL_MS);
 		expect(alarms).toEqual([]);
+	});
+
+	test("G2/R3: pending current notice past stall raises switch alarm", () => {
+		const w = confWorld();
+		const clock = fakeClock();
+		const s = memStoreSeeded(w.conf, clock.t);
+		switchToG2(s, w.conf, clock.t);
+		const alarms: string[] = [];
+		expect(
+			checkSwitchNotice(s, (k) => alarms.push(k), clock.t + SWITCH_NOTICE_STALL_MS + 1, SWITCH_NOTICE_STALL_MS),
+		).toBe(true);
+		expect(alarms).toEqual(["steward-switch-unacknowledged"]);
+	});
+
+	test("G2/R3: dead-letter current notice past stall raises switch alarm", () => {
+		const w = confWorld();
+		const clock = fakeClock();
+		const s = memStoreSeeded(w.conf, clock.t);
+		switchToG2(s, w.conf, clock.t);
+		const notice = s.wakes.find(s.steward.transfer(1)!.noticeId)!;
+		s.wakes.finish(notice.id, "dead_letter", clock.t + 2);
+		const alarms: string[] = [];
+		expect(
+			checkSwitchNotice(s, (k) => alarms.push(k), clock.t + SWITCH_NOTICE_STALL_MS + 10, SWITCH_NOTICE_STALL_MS),
+		).toBe(true);
+		expect(alarms).toEqual(["steward-switch-unacknowledged"]);
 	});
 });

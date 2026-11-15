@@ -1,9 +1,13 @@
 /**
  * Transfer pass: for each open transfer, create idempotent transfer items for unseen Steward deliveries,
  * hold them (kind=transfer, no thread → never folded), and compose in size-capped batches (V2-M1).
+ * A single frozen payload that alone exceeds the encoded cap is never sent: it is dead-lettered with an alarm (R2).
  */
 import { crashPoint } from "./crash.ts";
 import { composeWake } from "./hold.ts";
+import { alarms } from "./messages.ts";
+import type { Ctx, Lane } from "./relay-ctx.ts";
+import { raise } from "./relay-ctx.ts";
 import { isDischarged } from "./steward-discharge.ts";
 import { transferMessage } from "./steward-header.ts";
 import { type StewardTransfer, TRANSFER_DIGEST_MAX_BYTES, TRANSFER_DIGEST_MAX_ITEMS } from "./steward-types.ts";
@@ -88,10 +92,16 @@ export function holdTransferItem(
 /** UTF-8 encoded size of a composed transfer message (V2-M1 / M1). */
 export const encodedBytes = (message: string): number => Buffer.byteLength(message, "utf8");
 
+/** True when a held transfer alone exceeds the encoded replay bound. */
+export function isOversizedTransfer(item: HeldItem, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean {
+	if (item.kind !== "transfer") return false;
+	return encodedBytes(composeWake([item], now).message) > maxBytes;
+}
+
 /**
  * Compose held transfer items into one digest, capping count and UTF-8 encoded size at the
- * real composeWake framing. A single oversized frozen payload is admitted alone (never discarded);
- * overflow beyond the first item stays held for the next pass (paced by the gate).
+ * real composeWake framing. An item that alone exceeds the byte cap is never admitted (R2);
+ * callers dead-letter it. Overflow that would break the bound stays held for the next pass.
  */
 export function composeTransferBatch(
 	held: HeldItem[],
@@ -106,16 +116,57 @@ export function composeTransferBatch(
 		const next = [...batch, item];
 		const trial = composeWake(next, now);
 		const bytes = encodedBytes(trial.message);
-		if (batch.length === 0) {
-			// Non-discarding: first item always goes, alone if already over the byte cap.
-			batch.push(item);
-			if (bytes > maxBytes) break;
-			continue;
+		if (bytes > maxBytes || next.length > maxItems) {
+			if (batch.length === 0) continue; // refuse oversized solo — never send
+			break;
 		}
-		if (next.length > maxItems || bytes > maxBytes) break;
 		batch.push(item);
 	}
 	return batch.length ? composeWake(batch, now) : undefined;
+}
+
+/**
+ * Promote held transfers that alone exceed the encoded cap into dead-letter outbox rows and raise an alarm.
+ * Durable and non-discarding: the frozen payload stays visible; it is never POSTed.
+ */
+export function deadLetterOversizedTransfers(
+	r: Ctx,
+	l: Lane,
+	now: number,
+	maxBytes = TRANSFER_DIGEST_MAX_BYTES,
+): string[] {
+	const oversized = r.store.wakes.held(l.name).filter((h) => isOversizedTransfer(h, now, maxBytes));
+	const ids: string[] = [];
+	for (const item of oversized) {
+		if (!r.store.wakes.held(l.name).some((h) => h.deliveryId === item.deliveryId)) continue;
+		const row = r.store.wakes.compose(
+			now,
+			(held) => {
+				const hit = held.find((h) => h.deliveryId === item.deliveryId);
+				if (!hit) throw new Error(`oversized transfer vanished: ${item.deliveryId}`);
+				return {
+					...composeWake([hit], now),
+					kind: "transfer" as const,
+					...(hit.rights ? { rights: hit.rights } : {}),
+				};
+			},
+			l.name,
+		);
+		if (!row || row.deliveryId !== item.deliveryId) continue;
+		if (r.store.wakes.finish(row.id, "dead_letter", now)) {
+			ids.push(row.deliveryId);
+			r.d.log("transfer-oversized-dead-letter", {
+				deliveryId: row.deliveryId,
+				bytes: encodedBytes(row.message),
+				maxBytes,
+			});
+		}
+	}
+	if (ids.length) {
+		raise(r, l.akey("transfer-oversized"), alarms.transferOversized(ids, maxBytes));
+		for (const id of ids) r.reported.add(id);
+	}
+	return ids;
 }
 
 /** Seal when MAX(gen) ≠ F and no pending row has attempt_gen = F. */

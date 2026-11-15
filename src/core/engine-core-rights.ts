@@ -15,14 +15,15 @@ export abstract class CoreRights extends CoreBase {
 	 */
 	wakeRights(
 		mandate: string,
-		o: { full?: boolean; session?: string | undefined } = {},
+		o: { full?: boolean; session?: string | undefined; steward?: string } = {},
 	): { text: string; record?: RightsSent; full?: boolean } {
 		const rules = this.rightsRules();
 		if (rules === undefined) {
 			this.raiseAlarm("rights-unreadable", alarms.rightsUnreadable());
 			return { text: [rightsUnreadable(), mandate].filter(Boolean).join("\n") };
 		}
-		const id = this.privateFile("steward-thread");
+		// One Steward identity: snapshot (when supplied), else MAX(gen), else mirrored config (R1).
+		const id = o.steward ?? this.store.steward.current()?.thread ?? this.privateFile("steward-thread");
 		// The epoch this wake is composed under, read with the record: its full stamp writes the record only while that epoch is current.
 		const sent = this.rightsSent.get(),
 			epoch = this.rightsSent.epoch();
@@ -57,13 +58,8 @@ export abstract class CoreRights extends CoreBase {
 	}
 
 	/**
-	 * The Steward and the rights in force now, for the relay's check before every attempt of a row that depends on the Steward holding them
-	 * (relay.ts, `rightsNow`), and the standalone prerequisite for that state: the full block (or the unreadable notice), stamped `full` with the
-	 * state it was composed for, so its delivery writes the durable record. The row it goes ahead of follows exactly as it was queued.
-	 */
-	/**
-	 * Rights identity reads the generation (MAX(gen)'s thread), not the mirrored config file (B1).
-	 * Optional `steward` is the send's generation snapshot when the relay supplies one.
+	 * Rights identity is one Steward thread from the generation snapshot (or MAX(gen)), never a stale mirror alone (R1).
+	 * The same identity hashes the decision and composes the full prerequisite.
 	 */
 	protected async rightsNow(o?: { steward?: string }) {
 		const steward = o?.steward ?? this.store.steward.current()?.thread ?? this.privateFile("steward-thread"),
@@ -75,7 +71,7 @@ export abstract class CoreRights extends CoreBase {
 			...(session ? { session } : {}),
 			...(hash ? { hash } : {}),
 			wake: (forId: string) => {
-				const full = this.wakeRights("", { full: true, session });
+				const full = this.wakeRights("", { full: true, session, ...(steward ? { steward } : {}) });
 				return {
 					message: rightsFirstMessage(forId, full.text),
 					...(full.record ? { stamp: fullStamp(full.record, steward, session) } : {}),

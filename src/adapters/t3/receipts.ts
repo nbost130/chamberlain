@@ -6,10 +6,10 @@
 import { Database } from "bun:sqlite";
 
 /**
- * Approved outer line: matching open/close fence tokens, exact fenced content (no trim),
- * no newlines inside the fence. Template drift / mismatched tokens fail closed.
+ * Approved outer line: matching open/close fence tokens, exact fenced content (no trim).
+ * Only a well-formed **final** line counts (R4); a malformed terminal template yields no evidence.
  */
-const FENCE_RE = /^Delivery id: <webhook-data-([A-Za-z0-9]+)>([^<\r\n]*)<\/webhook-data-\1>$/gm;
+const FINAL_FENCE_RE = /^Delivery id: <webhook-data-([A-Za-z0-9]+)>([^<\r\n]*)<\/webhook-data-\1>$/;
 
 export type ReceiptCandidate = {
 	outboxId: number;
@@ -27,14 +27,16 @@ export type ReceiptMatch = {
 	recordedAt: number;
 };
 
-/** The last approved fenced Delivery-id line in a user message, or undefined when the outer template is absent/malformed (fail closed). */
+/** The authoritative final fenced Delivery-id line, or undefined when the outer template is absent/malformed (fail closed). */
 export function lastFencedDeliveryId(text: string): string | undefined {
-	let last: string | undefined;
-	for (const m of text.matchAll(FENCE_RE)) {
-		const id = m[2];
-		if (id) last = id;
-	}
-	return last;
+	const lines = text.split("\n");
+	let end = lines.length - 1;
+	while (end >= 0 && lines[end] === "") end--;
+	const last = end >= 0 ? lines[end] : undefined;
+	if (last === undefined) return undefined;
+	const m = FINAL_FENCE_RE.exec(last);
+	const id = m?.[2];
+	return id || undefined;
 }
 
 /** Renders the wake template the way T3 does, with a per-delivery fence token. */

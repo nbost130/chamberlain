@@ -185,6 +185,19 @@ describe("receipts D1–D6 and fail-closed association", () => {
 		expect(lastFencedDeliveryId("Delivery id: <webhook-data-H>R</webhook-data-H>")).toBe("R");
 	});
 
+	test("R4: malformed final template yields no evidence even with earlier quoted body id", () => {
+		const root = scratch();
+		const t3 = fakeT3(`${root}/projection.sqlite`);
+		const text = `${renderFencedWake("quoted body", "R", "A")}\nDelivery id: <webhook-data-X>actual</webhook-data-Y>`;
+		expect(lastFencedDeliveryId(text)).toBeUndefined();
+		t3.addMessage({ messageId: "m", threadId: "th", text, scheduledTaskId: "task" });
+		t3.addRun({ runId: "r", threadId: "th", status: "completed", userMessageId: "m" });
+		expect(
+			findReceipt(t3.path, { outboxId: 1, deliveryId: "R", landedAt: Date.now(), threads: ["th"] }),
+		).toBeUndefined();
+		t3.close();
+	});
+
 	test("template drift: missing outer Delivery-id line fails closed (no receipt)", () => {
 		const root = scratch();
 		const t3 = fakeT3(`${root}/t3.sqlite`);
