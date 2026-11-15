@@ -73,6 +73,22 @@ describe("retry and cancel", () => {
 		expect(out).toEqual(["retry: pend1 is pending, not a dead letter; only a dead letter can be retried"]);
 	});
 
+	test("retry of an oversized dead letter exits 1, stays dead_letter, never promises a send", () => {
+		const store = memStore();
+		const id = "transfer:over:cli";
+		store.wakes.enqueue({ deliveryId: id, message: "界".repeat(10_000), queuedAt: T0, kind: "transfer" });
+		const row = store.wakes.find(id)!;
+		store.wakes.finish(row.id, "dead_letter", T0 + 1);
+		const { code, out } = run(store, ["retry", id]);
+		expect(code).toBe(1);
+		expect(store.wakes.find(id)?.status).toBe("dead_letter");
+		expect(out).toHaveLength(1);
+		expect(out[0]).toContain("24000-byte");
+		expect(out[0]).toContain("shrink or split");
+		expect(out[0]).toContain("stays dead_letter");
+		expect(out[0]).not.toContain("pending again");
+	});
+
 	test("cancel gives up a pending row and a dead letter, and keeps a tombstone", () => {
 		const store = world();
 		for (const id of ["pend1", "dead1"]) {

@@ -107,10 +107,11 @@ export interface WakeStore {
 	finish(id: number, status: "delivered" | "dead_letter", now: number): boolean;
 	/**
 	 * The operator's retry: a dead_letter row only, back to pending with attempts at 0.
-	 * Oversized frozen payloads (above the encoded replay bound) stay dead_letter and are not re-armed.
+	 * Oversized frozen payloads (above the encoded replay bound, framing included) stay dead_letter and are not re-armed:
+	 * returns `"oversized"` so callers can distinguish refusal from a successful re-arm (which returns `"dead_letter"`).
 	 * What it found, or undefined when no row has the id.
 	 */
-	retry(deliveryId: string): OutboxStatus | undefined;
+	retry(deliveryId: string): OutboxStatus | "oversized" | undefined;
 	/** The operator's cancel: a pending or dead_letter row becomes a cancelled tombstone, members and all. What it found, or undefined. */
 	cancel(deliveryId: string, now: number): OutboxStatus | undefined;
 	/**

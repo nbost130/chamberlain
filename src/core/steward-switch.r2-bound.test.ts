@@ -52,7 +52,7 @@ describe("R2 encoded bound at every send path", () => {
 			}
 			if (scenario === "retry") {
 				expect(base.wakes.find(id)?.status).toBe("dead_letter");
-				expect(base.wakes.retry(id)).toBe("dead_letter");
+				expect(base.wakes.retry(id)).toBe("oversized");
 				expect(base.wakes.find(id)?.status).toBe("dead_letter");
 			} else {
 				// Atomic quarantine: finish failure rolls compose back — still held, never pending oversized.

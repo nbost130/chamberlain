@@ -8,8 +8,7 @@ import { type Ctx, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.
 import { current, findPrerequisite, prerequisiteBlocked, queuePrerequisite } from "./relay-prereq.ts";
 import { loadRightsSent, needsRights, rightsFirstKey, rightsGap, rightsStateKey } from "./rights-sent.ts";
 import { type GenSnapshot, snapshotGen } from "./steward-gens.ts";
-import { encodedBytes } from "./steward-transfer.ts";
-import { exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
+import { encodedSendBytes, exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
 /**
@@ -25,8 +24,8 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 		deadLetter(r, l, row, row.attempts);
 		return [];
 	}
-	// Encoded replay bound at the send gate: refuse any oversized frozen payload before rights/CAS/POST (R2).
-	if (exceedsEncodedCap(row.message)) {
+	// Encoded replay bound at the send gate: refuse on finalSendMessage size before rights/CAS/POST (R2).
+	if (exceedsEncodedCap(row.message, row.deliveryId)) {
 		refuseOversized(r, l, row);
 		return [];
 	}
@@ -55,7 +54,7 @@ function refuseOversized(r: Ctx, l: Lane, row: OutboxRow): void {
 	if (r.store.wakes.finish(row.id, "dead_letter", r.clock())) {
 		r.d.log("transfer-oversized-dead-letter", {
 			deliveryId: row.deliveryId,
-			bytes: encodedBytes(row.message),
+			bytes: encodedSendBytes(row.message, row.deliveryId),
 			maxBytes,
 		});
 		r.notBefore.delete(row.id);

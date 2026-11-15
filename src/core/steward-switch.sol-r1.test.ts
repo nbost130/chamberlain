@@ -10,8 +10,8 @@ import { commitSwitch } from "./steward-commit.ts";
 import { countingReceipt, isDischarged } from "./steward-discharge.ts";
 import { checkSwitchNotice } from "./steward-notice.ts";
 import { prepareSwitch } from "./steward-prepare.ts";
-import { composeTransferBatch, encodedBytes, transferPass } from "./steward-transfer.ts";
-import { SWITCH_NOTICE_STALL_MS, TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
+import { composeTransferBatch, transferPass } from "./steward-transfer.ts";
+import { encodedSendBytes, SWITCH_NOTICE_STALL_MS, TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
 
 const { confWorld, memStoreSeeded, writeSwitchRefs, deliverAndLedger, fakeClock } = useStewardSwitchFixtures();
 
@@ -187,7 +187,7 @@ describe("M1/R2: encoded byte cap — oversized solo refused, never sent", () =>
 			1,
 		)!;
 		expect(b.members).toEqual(["a"]);
-		expect(encodedBytes(b.message)).toBeLessThanOrEqual(TRANSFER_DIGEST_MAX_BYTES);
+		expect(encodedSendBytes(b.message, b.deliveryId)).toBeLessThanOrEqual(TRANSFER_DIGEST_MAX_BYTES);
 	});
 
 	test("oversized transfer is dead-lettered with alarm on compose, never POSTed", async () => {
@@ -228,7 +228,7 @@ describe("M1/R2: encoded byte cap — oversized solo refused, never sent", () =>
 		const transfers = held.filter((h) => h.kind === "transfer");
 		const batch = composeTransferBatch(transfers, 3)!;
 		expect(batch.members.every((m) => m.startsWith("transfer:"))).toBe(true);
-		expect(encodedBytes(batch.message)).toBeLessThanOrEqual(TRANSFER_DIGEST_MAX_BYTES);
+		expect(encodedSendBytes(batch.message, batch.deliveryId)).toBeLessThanOrEqual(TRANSFER_DIGEST_MAX_BYTES);
 		expect(held.some((h) => h.deliveryId === "sweep:1")).toBe(true);
 		expect(s.steward.transferItemForOrig(1, id)).toBeDefined();
 	});

@@ -55,8 +55,15 @@ export const DELIVERED_KEEP_MS = 30 * 24 * 3600_000;
  */
 export const DELIVERY_ID_LINE = (deliveryId: string) =>
 	`delivery id: ${deliveryId} (the same id again is a repeat: do not act on it twice)`;
-export const withDeliveryId = (message: string, deliveryId: string): string =>
-	message.includes(DELIVERY_ID_LINE(deliveryId)) ? message : `${message}\n${DELIVERY_ID_LINE(deliveryId)}`;
+/**
+ * The wake text the transport actually POSTs: stored body plus the delivery-id trailer.
+ * Cap checks (compose, quarantine, retry, send gate) measure this string — never the unframed body alone.
+ */
+export function finalSendMessage(message: string, deliveryId: string): string {
+	return message.includes(DELIVERY_ID_LINE(deliveryId)) ? message : `${message}\n${DELIVERY_ID_LINE(deliveryId)}`;
+}
+/** Alias of finalSendMessage — kept for existing call sites. */
+export const withDeliveryId = finalSendMessage;
 
 /** What `commit` did: nothing to send, written (a pending row or a held item), already known (any row or held item under this id), or a dry run. */
 export type Committed = "none" | "queued" | "known" | "dry";

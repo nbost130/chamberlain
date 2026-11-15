@@ -11,6 +11,7 @@ import { raise } from "./relay-ctx.ts";
 import { isDischarged } from "./steward-discharge.ts";
 import { transferMessage } from "./steward-header.ts";
 import {
+	encodedSendBytes,
 	exceedsEncodedCap,
 	type StewardTransfer,
 	TRANSFER_DIGEST_MAX_BYTES,
@@ -94,19 +95,20 @@ export function holdTransferItem(
 	});
 }
 
-/** UTF-8 encoded size of a composed transfer message (V2-M1 / M1). */
+/** UTF-8 encoded size of a composed transfer message body (unframed). Prefer encodedSendBytes for the cap. */
 export const encodedBytes = (message: string): number => Buffer.byteLength(message, "utf8");
 
-/** True when a held transfer alone exceeds the encoded replay bound. */
+/** True when a held transfer alone exceeds the encoded replay bound (final send framing included). */
 function isOversizedTransfer(item: HeldItem, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean {
 	if (item.kind !== "transfer") return false;
-	return exceedsEncodedCap(composeWake([item], now).message, maxBytes);
+	const trial = composeWake([item], now);
+	return exceedsEncodedCap(trial.message, trial.deliveryId, maxBytes);
 }
 
 /**
- * Compose held transfer items into one digest, capping count and UTF-8 encoded size at the
- * real composeWake framing. An item that alone exceeds the byte cap is never admitted (R2);
- * callers dead-letter it. Overflow that would break the bound stays held for the next pass.
+ * Compose held transfer items into one digest, capping count and UTF-8 encoded size of the
+ * final send message (composeWake body + delivery-id trailer). An item that alone exceeds the
+ * byte cap is never admitted (R2); callers dead-letter it. Overflow that would break the bound stays held.
  */
 export function composeTransferBatch(
 	held: HeldItem[],
@@ -120,8 +122,7 @@ export function composeTransferBatch(
 	for (const item of transfers) {
 		const next = [...batch, item];
 		const trial = composeWake(next, now);
-		const bytes = encodedBytes(trial.message);
-		if (bytes > maxBytes || next.length > maxItems) {
+		if (exceedsEncodedCap(trial.message, trial.deliveryId, maxBytes) || next.length > maxItems) {
 			if (batch.length === 0) continue; // refuse oversized solo — never send
 			break;
 		}
@@ -169,7 +170,7 @@ export function deadLetterOversizedTransfers(
 			ids.push(row.deliveryId);
 			r.d.log("transfer-oversized-dead-letter", {
 				deliveryId: row.deliveryId,
-				bytes: encodedBytes(row.message),
+				bytes: encodedSendBytes(row.message, row.deliveryId),
 				maxBytes,
 			});
 		} catch {
