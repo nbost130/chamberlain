@@ -20,16 +20,16 @@ export function parseLine(line: string): DeskEvent | undefined {
 	if (!o || typeof o !== "object") return undefined;
 	const family = typeof o.family === "string" ? o.family.trim() : "";
 	const title = typeof o.title === "string" ? o.title.trim() : "";
-	const rawTs = typeof o.ts === "string" ? o.ts : "";
-	const ms = Date.parse(rawTs);
-	if (!family || !title || !Number.isFinite(ms)) return undefined;
-	// Canonical ISO only — parenthesised Date comments (and any credential they carry) never reach storage (B2).
+	const ts = typeof o.ts === "string" ? o.ts : "";
+	if (!family || !title || !Number.isFinite(Date.parse(ts))) return undefined;
+	// Keep the accepted raw timestamp: flag-off delivery IDs and wake text stay byte-identical (R2).
+	// Triage canonicalises at prepareEvent / prepareTs (B2).
 	return {
 		source: typeof o.source === "string" && o.source ? o.source : "unknown",
 		family,
 		title,
 		body: typeof o.body === "string" ? o.body : "",
-		ts: new Date(ms).toISOString(),
+		ts,
 		severity: severityOf(o.severity),
 	};
 }

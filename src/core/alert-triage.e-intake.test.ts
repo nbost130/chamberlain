@@ -35,11 +35,7 @@ describe("E intake", () => {
 		const pad = "p".repeat(500);
 		writeFileSync(
 			r.inbox,
-			line({ severity: "critical", at: T0 - 7 * 3600_000, family: "pre-old", body: pad }) +
-				line({ severity: "critical", family: "pre-fresh", body: pad }) +
-				line({ severity: "warning", family: "w1", body: pad }) +
-				line({ severity: "warning", family: "w2", body: pad }) +
-				line({ severity: "warning", family: "w3", body: pad }),
+			`${line({ severity: "critical", at: T0 - 7 * 3600_000, family: "pre-old", body: pad })}${line({ severity: "critical", family: "pre-fresh", body: pad })}${line({ severity: "warning", family: "w1", body: pad })}${line({ severity: "warning", family: "w2", body: pad })}${line({ severity: "warning", family: "w3", body: pad })}`,
 		);
 		writeFileSync(`${r.inbox}.${T0 - 1000}`, line({ severity: "critical", family: "stray", at: T0 }));
 		let hits = 0;
@@ -53,9 +49,10 @@ describe("E intake", () => {
 				},
 			});
 		} catch {
-			/* crash */
+			/* crash before rename */
 		}
-		r.pass(T0); // recover
+		expect(hits).toBe(1);
+		r.store.state.delete(CURSOR_KEY); // force a fresh init so the renamed crash is reachable
 		try {
 			r.pass(min(1), {
 				crash: (p) => {
@@ -66,14 +63,13 @@ describe("E intake", () => {
 				},
 			});
 		} catch {
-			/* */
+			/* crash after rename */
 		}
-		// after recover, advance past grace and read
+		expect(hits).toBe(2);
 		r.pass(min(1) + 61_000);
 		appendFileSync(r.inbox, line({ severity: "warning", family: "W", at: min(2) }));
 		appendFileSync(r.inbox, line({ severity: "critical", family: "C2", at: min(2) }));
 		r.pass(min(2));
-		// rotate while pre-init still partly unread: pad live past rotateBytes
 		appendFileSync(r.inbox, line({ severity: "info", family: "pad", body: "x".repeat(70_000), at: min(3) }));
 		r.pass(min(3));
 		try {
@@ -87,13 +83,16 @@ describe("E intake", () => {
 		}
 		r.pass(min(5) + 61_000);
 		r.pass(min(6) + 120_000);
-		const obs = r.obligations();
-		const fams = obs.map((o) => o.event.family).sort();
-		expect(fams.filter((f) => ["pre-old", "pre-fresh", "stray", "C2"].includes(f)).length).toBeGreaterThanOrEqual(3);
+		const fams = r
+			.obligations()
+			.map((o) => o.event.family)
+			.sort();
+		expect(fams.filter((f) => ["pre-old", "pre-fresh", "stray", "C2"].includes(f)).sort()).toEqual(
+			["C2", "pre-fresh", "pre-old", "stray"].sort(),
+		);
 		expect(r.deskHeld().some((h) => h.message.includes("family W"))).toBe(true);
 		const cur = r.store.state.get<Cursor>(CURSOR_KEY);
-		expect(cur?.retired.every((x) => x.preInit === undefined || x.preInit === true || true)).toBe(true);
-		void hits;
+		expect(cur?.retired.every((x) => !x.preInit || x.preInitUntil !== undefined)).toBe(true);
 	});
 
 	test("E4 crash before cursor save", () => {
@@ -212,11 +211,18 @@ describe("E intake", () => {
 	});
 
 	test("E8 desk not ready", () => {
-		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
+		const r = triageRig({
+			desk: { morningHour: 23, startAt: "beginning" },
+			viaEngine: true,
+			deskReady: false,
+		});
 		r.settle(T0);
-		r.append({ family: "crit-ready" });
+		r.append({ family: "crit-ready", severity: "critical" });
+		r.append({ family: "warn-wait", severity: "warning", at: min(1) });
 		r.pass(min(1));
 		expect(r.stewardRows()).toHaveLength(1);
+		expect(r.stewardRows()[0]!.status).toBe("pending");
+		expect(r.deskHeld().some((h) => h.message.includes("family warn-wait"))).toBe(true);
 	});
 
 	test("E9 no desk lane", () => {

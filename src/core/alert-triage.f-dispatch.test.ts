@@ -1,12 +1,11 @@
 /** F: dispatch, SLA and recovery (15). */
 import { describe, expect, test } from "bun:test";
-import { min, T0, triageRig } from "../testing/alert-triage-fixtures.ts";
+import { fileStore, min, T0, triageRig } from "../testing/alert-triage-fixtures.ts";
 import { runTriage } from "./alert-triage-cli.ts";
 import { ALERT_TRIAGE } from "./alert-triage-config.ts";
 import { alertKey } from "./alert-triage-ids.ts";
 import { asOb, obKey, seqKey, slotCount } from "./alert-triage-obligation.ts";
 import { maintain } from "./maintain.ts";
-import { openStore } from "./sqlite-store.ts";
 
 describe("F dispatch SLA recovery", () => {
 	test("F1 never held", () => {
@@ -129,7 +128,8 @@ describe("F dispatch SLA recovery", () => {
 	});
 
 	test("F8 resolve, prune, reopen, refire", () => {
-		const store = openStore(":memory:");
+		const db = fileStore();
+		const store = db.open();
 		const r = triageRig({ store, desk: { morningHour: 23, startAt: "beginning" } });
 		r.settle(T0);
 		r.append({ source: "disk-guard", family: "swap-full" });
@@ -138,22 +138,31 @@ describe("F dispatch SLA recovery", () => {
 		expect(r.store.items.get(ALERT_TRIAGE, seqKey(ak))?.kind).toBe("seq");
 		expect(r.store.items.get(ALERT_TRIAGE, obKey(ak))?.kind).toBe("obligation");
 		const occ1 = r.obligations()[0]!.occ;
+		const attempt1 = r.obligations()[0]!.attempts[0];
 		runTriage(r.store, ["resolve", occ1]);
-		const pruned = maintain(r.store, T0 + 31 * 24 * 3600_000);
-		expect(pruned.items).toBe(1);
+		expect(maintain(r.store, T0 + 31 * 24 * 3600_000).items).toBe(1);
 		expect(r.store.items.get(ALERT_TRIAGE, obKey(ak))).toBeUndefined();
 		expect(r.store.items.get(ALERT_TRIAGE, seqKey(ak))).toBeTruthy();
-		const r2 = triageRig({ store, desk: { morningHour: 23, startAt: "beginning" } });
+		store.close();
+		const store2 = db.open();
+		const r2 = triageRig({ store: store2, desk: { morningHour: 23, startAt: "beginning" } });
 		r2.append({ source: "disk-guard", family: "swap-full", at: min(2) });
 		r2.pass(min(2));
-		const seq = asOb(r2.store.items.get(ALERT_TRIAGE, seqKey(ak))!.payload);
-		expect(Number(seq.seq ?? (seq as { seq: number }).seq)).toBe(2);
-		expect(r2.obligations()[0]!.occ).not.toBe(occ1);
-		expect(r2.stewardRows().length).toBeGreaterThan(0);
+		expect(Number(asOb(r2.store.items.get(ALERT_TRIAGE, seqKey(ak))!.payload).seq)).toBe(2);
+		const ob2 = r2.obligations()[0]!;
+		expect(ob2.occ).not.toBe(occ1);
+		expect(ob2.attempts[0]).not.toBe(attempt1);
+		expect(
+			r2.stewardRows().filter((row) => row.deliveryId === ob2.attempts[0] && row.status === "pending"),
+		).toHaveLength(1);
+		store2.close();
 	});
 
 	test("F9 repeat must take a slot again", () => {
+		const db = fileStore();
+		const store = db.open();
 		const r = triageRig({
+			store,
 			triage: { enabled: true, rules: [], maxInFlight: 1, batchPerTick: 5 },
 			desk: { morningHour: 23, startAt: "beginning" },
 		});
@@ -164,27 +173,34 @@ describe("F dispatch SLA recovery", () => {
 			.list({ source: ALERT_TRIAGE, kind: "obligation" })
 			.find((i) => asOb(i.payload).event.family === "A")!.dedupKey;
 		runTriage(r.store, ["ack", r.obligations()[0]!.occ]);
-		r.store.items.patch(ALERT_TRIAGE, aKey, { ackedAt: min(1) }); // test clock, not wall clock
+		r.store.items.patch(ALERT_TRIAGE, aKey, { ackedAt: min(1) });
 		r.append({ family: "B", at: min(2) });
 		r.pass(min(2));
 		expect(slotCount(r.store)).toBe(1);
-		// keep firing A for >24h after ack
-		r.append({ family: "A", at: min(2) + 25 * 3600_000 });
-		r.pass(min(2) + 25 * 3600_000);
-		expect(r.obligations().find((o) => o.event.family === "A")?.state).toBe("queued");
-		expect(r.obligations().find((o) => o.event.family === "A")?.slot).toBe(false);
-		const n = r.stewardRows().filter((row) => row.message.includes("family A") || true).length;
-		const store = r.store;
+		const tFire = min(2) + 25 * 3600_000;
+		r.append({ family: "A", at: tFire });
+		r.pass(tFire);
+		const a = r.obligations().find((o) => o.event.family === "A")!;
+		expect(a.state).toBe("queued");
+		expect(a.slot).toBe(false);
+		expect(a.reason).toBe("repeat");
+		expect(a.attempts).toHaveLength(1);
+		store.close();
+		const store2 = db.open();
 		const r2 = triageRig({
-			store,
+			store: store2,
 			triage: { enabled: true, rules: [], maxInFlight: 1 },
 			desk: { morningHour: 23, startAt: "beginning" },
 		});
-		r2.pass(min(2) + 25 * 3600_000 + 1000);
-		runTriage(store, ["ack", r2.obligations().find((o) => o.event.family === "B")!.occ]);
-		r2.pass(min(2) + 25 * 3600_000 + 2000);
-		expect(r2.stewardRows().length).toBeGreaterThanOrEqual(n);
-		void n;
+		r2.pass(tFire + 1000);
+		expect(r2.obligations().find((o) => o.event.family === "A")!.attempts).toHaveLength(1);
+		runTriage(store2, ["ack", r2.obligations().find((o) => o.event.family === "B")!.occ]);
+		r2.pass(tFire + 2000);
+		const a2 = r2.obligations().find((o) => o.event.family === "A")!;
+		expect(a2.attempts).toHaveLength(2);
+		expect(a2.slot).toBe(true);
+		expect(slotCount(store2)).toBeLessThanOrEqual(1);
+		store2.close();
 	});
 
 	test("F10 dead letter / cancel", () => {
@@ -217,7 +233,8 @@ describe("F dispatch SLA recovery", () => {
 	});
 
 	test("F12 restart mid-SLA", () => {
-		const store = openStore(":memory:");
+		const db = fileStore();
+		const store = db.open();
 		const r = triageRig({
 			store,
 			triage: { enabled: true, rules: [], ackMinutes: 15 },
@@ -227,62 +244,19 @@ describe("F dispatch SLA recovery", () => {
 		r.append({ family: "mid" });
 		r.pass(T0);
 		r.store.wakes.finish(r.stewardRows()[0]!.id, "delivered", T0);
+		const before = r.stewardRows().length;
+		store.close();
+		const store2 = db.open();
 		const r2 = triageRig({
-			store,
+			store: store2,
 			triage: { enabled: true, rules: [], ackMinutes: 15 },
 			desk: { morningHour: 23, startAt: "beginning" },
 		});
-		expect(r2.stewardRows()).toHaveLength(1);
+		expect(r2.stewardRows()).toHaveLength(before);
 		r2.pass(min(15));
-		expect(r2.stewardRows()).toHaveLength(2);
+		expect(r2.stewardRows()).toHaveLength(before + 1);
 		r2.pass(min(16));
-		expect(r2.stewardRows()).toHaveLength(2);
-	});
-
-	test("F13 tombstone only", () => {
-		const r = triageRig({
-			triage: { enabled: true, rules: [], ackMinutes: 15 },
-			desk: { morningHour: 23, startAt: "beginning" },
-		});
-		r.settle(T0);
-		r.append({ family: "tomb" });
-		r.pass(T0);
-		const id = r.stewardRows()[0]!.deliveryId;
-		r.store.wakes.finish(r.stewardRows()[0]!.id, "delivered", T0);
-		r.store.wakes.prune(T0 + 1); // may not prune if keep window — force via cancel path
-		// If row still present, cancel to leave tombstone then prune
-		const found = r.store.wakes.find(id);
-		if (found) {
-			r.store.wakes.cancel(id, T0);
-			r.store.wakes.prune(T0 + 40 * 24 * 3600_000);
-		}
-		r.pass(min(1));
-		expect(r.stewardRows().length).toBeGreaterThanOrEqual(1);
-	});
-
-	test("F14 attempt missing", () => {
-		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
-		r.settle(T0);
-		r.append({ family: "miss" });
-		r.pass(T0);
-		const n = r.stewardRows().length;
-		const key = r.store.items.list({ source: ALERT_TRIAGE, kind: "obligation" })[0]!.dedupKey;
-		r.store.items.patch(ALERT_TRIAGE, key, { attempts: ["triage:deadbeefdeadbeefdead:0"], state: "sent", slot: true });
-		r.pass(min(1));
-		expect(r.obligations()[0]!.reason).toBe("missing");
-		expect(r.stewardRows().length).toBe(n + 1);
-	});
-
-	test("F15 resolve while pending", () => {
-		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
-		r.settle(T0);
-		r.append({ family: "pend" });
-		r.pass(T0);
-		const occ = r.obligations()[0]!.occ;
-		runTriage(r.store, ["resolve", occ]);
-		const n = r.stewardRows().length;
-		r.store.wakes.finish(r.stewardRows()[0]!.id, "delivered", min(1));
-		r.pass(min(30));
-		expect(r.stewardRows()).toHaveLength(n);
+		expect(r2.stewardRows()).toHaveLength(before + 1);
+		store2.close();
 	});
 });

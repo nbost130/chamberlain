@@ -2,9 +2,10 @@
 import { describe, expect, test } from "bun:test";
 import { appendFileSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { triageRig } from "../testing/alert-triage-fixtures.ts";
+import { T0, triageRig } from "../testing/alert-triage-fixtures.ts";
 import { ALERT_DESK, DESK_RECEIVER } from "./alert-desk-config.ts";
 import { CURSOR_KEY } from "./alert-desk-cursor.ts";
+import { parseLine, signature, wakeId } from "./alert-desk-events.ts";
 import { ALERT_TRIAGE } from "./alert-triage-config.ts";
 
 function writeConf(path: string, doc: unknown): void {
@@ -142,5 +143,29 @@ describe("A flag off is today", () => {
 		r.pass(EXPECTED.t0);
 		expect(r.store.state.get(CURSOR_KEY)).toEqual(before);
 		expect(r.deskHeld()).toHaveLength(0);
+	});
+
+	test("A6 flag-off preserves non-ISO accepted timestamp", () => {
+		const ts = "Fri Nov 13 2026 10:00:00 GMT-0500";
+		const r = triageRig({
+			triage: { enabled: false },
+			desk: { morningHour: 23, startAt: "beginning" },
+			viaEngine: true,
+		});
+		r.append({ family: "legacy-date", ts, severity: "warning", title: "swap full", body: "swap at 94%" });
+		r.pass(T0);
+		const held = r.deskHeld()[0]!;
+		const parsed = parseLine(
+			JSON.stringify({
+				family: "legacy-date",
+				title: "swap full",
+				body: "swap at 94%",
+				severity: "warning",
+				ts,
+			}),
+		)!;
+		expect(held.deliveryId).toBe(wakeId("legacy-date", signature(parsed), ts));
+		expect(held.message).toContain(`at ${ts}.`);
+		expect(held.deliveryId).toBe("desk:9c2d23b1b11269ce");
 	});
 });

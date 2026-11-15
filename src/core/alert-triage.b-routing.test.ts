@@ -126,6 +126,19 @@ describe("B routing", () => {
 		expect(badMatch.invalid).toBe(true);
 		expect(badMatch.enabled).toBe(true);
 		expect(parseTriageConfig({ enabled: true, rules: "nope" }).invalid).toBe(true);
+		const literalBad = parseTriageConfig({
+			enabled: true,
+			rules: [{ id: "literal", match: { source: "bad" }, outcome: "human", right: "secrets" }],
+		});
+		expect(literalBad.invalid).not.toBe(true);
+		expect(literalBad.rules).toHaveLength(1);
+		expect(literalBad.rules[0]?.match.source).toBe("bad");
+		const literalBadFam = parseTriageConfig({
+			enabled: true,
+			rules: [{ id: "lit-fam", match: { family: "bad" }, outcome: "steward-task" }],
+		});
+		expect(literalBadFam.invalid).not.toBe(true);
+		expect(literalBadFam.rules[0]?.match.family).toBe("bad");
 	});
 
 	test("B7 invalid config", () => {

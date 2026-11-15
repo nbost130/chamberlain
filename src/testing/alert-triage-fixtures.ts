@@ -23,6 +23,12 @@ export const T0 = Date.parse("2026-11-13T15:00:00Z");
 export const min = (n: number) => T0 + n * 60_000;
 export const MIB = 1024 * 1024;
 
+/** Temp file-backed Store for reopen tests (Sol M5). */
+export function fileStore(): { path: string; open: () => ReturnType<typeof openStore> } {
+	const path = join(mkdtempSync(join(tmpdir(), "triage-db-")), "chamberlain.db");
+	return { path, open: () => openStore(path) };
+}
+
 const ev = (over: Partial<DeskEvent> & { at?: number } = {}): DeskEvent => {
 	const { at, ...rest } = over;
 	return {
@@ -47,6 +53,8 @@ export function triageRig(
 		/** Route through drainDeskPass (flag check + inbox via ALERT_DESK_INBOX). */
 		viaEngine?: boolean;
 		noDesk?: boolean;
+		/** When viaEngine, deskLane.wake.ready(); default true unless dry. */
+		deskReady?: boolean;
 	} = {},
 ) {
 	const dir = mkdtempSync(join(tmpdir(), "alert-triage-"));
@@ -84,7 +92,7 @@ export function triageRig(
 					outbox,
 					conf: dir,
 					DRY: !!opts.dry,
-					deskLane: opts.noDesk ? undefined : { wake: { ready: () => !opts.dry } },
+					deskLane: opts.noDesk ? undefined : { wake: { ready: () => opts.deskReady !== false && !opts.dry } },
 					log,
 					alarm,
 					clearAlarm,

@@ -48,35 +48,39 @@ function rightOk(outcome: Outcome, right: string | undefined): boolean {
 	return right === undefined;
 }
 
+/** Sentinel that cannot collide with an accepted match string such as `"bad"` (R1). */
+const INVALID = Symbol("invalid-match");
+type Invalid = typeof INVALID;
+
 /** Present match fields must be non-empty strings; a number/null becomes match-everything otherwise (B3). */
-function matchField(v: unknown): string | undefined | "bad" {
+function matchField(v: unknown): string | undefined | Invalid {
 	if (v === undefined) return undefined;
 	if (typeof v === "string" && v) return v;
-	return "bad";
+	return INVALID;
 }
 
-function parseMatch(raw: unknown): TriageRule["match"] | "bad" {
+function parseMatch(raw: unknown): TriageRule["match"] | Invalid {
 	if (raw === undefined) return {};
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "bad";
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return INVALID;
 	const m = raw as Record<string, unknown>;
-	for (const k of Object.keys(m)) if (k !== "source" && k !== "family") return "bad";
+	for (const k of Object.keys(m)) if (k !== "source" && k !== "family") return INVALID;
 	const source = matchField(m.source);
 	const family = matchField(m.family);
-	if (source === "bad" || family === "bad") return "bad";
+	if (source === INVALID || family === INVALID) return INVALID;
 	return { ...(source ? { source } : {}), ...(family ? { family } : {}) };
 }
 
-function parseRule(raw: unknown, usedIds: Set<string>): TriageRule | "bad" {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "bad";
+function parseRule(raw: unknown, usedIds: Set<string>): TriageRule | Invalid {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return INVALID;
 	const o = raw as Record<string, unknown>;
-	if ([...Object.keys(o)].some((k) => !RULE_KEYS.has(k))) return "bad";
-	if (typeof o.id !== "string" || !ID_OK.test(o.id) || usedIds.has(o.id)) return "bad";
-	if (!OUTCOMES.has(String(o.outcome))) return "bad";
+	if ([...Object.keys(o)].some((k) => !RULE_KEYS.has(k))) return INVALID;
+	if (typeof o.id !== "string" || !ID_OK.test(o.id) || usedIds.has(o.id)) return INVALID;
+	if (!OUTCOMES.has(String(o.outcome))) return INVALID;
 	const match = parseMatch(o.match);
-	if (match === "bad") return "bad";
+	if (match === INVALID) return INVALID;
 	const outcome = o.outcome as Outcome;
 	const right = o.right !== undefined ? String(o.right) : undefined;
-	if (!rightOk(outcome, right)) return "bad";
+	if (!rightOk(outcome, right)) return INVALID;
 	usedIds.add(o.id);
 	return { id: o.id, match, outcome, ...(right ? { right: right as Right } : {}) };
 }
@@ -97,7 +101,7 @@ export function parseTriageConfig(raw: unknown): TriageConfig {
 	const rules: TriageRule[] = [];
 	for (const r of o.rules ?? []) {
 		const p = parseRule(r, usedIds);
-		if (p === "bad") return invalid(o);
+		if (p === INVALID) return invalid(o);
 		rules.push(p);
 	}
 	const num = (k: string, d: number) =>
