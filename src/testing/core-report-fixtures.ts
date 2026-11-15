@@ -130,7 +130,13 @@ export async function replay(t: Timeline) {
 			return;
 		}
 		const r = read();
-		if (!reportKey(r.items, r.byMachine, fired)) return;
+		const key = reportKey(r.items, r.byMachine, fired);
+		if (!key) return;
+		// Clean completion: stage at once after the debounce (issue #72). Outstanding work still settles.
+		if (pending === 0) {
+			wake(key);
+			return;
+		}
 		if (until === undefined) start = true;
 		until = now + QUIET;
 	};

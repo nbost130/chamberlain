@@ -14,8 +14,8 @@ import { failedRead } from "./history";
 import { REPORT_HOLD_MS, reportWait, settleReport } from "./report";
 
 describe("reportWait", () => {
-	test("waits out the quiet window, busy or not", () => {
-		expect(reportWait(100, 40, false)).toBe(60);
+	test("a clean completion skips the quiet window; outstanding work still waits it out", () => {
+		expect(reportWait(100, 40, false)).toBe(0);
 		expect(reportWait(100, 40, true)).toBe(60);
 	});
 	test("goes at the end of the window when nothing is running", () => {
@@ -160,13 +160,13 @@ describe("settleReport", () => {
 
 describe("replay of a recorded timeline", () => {
 	const named = (name: string) => timelines.find((t) => t.name === name) as Timeline;
-	test("the #626 thread: 13 turn ends, one wake, after the last of them", async () => {
+	test("the #626 thread: 13 turn ends, one wake, once background work is gone (no quiet wait)", async () => {
 		// Its instruction was run 1 and 12 machine turns followed. Background work ran from 17:31:52 to 18:09:20.
-		expect(await replay(named("build-626"))).toEqual([{ at: "18:12:30", key: "report:i1000001:machine" }]);
+		expect(await replay(named("build-626"))).toEqual([{ at: "18:09:27", key: "report:i1000001:machine" }]);
 	});
 	test("the Postgres thread: one wake for each of the Steward's four instructions", async () => {
 		const wakes = await replay(named("postgres"));
-		expect(wakes.map((x) => x.at)).toEqual(["13:43:45", "14:47:21", "16:38:35", "17:14:17"]);
+		expect(wakes.map((x) => x.at)).toEqual(["13:40:45", "14:44:21", "16:35:35", "17:11:17"]);
 		expect(wakes.every((x) => /^report:i\d+:0$/.test(x.key))).toBe(true);
 	});
 });
@@ -178,5 +178,39 @@ describe("a final report in a machine's turn", () => {
 		fired.add("report:s1:machine");
 		expect(reportKey([instruction], true, fired)).toBeUndefined();
 		expect(reportKey([instruction], false, fired)).toBe("report:s1:1");
+	});
+});
+
+describe("issue #72 incident replay (fake clock)", () => {
+	const human = {
+		type: "user_message" as const,
+		id: "human-1",
+		text: "is this done?",
+		createdBy: "user" as const,
+		creationSource: "web" as const,
+		updatedAt: "2026-11-15T22:25:46.373Z",
+	};
+
+	test("a clean completion's key is due before the quiet window; a human follow-up would supersede only after a wait", async () => {
+		const fired = new Set<string>();
+		const initial = reportKey([instruction], false, fired);
+		expect(initial).toBe("report:s1:0");
+		// Production settleTurn stages this key at once when nothing is running. The old path waited QUIET ms, then:
+		const afterHuman = reportKey([instruction, human], false, fired);
+		expect(afterHuman).toBeUndefined();
+		const { w, clock } = watch({
+			quietUntil: () => QUIET,
+			reportKey: (r) => reportKey(r.items, r.byMachine, fired),
+			read: async () =>
+				clock() < QUIET ? completeRead : { items: [instruction, human], state: "complete" as const, byMachine: false },
+		});
+		// settleReport still waits the quiet window when quietUntil is set (outstanding settlement path).
+		expect(await settleReport(w)).toEqual({ wake: false, event: "skip-report-superseded" });
+		expect(clock()).toBe(QUIET);
+	});
+
+	test("reportWait skips the quiet window when nothing is running (clean-completion bypass)", () => {
+		expect(reportWait(QUIET, 0, false)).toBe(0);
+		expect(reportWait(QUIET, 0, true)).toBe(QUIET);
 	});
 });

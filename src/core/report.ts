@@ -14,9 +14,13 @@ export const REPORT_HOLD_MS = 60 * 60_000;
 const reportHoldMs = (): number => setting("reportHoldMs") ?? REPORT_HOLD_MS;
 const POLL_MS = 30_000;
 
-/** Pure: how long a report must still wait. Zero means now. */
+/**
+ * Pure: how long a report must still wait. Zero means now. A clean completion (nothing running) does not wait out the
+ * quiet window; only outstanding background work or children keep it. `waitLeft` still enforces the quiet window for
+ * the settlement path that began with outstanding work, so that path stays as it was.
+ */
 export function reportWait(quietUntil: number, now: number, busy: boolean, holdMs = reportHoldMs()): number {
-	if (now < quietUntil) return quietUntil - now;
+	if (now < quietUntil) return busy ? quietUntil - now : 0;
 	if (busy && now < quietUntil + holdMs) return Math.min(POLL_MS, quietUntil + holdMs - now);
 	return 0;
 }

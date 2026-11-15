@@ -164,8 +164,10 @@ sequenceDiagram
    previous state of every thread and finds the transitions worth a wake in `decide.ts`: a request that appeared, a
    thread that went to `waiting`, a top-level run that `failed`, a top-level turn that ended.
 2. **Settling.** The event waits a moment (2.5 s) and is re-checked on the newest state, so a burst of changes is one
-   decision. A turn end then waits out a quiet window (3 minutes, `CHAMBERLAIN_REPORT_QUIET_MS`) and any background
-   work or child threads, in case more work follows.
+   decision. A clean top-level completion (no running children or subagents, no pending background work) is queued as a
+   durable wake after that debounce, with no quiet window: a later human message cannot cancel it. A turn end that still
+   has outstanding work waits out a quiet window (3 minutes, `CHAMBERLAIN_REPORT_QUIET_MS`) and that work, in case more
+   follows.
 3. **Building the wake.** The engine asks the adapter's `inspect` for the last message, the waiting question and who
    gave the thread its latest instruction, and builds one message: what happened, the thread, the question or excerpt
    fenced as untrusted data, and the operator's decision rights. Approvals, secrets and machine links never reach the

@@ -47,6 +47,20 @@ export class WatcherDrafts extends WatcherReads {
 		return this.settleTurn(f, read, children);
 	}
 
+	/** Stages a clean completion's report at once: no quiet window, and a later human message cannot cancel it. */
+	protected async stageClean(f: Fire, due: string | { key: string; work: string }): Promise<boolean> {
+		const { live, draft, mine } = f;
+		const key = typeof due === "string" ? due : due.key;
+		const work = typeof due === "string" ? "" : due.work;
+		if (this.core.notified.has(key)) return false;
+		this.stage(mine, key);
+		draft.idleLine = work;
+		draft.stalled = false;
+		draft.excerpt = await this.lastMessage(live.id).catch(this.readFailed("last message", live.id, draft.excerpt));
+		draft.reported = true;
+		return true;
+	}
+
 	/** The wait that lets a finished turn's report settle (a PR update often follows); false when there is nothing to report. */
 	protected async settleTurn(f: Fire, read: InstructionRead, children: boolean): Promise<boolean> {
 		const { c, live, draft, mine } = f;
@@ -61,6 +75,8 @@ export class WatcherDrafts extends WatcherReads {
 			});
 			return false;
 		}
+		// Nothing still running: queue after the ordinary debounce. Do not wait out the quiet window (issue #72).
+		if (due && !children && live.backgroundWork === 0) return this.stageClean(f, due);
 		// No await from here to the set: an ssh check above can outlast another fire's whole window.
 		const waiting = this.quietUntil.has(live.id);
 		this.quietUntil.set(live.id, Date.now() + t.quietMs);
