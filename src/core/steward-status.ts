@@ -22,8 +22,7 @@ export function stewardStatus(store: Store, id?: string): StatusLine[] {
 	const undischarged = store.wakes.rows("delivered", null).filter((r) => {
 		const led = store.steward.ledger(r.id);
 		if (!led || led.origin === "unrecoverable") return false;
-		const hw = store.steward.transfer(led.gen)?.receiptHw;
-		return !isDischarged(store, r.id, hw);
+		return !isDischarged(store, r.id);
 	});
 	lines.push(`undischarged Steward deliveries: ${undischarged.length}`);
 	for (const r of undischarged.slice(0, 20)) {

@@ -87,7 +87,7 @@ describe("J. rollback (M1)", () => {
 		});
 
 		transferPass(store, clock.t);
-		expect(isDischarged(store, rId, store.steward.transfer(1)?.receiptHw)).toBe(true);
+		expect(isDischarged(store, rId)).toBe(true);
 		expect(store.steward.transfer(1)?.closedAt).toBeDefined();
 		expect(store.steward.transfer(2)?.closedAt).toBeDefined();
 	});

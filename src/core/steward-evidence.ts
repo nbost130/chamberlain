@@ -19,8 +19,7 @@ function shouldScan(store: Store, row: OutboxRow, filterGen: number | undefined)
 	const led = store.steward.ledger(row.id);
 	if (!led || led.origin === "unrecoverable") return false;
 	if (filterGen !== undefined && led.gen !== filterGen) return false;
-	const hw = store.steward.transfer(led.gen)?.receiptHw;
-	return !isDischarged(store, row.id, hw);
+	return !isDischarged(store, row.id);
 }
 
 function recordHit(store: Store, row: OutboxRow, hit: ReceiptHit, now: number): void {

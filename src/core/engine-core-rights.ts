@@ -61,8 +61,12 @@ export abstract class CoreRights extends CoreBase {
 	 * (relay.ts, `rightsNow`), and the standalone prerequisite for that state: the full block (or the unreadable notice), stamped `full` with the
 	 * state it was composed for, so its delivery writes the durable record. The row it goes ahead of follows exactly as it was queued.
 	 */
-	protected async rightsNow() {
-		const steward = this.privateFile("steward-thread"),
+	/**
+	 * Rights identity reads the generation (MAX(gen)'s thread), not the mirrored config file (B1).
+	 * Optional `steward` is the send's generation snapshot when the relay supplies one.
+	 */
+	protected async rightsNow(o?: { steward?: string }) {
+		const steward = o?.steward ?? this.store.steward.current()?.thread ?? this.privateFile("steward-thread"),
 			session = await this.stewardSession(),
 			rules = this.rightsRules();
 		const hash = rules === undefined ? undefined : rightsHash(steward, rules);

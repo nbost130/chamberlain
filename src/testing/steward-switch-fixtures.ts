@@ -5,26 +5,19 @@
 import { afterEach } from "bun:test";
 import {
 	chmodSync,
-	closeSync,
 	existsSync,
-	fsyncSync,
-	linkSync,
 	mkdirSync,
 	mkdtempSync,
-	openSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
-	unlinkSync,
 	writeFileSync,
-	writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname } from "node:path";
 import { writeConfigFile } from "../core/layout.ts";
 import { openStore } from "../core/sqlite-store.ts";
-import { seedGen1, switchRefName, switchRefPath } from "../core/steward-gens.ts";
+import { publishSwitchRef, seedGen1, switchRefName } from "../core/steward-gens.ts";
 import type { Store } from "../core/store.ts";
 import { memStore } from "./store.ts";
 
@@ -131,40 +124,6 @@ export function useStewardSwitchFixtures() {
 	const diskStore = (state: string): Store => {
 		mkdirSync(state, { recursive: true, mode: 0o700 });
 		return openStore(`${state}/chamberlain.db`);
-	};
-
-	/** Publish switch-owned ref via temp + link (never overwrite). Mode 0600. */
-	const publishSwitchRef = (conf: string, switchId: string, kind: "wake" | "compact", body: string): boolean => {
-		const final = switchRefPath(conf, switchId, kind);
-		mkdirSync(dirname(final), { recursive: true, mode: 0o700 });
-		if (existsSync(final)) return false;
-		const tmp = `${final}.tmp-${process.pid}-${Math.random().toString(16).slice(2)}`;
-		const fd = openSync(tmp, "w", 0o600);
-		try {
-			writeSync(fd, body);
-			fsyncSync(fd);
-		} finally {
-			closeSync(fd);
-		}
-		chmodSync(tmp, 0o600);
-		try {
-			linkSync(tmp, final);
-		} catch {
-			unlinkSync(tmp);
-			return false;
-		}
-		try {
-			const dirFd = openSync(dirname(final), "r");
-			try {
-				fsyncSync(dirFd);
-			} finally {
-				closeSync(dirFd);
-			}
-		} catch {
-			// best-effort directory sync
-		}
-		unlinkSync(tmp);
-		return true;
 	};
 
 	const writeSwitchRefs = (conf: string, switchId: string, o: { wakeUrl?: string; compactUrl?: string } = {}) => {

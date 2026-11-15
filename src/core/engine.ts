@@ -122,9 +122,10 @@ export class Core extends CoreWork {
 			gate: this.stewardGate,
 			log: this.log,
 			alarm: this.alarm,
+			conf: this.conf,
 			...this.d.relay,
 			...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
-			rightsNow: () => this.rightsNow(),
+			rightsNow: (o) => this.rightsNow(o),
 			onDelivered: (id) => recordAnswerDelivered(this.store, id),
 		});
 	}

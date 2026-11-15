@@ -32,13 +32,12 @@ function rootIdOf(store: Store, rowId: number): { rootOutboxId: number; rootDeli
 
 /** Unseen delivered Steward rows ledgered at fromGen that need a transfer item. */
 function transferSet(store: Store, fromGen: number): number[] {
-	const hw = store.steward.transfer(fromGen)?.receiptHw;
 	return store.wakes
 		.rows("delivered", null)
 		.filter((r) => {
 			const led = store.steward.ledger(r.id);
 			if (!led || led.gen !== fromGen || led.origin === "unrecoverable") return false;
-			return !isDischarged(store, r.id, hw);
+			return !isDischarged(store, r.id);
 		})
 		.map((r) => r.id);
 }
@@ -86,9 +85,13 @@ export function holdTransferItem(
 	});
 }
 
+/** UTF-8 encoded size of a composed transfer message (V2-M1 / M1). */
+export const encodedBytes = (message: string): number => Buffer.byteLength(message, "utf8");
+
 /**
- * Compose held transfer items into one digest, capping count and encoded size.
- * Overflow stays held for the next pass (paced by the gate / backpressure).
+ * Compose held transfer items into one digest, capping count and UTF-8 encoded size at the
+ * real composeWake framing. A single oversized frozen payload is admitted alone (never discarded);
+ * overflow beyond the first item stays held for the next pass (paced by the gate).
  */
 export function composeTransferBatch(
 	held: HeldItem[],
@@ -102,7 +105,14 @@ export function composeTransferBatch(
 	for (const item of transfers) {
 		const next = [...batch, item];
 		const trial = composeWake(next, now);
-		if (batch.length > 0 && (next.length > maxItems || trial.message.length > maxBytes)) break;
+		const bytes = encodedBytes(trial.message);
+		if (batch.length === 0) {
+			// Non-discarding: first item always goes, alone if already over the byte cap.
+			batch.push(item);
+			if (bytes > maxBytes) break;
+			continue;
+		}
+		if (next.length > maxItems || bytes > maxBytes) break;
 		batch.push(item);
 	}
 	return batch.length ? composeWake(batch, now) : undefined;
@@ -126,7 +136,7 @@ function tryClose(store: Store, t: StewardTransfer, now = Date.now()): boolean {
 	const roots = new Set(items.map((i) => i.rootOutboxId));
 	for (const id of transferSet(store, t.fromGen)) roots.add(id);
 	for (const root of roots) {
-		if (!isDischarged(store, root, t.receiptHw)) return false;
+		if (!isDischarged(store, root)) return false;
 	}
 	store.tx(() => store.steward.closeTransfer(t.fromGen, now));
 	return true;

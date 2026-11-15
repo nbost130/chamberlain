@@ -68,3 +68,6 @@ export type ReceiptHit = {
 /** Caps for one transfer/adoption replay digest (V2-M1): overflow stays held and is paced by the gate. */
 export const TRANSFER_DIGEST_MAX_ITEMS = 5;
 export const TRANSFER_DIGEST_MAX_BYTES = 24_000;
+
+/** How long after the current switch notice is delivered with no counting receipt before the unacknowledged alarm (G1/G2). */
+export const SWITCH_NOTICE_STALL_MS = 20 * 60_000;

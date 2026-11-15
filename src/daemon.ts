@@ -21,6 +21,7 @@ import { startup } from "./core/migrate.ts";
 import { startReconciler } from "./core/obs/ledger.ts";
 import { holdRelayLock, RelayDatabaseLinkedError, type RelayLock, RelayRunningError } from "./core/singleton.ts";
 import { evidencePass } from "./core/steward-evidence.ts";
+import { checkSwitchNotice } from "./core/steward-notice.ts";
 import { recoverSteward } from "./core/steward-recover.ts";
 import { transferPass } from "./core/steward-transfer.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
@@ -40,6 +41,8 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 	}
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
 	startup({ migrate: true, log });
+	/** Bound once the engine exists; recovery/notice before that no-ops until raise is wired. */
+	let raise: (key: string, title: string, summary: string) => void = () => {};
 	// Steward switch recovery (§2.7): seed, clear attempt_gen, adopt, mirror, evidence, transfer — before modules/engine.
 	const t3db = t3StateDbPath();
 	recoverSteward({
@@ -47,11 +50,13 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 		conf: CONF,
 		log,
 		findReceipt: (c) => findReceipt(t3db, { ...c, threads: undefined }),
+		alarm: (k, t, s) => raise(k, t, s),
 	});
 	setInterval(() => {
 		try {
 			evidencePass(store, (c) => findReceipt(t3db, c));
 			transferPass(store);
+			checkSwitchNotice(store, raise);
 		} catch (e) {
 			log("steward-pass-error", { error: String(e).slice(0, 200) });
 		}
@@ -71,7 +76,6 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 	}, 24 * 3600_000);
 
 	/** Adapters are made before the engine that raises their alarms, so the alarm is bound once the engine exists. */
-	let raise: (key: string, title: string, summary: string) => void = () => {};
 	const servers = loadServers(CONF).map((server) => ({
 		server,
 		adapter: makeAdapter(server, { conf: CONF, state: STATE, store, log, alarm: (k, t, s) => raise(k, t, s) }),

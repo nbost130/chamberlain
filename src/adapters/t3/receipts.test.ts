@@ -171,7 +171,7 @@ describe("receipts D1–D6 and fail-closed association", () => {
 		const receipt = store.steward.receiptFor(rId);
 		expect(receipt).toBeDefined();
 		expect(receipt!.id).toBeGreaterThan(hw);
-		expect(isDischarged(store, rId, hw)).toBe(false);
+		expect(isDischarged(store, rId)).toBe(false);
 		t3.close();
 	});
 

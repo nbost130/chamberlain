@@ -5,8 +5,11 @@
  */
 import { Database } from "bun:sqlite";
 
-/** Matches T3's wake-template line: `Delivery id: <webhook-data-H>ID</webhook-data-H>`. */
-const FENCE_RE = /Delivery id:\s*<webhook-data-[^>]+>([^<]*)<\/webhook-data-[^>]+>/g;
+/**
+ * Approved outer line: matching open/close fence tokens, exact fenced content (no trim),
+ * no newlines inside the fence. Template drift / mismatched tokens fail closed.
+ */
+const FENCE_RE = /^Delivery id: <webhook-data-([A-Za-z0-9]+)>([^<\r\n]*)<\/webhook-data-\1>$/gm;
 
 export type ReceiptCandidate = {
 	outboxId: number;
@@ -24,11 +27,11 @@ export type ReceiptMatch = {
 	recordedAt: number;
 };
 
-/** The last fenced Delivery-id line in a user message, or undefined when the outer template is absent (fail closed). */
+/** The last approved fenced Delivery-id line in a user message, or undefined when the outer template is absent/malformed (fail closed). */
 export function lastFencedDeliveryId(text: string): string | undefined {
 	let last: string | undefined;
 	for (const m of text.matchAll(FENCE_RE)) {
-		const id = m[1]?.trim();
+		const id = m[2];
 		if (id) last = id;
 	}
 	return last;

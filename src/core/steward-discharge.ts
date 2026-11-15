@@ -1,16 +1,23 @@
 /**
- * Discharge: a receipt on a root or any descendant transfer item closes the obligation.
- * A receipt on generation F counts only when receipt.id ≤ transfer(F).receipt_hw (D6).
+ * Discharge: one counting-receipt predicate for transfer, retention and status.
+ * Each envelope uses its own ledger generation's retirement cutoff (B2/B3).
  */
 
 import type { TransferItem } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 
-/** True when outboxId itself has a counting receipt under optional high-water. */
-function ownReceipt(store: Store, outboxId: number, hw?: number): boolean {
+/**
+ * True when `outboxId` has a receipt that still counts for its own ledger generation.
+ * A receipt on generation F counts only when `receipt.id ≤ transfer(F).receipt_hw` (or F has no transfer yet).
+ * Unledgered rows never count as discharged via their own receipt (retention must not erase them).
+ */
+export function countingReceipt(store: Store, outboxId: number): boolean {
 	const r = store.steward.receiptFor(outboxId);
 	if (!r) return false;
-	return hw === undefined || r.id <= hw;
+	const led = store.steward.ledger(outboxId);
+	if (!led) return false;
+	const t = store.steward.transfer(led.gen);
+	return t === undefined || r.id <= t.receiptHw;
 }
 
 /** Transfer items whose root or orig is this outbox id (open and closed transfers). */
@@ -26,15 +33,13 @@ function itemsForRoot(store: Store, rootOutboxId: number): TransferItem[] {
 
 /**
  * True when this root (or orig) is discharged: a counting receipt on itself, or on any
- * outbox row that carries a transfer item descended from it (any generation in the chain).
+ * descendant transfer envelope whose own generation cutoff still admits its receipt.
  */
-export function isDischarged(store: Store, rootOutboxId: number, hw?: number): boolean {
-	// High-water gates only the root's own receipt (D6: late completions on a retired gen).
-	// A receipt on any descendant transfer item discharges the chain (M1 / J2 / J3).
-	if (ownReceipt(store, rootOutboxId, hw)) return true;
+export function isDischarged(store: Store, rootOutboxId: number): boolean {
+	if (countingReceipt(store, rootOutboxId)) return true;
 	for (const item of itemsForRoot(store, rootOutboxId)) {
 		const row = store.wakes.find(item.itemId);
-		if (row && ownReceipt(store, row.id)) return true;
+		if (row && countingReceipt(store, row.id)) return true;
 	}
 	return false;
 }

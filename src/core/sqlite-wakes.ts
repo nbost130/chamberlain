@@ -204,23 +204,34 @@ function beginAttemptRow(c: Db, id: number, now: number, expectGen?: number): nu
 	return n;
 }
 
+/** Counting receipt for one outbox id: own ledger gen's transfer cutoff (same predicate as steward-discharge). */
+const COUNTING_RECEIPT_SQL = `(
+	EXISTS (
+		SELECT 1 FROM steward_receipts r
+		JOIN steward_deliveries d ON d.outbox_id = r.outbox_id
+		LEFT JOIN steward_transfers t ON t.from_gen = d.gen
+		WHERE r.outbox_id = $oid AND (t.from_gen IS NULL OR r.id <= t.receipt_hw)
+	)
+)`;
+
 function pruneWakes(c: Db, before: number): number {
+	// Steward-lane delivered rows prune only when ledgered and counting-discharged (or unrecoverable).
+	// Unledgered Steward rows never prune. Desk/cancelled prune as before.
 	return c.run(
 		`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
 			 AND id NOT IN (SELECT m.outbox_id FROM outbox_members m JOIN claims c ON c.delivery_id = m.delivery_id JOIN items i ON i.id = c.item_id WHERE i.state != 'resolved')
 			 AND (
 			   receiver IS NOT NULL
 			   OR status = 'cancelled'
-			   OR NOT EXISTS (SELECT 1 FROM steward_deliveries d WHERE d.outbox_id = outbox.id)
 			   OR EXISTS (
 			     SELECT 1 FROM steward_deliveries d WHERE d.outbox_id = outbox.id AND (
 			       d.origin = 'unrecoverable'
-			       OR EXISTS (SELECT 1 FROM steward_receipts r WHERE r.outbox_id = outbox.id)
+			       OR ${COUNTING_RECEIPT_SQL.replaceAll("$oid", "outbox.id")}
 			       OR EXISTS (
 			         SELECT 1 FROM transfer_items ti
 			         JOIN outbox_members m ON m.delivery_id = ti.item_id
-			         JOIN steward_receipts r2 ON r2.outbox_id = m.outbox_id
-			         WHERE ti.root_outbox_id = outbox.id OR ti.orig_outbox_id = outbox.id
+			         WHERE (ti.root_outbox_id = outbox.id OR ti.orig_outbox_id = outbox.id)
+			           AND ${COUNTING_RECEIPT_SQL.replaceAll("$oid", "m.outbox_id")}
 			       )
 			     )
 			   )

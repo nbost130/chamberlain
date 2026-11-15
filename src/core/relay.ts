@@ -132,9 +132,11 @@ function sanitizeResult(res: WakeResult): WakeResult {
 }
 
 /** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its text URL-redacted. */
-async function post(l: Lane, row: OutboxRow): Promise<WakeResult> {
+async function post(l: Lane, row: OutboxRow, target?: string): Promise<WakeResult> {
 	try {
-		return sanitizeResult(await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId)));
+		return sanitizeResult(
+			await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId), target ? { target } : undefined),
+		);
 	} catch (e) {
 		return { ok: false, error: redactUrls(e instanceof Error ? e.message : String(e)) };
 	}

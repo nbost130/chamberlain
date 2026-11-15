@@ -7,6 +7,7 @@ import { type AdoptFindReceipt, adoptPass } from "./steward-adopt.ts";
 import { finishMirrors } from "./steward-commit.ts";
 import { type EvidenceFinder, evidencePass } from "./steward-evidence.ts";
 import { seedGen1 } from "./steward-gens.ts";
+import { checkSwitchNotice } from "./steward-notice.ts";
 import { transferPass } from "./steward-transfer.ts";
 import type { Store } from "./store.ts";
 
@@ -16,6 +17,7 @@ export type RecoverDeps = {
 	log: Log;
 	findReceipt: AdoptFindReceipt & EvidenceFinder;
 	now?: number;
+	alarm?: (key: string, title: string, summary: string) => void;
 };
 
 export type RecoverCounts = {
@@ -36,6 +38,7 @@ export function recoverSteward(d: RecoverDeps): RecoverCounts {
 	const mirrors = finishMirrors(d.store, d.conf);
 	const receipts = evidencePass(d.store, d.findReceipt, { now });
 	const xfer = transferPass(d.store, now);
+	if (d.alarm) checkSwitchNotice(d.store, d.alarm, now);
 	const counts: RecoverCounts = {
 		seeded,
 		adopted: adopt.adopted,

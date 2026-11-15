@@ -54,8 +54,7 @@ describe("A. in-flight POSTs at switch commit", () => {
 		transferPass(store, clock.t);
 		const item = store.steward.transferItemForOrig(1, row.id);
 		expect(item).toBeDefined();
-		const hw = store.steward.transfer(1)!.receiptHw;
-		expect(isDischarged(store, row.id, hw)).toBe(false);
+		expect(isDischarged(store, row.id)).toBe(false);
 
 		const composed = store.wakes.compose(clock.t, (held) =>
 			composeWake(
@@ -73,7 +72,7 @@ describe("A. in-flight POSTs at switch commit", () => {
 			thread: "thread-g2",
 			recordedAt: clock.t,
 		});
-		expect(isDischarged(store, row.id, hw)).toBe(true);
+		expect(isDischarged(store, row.id)).toBe(true);
 	});
 
 	test("A2: POST refused — R retried at g2 with no transfer item", async () => {
