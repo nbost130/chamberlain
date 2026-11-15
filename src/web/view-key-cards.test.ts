@@ -13,6 +13,7 @@ import { newToken, TOKEN_HEADER } from "../core/capability.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";
+import { VIEW_KEY_CARD_TYPES } from "./view-key.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3795";
@@ -104,7 +105,8 @@ describe("the view key answers a question card waiting in another thread", () =>
 				{ choice: 1, sig: q.sig },
 			);
 			expect([r.status, await r.json(), r.headers.get("set-cookie")]).toEqual([200, { ok: true, choice: "B" }, null]);
-			expect(s.answers).toEqual([[q.id, 1, q.sig]]);
+			// the kinds it may answer go with it, so mirror.answer checks them again on the card it sends (waiting.test.ts)
+			expect(s.answers).toEqual([[q.id, 1, q.sig, VIEW_KEY_CARD_TYPES]]);
 			expect(s.logs.filter((l) => l.event === "card-answered")).toEqual([
 				{ event: "card-answered", id: q.id, status: 200, key: "view" },
 			]);

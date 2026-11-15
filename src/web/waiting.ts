@@ -197,12 +197,15 @@ async function sendReserved(
  * Answers a listed card with one of its options. The checks here are the core's: the card is still listed, it is an
  * answerable kind, the choice is one of its options, the fingerprint is the one the operator saw, and this card as
  * shown has not been sent already. Re-reading it live and sending the answer is the adapter's.
+ * `only`, when given, is the kinds this caller may answer (the view key: a question card, src/web/view-key.ts). It is checked HERE, on the card the
+ * fingerprint is checked against and the answer is reserved for, with no await between: a card listed as a question when a request was let in,
+ * and replaced under the same id by an approval before its turn came, is refused, not approved.
  */
 async function answerCard(
 	d: WaitingDeps,
 	st: WaitingState,
 	id: string,
-	{ choice, sig }: { choice: unknown; sig: unknown },
+	{ choice, sig, only }: { choice: unknown; sig: unknown; only?: ReadonlySet<string> },
 ): Promise<AnswerReply> {
 	const checked = checkCard(
 		[...st.byServer.values()].flat().find((c) => c.id === id),
@@ -211,6 +214,8 @@ async function answerCard(
 	);
 	if (!checked.ok) return { status: checked.status, body: checked.body };
 	const card = checked.card;
+	if (only && (!only.has(card.type) || needsConfirmation(card)))
+		return { status: 403, body: { error: "refused: this kind of card is not answered with the key you used" } };
 	const pair = d.servers().find((x) => x.server.name === card.server);
 	if (!pair || !has(pair.adapter, "answer"))
 		return { status: 403, body: { error: `answer it in its thread on ${card.server}` } };
@@ -244,7 +249,8 @@ export function createWaiting(d: WaitingDeps) {
 	const list = () => [...st.byServer.values()].flat();
 	/** Servers whose last read failed, so the view can say its list may be missing what waits there. */
 	const unreachable = () => [...st.failing].map(([server, since]) => ({ server, since }));
-	const answer = (id: string, choice: unknown, sig: unknown) => answerCard(d, st, id, { choice, sig });
+	const answer = (id: string, choice: unknown, sig: unknown, only?: ReadonlySet<string>) =>
+		answerCard(d, st, id, { choice, sig, only });
 
 	const secret = (q: SecretAsk) => secretRequest(d, st, q);
 

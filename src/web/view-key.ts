@@ -44,11 +44,13 @@ const ITEM_WRITE = new RegExp(`^/api/items/Q-[a-z0-9]{4,16}/(${VIEW_KEY_WRITES.j
 /**
  * `POST /api/cards/<id>/answer`: a card waiting in another thread, answered from the Decisions view. Only a QUESTION card (`VIEW_KEY_CARD_TYPES`),
  * which takes no confirmation; an approval, a goal proposal, a secret and a machine link are refused to the view key inside the route
- * (./app-routes.ts cardsRoute), and `/confirm` (the approvals' first step) is not on this list at all. Why this adds no power the view key lacked:
- * it already answers every Chamberlain question, `only-you` ones included, and a thread-routed option already reaches a thread as the
- * principal's words; a question card is the same kind of choice, asked in a thread instead of through `chamberlain ask`.
+ * (./view-key-cards.ts, and again where the answer is sent: ./waiting.ts answerCard `only`), and `/confirm` (the approvals' first step) is not on
+ * this list at all. This is a NEW permission, granted on purpose (Nathan, 2026-11-15): it resolves a builder's pending question request in T3 as
+ * the principal's answer (`runtime-request.respond`), which no item answer reaches. Its harm is of the kind the view key already carried: it
+ * answers every Chamberlain question for the principal, `only-you` ones included, and a thread-routed option already reaches a thread as the
+ * principal's words. What runs or commits to something (an approval, a goal) stays the full page's, behind its server-checked confirmation.
  */
-export const CARD_ANSWER_PATH = /^\/api\/cards\/C-[0-9a-f]{12}\/answer$/;
+const CARD_ANSWER_PATH = /^\/api\/cards\/C-[0-9a-f]{12}\/answer$/;
 /** The kinds of card the view key may answer: a question card. Never an approval or goal (they run or commit to something), a secret or a link. */
 export const VIEW_KEY_CARD_TYPES: ReadonlySet<string> = new Set(["question"]);
 /** The fields a view-key card answer may carry: the option chosen and the card's fingerprint as the view showed it. No confirmation, no note. */
