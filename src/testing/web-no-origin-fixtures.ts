@@ -113,7 +113,6 @@ export function useWebNoOriginFixtures() {
 	/** What a request that proves nothing but a header key must be refused, whatever its Origin: the same list for every credential below. */
 	const REFUSED: [string, string, unknown?][] = [
 		["GET", "/api/items/Q-abcd"],
-		["GET", "/evidence/Q-evid/shot.png"],
 		["GET", "/api/health"],
 		["POST", "/api/accept-all", { ids: ["Q-abcd"] }],
 		["POST", "/api/cards/C-0123456789ab/confirm", { choice: 0, sig: "s1" }],
@@ -130,10 +129,12 @@ export function useWebNoOriginFixtures() {
 	];
 
 	/**
-	 * The four ways to put off, bring back or settle a question without choosing an option. The page key with no Origin or from a frame still gets none of them;
-	 * the VIEW key gets them in place (src/web/view-key.ts, view-key.test.ts), so they are refused here to the page key alone.
+	 * The four ways to put off, bring back or settle a question without choosing an option, and a question's listed evidence. The page key with no Origin or
+	 * from a frame still gets none of them; the VIEW key gets them (src/web/view-key.ts, view-key.test.ts, view-key-evidence.test.ts), so they are refused
+	 * here to the page key alone.
 	 */
 	const REFUSED_TO_THE_PAGE_KEY: [string, string, unknown?][] = [
+		["GET", "/evidence/Q-evid/shot.png"],
 		["POST", "/api/items/Q-abcd/snooze", { until: "2099-01-01T00:00:00.000Z" }],
 		["POST", "/api/items/Q-abcd/unsnooze", {}],
 		["POST", "/api/items/Q-abcd/direction", { note: "go with A" }],

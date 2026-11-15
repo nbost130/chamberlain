@@ -1,16 +1,20 @@
 // The decision queue for T3's inline chat frames. The Steward renders only a two-line shell that loads this file, so
 // showing the queue costs it almost nothing; questions come live from /api/queue. Theme comes from T3's CSS variables.
 // This view holds only the VIEW key, and the SERVER enforces what that may do (src/web/view-key.ts): it may GET /api/queue, /api/recent and
-// /api/rulings, and POST an item's answer (a choice, never a note), snooze, un-snooze, direction and dismiss, and nothing else. The pill buttons along
-// each card's bottom edge, and on each row of the Snoozed tab, do those in place: one tap is one request, no confirmation, no page change. It never
-// answers a card or an approval, never saves a ruling and never reads one item on its own: those are done on the full queue page, which the links open.
+// /api/rulings, GET the evidence files a question it reads lists, and POST an item's answer (a choice, never a note), snooze, un-snooze, direction and
+// dismiss, and nothing else. The pill buttons along each card's bottom edge, and on each row of the Snoozed tab, do those in place: one tap is one
+// request, no confirmation, no page change. It never answers a card or an approval, never saves a ruling and never reads one item on its own: those
+// are done on the full queue page, which the links open. Everything the full page SHOWS of a question, this view shows too (the parity test,
+// src/web/inline-parity.test.ts, fails when the page shows a field this view does not).
 (() => {
 	const SRC = new URL(document.currentScript.src);
 	// A phone lays out a page with no viewport tag at desktop width and shrinks it to fit, so the view reads tiny.
 	// Shells posted before the tag was added to them get it here.
 	try { if (document.head && !document.querySelector('meta[name="viewport"]')) { const m = document.createElement("meta"); m.name = "viewport"; m.content = "width=device-width, initial-scale=1"; document.head.append(m); } } catch { /* a page without a head keeps its layout */ }
 	const BASE = SRC.origin;
-	// The view key (never the page key: a Decisions post is copied into the thread) rides on this script's own address (?k=). Every call proves it with a header; the image links below carry it as ?k= too, but the page serves evidence only to its own link or cookie.
+	// The view key (never the page key: a Decisions post is copied into the thread) rides on this script's own address (?k=). Every call proves it with a
+	// header; an <img> or <video> cannot send one, so evidence addresses carry it as ?k= (the server serves the view key a file its question lists, and
+	// nothing else by it: src/web/view-key.ts).
 	// A 401 means the key is missing, or it was rotated since this view was made: say so instead of showing an empty queue.
 	const KEY = SRC.searchParams.get("k") || "";
 	const kq = KEY ? `?k=${encodeURIComponent(KEY)}` : "";
@@ -44,7 +48,9 @@
 .dq-kind.only-you{color:var(--destructive)}.dq-kind.product{color:var(--chart-4)}.dq-kind.ruling{color:var(--warning)}.dq-kind.idea{color:var(--success)}.dq-kind.thread{color:var(--info)}.dq-kind.approval,.dq-kind.secret,.dq-kind.link{color:var(--warning)}.dq-kind.goal{color:var(--primary)}
 .dq-cmd{font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;word-break:break-all;background:var(--code-background,var(--muted));border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin:0;max-height:240px;overflow:auto}
 .dq-title{font-weight:600;font-size:15px;line-height:1.3}.dq-ctx{font-size:13px;color:var(--muted-foreground);line-height:1.45}.dq-ctx p{margin:0}.dq-ctx>*+*{margin-top:6px}.dq-ctx ul{margin:0;padding-left:18px}.dq-ctx li+li{margin-top:4px}
-.dq-ev{display:flex;gap:8px;overflow-x:auto}.dq-ev img{height:140px;border-radius:var(--radius);border:1px solid var(--border)}
+.dq-ev{display:flex;flex-wrap:wrap;gap:8px}.dq-ev figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%}.dq-ev img{display:block;max-height:220px;max-width:100%;object-fit:contain;border-radius:var(--radius);border:1px solid var(--border)}.dq-ev video{display:block;width:100%;max-height:320px;border-radius:var(--radius);border:1px solid var(--border)}.dq-ev figure.wide{flex:1 1 100%}.dq-ev figcaption{font-size:12px;color:var(--muted-foreground)}
+.dq-links{display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 100%}.dq-links a{color:var(--primary);overflow-wrap:anywhere}.dq-rule{font-size:13px;line-height:1.45;border-left:2px solid var(--warning);padding-left:10px}.dq-test{font-family:var(--font-mono);font-size:11px;color:var(--warning);border:1px dashed var(--warning);border-radius:var(--radius);padding:6px 10px}
+.dq-copts{display:flex;flex-direction:column;gap:4px;margin:0;padding-left:18px;font-size:13px}
 .dq-opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);min-height:48px;cursor:pointer}
 .dq-opt.sel{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,transparent)}
 .dq-opt input{margin-top:3px;accent-color:var(--primary);width:18px;height:18px}
@@ -58,11 +64,9 @@
 .dq-pill:hover,.dq-btn:hover:not(:disabled),.dq-reload:hover{background:color-mix(in srgb,var(--foreground) 13%,transparent)}.dq-pill:focus-visible,.dq-btn:focus-visible,.dq-reload:focus-visible,.dq-go:focus-visible,.dq-tab:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .dq-btn.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
 .dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
-.dq-options{display:flex;flex-wrap:wrap;gap:10px}
-.dq-btn.dq-main{font-size:16px;font-weight:600;min-height:52px;padding:14px 24px;border-radius:28px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center}
+.dq-btn.dq-main{font-size:13px;font-weight:600;min-height:38px;padding:7px 16px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center}
 .dq-btn.dq-sec,.dq-pill.dq-sec{font-size:12px;font-weight:500;min-height:34px;padding:5px 14px}
-@media(pointer:coarse){.dq-btn.dq-sec,.dq-pill.dq-sec{min-height:40px}}
-@media(max-width:520px){.dq-btn.dq-main{flex:1 1 100%}}
+@media(pointer:coarse){.dq-btn.dq-sec,.dq-pill.dq-sec{min-height:40px}.dq-btn.dq-main{min-height:44px}}
 .dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--border);margin-top:2px;padding-top:12px}
 .dq-dir{display:flex;flex-direction:column;gap:8px}
 .dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
@@ -130,22 +134,35 @@
 	const count = el("span", "dq-count", "…");
 	const reload = el("button", "dq-reload", "Refresh"); reload.type = "button";
 	const list = el("div");
+	// The full page's test-mode bar: a queue of fixture data says so here too.
+	const testBar = el("div", "dq-test", "TEST MODE: fixture data. No wake is sent and no question card is touched."); testBar.style.display = "none";
+	const testMode = (q) => { testBar.style.display = q?.testMode ? "" : "none"; };
 // How many cards still wait, so a tap that settles one updates the count at once; `refresh` re-reads the queue (the Decisions view sets it).
 let remaining = 0;
 let refresh = () => {};
-head.append(count, reload); wrap.append(head, list); root.replaceChildren(wrap);
+head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildren(wrap);
 
+	const plainHealth = el("details", "dq-health");
 	async function load() {
 		list.replaceChildren(el("div", "dq-empty", "Loading the queue…"));
 		if (ITEM) return loadOne();
 		try {
 			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
-			const items = q.items || [];
-remaining = items.length;
-count.textContent = `${items.length} waiting`;
-			if (!items.length) { list.replaceChildren(el("div", "dq-empty", "Nothing waiting. The queue is clear.")); return; }
+			testMode(q);
+			// The Steward's health, as the full page's header shows it.
+			if (!plainHealth.parent) wrap.insertBefore(plainHealth, list);
+			paintHealth(plainHealth, q.health, q.healthLimits);
+			// The questions, then the cards waiting in other threads, as the full page lists them.
+			const items = [...(q.items || []), ...(q.cards || []).map(fromCard)];
+			const later = q.snoozed || [];
+			remaining = items.length;
+			count.textContent = `${items.length} waiting`;
 			const box = el("div"); box.style.cssText = "display:flex;flex-direction:column;gap:12px";
+			if (!items.length) box.append(el("div", "dq-empty", "Nothing waiting. The queue is clear."));
 			for (const it of items) box.append(card(it));
+			// What the full page shows below the queue: the questions put off until later, each with when it returns and its one-tap actions.
+			if (later.length) box.append(el("div", "dq-meta", `SNOOZED · ${later.length}`));
+			for (const s of later) { const k = snoozedCard(s); k.update(s); box.append(k.node); }
 			list.replaceChildren(box);
 		} catch (e) {
 			count.textContent = "?";
@@ -158,6 +175,7 @@ count.textContent = `${items.length} waiting`;
 		try {
 			// An inline frame may not read one item on its own, so it finds this one in the open queue, then in the recent answers.
 			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
+			testMode(q);
 			const it = (q.items || []).find((x) => x.id === ITEM);
 			if (it) { count.textContent = "open"; list.replaceChildren(card(it)); return; }
 			// A snoozed question is not answered and not on the active list: say when it returns. The Decisions view's Snoozed tab brings it back in place; this one-question view links to the full page.
@@ -165,7 +183,7 @@ count.textContent = `${items.length} waiting`;
 			if (later) {
 				count.textContent = "snoozed";
 				const c = el("div", "dq-card");
-				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`), fullPage(later, "Un-snooze"));
+				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), metaOf(later), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`), fullPage(later, "Un-snooze"));
 				list.replaceChildren(c);
 				return;
 			}
@@ -244,15 +262,14 @@ count.textContent = `${items.length} waiting`;
 	const SNOOZE_TAP_MS = 3600000;
 	const btn = (text, cls, onTap) => { const b = el("button", `dq-btn${cls ? ` ${cls}` : ""}`, text); b.type = "button"; b.addEventListener("click", onTap); return b; };
 
-	// The buttons on a card, which act in place. The answer options are the main buttons: big, on their own row (dq-options, class dq-main), the recommended one filled.
-	// Below them the actions every card has are a smaller, quieter row (dq-actions, class dq-sec): Snooze, Dismiss, Direction, then the thread link. One tap is one
-	// request: no confirmation, no second button, no page change. Direction needs a note, so it opens a field in the same card and Send is the one tap
+	// The buttons on a card, which act in place: one row across the card (dq-actions), wrapping only when the width runs out. The answer options come first
+	// (class dq-main), only slightly bigger than the rest, the recommended one filled; then the actions every card has (class dq-sec): Snooze, Dismiss,
+	// Direction, then the thread link. One tap is one request: no confirmation, no second button, no page change. Direction needs a note, so it opens a field in the same card and Send is the one tap
 	// after it. A secret and a card pointer are settled in their own thread: they get Snooze and the thread link. The card then says what happened
 	// (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
 	function panel(it, c, settles) {
 		const msg = el("div", "dq-msg");
 		const row = el("div", "dq-actions");
-		const opts = el("div", "dq-options");
 		const dir = el("div", "dq-dir"); dir.style.display = "none";
 		const note = el("textarea"); note.placeholder = "Direction for the thread (no option chosen)"; note.rows = 2; note.setAttribute("aria-label", "Direction for the thread");
 		const sendDir = el("button", "dq-go", "Send direction"); sendDir.type = "button";
@@ -263,7 +280,7 @@ count.textContent = `${items.length} waiting`;
 		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
 		function done(text, extra, action) {
 			// A snoozed card stays on screen saying so, but is replaced by a live one if the question comes back (see waiting()).
-			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove(); opts.remove();
+			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove();
 			const own = threadLink(it);
 			row.replaceChildren(...(own ? [own] : []), ...extra);
 			tell("dq-ok", text);
@@ -281,14 +298,14 @@ count.textContent = `${items.length} waiting`;
 			} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); lock(false); }
 		}
 		const answered = (o) => (r) => `Answered: ${r.choice || o.label}. ${r.to === "thread" ? "Sent to its thread." : "Recorded; the wake to the Steward is queued."}`;
+		const acts = [];
 		if (settles) {
 			(it.options || []).forEach((o, i) => {
 				const b = btn(o.label, i === it.recommended ? "dq-main rec" : "dq-main", () => send("answer", { choice: i }, answered(o)));
 				if (i === it.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
-				taps.push(b); opts.append(b);
+				taps.push(b); acts.push(b);
 			});
 		}
-		const acts = [];
 		const act = (b) => { taps.push(b); acts.push(b); };
 		act(btn("Snooze", "dq-sec", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, (r) => `Snoozed. It returns ${returnsAt(r.until)}.`)));
 		if (settles) {
@@ -302,19 +319,58 @@ count.textContent = `${items.length} waiting`;
 		});
 		const own = threadLink(it);
 		row.append(...acts, ...(own ? [own] : []));
-		return settles ? [dir, msg, ...(opts.children.length ? [opts] : []), row] : [msg, row];
+		return settles ? [dir, msg, row] : [msg, row];
+	}
+
+	// How long ago a question was asked, worded as the full page words it (app.js agoLong).
+	const ago = (iso) => { const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} days`; };
+	// The line under a question's kind, as the full page's crumbs and list row show it: its thread, when it was asked, what it blocks (an idea has no
+	// deadline), its tag, "not now", and where the thread is when there is no link to it.
+	function metaOf(it) {
+		const bits = [it.thread, it.createdAt && Number.isFinite(Date.parse(it.createdAt)) ? `asked ${ago(it.createdAt)} ago` : "", it.blocks || (it.kind === "idea" ? "no deadline" : ""), it.tag || "", it.notNowAt ? "not now" : ""];
+		if (!threadLink(it)) bits.push([it.server, it.threadId].filter(Boolean).join(" · "));
+		return el("div", "dq-meta", bits.filter(Boolean).join(" · "));
+	}
+	// A question's evidence, as the full page shows it (app.js evidenceHtml): each video and image with its caption, then its links. A file's address
+	// carries the view key as ?k= (an <img> cannot send a header), and the server serves it only a file this question lists. An image opens full size in
+	// a new tab. A file that does not load is replaced by a note; a link that is not http(s) is shown as text, never made an href.
+	function evidence(it) {
+		const ev = it.evidence || [];
+		const url = (x) => `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`;
+		const vids = ev.filter((x) => x.type === "video" && x.path), imgs = ev.filter((x) => x.type === "image" && x.path), links = ev.filter((x) => x.type === "link" && x.url);
+		if (!vids.length && !imgs.length && !links.length) return null;
+		const box = el("div", "dq-ev");
+		const fig = (media, x, cls) => { const f = el("figure", cls); f.append(media); if (x.caption) f.append(el("figcaption", "", x.caption)); return f; };
+		for (const x of vids) {
+			const v = el("video"); v.controls = true; v.preload = "metadata"; v.setAttribute("playsinline", ""); v.src = url(x);
+			v.onerror = () => v.replaceWith(el("div", "dq-meta", "This video could not load. It shows on the full queue page."));
+			box.append(fig(v, x, "wide"));
+		}
+		for (const x of imgs) {
+			const a = el("a"); a.href = url(x); a.target = "_blank"; a.rel = "noopener";
+			const i = el("img"); i.src = url(x); i.alt = x.caption || "screenshot";
+			i.onerror = () => a.replaceWith(el("div", "dq-meta", "This image could not load. It shows on the full queue page."));
+			a.append(i); box.append(fig(a, x));
+		}
+		if (links.length) {
+			const l = el("div", "dq-links"); l.append(el("span", "dq-meta", "LINKS"));
+			for (const x of links) {
+				if (!/^https?:\/\//i.test(x.url)) { l.append(el("span", "", x.caption ? `${x.caption}: ${x.url}` : x.url)); continue; }
+				const a = el("a", "", x.caption || x.url); a.href = x.url; a.target = "_blank"; a.rel = "noopener noreferrer"; l.append(a);
+			}
+			box.append(l);
+		}
+		return box;
 	}
 
 	function card(it) {
 		const c = el("div", "dq-card");
-		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`), el("div", "dq-title", it.title));
+		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`));
+		if (!it.mirrored) c.append(metaOf(it));
+		c.append(el("div", "dq-title", it.title));
 		if (it.context) c.append(context(it.context));
-		const imgs = (it.evidence || []).filter((x) => x.type === "image" && x.path);
-		if (imgs.length) {
-			const ev = el("div", "dq-ev");
-			for (const x of imgs) { const i = el("img"); i.src = `${BASE}/evidence/${encodeURIComponent(it.id)}/${encodeURIComponent(x.path)}${kq}`; i.alt = x.caption || "evidence"; i.onerror = () => i.replaceWith(el("div", "dq-meta", "Image evidence shows on the full queue page.")); ev.append(i); }
-			c.append(ev);
-		}
+		const ev = it.mirrored ? null : evidence(it);
+		if (ev) c.append(ev);
 		if (it.secret) {
 			// The server says `ended` once no secret box waits in the thread (it timed out, or was cancelled or answered): never point at a box that is gone.
 			if (it.secretRequest === "ended") c.append(el("div", "dq-msg dq-expired", "Request expired. Its secret box is closed: ask the thread to reopen it."));
@@ -328,7 +384,14 @@ count.textContent = `${items.length} waiting`;
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
 			c.insertBefore(where, c.children[1]);
 			// An approval's command, exactly as T3 holds it: what is read is what would be approved.
-			if ((m.type === "approval" || m.type === "goal") && m.command) c.append(el("pre", "dq-cmd", m.command));
+			if (m.command) c.append(el("pre", "dq-cmd", m.command));
+			// Its options, as the full page lists them (read here, chosen there); a card the page cannot answer says why instead.
+			if (m.answerable === false) c.append(el("div", "dq-msg", m.why || "Answer it in its thread."));
+			else if (m.options?.length) {
+				const ol = el("ul", "dq-copts");
+				m.options.forEach((o, k) => ol.append(el("li", "", `${o.label}${k === m.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`)));
+				c.append(ol);
+			}
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
 			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
 			c.append(linkOut("Open the queue page", "/", false, "dq-pill"));
@@ -338,8 +401,42 @@ count.textContent = `${items.length} waiting`;
 		}
 		// What each option means, as the card showed it before the options became buttons: the buttons carry the labels, this carries the detail.
 		for (const o of it.options || []) if (o.detail) c.append(el("div", "dq-d", `${o.label}: ${o.detail}`));
+		// The ruling the question proposes, as the full page shows it beside the answer. It is saved only there (the view key never saves a ruling).
+		if (it.proposedRuling) c.append(el("div", "dq-rule", `Proposed ruling: “${it.proposedRuling}”. Save it as a ruling on the full queue page.`));
 		c.append(...panel(it, c, true));
 		return c;
+	}
+	// One card per snoozed question: when it returns, and the one-press actions its kind supports. Bring back now puts it on the waiting list at once; Dismiss
+	// closes it, except for a secret or a card pointer, which are settled in their own thread (the server refuses them): those get Bring back now and the thread link,
+	// as Waiting's panel gives them Snooze and the thread link. Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again.
+	// A card is made once per item and kept (snoozedCards), so a redraw never drops a press in flight: its lock lives with the card.
+	function snoozedCard(it) {
+		const c = el("div", "dq-card");
+		const title = el("div", "dq-title", it.title);
+		const meta = el("div", "dq-meta");
+		const msg = el("div", "dq-msg");
+		const row = el("div", "dq-actions");
+		const taps = [];
+		let sending = false;
+		const lock = (on) => { sending = on; for (const b of taps) b.disabled = on; };
+		async function act(action, said) {
+			if (sending) return;
+			lock(true); msg.className = "dq-msg"; msg.textContent = "Sending…";
+			try {
+				const r = await postItem(it.id, action, {});
+				if (r.ok) { msg.className = "dq-msg dq-ok"; msg.textContent = said; refresh(); return; }
+				msg.className = "dq-msg dq-bad"; msg.textContent = r.b.error || `HTTP ${r.status}`;
+			} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; }
+			lock(false);
+		}
+		taps.push(btn("Bring back now", "dq-sec rec", () => act("unsnooze", "Back on the waiting list.")));
+		if (!it.secret && !it.cardRequest) taps.push(btn("Dismiss", "dq-sec", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
+		const own = threadLink(it);
+		row.append(...taps, ...(own ? [own] : []));
+		c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), title, meta);
+		if (it.context) c.append(context(it.context));
+		c.append(msg, row);
+		return { node: c, update: (x) => { title.textContent = x.title; meta.textContent = `${x.thread} · returns ${returnsAt(x.snooze.until)}`; } };
 	}
 	if (DASH) { dash(); return; }
 	reload.addEventListener("click", load);
@@ -372,38 +469,6 @@ count.textContent = `${items.length} waiting`;
 		let lastHealth, lastHealthLimits;
 		let focused = false;
 		const bad = (pane, e) => pane.replaceChildren(el("div", "dq-msg dq-bad", `Could not reach the queue: ${e?.message ?? e}`));
-		// One card per snoozed question: when it returns, and the one-press actions its kind supports. Bring back now puts it on the waiting list at once; Dismiss
-		// closes it, except for a secret or a card pointer, which are settled in their own thread (the server refuses them): those get Bring back now and the thread link,
-		// as Waiting's panel gives them Snooze and the thread link. Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again.
-		// A card is made once per item and kept (snoozedCards), so a redraw never drops a press in flight: its lock lives with the card.
-		function snoozedCard(it) {
-			const c = el("div", "dq-card");
-			const title = el("div", "dq-title", it.title);
-			const meta = el("div", "dq-meta");
-			const msg = el("div", "dq-msg");
-			const row = el("div", "dq-actions");
-			const taps = [];
-			let sending = false;
-			const lock = (on) => { sending = on; for (const b of taps) b.disabled = on; };
-			async function act(action, said) {
-				if (sending) return;
-				lock(true); msg.className = "dq-msg"; msg.textContent = "Sending…";
-				try {
-					const r = await postItem(it.id, action, {});
-					if (r.ok) { msg.className = "dq-msg dq-ok"; msg.textContent = said; refresh(); return; }
-					msg.className = "dq-msg dq-bad"; msg.textContent = r.b.error || `HTTP ${r.status}`;
-				} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; }
-				lock(false);
-			}
-			taps.push(btn("Bring back now", "dq-sec rec", () => act("unsnooze", "Back on the waiting list.")));
-			if (!it.secret && !it.cardRequest) taps.push(btn("Dismiss", "dq-sec", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
-			const own = threadLink(it);
-			row.append(...taps, ...(own ? [own] : []));
-			c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), title, meta);
-			if (it.context) c.append(context(it.context));
-			c.append(msg, row);
-			return { node: c, update: (x) => { title.textContent = x.title; meta.textContent = `${x.thread} · returns ${returnsAt(x.snooze.until)}`; } };
-		}
 		const snoozedCards = new Map(); // item ID -> its card
 		function paintSnoozed(rows) {
 			tabCount("Snoozed", rows.length);
@@ -421,6 +486,7 @@ count.textContent = `${items.length} waiting`;
 		async function waiting() {
 			try {
 				const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
+				testMode(q);
 				const h = q.health;
 				lastHealth = h; lastHealthLimits = q.healthLimits;
 				paintHealth(health, h, q.healthLimits);

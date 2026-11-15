@@ -268,14 +268,22 @@ test("the view sends the page's key from its own script address on every call, a
 	expect(imgs.every((i) => i.src.endsWith(`/shot.png?k=${KEY}`))).toBe(true);
 });
 
-test("an evidence image the page refuses (the weak view key cannot read evidence) is replaced by a note that points to the full page", async () => {
-	const it = { ...item("x"), evidence: [{ type: "image", path: "shot.png", caption: "a shot" }] };
+test("an evidence image or video that does not load (a real failure: the file is gone, the network dropped) is replaced by a note that points to the full page", async () => {
+	const it = {
+		...item("x"),
+		evidence: [
+			{ type: "image", path: "shot.png", caption: "a shot" },
+			{ type: "video", path: "clip.mp4", caption: "a demo" },
+		],
+	};
 	const dq = run(() => ({ items: [it] }), { src: "http://queue.test/inline.js?view=decisions&k=k-view" });
 	await settle();
-	const img = dq.all((e) => e.tag === "img")[0]!;
-	(img as unknown as { onerror: () => void }).onerror();
-	expect(dq.all((e) => e.tag === "img")).toHaveLength(0);
-	expect(dq.textContent).toContain("Image evidence shows on the full queue page.");
+	for (const tag of ["img", "video"]) (dq.all((e) => e.tag === tag)[0] as unknown as { onerror: () => void }).onerror();
+	expect(dq.all((e) => e.tag === "img" || e.tag === "video")).toHaveLength(0);
+	expect(dq.textContent).toContain("This image could not load. It shows on the full queue page.");
+	expect(dq.textContent).toContain("This video could not load. It shows on the full queue page.");
+	// the caption stays with its note
+	expect(dq.textContent).toContain("a shot");
 });
 
 test("a mirrored card's 'Open the queue page' link carries no key: the script's key is the weak view key, and the browser's own cookie signs it in", async () => {

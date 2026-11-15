@@ -1,7 +1,8 @@
 /**
- * Which link out of the Decisions view carries a key (src/web/static/inline.js `linkOut`): the thread link, `/open/<server>/<threadId>`, and only
- * that one, and only the VIEW key the script already holds in its own address (the server accepts it on /open alone: src/web/view-key.ts). Every
- * other link out carries none, so a key is never in an address the server would not take it on. Run against the in-memory DOM (src/testing/inline-dom.ts).
+ * Which link out of the Decisions view carries a key (src/web/static/inline.js `linkOut`): the thread link, `/open/<server>/<threadId>`, and an
+ * evidence file (an image opens full size), and only those, and only the VIEW key the script already holds in its own address (the server accepts it
+ * on those two GETs alone, and an evidence file only for a name its question lists: src/web/view-key.ts). Every other link out carries none, so a key
+ * is never in an address the server would not take it on. Run against the in-memory DOM (src/testing/inline-dom.ts).
  */
 import { describe, expect, test } from "bun:test";
 import { type El, run, settle } from "../testing/inline-dom.ts";
@@ -36,22 +37,34 @@ describe("the view's links out", () => {
 		expect(rest.length).toBeGreaterThan(0); // "Open the queue page" at least
 		for (const [text, h] of rest) expect([text, h?.includes(KEY), h?.includes("k=")]).toEqual([text, false, false]);
 	});
-	test("among links (anchors), only the /open href carries the key, in its query; an evidence image's own `src` carries it as before, and nothing else does", async () => {
-		const withImage = { ...threadItem, evidence: [{ type: "image", path: "shot.png", caption: "a shot" }] };
-		const dq = run(() => ({ items: [withImage] }), { src: SRC, window: { parent: {} } });
+	test("among links (anchors), only /open and an evidence file carry the key, in their query; an evidence image's and video's own `src` carry it too, and nothing else does", async () => {
+		const withEvidence = {
+			...threadItem,
+			evidence: [
+				{ type: "image", path: "shot.png", caption: "a shot" },
+				{ type: "video", path: "clip.mp4", caption: "a demo" },
+				{ type: "link", url: "https://example.com/spec", caption: "the spec" },
+			],
+		};
+		const dq = run(() => ({ items: [withEvidence] }), { src: SRC, window: { parent: {} } });
 		await settle();
+		const k = `?k=${encodeURIComponent(KEY)}`;
+		const file = (name: string) => `http://queue.test/evidence/${withEvidence.id}/${name}${k}`;
 		expect(hrefs(dq)).toEqual([
-			["Open the thread", `http://queue.test/open/mithrandir/t1?k=${encodeURIComponent(KEY)}`],
+			["", file("shot.png")],
+			["the spec", "https://example.com/spec"],
+			["Open the thread", `http://queue.test/open/mithrandir/t1${k}`],
 		]);
 		const carrying = dq.all(
 			(e) =>
 				JSON.stringify([e.href, e.attrs, e.textContent]).includes(KEY) ||
 				String((e as { src?: unknown }).src ?? "").includes(KEY),
 		);
-		expect(carrying.map((e) => e.tag).sort()).toEqual(["a", "img"]);
-		// the evidence image is not a link out, and the server serves evidence to the page's own link or cookie only, so its `?k=` buys nothing (view-key.test.ts)
-		expect(dq.all((e) => e.tag === "img").map((e) => (e as { src?: string }).src)).toEqual([
-			`http://queue.test/evidence/${withImage.id}/shot.png?k=${encodeURIComponent(KEY)}`,
+		expect(carrying.map((e) => e.tag).sort()).toEqual(["a", "a", "img", "video"]);
+		// the server serves the view key an evidence file its question lists, and nothing else by `?k=` (view-key-evidence.test.ts)
+		expect(dq.all((e) => e.tag === "img" || e.tag === "video").map((e) => (e as { src?: string }).src)).toEqual([
+			file("clip.mp4"),
+			file("shot.png"),
 		]);
 	});
 	test("a view with no key in its address puts none on any link, /open included", async () => {

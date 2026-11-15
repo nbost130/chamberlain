@@ -109,7 +109,10 @@ export function useWebViewKeyFixtures() {
 		["answer", `/api/items/${id}/answer`, { choice: 1 }],
 	];
 
-	/** Every other write or read, each refused to the view key whatever its origin. */
+	/**
+	 * Every other write or read, each refused to the view key whatever its origin. Evidence is not here: the view key may GET a file its
+	 * question lists (src/web/view-key-evidence.test.ts holds what it is still refused there).
+	 */
 	const REFUSED: [string, string, unknown?][] = [
 		["POST", "/api/items/Q-abcd/not-now", {}],
 		["POST", "/api/accept-all", { ids: ["Q-abcd"] }],
@@ -122,7 +125,6 @@ export function useWebViewKeyFixtures() {
 		["POST", "/api/items/Q-abcd/answer", { choice: 0, saveRuling: true, rulingWording: "Always merge" }],
 		["POST", "/api/items/Q-abcd/answer", { choice: 0, by: "batch" }],
 		["GET", "/api/items/Q-abcd"],
-		["GET", "/evidence/Q-abcd/shot.png"],
 		["GET", "/"],
 		["GET", "/rulings"],
 	];

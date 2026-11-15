@@ -2,11 +2,16 @@
 import { TOKEN_HEADER, TOKEN_PARAM } from "../core/capability.ts";
 import type { AppDeps, Ctx } from "./app-ctx.ts";
 import { fail, inlineCors, inlineVerdict, isJsonContentType, withSecurity } from "./app-http.ts";
+import { viewKeyReadable } from "./app-routes.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { openPage } from "./thread-links.ts";
-import { OPEN_PATH, viewKeyVerdict } from "./view-key.ts";
+import { EVIDENCE_PATH, OPEN_PATH, viewKeyVerdict } from "./view-key.ts";
 
-function evidence(ctx: Ctx, url: URL): Response {
+/**
+ * One evidence file: only a name the question lists, from its own folder (./evidence.ts). `viewKey` is a request whose only proof is the view
+ * key: it is served a file only of a question its own reads show it (`viewKeyReadable`), so the file adds nothing those reads do not name.
+ */
+function evidence(ctx: Ctx, url: URL, viewKey: boolean): Response {
 	const { d } = ctx;
 	const parts = url.pathname.split("/").filter(Boolean);
 	if (parts.length !== 3) return fail(404, "not found");
@@ -18,6 +23,7 @@ function evidence(ctx: Ctx, url: URL): Response {
 	} catch {
 		return fail(404, "not found");
 	}
+	if (viewKey && !viewKeyReadable(ctx).has(itemId)) return fail(404, "not found");
 	const item = ctx.state().get(itemId);
 	const listed = (item?.evidence ?? []).flatMap((e) => (e.type !== "link" && e.path ? [e.path] : []));
 	const hit = resolveEvidence(d.state, itemId, name, listed);
@@ -118,7 +124,10 @@ export function staticResponse(d: AppDeps, req: Request, url: URL): Response | u
  *   `?k=` on a page or evidence GET (a link: the page load sets the cookie and drops the key from the address);
  *   the page key in the header, FROM THE PAGE'S OWN ORIGIN;
  *   the header with anything else: the page key from an inline frame or from a request with no Origin at all (curl, an agent), or the
- *   view key (the weak secret a Decisions post carries) from anywhere. Those get inline authority only: inlineVerdict, nothing more.
+ *   view key (the weak secret a Decisions post carries) from anywhere. Those get inline authority only: inlineVerdict, nothing more; the
+ *   view key its own list (./view-key.ts).
+ * The view key also rides as `?k=` on the two GETs of its list that are not the API: /open (never from a frame) and an evidence file (an
+ * `<img>` cannot send a header). Neither is a link that signs in: it sets no cookie, and `full` never comes of it.
  * `full` is the first three: everything the page can do. Without it a request is restricted.
  */
 export function capabilityProof(d: AppDeps, req: Request, url: URL, gate: Gate) {
@@ -130,9 +139,11 @@ export function capabilityProof(d: AppDeps, req: Request, url: URL, gate: Gate) 
 		req.method === "GET" &&
 		!inline &&
 		(isShell(url.pathname) || isOpen(url.pathname) || url.pathname.startsWith("/evidence/"));
-	// The view key opens a thread link and nothing else by `?k=`: only /open, a GET, never from a frame. It is not a link that signs in
-	// (`byLink` below is the page key's alone), so it sets no cookie and the key never leaves the address it came on.
-	const viewLink = req.method === "GET" && !inline && isOpen(url.pathname) && d.capability.acceptsView(linkKey);
+	// The view key by `?k=`: a GET of /open (never from a frame) or of one evidence file (from anywhere: the Decisions view's own `<img>` and
+	// `<video>` cannot send a header). It is not a link that signs in (`byLink` below is the page key's alone), so it sets no cookie and the
+	// key never leaves the address it came on. What it may then fetch is the view key's list (restrictedRefusal) and the evidence rules.
+	const viewLinkPath = (isOpen(url.pathname) && !inline) || EVIDENCE_PATH.test(url.pathname);
+	const viewLink = req.method === "GET" && viewLinkPath && d.capability.acceptsView(linkKey);
 	const byViewKey = !byPageKeyHeader && (d.capability.acceptsView(headerKey) || viewLink);
 	// A cookie reaches an item's evidence only from the page's own origin (or a direct navigation): another PORT on the same host is "same-site", not
 	// "same-origin", and must not be able to embed the evidence images with the owner's cookie. The header and ?k= are explicit and unaffected.
@@ -156,9 +167,10 @@ function viewKeyMay(req: Request, url: URL, inline: boolean): boolean {
 /**
  * Inline authority only: a null-origin frame, or a request whose only proof is a header and which has no cookie, no link and no own origin.
  * The same three reads and plain answer; anything else is refused whatever its path, so the key a post carries cannot read an item or its
- * evidence, answer a card or an approval, save a ruling or accept a batch. A refusal here is a 403, not a 401: the key is valid.
+ * evidence, answer a card or an approval, save a ruling or accept a batch (the view key's own list, ./view-key.ts, adds the listed evidence of a
+ * question its reads show it, and nothing else). A refusal here is a 403, not a 401: the key is valid.
  * A null-origin frame's own page-key requests stay exactly as they were (refused for the API; its other GETs pass), except the /open route,
- * which a frame has no use for and which did not exist when that rule was written. The view key is held to the list on every path and from
+ * which a frame has no use for and which did not exist when that rule was written. The view key is held to its list on every path and from
  * every origin, evidence included.
  * The page's own static shell (`/`, `/rulings`, `/item/<id>`) carries no data and is served to the page key in a header, as it always was: a
  * browser loads it by navigation (cookie, or `?k=`), and a tool may fetch it. What the limit protects is the API, evidence and every write.
@@ -260,9 +272,9 @@ function openThread(ctx: Ctx, pathname: string, tap: boolean): Response {
 }
 
 /** The pages and files behind the key: evidence, the open page, the app shell. */
-export function servePage(ctx: Ctx, req: Request, url: URL): Response {
+export function servePage(ctx: Ctx, req: Request, url: URL, viewKey: boolean): Response {
 	if (req.method !== "GET") return withSecurity(fail(404, "not found"));
-	if (url.pathname.startsWith("/evidence/")) return withSecurity(evidence(ctx, url));
+	if (url.pathname.startsWith("/evidence/")) return withSecurity(evidence(ctx, url, viewKey));
 	if (isOpen(url.pathname)) return withSecurity(openThread(ctx, url.pathname, tapped(req)));
 	if (isShell(url.pathname))
 		return withSecurity(

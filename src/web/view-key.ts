@@ -1,10 +1,17 @@
 /**
  * What the VIEW key may do (`secrets/view-key`, the one key a Decisions post carries: a post is copied into the thread). One explicit
  * allowlist, named here and nowhere derived: three reads, a plain answer, the four ways to settle, put off or bring back a question that
- * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), and one navigation: `GET /open/<server>/<threadId>`,
- * the "Open the thread" link (a redirect to the thread's app link, made by the linker from the path, never from the request; it signs
- * nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else; the Decisions view's thread link is the one link out that carries the key). Every other route refuses the view key,
- * whatever its Origin: not-now, batch accept, every ruling action, the question-card and approval routes, one item's own read, evidence, pages.
+ * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), and two GETs that are not the API:
+ *   - `GET /open/<server>/<threadId>`, the "Open the thread" link (a redirect to the thread's app link, made by the linker from the path, never
+ *     from the request; it signs nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else; the Decisions
+ *     view's thread link is the one link out that carries the key);
+ *   - `GET /evidence/<id>/<name>`, one evidence file the question lists, for a question the view key's own reads already show it (the open and
+ *     snoozed queue, the recent answers: `viewKeyReadable` in ./app-routes.ts). An `<img>` or `<video>` cannot send a header, so `?k=<view key>`
+ *     works here too, and it too signs nothing in and sets no cookie. A name the question does not list, another question's folder, a question
+ *     the reads do not show, or any path outside the folder is refused (./evidence.ts resolveEvidence, ./app-pages.ts). The Decisions view showed
+ *     its evidence this way until 3b28f2b swapped the page key in posts for this one and left evidence off its list.
+ * Every other route refuses the view key, whatever its Origin: not-now, batch accept, every ruling action, the question-card and approval routes,
+ * one item's own read, pages.
  *
  * Three things use it, and nothing else decides what the view key may do:
  *   - `viewKeyVerdict`: the request's route and method against the list (the origin gate and the key gate in ./app.ts);
@@ -28,15 +35,19 @@ export const VIEW_KEY_ANSWER_FIELDS: ReadonlySet<string> = new Set(["choice"]);
 /** `/open/<server>/<threadId>`: sends a device on to the thread's link (./thread-links.ts). The one page-shaped route the view key may GET. */
 export const OPEN_PATH = /^\/open\/[^/]+\/[^/]+$/;
 
+/** `/evidence/<id>/<name>`: one of a question's evidence files (./evidence.ts). The other GET the view key may make that is not the API. */
+export const EVIDENCE_PATH = /^\/evidence\/Q-[a-z0-9]{4,16}\/[^/]+$/;
+
 const ITEM_WRITE = new RegExp(`^/api/items/Q-[a-z0-9]{4,16}/(${VIEW_KEY_WRITES.join("|")})$`);
 
 /** Pure: a request's route against the view key's list. `preflight` is an OPTIONS for a route on it (it grants nothing and carries no key). */
 export function viewKeyVerdict(
 	method: string,
 	pathname: string,
-): "read" | "open" | ViewKeyWrite | "preflight" | "refuse" {
+): "read" | "open" | "evidence" | ViewKeyWrite | "preflight" | "refuse" {
 	if (method === "GET") {
 		if (VIEW_KEY_READS.has(pathname)) return "read";
+		if (EVIDENCE_PATH.test(pathname)) return "evidence";
 		return OPEN_PATH.test(pathname) ? "open" : "refuse";
 	}
 	const write = ITEM_WRITE.exec(pathname)?.[1] as ViewKeyWrite | undefined;

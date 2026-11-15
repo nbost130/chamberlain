@@ -8,7 +8,7 @@ import {
 	SESSION_COOKIE,
 	sessionOf,
 } from "../core/challenge.ts";
-import { type KeyUsed, notNow } from "../core/questions.ts";
+import { type KeyUsed, notNow, type QuestionState } from "../core/questions.ts";
 import { ranked, snoozed } from "../core/questions-wake.ts";
 import { readRulings } from "../core/rulings.ts";
 import { confirmRuling, editRuling, retireRuling } from "../core/rulings-change.ts";
@@ -34,6 +34,24 @@ function rulingsView(ctx: Ctx) {
 	}));
 }
 
+/** The answered and dismissed questions /api/recent shows: the newest twenty. */
+function recentStates(states: QuestionState[]): (QuestionState & { at: string })[] {
+	const done = states
+		.filter((i) => i.status !== "open")
+		.map((i) => ({ ...i, at: i.answer?.t ?? i.dismissal?.t ?? i.createdAt }));
+	done.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+	return done.slice(0, 20);
+}
+
+/**
+ * The questions the view key's reads show it (/api/queue's open and snoozed lists, /api/recent's twenty), and so the only ones whose listed
+ * evidence it may fetch (./app-pages.ts): a file of a question it cannot read is refused to it, whatever the name.
+ */
+export function viewKeyReadable(ctx: Ctx): Set<string> {
+	const states = [...ctx.state().values()];
+	return new Set([...ranked(states), ...snoozed(states), ...recentStates(states)].map((i) => i.id));
+}
+
 function queueResponse(ctx: Ctx): Response {
 	const { d } = ctx;
 	// One snapshot for both lists, so an item whose time arrives between two reads is never in neither.
@@ -55,11 +73,7 @@ function queueResponse(ctx: Ctx): Response {
 }
 
 function recentResponse(ctx: Ctx): Response {
-	const done = [...ctx.state().values()]
-		.filter((i) => i.status !== "open")
-		.map((i) => ({ ...view(ctx.d, i), at: i.answer?.t ?? i.dismissal?.t ?? i.createdAt }));
-	done.sort((a, b) => String(b.at).localeCompare(String(a.at)));
-	return json({ items: done.slice(0, 20) });
+	return json({ items: recentStates([...ctx.state().values()]).map((i) => ({ ...view(ctx.d, i), at: i.at })) });
 }
 
 /** The GET routes. Undefined for a path that is none of them. */

@@ -166,15 +166,17 @@ const when = (iso) => {
 	const soon = d.getTime() - now.getTime() < 6 * 86400_000;
 	return d.toLocaleString([], soon ? { weekday: "short", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 };
-// Little buttons along an item's bottom edge, in this order: Open thread, Snooze, Direction, Dismiss. A secret and a card pointer are settled in
-// their own thread, so they get only the thread link and Snooze.
-function actionsHtml(i, settles) {
+// One row of buttons along an item's bottom edge, wrapping only when the width runs out: first `lead` (the Answer button, a little bigger, and Not
+// now), then the little ones in this order: Open thread, Snooze, Direction, Dismiss. A secret and a card pointer are settled in their own thread, so
+// they get only Not now, the thread link and Snooze. A phone gets the same row (Nathan, 2026-11-15): no separate, larger bar for Answer.
+const NOT_NOW_BTN = '<button type="button" class="btn-ghost lead" data-act="not-now">Not now <span class="kbd">H</span></button>';
+function actionsHtml(i, settles, lead = "") {
 	const link = threadHref(i) ? `<a class="mini" href="${esc(threadHref(i))}">Open thread</a>` : "";
 	const open = S.panel[i.id] === "snooze";
 	const choices = open ? `<div class="snooze-panel" role="group" aria-label="Snooze until">
 		${snoozeChoices(new Date()).map((c) => `<button type="button" class="mini" data-snooze="${c.id}" title="${esc(when(c.at.toISOString()))}">${c.label}</button>`).join("")}
 		<label class="custom">Custom <input type="datetime-local" id="snooze-custom" aria-label="Snooze until a time of your own"></label><button type="button" class="mini" data-act="snooze-custom">Set</button></div>` : "";
-	return `<div class="item-actions" role="group" aria-label="More ways to handle this">${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button><button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>` : ""}</div>${choices}`;
+	return `<div class="item-actions" role="group" aria-label="Ways to handle this">${lead}${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button><button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>` : ""}</div>${choices}`;
 }
 function snoozedHtml() {
 	if (!S.snoozed.length) return "";
@@ -244,16 +246,14 @@ function detailHtml() {
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
 			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
 			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
-			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
-			${actionsHtml(i, false)}
+			${actionsHtml(i, false, NOT_NOW_BTN)}
 		</section>`;
 	}
 	if (i.secret) {
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
 			<div class="secret"><b>This needs a secret.</b>${i.secretRequest === "ended" ? `<span class="expired">Request expired. Its secret box is closed: ask the thread to reopen it.</span>` : `<span>Enter it in its own thread. This page never takes a secret value, and the Steward never sees one.</span>`}
 			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
-			<div class="buttons"><button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
-			${actionsHtml(i, false)}
+			${actionsHtml(i, false, NOT_NOW_BTN)}
 		</section>`;
 	}
 	const pick = defaultPick(i);
@@ -265,11 +265,8 @@ function detailHtml() {
 		<fieldset class="answer"><legend class="legend">YOUR ANSWER</legend>${opts}</fieldset>
 		<div class="note"><label for="note">Note to the thread (optional) <span class="kbd">R</span></label><textarea id="note" rows="2" placeholder="Anything the thread should know with your answer.">${esc(S.note[i.id] || "")}</textarea></div>
 		${doesHtml(i)}
-		<div class="buttons"><button type="button" class="btn-answer" data-act="answer" ${S.busy ? "disabled" : ""}>Answer${sl ? ` ${esc(sl)}` : ""} <span class="kbd">Enter</span></button>
-			<button type="button" class="btn-ghost" data-act="not-now">Not now <span class="kbd">H</span></button></div>
-		${actionsHtml(i, true)}
-	</section>
-	<footer class="mbar i-mbar"><button type="button" class="btn-ghost" data-act="not-now">Not now</button><button type="button" class="btn-answer" data-act="answer" ${S.busy ? "disabled" : ""}>Answer${sl ? ` ${esc(sl)}` : ""}</button></footer>`;
+		${actionsHtml(i, true, `<button type="button" class="btn-answer lead" data-act="answer" ${S.busy ? "disabled" : ""}>Answer${sl ? ` ${esc(sl)}` : ""} <span class="kbd">Enter</span></button>${NOT_NOW_BTN}`)}
+	</section>`;
 }
 
 function renderQueue() {

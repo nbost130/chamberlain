@@ -20,9 +20,11 @@ describe("the allowlist is one explicit list", () => {
 		expect([...VIEW_KEY_READS].sort()).toEqual(["/api/queue", "/api/recent", "/api/rulings"]);
 		expect([...VIEW_KEY_WRITES]).toEqual(["answer", "snooze", "unsnooze", "direction", "dismiss"]);
 	});
-	test("the verdict on each route: the five writes and three reads pass; not-now, batch, rulings, cards and an item's read do not", () => {
+	test("the verdict on each route: the five writes, three reads and one evidence file pass; not-now, batch, rulings, cards and an item's read do not", () => {
 		for (const w of VIEW_KEY_WRITES) expect(viewKeyVerdict("POST", `/api/items/Q-abcd/${w}`)).toBe(w);
 		for (const r of VIEW_KEY_READS) expect(viewKeyVerdict("GET", r)).toBe("read");
+		// the route's shape only: which names and which questions it may then fetch is view-key-evidence.test.ts
+		expect(viewKeyVerdict("GET", "/evidence/Q-abcd/shot.png")).toBe("evidence");
 		for (const [m, p] of [
 			["POST", "/api/items/Q-abcd/not-now"],
 			["POST", "/api/accept-all"],
@@ -32,7 +34,12 @@ describe("the allowlist is one explicit list", () => {
 			["POST", "/api/items/not-an-id/snooze"],
 			["POST", "/api/items/Q-abcd/snooze/x"],
 			["GET", "/api/items/Q-abcd"],
-			["GET", "/evidence/Q-abcd/shot.png"],
+			["GET", "/evidence/Q-abcd"],
+			["GET", "/evidence/Q-abcd/sub/shot.png"],
+			["GET", "/evidence/not-an-id/shot.png"],
+			["GET", "/evidence/Q-abcd/"],
+			["POST", "/evidence/Q-abcd/shot.png"],
+			["OPTIONS", "/evidence/Q-abcd/shot.png"],
 			["GET", "/"],
 			["PUT", "/api/items/Q-abcd/snooze"],
 			["DELETE", "/api/items/Q-abcd/dismiss"],
