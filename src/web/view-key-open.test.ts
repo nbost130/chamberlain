@@ -183,17 +183,9 @@ describe("the view key can do nothing else with /open", () => {
 		}
 	});
 
-	test("`?k=<view key>` still opens no other route: a page, evidence, an item and the API stay refused, and set no cookie", async () => {
+	test("`?k=<view key>` still opens no other route: a page, an item and the API stay refused, and set no cookie (evidence: view-key-evidence.test.ts)", async () => {
 		const s = setup(links);
-		for (const p of [
-			"/",
-			"/rulings",
-			"/item/Q-abcd",
-			"/evidence/Q-abcd/shot.png",
-			"/api/items/Q-abcd",
-			"/api/queue",
-			"/api/health",
-		]) {
+		for (const p of ["/", "/rulings", "/item/Q-abcd", "/api/items/Q-abcd", "/api/queue", "/api/health"]) {
 			const r = await s.send("GET", viaLink(s, p), TAP);
 			expect([p, r.status, r.headers.get("set-cookie")]).toEqual([p, 401, null]);
 		}

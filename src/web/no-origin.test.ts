@@ -106,13 +106,16 @@ describe("a key that is wrong, absent or the wrong kind", () => {
 		expect(only.capability.acceptsView("")).toBe(false);
 		expect(s.page === s.view).toBe(false);
 	});
-	test("the view key is never a link, a cookie or a page load: `?k=<view>` on a page, evidence or the API is 401, and no cookie is set", async () => {
+	test("the view key is never a link, a cookie or a page load: `?k=<view>` on a page or the API is 401, and no cookie is set", async () => {
 		const s = setup();
-		for (const path of ["/", "/rulings", "/item/Q-abcd", "/evidence/Q-evid/shot.png", "/api/queue"]) {
+		for (const path of ["/", "/rulings", "/item/Q-abcd", "/api/queue"]) {
 			const r = await s.send("GET", `${path}?k=${encodeURIComponent(s.view)}`);
 			expect([path, r.status]).toEqual([path, 401]);
 			expect(r.headers.get("set-cookie")).toBeNull();
 		}
+		// a listed evidence file is the one exception (an <img> cannot send a header): served, and still no cookie (view-key-evidence.test.ts)
+		const ev = await s.send("GET", `/evidence/Q-evid/shot.png?k=${encodeURIComponent(s.view)}`);
+		expect([ev.status, ev.headers.get("set-cookie"), await ev.text()]).toEqual([200, null, "PNGBYTES"]);
 	});
 });
 

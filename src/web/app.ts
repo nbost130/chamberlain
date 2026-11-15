@@ -39,7 +39,8 @@ async function handle(ctx: Ctx, req: Request): Promise<Response> {
 		const r = withSecurity(await api(ctx, req, url, authorityOf(gate.inline || !proof.full, proof.byViewKey)));
 		return gate.allowed ? inlineCors(r) : r;
 	}
-	return servePage(ctx, req, url);
+	// A request whose only proof is the view key is held to its list on evidence too: only a question its reads show it.
+	return servePage(ctx, req, url, proof.byViewKey && !proof.full);
 }
 
 export function createApp(d: AppDeps) {

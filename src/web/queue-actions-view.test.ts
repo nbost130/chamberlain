@@ -8,17 +8,27 @@ import { readFileSync } from "node:fs";
 import { at, BUTTONS, item, page, rowOf, snoozedItem } from "../testing/web-queue-actions-view-fixtures.ts";
 
 describe("the buttons along an item's bottom edge", () => {
-	test("are Open thread, Snooze, Direction, Dismiss, in that order, as small quiet buttons after the answer controls", async () => {
+	test("are one row: Answer and Not now first, then Open thread, Snooze, Direction, Dismiss as small quiet buttons, in that order", async () => {
 		const p = await page(() => ({ items: [item("Q-aaaa")] }));
 		expect(rowOf(p.html())).toEqual(BUTTONS);
 		const html = p.html();
 		const row = html.indexOf('class="item-actions"');
-		expect(row).toBeGreaterThan(html.indexOf('class="btn-answer"'));
-		expect(row).toBeGreaterThan(html.indexOf('data-act="not-now"'));
-		// every one is the page's small `mini` button: none is a primary or a ghost button
 		const inRow = html.slice(row, html.indexOf("</div>", row));
+		// Nathan, 2026-11-15: the answer sits in the same row as the other buttons, not on a row of its own
+		expect(html.match(/class="buttons"/g)).toBeNull();
+		const order = [
+			'class="btn-answer lead"',
+			'class="btn-ghost lead" data-act="not-now"',
+			">Open thread<",
+			">Snooze<",
+			">Direction<",
+			">Dismiss<",
+		];
+		const at = order.map((x) => inRow.indexOf(x));
+		expect(at.every((n) => n >= 0)).toBe(true);
+		expect([...at].sort((a, b) => a - b)).toEqual(at);
+		// the four after the lead are the page's small `mini` button
 		expect(inRow.match(/class="mini"/g)).toHaveLength(4);
-		expect(inRow).not.toMatch(/btn-(answer|primary|ghost)/);
 		expect(inRow).toContain('<a class="mini" href="/open/main/t1">Open thread</a>');
 	});
 	test("take the thread link out of the crumbs at the top: it lives only in the row", async () => {
@@ -47,7 +57,7 @@ describe("the buttons along an item's bottom edge", () => {
 		const rule = css.match(/\.mini \{([^}]*)\}/)![1]!;
 		expect(rule).toContain("border-radius: 999px");
 		expect(rule).toContain("font-size: 12px");
-		expect(css).toMatch(/@media \(pointer: coarse\) \{ \.mini \{ min-height: 40px; \} \}/);
+		expect(css).toMatch(/@media \(pointer: coarse\) \{ \.mini \{ min-height: 40px; \}/);
 		expect(rule).toMatch(/border: 1px solid var\(--edge\)/);
 		expect(rule).toMatch(/background: var\(--raise\)/);
 	});
