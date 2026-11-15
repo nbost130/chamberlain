@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { useCoreRelayFixtures } from "../testing/core-relay-fixtures.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
-import { withDeliveryId } from "./deliver.ts";
+import { finalSendMessage } from "./deliver.ts";
 import type { Gate } from "./hold.ts";
 import { createRelay } from "./relay.ts";
 import { RIGHTS_SENT_KEY, rightsFirstId } from "./rights-sent.ts";
@@ -96,8 +96,8 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", thread: "t1", rights: [stamp] });
 		const F = rightsFirstId("w1", r.key());
 		expect(await r.relay().pass()).toEqual([F, "w1"]);
-		expect(r.posts[0]!.message).toBe(withDeliveryId(`[chamberlain] rights for w1\n${BLOCK}`, F));
-		expect(r.posts[1]!.message).toBe(withDeliveryId("pointer", "w1"));
+		expect(r.posts[0]!.message).toBe(finalSendMessage(`[chamberlain] rights for w1\n${BLOCK}`, F));
+		expect(r.posts[1]!.message).toBe(finalSendMessage("pointer", "w1"));
 		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", message: "pointer", attempts: 1 });
 		expect(r.store.wakes.find(F)).toMatchObject({
 			status: "delivered",
@@ -145,7 +145,7 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		r.clock.t += 2000;
 		expect(await relay.pass()).toEqual([F2, "w1"]);
 		expect(r.ids()).toEqual([F1, "w1", F2, F2, "w1"]);
-		expect(r.posts.at(-1)!.message).toBe(withDeliveryId("pointer", "w1"));
+		expect(r.posts.at(-1)!.message).toBe(finalSendMessage("pointer", "w1"));
 		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", attempts: 2 });
 		expect(r.record()).toMatchObject({ session: "s2", hash: H1 });
 	});

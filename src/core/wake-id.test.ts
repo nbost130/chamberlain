@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
-import { createOutbox, DELIVERY_ID_LINE, withDeliveryId } from "./deliver.ts";
+import { createOutbox, DELIVERY_ID_LINE, finalSendMessage } from "./deliver.ts";
 import { createRelay } from "./relay.ts";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
@@ -78,11 +78,11 @@ describe("every wake carries its delivery id as the last line of its text", () =
 		for (const id of ["sweep:7", "sweep:8"]) expect(digest.message).toContain(`deliveryId: ${id}`);
 	});
 
-	test("withDeliveryId adds the line once, and is the identity for a text that has it", () => {
-		const once = withDeliveryId("hello", "id-1");
+	test("finalSendMessage adds the line once, and is the identity for a text that has it", () => {
+		const once = finalSendMessage("hello", "id-1");
 		expect(once).toBe(`hello\n${DELIVERY_ID_LINE("id-1")}`);
-		expect(withDeliveryId(once, "id-1")).toBe(once);
-		expect(withDeliveryId(once, "id-2")).toBe(`${once}\n${DELIVERY_ID_LINE("id-2")}`);
+		expect(finalSendMessage(once, "id-1")).toBe(once);
+		expect(finalSendMessage(once, "id-2")).toBe(`${once}\n${DELIVERY_ID_LINE("id-2")}`);
 	});
 });
 

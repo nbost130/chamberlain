@@ -11,7 +11,7 @@ import { useCoreEngineFixtures } from "../testing/core-engine-fixtures.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
-import { withDeliveryId } from "./deliver.ts";
+import { finalSendMessage } from "./deliver.ts";
 import { createEngine } from "./engine.ts";
 import { MIGRATIONS } from "./migrations.ts";
 import { openStore } from "./sqlite-store.ts";
@@ -37,7 +37,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 			expect(sent).toEqual(
 				stopAt === "prerequisite queued" ? [prereq[0]!.deliveryId, row.deliveryId] : [row.deliveryId],
 			);
-			expect(again.fake.wakes.at(-1)!.message).toBe(withDeliveryId(row.message, row.deliveryId));
+			expect(again.fake.wakes.at(-1)!.message).toBe(finalSendMessage(row.message, row.deliveryId));
 			expect(again.store.state.get("rights-sent")).toMatchObject({
 				steward: "steward-2",
 				session: "session-1",
@@ -137,7 +137,7 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 				]);
 				expect(r.fake.wakes[0]!.message).toContain("Decision rights (standing rules):");
 				expect(r.fake.wakes[0]!.message).toContain("The Steward may merge green PRs.");
-				expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(message, "old-pointer"));
+				expect(r.fake.wakes[1]!.message).toBe(finalSendMessage(message, "old-pointer"));
 				expect(r.store.wakes.find("old-pointer")).toMatchObject({ status: "delivered", message });
 				const logged = r.events.find((e) => e.event === "rights-first");
 				expect(logged).toMatchObject({ deliveryId: "old-pointer", first: r.fake.wakes[0]!.deliveryId });
@@ -162,8 +162,8 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 			"plain",
 			"old-pointer",
 		]);
-		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(plain, "plain"));
-		expect(r.fake.wakes[2]!.message).toBe(withDeliveryId(wakeText(POINTER_545334A), "old-pointer"));
+		expect(r.fake.wakes[1]!.message).toBe(finalSendMessage(plain, "plain"));
+		expect(r.fake.wakes[2]!.message).toBe(finalSendMessage(wakeText(POINTER_545334A), "old-pointer"));
 		await r.quiet();
 		expect(r.fake.wakes).toHaveLength(3);
 	});
@@ -175,7 +175,7 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 			"quoting:rights-first",
 			"quoting",
 		]);
-		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(message, "quoting"));
+		expect(r.fake.wakes[1]!.message).toBe(finalSendMessage(message, "quoting"));
 	});
 });
 

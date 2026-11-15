@@ -95,9 +95,6 @@ export function holdTransferItem(
 	});
 }
 
-/** UTF-8 encoded size of a composed transfer message body (unframed). Prefer encodedSendBytes for the cap. */
-export const encodedBytes = (message: string): number => Buffer.byteLength(message, "utf8");
-
 /** True when a held transfer alone exceeds the encoded replay bound (final send framing included). */
 function isOversizedTransfer(item: HeldItem, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean {
 	if (item.kind !== "transfer") return false;

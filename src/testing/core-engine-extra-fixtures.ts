@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import type { ThreadInput } from "../core/adapter.ts";
 import type { RunFailure } from "../core/adapter-inspect.ts";
 import type { TurnItem } from "../core/decide.ts";
-import { withDeliveryId } from "../core/deliver.ts";
+import { finalSendMessage } from "../core/deliver.ts";
 import type { Engine } from "../core/engine.ts";
 import type { EngineDeps } from "../core/engine-support.ts";
 import type { Store } from "../core/store.ts";
@@ -153,7 +153,7 @@ export function useCoreEngineExtraFixtures(makeEngine: (d: EngineDeps) => Engine
 		expect(first.message).toContain("Decision rights (standing rules):");
 		expect(first.message).toContain("The Steward may merge green PRs.");
 		expect(first.message).toContain(`(${row.deliveryId})`);
-		expect(r.fake.wakes[2]!.message).toBe(withDeliveryId(row.message, row.deliveryId));
+		expect(r.fake.wakes[2]!.message).toBe(finalSendMessage(row.message, row.deliveryId));
 		expect(r.store.wakes.find(row.deliveryId)).toMatchObject({ status: "delivered", message: row.message });
 		return first;
 	}

@@ -62,8 +62,6 @@ export const DELIVERY_ID_LINE = (deliveryId: string) =>
 export function finalSendMessage(message: string, deliveryId: string): string {
 	return message.includes(DELIVERY_ID_LINE(deliveryId)) ? message : `${message}\n${DELIVERY_ID_LINE(deliveryId)}`;
 }
-/** Alias of finalSendMessage — kept for existing call sites. */
-export const withDeliveryId = finalSendMessage;
 
 /** What `commit` did: nothing to send, written (a pending row or a held item), already known (any row or held item under this id), or a dry run. */
 export type Committed = "none" | "queued" | "known" | "dry";
