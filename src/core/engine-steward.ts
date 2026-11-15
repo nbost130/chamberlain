@@ -5,6 +5,7 @@
  */
 import type { StewardProbe } from "./adapter-inspect.ts";
 import { needsCompact } from "./decide.ts";
+import type { WakeResult } from "./deliver.ts";
 import type { Log } from "./log.ts";
 import { type AlarmText, alarms } from "./messages.ts";
 import { redactUrls } from "./redact.ts";
@@ -23,7 +24,8 @@ export type StewardCheckDeps = {
 	rightsSent: ReturnType<typeof openRightsSent>;
 	/** Whether a compaction target is configured, and the relay's compaction (the relay is the one code that calls a wake transport). */
 	compactReady: () => boolean;
-	compact: (deliveryId: string) => Promise<{ status?: number }>;
+	/** The relay's compaction attempt: carries `ok` and a sanitized `error`, not only HTTP status. */
+	compact: (deliveryId: string) => Promise<WakeResult>;
 	log: Log;
 	alarm: (key: string, title: string, summary: string) => void;
 	raiseAlarm: (key: string, a: AlarmText) => void;
@@ -67,7 +69,16 @@ async function sendCompact(c: StewardCheckDeps, id: string): Promise<void> {
 	const deliveryId = `compact:${id}:${Date.now()}`;
 	try {
 		const r = await c.compact(deliveryId);
-		c.log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 });
+		if (r.ok) {
+			c.log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 });
+			return;
+		}
+		c.log("deliver-error", {
+			deliveryId,
+			attempt: 1,
+			...(r.status !== undefined ? { http: r.status } : {}),
+			...(r.error ? { error: redactUrls(r.error) } : {}),
+		});
 	} catch (e) {
 		c.log("deliver-error", {
 			deliveryId,

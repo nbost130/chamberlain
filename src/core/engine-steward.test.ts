@@ -33,7 +33,7 @@ function rig(over: Partial<StewardCheckDeps> = {}, o: { files?: Record<string, s
 		compactReady: () => true,
 		compact: async (deliveryId) => {
 			calls.push(["compact", deliveryId]);
-			return { status: 202 };
+			return { ok: true, status: 202 };
 		},
 		log: (event, data) => calls.push(["log", event, data]),
 		alarm: (key, title, summary) => calls.push(["alarm", key, title, summary]),
@@ -152,9 +152,9 @@ describe("the Steward check: compaction", () => {
 			["log", "delivered", { deliveryId: id, http: 202, attempt: 1 }],
 		]);
 	});
-	test("a delivery with no status logs none; a failure logs its message URL-redacted, or the thrown value as text", async () => {
+	test("a delivery with no status logs none; a failure (thrown or returned) logs deliver-error, never delivered", async () => {
 		setSystemTime(new Date(NOW));
-		const quiet = rig({ compact: async () => ({}) });
+		const quiet = rig({ compact: async () => ({ ok: true }) });
 		quiet.state.probe = over(2000);
 		await quiet.check();
 		expect(quiet.calls.at(-1)).toEqual(["log", "delivered", { deliveryId: `compact:th-steward:${NOW}`, attempt: 1 }]);
@@ -170,10 +170,32 @@ describe("the Steward check: compaction", () => {
 			});
 			bad.state.probe = over(2000);
 			await bad.check();
+			expect(bad.calls.filter((c) => c[0] === "log" && c[1] === "delivered")).toEqual([]);
 			expect(bad.calls.at(-1)).toEqual([
 				"log",
 				"deliver-error",
 				{ deliveryId: `compact:th-steward:${NOW}`, attempt: 1, error: text },
+			]);
+		}
+		for (const [res, fields] of [
+			[{ ok: false as const, status: 503 }, { http: 503 }],
+			[
+				{ ok: false as const, error: `network fail ${"https://hooks.example.test/x"}` },
+				{ error: "network fail <url>" },
+			],
+			[
+				{ ok: false as const, status: 500, error: "network:ECONNREFUSED" },
+				{ http: 500, error: "network:ECONNREFUSED" },
+			],
+		] as const) {
+			const bad = rig({ compact: async () => res });
+			bad.state.probe = over(2000);
+			await bad.check();
+			expect(bad.calls.filter((c) => c[0] === "log" && c[1] === "delivered")).toEqual([]);
+			expect(bad.calls.at(-1)).toEqual([
+				"log",
+				"deliver-error",
+				{ deliveryId: `compact:th-steward:${NOW}`, attempt: 1, ...fields },
 			]);
 		}
 	});

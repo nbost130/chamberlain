@@ -126,10 +126,15 @@ export function createRelay(d: RelayDeps) {
 	};
 }
 
+/** A WakeResult whose `error` has had every URL-shaped run replaced; thrown text is redacted the same way. */
+function sanitizeResult(res: WakeResult): WakeResult {
+	return res.error !== undefined ? { ...res, error: redactUrls(res.error) } : res;
+}
+
 /** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its text URL-redacted. */
 async function post(l: Lane, row: OutboxRow): Promise<WakeResult> {
 	try {
-		return await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId));
+		return sanitizeResult(await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId)));
 	} catch (e) {
 		return { ok: false, error: redactUrls(e instanceof Error ? e.message : String(e)) };
 	}
@@ -157,7 +162,7 @@ function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
 		const epoch = invalidateRights(store);
 		d.log("rights-invalidated", { reason: "compaction", deliveryId, epoch });
 		crashPoint("compact-invalidated");
-		return d.compact.send(deliveryId, "");
+		return sanitizeResult(await d.compact.send(deliveryId, ""));
 	});
 }
 

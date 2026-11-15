@@ -121,29 +121,75 @@ describe("PR 0: URL-safe transport errors", () => {
 		assertNoToken("WakeResult", JSON.stringify(res));
 	});
 
-	test("P4: compaction failure with a sentinel URL leaves no token in the log fields", async () => {
-		const calls: [string, ...unknown[]][] = [];
-		const check = createStewardCheck({
-			privateFile: (n) => (n === "steward-thread" ? "th-steward" : undefined),
-			exclude: new Set(),
+	test("P4: compaction failures (throw, HTTP refusal, returned URL error) log deliver-error and never delivered", async () => {
+		const base = {
+			privateFile: (n: string) => (n === "steward-thread" ? "th-steward" : undefined),
+			exclude: new Set<string>(),
 			probe: () => ({ readable: true, contextTokens: 9_999 }),
 			rightsSent: { get: () => undefined, set: () => {}, epoch: () => 0 },
 			compactReady: () => true,
-			compact: async () => {
-				throw new Error(`compact POST failed: ${SENTINEL}`);
-			},
-			log: (event, data) => calls.push(["log", event, data]),
 			alarm: () => {},
 			raiseAlarm: () => {},
 			dry: false,
 			compactAt: 100,
 			onDecisionsThread: () => {},
+		};
+		const run = async (compact: () => Promise<{ ok: boolean; status?: number; error?: string }>) => {
+			const calls: [string, ...unknown[]][] = [];
+			await createStewardCheck({
+				...base,
+				compact: async () => compact(),
+				log: (event, data) => calls.push(["log", event, data]),
+			}).check();
+			return calls;
+		};
+
+		const thrown = await run(async () => {
+			throw new Error(`compact POST failed: ${SENTINEL}`);
 		});
-		await check.check();
-		const err = calls.find((c) => c[1] === "deliver-error");
-		expect(err).toBeDefined();
-		assertNoToken("compaction deliver-error", JSON.stringify(err));
-		expect(JSON.stringify(err)).toContain("<url>");
+		expect(thrown.filter((c) => c[1] === "delivered")).toEqual([]);
+		const thrownErr = thrown.find((c) => c[1] === "deliver-error");
+		expect(thrownErr).toBeDefined();
+		assertNoToken("P4 throw", JSON.stringify(thrownErr));
+		expect(JSON.stringify(thrownErr)).toContain("<url>");
+
+		const http = await run(async () => ({ ok: false, status: 503 }));
+		expect(http.filter((c) => c[1] === "delivered")).toEqual([]);
+		expect(http.find((c) => c[1] === "deliver-error")?.[2]).toMatchObject({ http: 503, attempt: 1 });
+
+		const returned = await run(async () => ({
+			ok: false,
+			error: `webhook refused at ${SENTINEL}`,
+		}));
+		expect(returned.filter((c) => c[1] === "delivered")).toEqual([]);
+		const returnedErr = returned.find((c) => c[1] === "deliver-error");
+		expect(returnedErr?.[2]).toMatchObject({ error: "webhook refused at <url>", attempt: 1 });
+		assertNoToken("P4 returned WakeResult.error", JSON.stringify(returned));
+	});
+
+	test("P4b: a returned WakeResult.error with a sentinel is redacted by the relay before logging", async () => {
+		const root = scratch();
+		const store = openStore(dbPath(`${root}/state`));
+		const events: { event: string; data?: Record<string, unknown> }[] = [];
+		const relay = createRelay({
+			store,
+			lock: testRelayLock(store),
+			gate: () => "idle",
+			log: (event, data) => events.push({ event, ...(data ? { data } : {}) }),
+			alarm: () => {},
+			retryAfterMs: () => 0,
+			maxAttempts: 1,
+			wake: {
+				ready: () => true,
+				send: async () => ({ ok: false, error: `returned ${SENTINEL}` }),
+			},
+		});
+		createOutbox({ store, log: () => {} }).deliver("m", "w-returned");
+		await relay.pass();
+		const err = events.find((e) => e.event === "deliver-error");
+		expect(err?.data?.error).toBe("returned <url>");
+		assertNoToken("returned WakeResult.error", JSON.stringify(events));
+		store.close();
 	});
 
 	test("P5: a non-t3 transport that throws raw URL text is redacted by the relay layer", async () => {
