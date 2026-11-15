@@ -23,7 +23,7 @@ const snoozed = {
 const mirrored = { ...card("make", "sig-1"), server: "mac", threadId: "t2", open: "/open/mac/t2" };
 
 describe("the view's links out", () => {
-	test("in a frame: the thread link carries the view key, as `?k=` on /open; every other link carries no key at all", async () => {
+	test("in a frame: every link of ours is a thread link (/open) and carries the view key as `?k=`, which /open takes; there is no other link of ours", async () => {
 		const dq = run(() => ({ items: [threadItem], cards: [mirrored], snoozed: [snoozed] }), {
 			src: SRC,
 			window: { parent: {} },
@@ -34,8 +34,8 @@ describe("the view's links out", () => {
 		const rest = links.filter(([, h]) => !h?.includes("/open/"));
 		expect(open.length).toBeGreaterThan(0);
 		for (const [text, h] of open) expect([text, h?.endsWith(`?k=${encodeURIComponent(KEY)}`)]).toEqual([text, true]);
-		expect(rest.length).toBeGreaterThan(0); // "Open the queue page" at least
-		for (const [text, h] of rest) expect([text, h?.includes(KEY), h?.includes("k=")]).toEqual([text, false, false]);
+		// the queue page and an item are never linked: a phone's in-app browser would open them without the page's cookie (inline-links.test.ts)
+		expect(rest).toEqual([]);
 	});
 	test("among links (anchors), only /open and an evidence file carry the key, in their query; an evidence image's and video's own `src` carry it too, and nothing else does", async () => {
 		const withEvidence = {

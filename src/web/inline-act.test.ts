@@ -101,7 +101,7 @@ describe("one tap is one request", () => {
 		expect(labels(dq)).toEqual([]);
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("clear");
 	});
-	test("Snooze: one POST for an hour on, the card says when it returns and offers the full page to undo it", async () => {
+	test("Snooze: one POST for an hour on, the card says when it returns and offers Un-snooze in place (no link to the full page)", async () => {
 		const at = Date.now();
 		const { dq, posts, calls } = view((_p, body) => ok({ ok: true, until: body.until }));
 		await settle();
@@ -113,11 +113,12 @@ describe("one tap is one request", () => {
 		expect(until - at).toBeLessThan(3_600_000 + 5_000);
 		expect(posts()[0]!.body.until).toEndWith("Z");
 		expect(msg(dq).textContent).toStartWith("Snoozed. It returns ");
-		expect(dq.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
-			["Un-snooze", "http://queue.test/item/Q-act1"],
-		]);
+		expect(dq.all((e) => e.tag === "a" && e.href.includes("/item/"))).toEqual([]);
 		// the Snoozed section follows at once: the view read the queue again
 		expect(calls.filter((c) => c.path === "/api/queue").length).toBeGreaterThan(1);
+		// and Un-snooze is one more tap, in place
+		await tap(dq, "Un-snooze");
+		expect(posts()[1]).toMatchObject({ path: "/api/items/Q-act1/unsnooze", body: {} });
 	});
 	test("Dismiss: one POST, no confirmation (the view has no dialog to call), the card says dismissed and nothing was answered", async () => {
 		const { dq, posts } = view(() => ok({ ok: true, kind: "dismissed" }));
@@ -192,5 +193,29 @@ describe("an error shows on the card, and the buttons come back", () => {
 		expect(msg(dq).textContent).toContain("this view's key no longer works");
 		expect(dq.textContent).toContain("This view's key no longer works");
 		expect(button(dq, "Dismiss").disabled).toBe(false);
+	});
+});
+
+describe("the plain queue view (no ?view=) follows a tap on its snoozed list", () => {
+	test("Bring back now: one POST, then the list is read again and the question is back among the waiting ones (Sol's audit, 2026-11-15)", async () => {
+		const snoozed = { ...item({ id: "Q-snzp" }), snooze: { until: "2026-11-15T09:00:00.000Z", active: true } };
+		let back = false;
+		const calls: { method: string; path: string; body?: unknown }[] = [];
+		const dq = run(() => (back ? { items: [item({ id: "Q-snzp" })] } : { items: [], snoozed: [snoozed] }), {
+			src: "http://queue.test/inline.js?k=VIEWKEY",
+			calls,
+			post: () => {
+				back = true;
+				return ok({ ok: true });
+			},
+		});
+		await settle();
+		expect(dq.querySelector(".dq-count")!.textContent).toBe("0 waiting");
+		await tap(dq, "Bring back now");
+		await settle();
+		expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["/api/items/Q-snzp/unsnooze"]);
+		expect(calls.filter((c) => c.path === "/api/queue")).toHaveLength(2);
+		expect(dq.querySelector(".dq-count")!.textContent).toBe("1 waiting");
+		expect(dq.all((e) => e.tag === "button" && e.textContent === "Bring back now")).toEqual([]);
 	});
 });

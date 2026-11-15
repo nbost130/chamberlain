@@ -36,7 +36,7 @@ describe("links out of the view", () => {
 	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
 	const anchors = (dq: El) =>
 		dq.all((e) => e.tag === "a").map((a) => ({ text: a.textContent, href: a.href, target: a.target }));
-	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s); only the thread link carries the view key (on /open, which takes it), the queue page link none", async () => {
+	test("a mirrored card links only to its thread, through /open with the view key (which /open takes): never to the queue page, a dead end on a phone", async () => {
 		const c = {
 			...card("make", "sig-1"),
 			server: "mac",
@@ -47,8 +47,11 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [], cards: [c] }), { src: SRC });
 		await settle();
 		expect(anchors(dq)).toEqual([
-			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
-			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12?k=KEY", target: "_blank" },
+			{
+				text: "Open the thread to answer",
+				href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12?k=KEY",
+				target: "_blank",
+			},
 		]);
 	});
 	test("a question asked with chamberlain ask links to its thread too", async () => {
@@ -81,10 +84,9 @@ describe("links out of the view", () => {
 		const q = { ...item("x"), link: "t3-thread://v2/env/t", open: "t3code://threads/env/t" };
 		const dq = run(() => ({ items: [q], cards: [c] }), { src: SRC });
 		await settle();
-		const hrefs = anchors(dq).map((a) => a.href);
-		expect(anchors(dq).map((a) => a.text)).toEqual(["Open the queue page"]);
-		expect(hrefs[0]).toBe("http://queue.test/");
-		expect(hrefs.every((h) => h.startsWith("http://queue.test/"))).toBe(true);
+		// no link at all: the card names its thread and server in words instead
+		expect(anchors(dq)).toEqual([]);
+		expect(dq.textContent).toContain("on its card, in “T”");
 	});
 });
 
@@ -109,15 +111,14 @@ describe("the thread link inside T3's phone app", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([{ text: "Open the thread", href: APP, target: "" }]);
 	});
-	test("a mirrored card and a secret question get the app link too; the queue page link stays the page's own", async () => {
+	test("a mirrored card and a secret question get the app link too, and nothing else", async () => {
 		const c = { ...card("make", "sig-1"), open: "/open/main/t", app: APP };
 		const s = { ...q, secret: true };
 		const dq = run(() => ({ items: [s], cards: [c] }), { src: SRC, window: top() });
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the thread", href: APP, target: "" },
-			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
-			{ text: "Open the thread", href: APP, target: "" },
+			{ text: "Open the thread to answer", href: APP, target: "" },
 		]);
 	});
 	test("in a frame (T3's web and desktop clients), the link goes through /open, which the frame can open", async () => {

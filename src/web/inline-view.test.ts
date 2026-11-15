@@ -196,13 +196,15 @@ test("a mirrored card or approval is shown read-only: no option to pick, no butt
 	};
 	const dq = run(() => ({ items: [], cards: [q, qc] }), { calls });
 	await settle();
-	expect(dq.textContent).toContain("Approvals and goals are answered on the full queue page, never here.");
-	expect(dq.textContent).toContain("Answer this question card on the full queue page.");
+	// each says where it is answered: on its own card, in its thread, where T3 checks who is answering
+	expect(dq.textContent).toContain("Approve or decline it on its card, in “T” on main in T3.");
+	expect(dq.textContent).toContain("Answer it on its card, in “T” on main in T3.");
 	// The command is still shown exactly, so it can be read; but nothing here can approve it.
 	expect(dq.all((e) => e.tag === "pre").map((e) => e.textContent)).toEqual(["rm -rf build"]);
 	expect(dq.all((e) => e.tag === "input")).toHaveLength(0);
 	expect(dq.all((e) => e.className.includes("dq-go"))).toHaveLength(0);
-	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(2);
+	// never a link to the queue page: a phone's in-app browser would open it without the page's cookie (inline-links.test.ts)
+	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(0);
 	expect(calls.every((c) => c.method === "GET" && INLINE_PATHS.has(c.path))).toBe(true);
 });
 
@@ -286,11 +288,13 @@ test("an evidence image or video that does not load (a real failure: the file is
 	expect(dq.textContent).toContain("a shot");
 });
 
-test("a mirrored card's 'Open the queue page' link carries no key: the script's key is the weak view key, and the browser's own cookie signs it in", async () => {
+test("a mirrored card has no 'Open the queue page' link (Nathan's dead end, 2026-11-15): its one link is its thread, where the card is answered", async () => {
 	const KEY = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
-	const dq = run(() => ({ items: [], cards: [card("rm -rf build", "sig-1")] }), {
+	const dq = run(() => ({ items: [], cards: [{ ...card("rm -rf build", "sig-1"), open: "/open/main/t" }] }), {
 		src: `http://queue.test/inline.js?view=decisions&k=${KEY}`,
 	});
 	await settle();
-	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(1);
+	expect(dq.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
+		["Open the thread to answer", `http://queue.test/open/main/t?k=${KEY}`],
+	]);
 });

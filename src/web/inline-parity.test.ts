@@ -36,7 +36,9 @@ async function expectParity(
 	const html = await webPage(queue, pathname);
 	const web = visibleText(html);
 	for (const m of mustShow) expect([m, web.includes(m.toLowerCase())]).toEqual([m, true]);
-	const shown = [...new Set(strings(fixture))].filter((s) => /-mark/i.test(s) && web.includes(s.toLowerCase()));
+	// every string value of the fixture the page shows, whatever it is (a marker, a date, a URL): no filter, so a field the page starts showing as it
+	// is cannot slip past
+	const shown = [...new Set(strings(fixture))].filter((s) => s.trim().length > 0 && web.includes(s.toLowerCase()));
 	const webFiles = addresses(html).filter((a) => a.startsWith("/evidence/") || /^https?:/.test(a));
 	for (const [label, src] of VIEWS) {
 		const dq = run(() => queue, { src });

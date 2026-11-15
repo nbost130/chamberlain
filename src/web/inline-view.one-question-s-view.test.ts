@@ -7,21 +7,30 @@ import { buttons, item } from "../testing/web-inline-view-fixtures.ts";
 import { VIEW_KEY_WRITES } from "./view-key.ts";
 
 describe("one question's view (?item=) and the recent answers know snoozed and dismissed", () => {
-	test("a snoozed question says when it returns and links to it on the full page", async () => {
+	test("a snoozed question says when it returns and un-snoozes in place: no link to the full page, which a phone's in-app browser cannot open", async () => {
 		const later = {
 			...item("x"),
 			id: "Q-snz1",
 			snooze: { until: "2026-11-15T09:00:00.000Z", at: "2026-11-14T12:00:00.000Z", active: true, returned: false },
 		};
-		const dq = run(() => ({ items: [], snoozed: [later] }), { src: "http://queue.test/inline.js?item=Q-snz1&k=KEY" });
+		const calls: { method: string; path: string; body?: unknown }[] = [];
+		const dq = run(() => ({ items: [], snoozed: [later] }), {
+			src: "http://queue.test/inline.js?item=Q-snz1&k=KEY",
+			calls,
+			post: () => ({ status: 200, body: { ok: true } }),
+		});
 		await settle();
 		expect(dq.textContent).toContain("Snoozed. It returns ");
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("snoozed");
-		// this one-question view only links to the full page; the Decisions view's Snoozed tab brings an item back in place
-		expect(dq.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
-			["Un-snooze", "http://queue.test/item/Q-snz1"],
+		expect(dq.all((e) => e.tag === "a").map((a) => a.href)).toEqual([]);
+		expect(buttons(dq)).toEqual(["Un-snooze"]);
+		const un = dq.all((e) => e.tag === "button" && e.textContent === "Un-snooze")[0]!;
+		for (const fn of un.listeners.click ?? []) await fn();
+		await settle();
+		expect(calls.filter((c) => c.method === "POST")).toEqual([
+			{ method: "POST", path: "/api/items/Q-snz1/unsnooze", body: {} },
 		]);
-		expect(buttons(dq)).toEqual([]);
+		expect(dq.textContent).toContain("Back on the waiting list.");
 	});
 	test("a dismissed question says dismissed and that nothing was answered", async () => {
 		const gone = {

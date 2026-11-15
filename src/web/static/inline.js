@@ -3,8 +3,8 @@
 // This view holds only the VIEW key, and the SERVER enforces what that may do (src/web/view-key.ts): it may GET /api/queue, /api/recent and
 // /api/rulings, GET the evidence files a question it reads lists, and POST an item's answer (a choice, never a note), snooze, un-snooze, direction and
 // dismiss, and nothing else. The pill buttons along each card's bottom edge, and on each row of the Snoozed tab, do those in place: one tap is one
-// request, no confirmation, no page change. It never answers a card or an approval, never saves a ruling and never reads one item on its own: those
-// are done on the full queue page, which the links open. Everything the full page SHOWS of a question, this view shows too (the parity test,
+// request, no confirmation, no page change. It never answers a card or an approval (those are answered on the card itself, in its thread, which its
+// link opens), never saves a ruling and never reads one item on its own. No link it shows is a dead end (src/web/inline-links.test.ts). Everything the full page SHOWS of a question, this view shows too (the parity test,
 // src/web/inline-parity.test.ts, fails when the page shows a field this view does not).
 (() => {
 	const SRC = new URL(document.currentScript.src);
@@ -62,7 +62,7 @@
 .dq-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground)}
 .dq-pill,.dq-btn,.dq-reload,.dq-go{font:inherit;font-size:13px;font-weight:500;line-height:1.2;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 18px;border-radius:999px;border:1px solid color-mix(in srgb,var(--foreground) 35%,transparent);background:color-mix(in srgb,var(--foreground) 6%,transparent);color:var(--foreground);text-decoration:none;cursor:pointer}
 .dq-pill:hover,.dq-btn:hover:not(:disabled),.dq-reload:hover{background:color-mix(in srgb,var(--foreground) 13%,transparent)}.dq-pill:focus-visible,.dq-btn:focus-visible,.dq-reload:focus-visible,.dq-go:focus-visible,.dq-tab:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.dq-btn.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
+.dq-btn.rec,.dq-pill.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
 .dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
 .dq-btn.dq-main{font-size:13px;font-weight:600;min-height:38px;padding:7px 16px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center}
 .dq-btn.dq-sec,.dq-pill.dq-sec{font-size:12px;font-weight:500;min-height:34px;padding:5px 14px}
@@ -122,7 +122,8 @@
 		]) { const tile = el("div", "dq-health-signal"); tile.append(el("span", "dq-health-label", label), el("strong", "", value), el("span", "dq-health-note", elevated ? "↑ Above threshold" : note)); signals.append(tile); }
 		root.append(signals);
 		if (h.unknown?.length) root.append(el("div", "dq-health-warning", "Some measurements are unavailable."));
-		const details = el("details", "dq-health-evidence"); details.open = Boolean(expanded); details.append(el("summary", "", "Measurement details"), el("pre", "", h.report)); root.append(details);
+		// The check's own time, as the full page's health line shows it; the summary above gives it as an age.
+		const details = el("details", "dq-health-evidence"); details.open = Boolean(expanded); details.append(el("summary", "", "Measurement details"), el("div", "dq-health-age", `Checked at ${h.at}`), el("pre", "", h.report)); root.append(details);
 	}
 	const style = el("style"); style.textContent = css + healthCss; document.head.append(style);
 	const root = document.getElementById("dq") || document.body.appendChild(el("div"));
@@ -183,7 +184,9 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			if (later) {
 				count.textContent = "snoozed";
 				const c = el("div", "dq-card");
-				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), metaOf(later), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`), fullPage(later, "Un-snooze"));
+				c.append(el("div", `dq-kind ${later.kind}`, KIND[later.kind] || later.kind), metaOf(later), el("div", "dq-title", later.title), el("div", "dq-msg dq-away", `Snoozed. It returns ${returnsAt(later.snooze.until)}.`));
+				const msg = el("div", "dq-msg");
+				c.append(msg, snoozedRow(later, msg));
 				list.replaceChildren(c);
 				return;
 			}
@@ -220,12 +223,12 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 
 	// When a snoozed question returns, in this device's own time zone.
 	const returnsAt = (iso) => { const d = new Date(iso); return isNaN(d) ? "later" : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
-	// A link out of this view: one of the page's own addresses. T3 Code's web and desktop clients show this view in a sandboxed frame that
-	// opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets. Only the thread link (`/open`) carries a key
-	// (`withKey`): the view key this script already holds, never the page key, which the server accepts on /open alone (src/web/view-key.ts) and which
-	// signs nothing in, so a new tab opens the thread from any browser. Every other link carries none: the weak view key cannot sign a browser in, so
-	// the queue page and an item open signed in only where the browser already holds the page's cookie.
-	const linkOut = (text, path, withKey, cls = "dq-pill dq-sec") => { const a = el("a", cls, text); a.href = `${BASE}${path}${withKey ? kq : ""}`; a.target = "_blank"; a.rel = "noopener"; return a; };
+	// A link out of this view to one of the page's own addresses. T3 Code's web and desktop clients show this view in a sandboxed frame that opens only an
+	// http(s) link (it hands it to the app's browser), so that is what a frame gets. NO DEAD ENDS: every link this view shows must open something that works
+	// in a browser holding nothing but the address (a phone's in-app browser has no cookie of ours), so it links only to what the view key opens by `?k=`:
+	// the thread (`/open`, here) and an evidence file (evidence()). Never the queue page or an item: the weak view key cannot sign a browser in, and they
+	// would show "This page needs its link" (src/web/inline-links.test.ts follows every link this view renders and fails on that page).
+	const linkOut = (text, path, cls = "dq-pill dq-sec") => { const a = el("a", cls, text); a.href = `${BASE}${path}${kq}`; a.target = "_blank"; a.rel = "noopener"; return a; };
 	// T3 Code's phone app shows this view as the top document of its own web view, not in a frame, and hands any link that is not http(s)
 	// to the phone's OS, which opens the app's own link (t3code://threads/…) in the app itself: the thread opens in place, no browser.
 	// So the top document links straight to the app link the server made; a frame (T3's web and desktop clients) uses /open.
@@ -237,15 +240,27 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 	// No target: an app link is a navigation the app's web view hands to the OS, and a new window would drop it.
 	const threadLink = (x, cls = "dq-pill dq-sec") => {
 		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", cls, "Open the thread"); a.href = x.app; return a; }
-		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open, true, cls) : null;
+		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open, cls) : null;
 	};
 
-	// A card the view cannot act on (a snoozed question, shown on its own): the thread link and one link to the full queue page.
-	const fullPage = (it, text) => {
+	// Un-snooze in place: one tap, the view key's own write (src/web/view-key.ts), then the queue is read again. `tell` shows what happened.
+	const unsnoozeBtn = (it, tell) => {
+		const b = btn("Un-snooze", "dq-sec", async () => {
+			b.disabled = true; tell("", "Sending…");
+			try {
+				const r = await postItem(it.id, "unsnooze", {});
+				if (r.ok) { tell("dq-ok", "Back on the waiting list."); b.remove(); refresh(); return; }
+				tell("dq-bad", r.b.error || `HTTP ${r.status}`);
+			} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); }
+			b.disabled = false;
+		});
+		return b;
+	};
+	// A snoozed question shown on its own: Un-snooze in place, and the thread link.
+	const snoozedRow = (it, msg) => {
 		const row = el("div", "dq-actions");
 		const own = threadLink(it);
-		if (own) row.append(own);
-		row.append(linkOut(text, `/item/${encodeURIComponent(it.id)}`));
+		row.append(unsnoozeBtn(it, (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; }), ...(own ? [own] : []));
 		return row;
 	};
 
@@ -293,7 +308,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			lock(true); tell("", "Sending…");
 			try {
 				const r = await postItem(it.id, action, body);
-				if (r.ok) done(said(r.b), action === "snooze" ? [linkOut("Un-snooze", `/item/${encodeURIComponent(it.id)}`)] : [], action);
+				if (r.ok) done(said(r.b), action === "snooze" ? [unsnoozeBtn(it, tell)] : [], action);
 				else { tell("dq-bad", r.b.error || `HTTP ${r.status}`); lock(false); }
 			} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); lock(false); }
 		}
@@ -392,11 +407,13 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 				m.options.forEach((o, k) => ol.append(el("li", "", `${o.label}${k === m.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`)));
 				c.append(ol);
 			}
-			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
-			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
-			c.append(linkOut("Open the queue page", "/", false, "dq-pill"));
-			const t = threadLink(m, "dq-pill");
-			if (t) c.append(t);
+			// The view key never answers a card or an approval (anyone who reads the thread holds it). The card is answered on itself, in its own thread,
+			// where T3 checks who you are: so its one link is that thread (in T3's phone app it opens there in place). Never the queue page, which a
+			// phone's in-app browser opens without the page's cookie ("This page needs its link").
+			const t = threadLink(m, "dq-pill rec");
+			const verb = m.type === "question" ? "Answer it" : m.type === "approval" || m.type === "goal" ? "Approve or decline it" : "Act on it";
+			c.append(el("div", "dq-msg", t ? `${verb} on its card, in its thread: open the thread and it is there.` : `${verb} on its card, in “${m.threadTitle}” on ${m.server} in T3.`));
+			if (t) { t.textContent = "Open the thread to answer"; c.append(t); }
 			return c;
 		}
 		// What each option means, as the card showed it before the options became buttons: the buttons carry the labels, this carries the detail.
@@ -424,7 +441,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			lock(true); msg.className = "dq-msg"; msg.textContent = "Sending…";
 			try {
 				const r = await postItem(it.id, action, {});
-				if (r.ok) { msg.className = "dq-msg dq-ok"; msg.textContent = said; refresh(); return; }
+				// The Decisions view re-reads the queue in place; the plain view reloads its list, so the question moves back to waiting there too.
+				if (r.ok) { msg.className = "dq-msg dq-ok"; msg.textContent = said; if (DASH) refresh(); else load(); return; }
 				msg.className = "dq-msg dq-bad"; msg.textContent = r.b.error || `HTTP ${r.status}`;
 			} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; }
 			lock(false);

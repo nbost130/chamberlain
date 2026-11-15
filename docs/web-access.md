@@ -35,7 +35,12 @@ Treat them like a password: anyone who holds one can read the queue and answer f
 
 The page link is the one place the page key appears. **It never goes into a Decisions post.** `chamberlain ask` puts the **view key** in the view it posts to the Decisions thread
 (with the page up but no view key yet, it posts the one-line notice and says so on stderr, never a link that cannot work), and refuses to send any post whose text holds the page key. The inline
-view passes the view key on every call. Its "Open the queue page" and "Open the thread" links (the second goes through `/open/<server>/<threadId>`, except in T3 Code's phone app, where it is the thread's app link; see [CONFIGURATION.md](CONFIGURATION.md)) differ in what they carry: **"Open the thread" carries the view key, as `?k=<view key>`** (the key the view already holds in its own address, never the page key), because the server takes the view key on `/open` alone among links (it sets no cookie and signs nothing in), so the thread opens from any browser; **every other link the view builds carries no key** ("Open the queue page", an item), because the weak view key cannot sign a browser in: those open signed in only in a browser that already holds the cookie. In T3 Code's phone app the thread link is the app link, with no key. **Evidence in the Decisions view**
+view passes the view key on every call. **It has no dead-end links**: every link it shows opens something that works in a browser holding nothing but the
+address, as a phone's in-app browser does (it has no cookie of ours). So it links only to what the view key opens by `?k=`: "Open the thread" (through
+`/open/<server>/<threadId>`, except in T3 Code's phone app, where it is the thread's app link with no key; see [CONFIGURATION.md](CONFIGURATION.md)) and an
+evidence file. It never links to the queue page or an item, which the view key cannot sign a browser in to ("This page needs its link"). A card waiting in
+another thread is answered on itself, in its own thread, where T3 checks who is answering: its one link is "Open the thread to answer". Un-snooze is a tap
+in place. `src/web/inline-links.test.ts` follows every link the view renders, with nothing but the address, and fails on the needs-its-link page. **Evidence in the Decisions view**
 (images, with a link to each at full size, and video) loads with `?k=<view key>`: the server serves the view key a file the question lists and nothing else by it. From 3b28f2b (posts stopped
 carrying the page key) until this was fixed, the view showed "Image evidence shows on the full queue page." in place of every image.
 
