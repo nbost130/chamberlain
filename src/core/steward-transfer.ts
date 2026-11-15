@@ -109,7 +109,7 @@ export function composeTransferBatch(
 }
 
 /** Seal when MAX(gen) ≠ F and no pending row has attempt_gen = F. */
-export function trySeal(store: Store, t: StewardTransfer, now = Date.now()): boolean {
+function trySeal(store: Store, t: StewardTransfer, now = Date.now()): boolean {
 	if (t.sealedAt !== undefined) return true;
 	if (store.steward.maxGen() === t.fromGen) return false;
 	if (store.steward.pendingWithAttemptGen(t.fromGen).length) return false;
@@ -118,7 +118,7 @@ export function trySeal(store: Store, t: StewardTransfer, now = Date.now()): boo
 }
 
 /** Close when sealed and every root in the set is discharged. */
-export function tryClose(store: Store, t: StewardTransfer, now = Date.now()): boolean {
+function tryClose(store: Store, t: StewardTransfer, now = Date.now()): boolean {
 	if (t.closedAt !== undefined) return true;
 	const sealed = trySeal(store, t, now);
 	if (!sealed) return false;

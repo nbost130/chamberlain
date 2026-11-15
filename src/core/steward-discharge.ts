@@ -39,18 +39,6 @@ export function isDischarged(store: Store, rootOutboxId: number, hw?: number): b
 	return false;
 }
 
-/** Counting high-water for generation F's transfer, if one is open. */
-export function receiptHwFor(store: Store, fromGen: number): number | undefined {
-	const t = store.steward.transfer(fromGen);
-	return t?.receiptHw;
-}
-
-/** Whether a ledgered delivery's receipt still counts for its generation. */
-export function receiptCounts(store: Store, outboxId: number, gen: number): boolean {
-	const hw = receiptHwFor(store, gen);
-	return ownReceipt(store, outboxId, hw);
-}
-
 /** Operator release: writes an operator receipt for one outbox id. */
 export function releaseWake(store: Store, deliveryId: string, now = Date.now()): boolean {
 	const row = store.wakes.find(deliveryId);

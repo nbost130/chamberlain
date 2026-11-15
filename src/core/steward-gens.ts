@@ -2,7 +2,7 @@
  * Steward generations: the current MAX(gen), seeding gen 1 from config, and resolving switch-owned secret refs.
  * Gen 0 is reserved (legacy, destination unknown) and has no row.
  */
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { ensureSecretsDir, secretPath, thread } from "./layout.ts";
 import type { StewardGen } from "./steward-types.ts";
 import type { Store } from "./store.ts";
@@ -50,12 +50,4 @@ export function seedGen1(store: Store, conf: string, now = Date.now()): StewardG
 	};
 	store.tx(() => store.steward.insertGen(g));
 	return g;
-}
-
-/** Absolute path of a generation's wake or compact ref under secrets/, or undefined when missing. */
-export function genSecretPath(conf: string, g: StewardGen, kind: "wake" | "compact"): string | undefined {
-	const ref = kind === "wake" ? g.wakeRef : g.compactRef;
-	if (!ref) return undefined;
-	const p = secretPath(conf, ref);
-	return p && existsSync(p) ? p : undefined;
 }

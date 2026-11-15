@@ -123,13 +123,3 @@ export function findReceipt(dbPath: string, c: ReceiptCandidate): ReceiptMatch |
 		db.close();
 	}
 }
-
-/** Batch evidence: one open, many candidates. */
-export function findReceipts(dbPath: string, candidates: ReceiptCandidate[]): ReceiptMatch[] {
-	const out: ReceiptMatch[] = [];
-	for (const c of candidates) {
-		const hit = findReceipt(dbPath, c);
-		if (hit) out.push(hit);
-	}
-	return out;
-}

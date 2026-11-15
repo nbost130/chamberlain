@@ -5,7 +5,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { secretPath } from "./layout.ts";
-import { ensureStewardSecretsDir, maxGen, switchRefName, switchRefPath } from "./steward-gens.ts";
+import { ensureStewardSecretsDir, maxGen, switchRefPath } from "./steward-gens.ts";
 import type { StewardSwitch } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 
@@ -89,9 +89,3 @@ export function abortSwitch(store: Store, id: string): { ok: true } | { ok: fals
 	store.tx(() => store.steward.setSwitchPhase(id, "aborted"));
 	return { ok: true };
 }
-
-/** Ref names a forward prepare expects the successor to publish. */
-export const expectedRefNames = (id: string) => ({
-	wake: switchRefName(id, "wake"),
-	compact: switchRefName(id, "compact"),
-});

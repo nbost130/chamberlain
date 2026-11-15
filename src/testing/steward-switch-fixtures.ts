@@ -29,7 +29,7 @@ import type { Store } from "../core/store.ts";
 import { memStore } from "./store.ts";
 
 export type FakeClock = { t: number; now: () => number; advance: (ms: number) => void };
-export type FakeWebhookPost = { url: string; deliveryId: string; message: string };
+type FakeWebhookPost = { url: string; deliveryId: string; message: string };
 export type ConfWorld = {
 	root: string;
 	conf: string;

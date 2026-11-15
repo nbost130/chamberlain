@@ -19,7 +19,7 @@ export type TransferHeaderInput = {
 };
 
 /** Header lines placed above the frozen original message on a transfer item. */
-export function transferHeader(o: TransferHeaderInput): string {
+function transferHeader(o: TransferHeaderInput): string {
 	const when = new Date(o.createdAt).toISOString();
 	if (o.fromGen === 0 || o.adoption) {
 		return [
