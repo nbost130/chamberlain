@@ -129,20 +129,10 @@ function ledgerApi(c: Db) {
 				d.origin,
 			);
 		},
-		/** Rewrite origin (remediation of pre-v2 rows wrongly ledgered as adopted/unrecoverable by v0.4.0). */
+		/** Rewrite origin (remediation of exact-set members wrongly ledgered as adopted/unrecoverable). */
 		setLedgerOrigin: (outboxId: number, origin: StewardOrigin) => {
 			c.run("UPDATE steward_deliveries SET origin = ? WHERE outbox_id = ?", origin, outboxId);
 		},
-		/** Gen-0 ledger rows at or below the historical watermark that are not yet adopted-historical. */
-		gen0NeedingHistorical: (hi: number) =>
-			c
-				.all(
-					`SELECT outbox_id FROM steward_deliveries
-					 WHERE gen = 0 AND outbox_id <= ? AND origin IN ('adopted', 'unrecoverable')
-					 ORDER BY outbox_id`,
-					hi,
-				)
-				.map((r) => r.outbox_id as number),
 		receiptFor: (outboxId: number) => {
 			const r = c.one("SELECT * FROM steward_receipts WHERE outbox_id = ?", outboxId);
 			return r ? toReceipt(r) : undefined;

@@ -11,8 +11,11 @@ export type StewardOrigin = "live" | "adopted" | "unrecoverable" | "adopted-hist
 export const isSettledOrigin = (origin: StewardOrigin): boolean =>
 	origin === "unrecoverable" || origin === "adopted-historical";
 
-/** State key: max pre-v2 Steward delivered outbox id (migration 16). Rows at or below are historical. */
-export const HISTORICAL_ADOPT_HI_KEY = "steward.adopt.historical_hi";
+/**
+ * State key: JSON array of Steward outbox ids that were delivered (and unstamped) at the pre-v2→16 upgrade.
+ * Absent on databases that were already schema 15+ — adoptPass must not invent membership.
+ */
+export const HISTORICAL_ADOPT_IDS_KEY = "steward.adopt.historical_ids";
 export type SwitchPhase = "preparing" | "committed" | "mirrored" | "aborted";
 export type ReceiptKind = "t3-run" | "operator";
 

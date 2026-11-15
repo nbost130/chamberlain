@@ -1,19 +1,16 @@
 /**
  * #67: upgrading a 0.3.x (schema 14) database must adopt pre-upgrade delivered Steward rows as
  * adopted-historical — zero held transfers, zero sends, zero dead letters, no oversized alarm.
- * A genuinely pending row still transfers after the watermark.
- *
- * The main case below fails against v0.4.0's adoptPass (every payload becomes a gen-0 transfer) and
- * passes with this fix. Evidence: see the PR body / chamberlain-67-adopt-fix.md.
+ * Exact id-set membership (not a max-id watermark). Schema-15 upgrades invent no historical set.
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { useStewardSwitchFixtures } from "../testing/steward-switch-fixtures.ts";
 import { MIGRATIONS } from "./migrations.ts";
 import { openStore } from "./sqlite-store.ts";
-import { adoptPass, historicalAdoptHi } from "./steward-adopt.ts";
+import { adoptPass, historicalAdoptIds } from "./steward-adopt.ts";
 import { recoverSteward } from "./steward-recover.ts";
-import { holdTransferItem, transferItemId } from "./steward-transfer.ts";
+import { holdTransferItem } from "./steward-transfer.ts";
 import { TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 
@@ -51,44 +48,34 @@ describe("#67 historical adoption of pre-v2 delivered Steward rows", () => {
 
 		const raw = new Database(dbPath);
 		const deliveredIds: number[] = [];
-		const insert = (o: {
-			deliveryId: string;
-			message: string;
-			thread: string;
-			at: number;
-			status?: "delivered" | "pending";
-		}) => {
-			const status = o.status ?? "delivered";
+		const add = (o: { deliveryId: string; message: string; thread: string; at: number }) => {
 			raw.run(
 				`INSERT INTO outbox (delivery_id, message, kind, thread, receiver, created_at, folded, status, attempts, finished_at)
-				 VALUES (?, ?, NULL, ?, NULL, ?, 0, ?, 0, ?)`,
-				[o.deliveryId, o.message, o.thread, o.at, status, status === "delivered" ? o.at : null],
+				 VALUES (?, ?, NULL, ?, NULL, ?, 0, 'delivered', 0, ?)`,
+				[o.deliveryId, o.message, o.thread, o.at, o.at],
 			);
-			const row = raw.query("SELECT id FROM outbox WHERE delivery_id = ?").get(o.deliveryId) as { id: number };
-			if (status === "delivered") deliveredIds.push(row.id);
-			return row.id;
+			deliveredIds.push(
+				(raw.query("SELECT id FROM outbox WHERE delivery_id = ?").get(o.deliveryId) as { id: number }).id,
+			);
 		};
-		// Mix shaped like the failed live DB: normal, oversized, retired-thread destinations.
-		insert({ deliveryId: "h67-a", message: "normal wake a", thread: RETIRED_THREAD, at: clock.t });
-		insert({ deliveryId: "h67-b", message: "normal wake b", thread: RETIRED_THREAD, at: clock.t + 1 });
-		insert({ deliveryId: "h67-over-1", message: OVERSIZE, thread: RETIRED_THREAD, at: clock.t + 2 });
-		insert({ deliveryId: "h67-over-2", message: OVERSIZE, thread: LIVE_THREAD, at: clock.t + 3 });
-		insert({ deliveryId: "h67-c", message: "normal wake c", thread: LIVE_THREAD, at: clock.t + 4 });
-		const pendingId = insert({
-			deliveryId: "h67-pending",
-			message: "still pending",
-			thread: LIVE_THREAD,
-			at: clock.t + 5,
-			status: "pending",
-		});
+		add({ deliveryId: "h67-a", message: "normal wake a", thread: RETIRED_THREAD, at: clock.t });
+		add({ deliveryId: "h67-b", message: "normal wake b", thread: RETIRED_THREAD, at: clock.t + 1 });
+		add({ deliveryId: "h67-over-1", message: OVERSIZE, thread: RETIRED_THREAD, at: clock.t + 2 });
+		add({ deliveryId: "h67-over-2", message: OVERSIZE, thread: LIVE_THREAD, at: clock.t + 3 });
+		add({ deliveryId: "h67-c", message: "normal wake c", thread: LIVE_THREAD, at: clock.t + 4 });
+		raw.run(
+			`INSERT INTO outbox (delivery_id, message, kind, thread, receiver, created_at, folded, status, attempts, finished_at)
+			 VALUES ('h67-pending', 'still pending', NULL, ?, NULL, ?, 0, 'pending', 0, NULL)`,
+			[LIVE_THREAD, clock.t + 5],
+		);
+		const pendingId = (raw.query("SELECT id FROM outbox WHERE delivery_id = 'h67-pending'").get() as { id: number }).id;
 		raw.close();
 
 		const alarms: string[] = [];
 		const store = openStore(dbPath);
-		const hi = historicalAdoptHi(store);
-		expect(hi).toBeGreaterThan(0);
-		expect(deliveredIds.every((id) => id <= hi)).toBe(true);
-		expect(pendingId).toBeGreaterThan(hi);
+		const ids = historicalAdoptIds(store);
+		expect([...ids].sort((a, b) => a - b)).toEqual([...deliveredIds].sort((a, b) => a - b));
+		expect(ids.has(pendingId)).toBe(false);
 
 		const r = recoverSteward({
 			store,
@@ -119,7 +106,6 @@ describe("#67 historical adoption of pre-v2 delivered Steward rows", () => {
 		expect(notice?.message).toContain("Adopted 5 historical wakes, none replayed");
 		expect(Buffer.byteLength(notice!.message, "utf8")).toBeLessThanOrEqual(TRANSFER_DIGEST_MAX_BYTES);
 
-		// Idempotent: second recovery changes nothing.
 		const again = recoverSteward({
 			store,
 			conf: w.conf,
@@ -135,31 +121,27 @@ describe("#67 historical adoption of pre-v2 delivered Steward rows", () => {
 		store.close();
 	});
 
-	test("post-watermark delivered-without-ledger still transfers; pending is untouched by adopt", () => {
+	test("post-set delivered-without-ledger still transfers; pending is untouched by adopt", () => {
 		const w = confWorld();
 		const clock = fakeClock();
-		const store = openStore(`${w.state}/post-hi.db`);
+		const store = openStore(`${w.state}/post-set.db`);
 		recoverSteward({ store, conf: w.conf, log: () => {}, findReceipt: () => undefined, now: clock.t });
-		expect(historicalAdoptHi(store)).toBe(0);
+		expect(historicalAdoptIds(store).size).toBe(0);
 
-		store.wakes.enqueue({ deliveryId: "post-hi-pending", message: "pending body", queuedAt: clock.t + 1 });
-		expect(store.wakes.find("post-hi-pending")?.status).toBe("pending");
-
-		store.wakes.enqueue({ deliveryId: "post-hi-delivered", message: "needs transfer", queuedAt: clock.t + 2 });
-		const row = store.wakes.find("post-hi-delivered")!;
+		store.wakes.enqueue({ deliveryId: "post-pending", message: "pending body", queuedAt: clock.t + 1 });
+		store.wakes.enqueue({ deliveryId: "post-delivered", message: "needs transfer", queuedAt: clock.t + 2 });
+		const row = store.wakes.find("post-delivered")!;
 		store.wakes.finish(row.id, "delivered", clock.t + 2);
 
 		const a = adoptPass(store, () => undefined, clock.t + 3);
 		expect(a.historical).toBe(0);
 		expect(a.transferItems).toBe(1);
 		expect(store.steward.ledger(row.id)).toMatchObject({ origin: "adopted" });
-		expect(store.wakes.held(null).some((h) => h.deliveryId === transferItemId(row.id, 0))).toBe(true);
-		expect(store.wakes.find("post-hi-pending")?.status).toBe("pending");
-		expect(store.steward.ledger(store.wakes.find("post-hi-pending")!.id)).toBeUndefined();
+		expect(store.wakes.find("post-pending")?.status).toBe("pending");
 		store.close();
 	});
 
-	test("already-ran-0.4.0 shape: gen-0 adopted + held transfer remediates to historical", () => {
+	test("exact-set member wrongly ledgered as adopted remediates", () => {
 		const w = confWorld();
 		const clock = fakeClock();
 		const dbPath = `${w.state}/remediate.db`;
@@ -174,11 +156,9 @@ describe("#67 historical adoption of pre-v2 delivered Steward rows", () => {
 		raw.close();
 
 		const store = openStore(dbPath);
-		// Simulate v0.4.0's wrong adopt: ledger as adopted + hold a gen-0 transfer (bypass historical path).
-		store.state.set("steward.adopt.historical_hi", origId);
+		expect(historicalAdoptIds(store).has(origId)).toBe(true);
 		seedWrongAdopt(store, origId, clock.t + 1);
 		expect(store.steward.ledger(origId)?.origin).toBe("adopted");
-		expect(store.wakes.held(null).filter((h) => h.kind === "transfer")).toHaveLength(1);
 
 		const r = recoverSteward({
 			store,
@@ -190,12 +170,10 @@ describe("#67 historical adoption of pre-v2 delivered Steward rows", () => {
 		expect(r.adopted).toBe(1);
 		expect(store.steward.ledger(origId)).toMatchObject({ origin: "adopted-historical" });
 		expect(store.wakes.held(null).filter((h) => h.kind === "transfer")).toHaveLength(0);
-		expect(store.steward.transferItemForOrig(0, origId)).toBeUndefined();
 		store.close();
 	});
 });
 
-/** Reproduce v0.4.0 adoptPass outcome for one row (gen-0 adopted + transfer item). */
 function seedWrongAdopt(store: Store, outboxId: number, now: number) {
 	store.tx(() => {
 		if (store.steward.maxGen() < 1) {

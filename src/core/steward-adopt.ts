@@ -1,11 +1,12 @@
 /**
  * Adoption of pre-upgrade Steward delivered rows (B3): runs at every daemon start under the relay lock.
- * Pre-v2 delivered rows (id ≤ steward.adopt.historical_hi) → adopted-historical, settled, no transfer.
- * Post-watermark rows: empty → unrecoverable; payload without receipt → gen 0 standing transfer; receipt → gen 0 + receipt.
+ * Exact pre-v2 membership (steward.adopt.historical_ids, set only on ≤14→16 upgrade) → adopted-historical, no transfer.
+ * All other unledgered delivered rows: empty → unrecoverable; no receipt → gen 0 transfer; receipt → gen 0 + receipt.
+ * Absent historical_ids → no historical path (schema-15+ databases keep normal v2 checks).
  */
 import { crashPoint } from "./crash.ts";
 import { holdTransferItem, transferItemId } from "./steward-transfer.ts";
-import { exceedsEncodedCap, HISTORICAL_ADOPT_HI_KEY, type ReceiptHit } from "./steward-types.ts";
+import { exceedsEncodedCap, HISTORICAL_ADOPT_IDS_KEY, type ReceiptHit } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 
 export type AdoptFindReceipt = (o: {
@@ -25,17 +26,11 @@ export type AdoptResult = {
 
 const HISTORICAL_NOTICE_ID = "adopt-historical-notice";
 
-/** Durable pre-v2 watermark: set by migration 16; computed once if missing (tests / odd restores). */
-export function historicalAdoptHi(store: Store): number {
-	const raw = store.state.get<number | string>(HISTORICAL_ADOPT_HI_KEY);
-	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-	if (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw))) return Number(raw);
-	const hi = store.wakes
-		.rows("delivered", null)
-		.filter((r) => r.attemptGen === undefined)
-		.reduce((m, r) => Math.max(m, r.id), 0);
-	store.state.set(HISTORICAL_ADOPT_HI_KEY, hi);
-	return hi;
+/** Exact pre-v2 delivered id set from migration 16. Absent or malformed → empty (never invent membership). */
+export function historicalAdoptIds(store: Store): ReadonlySet<number> {
+	const raw = store.state.get<unknown>(HISTORICAL_ADOPT_IDS_KEY);
+	if (!Array.isArray(raw)) return new Set();
+	return new Set(raw.filter((id): id is number => typeof id === "number" && Number.isFinite(id)));
 }
 
 /** Ensure a standing transfer from gen 0 to the current generation exists. */
@@ -83,11 +78,15 @@ function maybeHistoricalNotice(store: Store, historical: number, now: number): b
 }
 
 /**
- * Remedi ate gen-0 adopted/unrecoverable rows at or below the watermark (a database that already ran v0.4.0's adoptPass).
- * Idempotent: already-historical rows are skipped.
+ * Remedi ate gen-0 adopted/unrecoverable rows that are in the exact historical id set
+ * (e.g. a crash between a wrong ledger write and a later restart). Membership only — never an id interval.
  */
-function remediateHistorical(store: Store, hi: number, result: AdoptResult): void {
-	for (const outboxId of store.steward.gen0NeedingHistorical(hi)) {
+function remediateHistorical(store: Store, ids: ReadonlySet<number>, result: AdoptResult): void {
+	for (const outboxId of ids) {
+		const led = store.steward.ledger(outboxId);
+		if (!led) continue;
+		if (led.gen !== 0 || led.origin === "adopted-historical") continue;
+		if (led.origin !== "adopted" && led.origin !== "unrecoverable") continue;
 		store.tx(() => {
 			store.steward.setLedgerOrigin(outboxId, "adopted-historical");
 			dropGen0Transfer(store, outboxId);
@@ -108,15 +107,15 @@ export function adoptPass(store: Store, find: AdoptFindReceipt, now = Date.now()
 		transferItems: 0,
 		notice: false,
 	};
-	const hi = historicalAdoptHi(store);
-	remediateHistorical(store, hi, result);
+	const ids = historicalAdoptIds(store);
+	remediateHistorical(store, ids, result);
 
 	for (const raw of store.steward.deliveredStewardWithoutLedger()) {
 		const outboxId = raw.id as number;
 		const deliveryId = raw.delivery_id as string;
 		const message = (raw.message as string) ?? "";
 		const createdAt = raw.created_at as number;
-		if (outboxId <= hi) {
+		if (ids.has(outboxId)) {
 			store.tx(() => {
 				store.steward.insertLedger({ outboxId, gen: 0, origin: "adopted-historical" });
 				crashPoint("adopted");
