@@ -15,15 +15,22 @@ export type PrepareResult =
 
 const newSwitchId = (): string => randomBytes(8).toString("hex");
 
+/** Shared gates: --live required; at most one preparing switch. */
+function prepareGate(store: Store, live: boolean): PrepareResult | undefined {
+	if (!live) return { ok: false, code: 2, error: "steward prepare requires --live" };
+	if (store.steward.openSwitch())
+		return { ok: false, code: 3, error: "a switch is already preparing; abort it or commit it first" };
+	return undefined;
+}
+
 /** Prepare a forward switch to `toThread`. */
 export function prepareSwitch(
 	store: Store,
 	conf: string,
 	o: { toThread: string; live: boolean; now?: number },
 ): PrepareResult {
-	if (!o.live) return { ok: false, code: 2, error: "steward prepare requires --live" };
-	if (store.steward.openSwitch())
-		return { ok: false, code: 3, error: "a switch is already preparing; abort it or commit it first" };
+	const gate = prepareGate(store, o.live);
+	if (gate) return gate;
 	const fromGen = maxGen(store);
 	if (fromGen < 1) return { ok: false, code: 2, error: "no steward generation is seeded yet" };
 	const id = newSwitchId();
@@ -49,9 +56,8 @@ export function prepareRollback(
 	conf: string,
 	o: { toGen: number; live: boolean; now?: number },
 ): PrepareResult {
-	if (!o.live) return { ok: false, code: 2, error: "steward prepare requires --live" };
-	if (store.steward.openSwitch())
-		return { ok: false, code: 3, error: "a switch is already preparing; abort it or commit it first" };
+	const gate = prepareGate(store, o.live);
+	if (gate) return gate;
 	const target = store.steward.gen(o.toGen);
 	if (!target) return { ok: false, code: 2, error: `generation ${o.toGen} does not exist` };
 	const wakeFile = secretPath(conf, target.wakeRef);
