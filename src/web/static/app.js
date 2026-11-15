@@ -167,8 +167,9 @@ const when = (iso) => {
 	return d.toLocaleString([], soon ? { weekday: "short", hour: "numeric", minute: "2-digit" } : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 };
 // One row of buttons along an item's bottom edge, wrapping only when the width runs out: first `lead` (the Answer button, a little bigger, and Not
-// now), then the little ones in this order: Open thread, Snooze, Direction, Dismiss. A secret and a card pointer are settled in their own thread, so
-// they get only Not now, the thread link and Snooze. A phone gets the same row (Nathan, 2026-11-15): no separate, larger bar for Answer.
+// now), then the little ones in this order: Open thread, Snooze, Direction, Dismiss. Every kind gets Dismiss (Nathan, 2026-11-15 #68). A secret and a
+// card pointer are answered in their own thread, so they get Not now, the thread link, Snooze and Dismiss, and never Direction. A phone gets the same
+// row (Nathan, 2026-11-15): no separate, larger bar for Answer.
 const NOT_NOW_BTN = '<button type="button" class="btn-ghost lead" data-act="not-now">Not now <span class="kbd">H</span></button>';
 function actionsHtml(i, settles, lead = "") {
 	const link = threadHref(i) ? `<a class="mini" href="${esc(threadHref(i))}">Open thread</a>` : "";
@@ -176,7 +177,9 @@ function actionsHtml(i, settles, lead = "") {
 	const choices = open ? `<div class="snooze-panel" role="group" aria-label="Snooze until">
 		${snoozeChoices(new Date()).map((c) => `<button type="button" class="mini" data-snooze="${c.id}" title="${esc(when(c.at.toISOString()))}">${c.label}</button>`).join("")}
 		<label class="custom">Custom <input type="datetime-local" id="snooze-custom" aria-label="Snooze until a time of your own"></label><button type="button" class="mini" data-act="snooze-custom">Set</button></div>` : "";
-	return `<div class="item-actions" role="group" aria-label="Ways to handle this">${lead}${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button><button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>` : ""}</div>${choices}`;
+	const direction = settles ? `<button type="button" class="mini" data-act="direction" title="Send your note to the Steward with no option chosen">Direction</button>` : "";
+	const dismiss = `<button type="button" class="mini" data-act="dismiss" title="Already handled, or no longer needed">Dismiss</button>`;
+	return `<div class="item-actions" role="group" aria-label="Ways to handle this">${lead}${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${direction}${dismiss}</div>${choices}`;
 }
 function snoozedHtml() {
 	if (!S.snoozed.length) return "";
@@ -242,9 +245,9 @@ function detailHtml() {
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
 		<div class="headline"><h1>${esc(i.title)}</h1>${i.context ? contextHtml(i.context) : ""}</div>`;
 	if (i.cardRequest && !i.secret) {
-		// A card pointer is never answered here: the card is acted on in its own thread, and this question closes only when the card does.
+		// A card pointer is never answered here: the card is acted on in its own thread. Dismiss stops tracking this item without answering the card.
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
-			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there; this question and its hold close only when the card does.</span>
+			<div class="secret"><b>Act on the question card itself.</b><span>This question points to a question card waiting in its thread. Answer or approve it there. Dismiss stops tracking this item and does not answer the card.</span>
 			${threadHref(i) ? `<a href="${esc(threadHref(i))}">Open ${esc(i.thread)} in T3</a>` : `<span>Open “${esc(i.thread)}” on ${esc(i.server)} in T3.</span>`}</div>
 			${actionsHtml(i, false, NOT_NOW_BTN)}
 		</section>`;
@@ -302,9 +305,11 @@ async function afterSettle(onItem) {
 	if (onItem) go(next ? `/item/${next.id}` : "/", true);
 }
 // Direction sends the note with no option chosen, so the note is required. Dismiss sends it if there is one. Neither is an answer to the question.
+// A secret and a card pointer may be dismissed (never directed): that stops tracking them and never enters a secret or answers the card.
 async function settleCurrent(kind) {
 	const i = current();
-	if (!i || i.secret || i.cardRequest || S.busy) return;
+	if (!i || S.busy) return;
+	if (kind === "direction" && (i.secret || i.cardRequest)) return;
 	const note = (S.note[i.id] || "").trim();
 	if (kind === "direction" && !note) { toast("Write your direction in the note first. It goes to the Steward with no option chosen.", true); document.getElementById("note")?.focus(); return; }
 	if (kind === "dismiss" && !confirm(`Dismiss “${i.title}”? It leaves the queue and its hold closes. This is not an answer: nothing is settled.`)) return;

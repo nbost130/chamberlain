@@ -74,11 +74,11 @@ describe("the buttons along a card's bottom edge", () => {
 		expect(dq.all((e) => e.tag === "textarea")[0]!.parent!.style.display).toBe("none");
 		expect(dq.textContent).toContain("Ship it: today");
 	});
-	test("a secret and a card pointer get Snooze only, and no direction field", async () => {
+	test("a secret and a card pointer get Snooze and Dismiss, and no direction field", async () => {
 		for (const extra of [{ secret: true }, { cardRequest: "r1" }]) {
 			const { dq } = view(() => ok({}), [item(extra)]);
 			await settle();
-			expect(labels(dq)).toEqual(["Snooze", "▾"]);
+			expect(labels(dq)).toEqual(["Snooze", "▾", "Dismiss"]);
 			expect(dq.all((e) => e.tag === "textarea")).toHaveLength(0);
 		}
 	});

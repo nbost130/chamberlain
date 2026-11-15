@@ -31,9 +31,10 @@ const WHY_CLOSED: Record<Exclude<QuestionState["status"], "open">, string> = {
 	"answered-on-card": "already answered on its question card in T3",
 };
 /**
- * Why an item cannot be answered, directed or dismissed here, or undefined when it can: the same refusals for every way of settling one.
- * A card pointer closes only when its card does, so settling it here would take it off the queue (and its hold off the ledger) while the
- * card still waits; the refusal says where to act.
+ * Why an item cannot be answered or directed here, or undefined when it can. A dismissal is different: every open item may be
+ * dismissed (including a secret and a card pointer), so callers that dismiss skip this and only check that the item is still open.
+ * Answering or directing a secret or a card pointer here would take a value or a choice the page must never carry; the refusal
+ * says where to act. A card pointer's card stays in its thread until acted on there, even after a dismissal.
  */
 export function unsettleable(i: QuestionState): Reply | undefined {
 	if (i.status !== "open") return refuse(409, WHY_CLOSED[i.status]);
@@ -41,8 +42,14 @@ export function unsettleable(i: QuestionState): Reply | undefined {
 	if (i.cardRequest)
 		return refuse(
 			409,
-			"this question points to a question card waiting in its thread: act on the card itself; this question and its hold close only when the card does",
+			"this question points to a question card waiting in its thread: act on the card itself, or dismiss this item to stop tracking it without answering the card",
 		);
+	return undefined;
+}
+
+/** Why an item cannot be dismissed here, or undefined when it can: closed ones only. A secret and a card pointer may be dismissed. */
+function undismissable(i: QuestionState): Reply | undefined {
+	if (i.status !== "open") return refuse(409, WHY_CLOSED[i.status]);
 	return undefined;
 }
 
@@ -104,6 +111,7 @@ function claimSettled(d: ItemActionDeps, i: QuestionState, answer: Answer): Repl
  * Direction and Dismiss settle an item the way an answer does: one claim on the item's one wake, the wake's outbox row and the end of any
  * snooze, in one transaction. Direction is an answer, so the Steward reads it; a dismissal is recorded as dismissed and is never an
  * answer, a ruling or a settled-question match. Neither goes straight to the thread: the Steward has to read the note, or stop tracking.
+ * A dismissal may close a secret or a card pointer; it never enters a secret and never answers or approves the card behind a pointer.
  */
 function settle(d: ItemActionDeps, act: Act, kind: AnswerKind, raw: unknown): Promise<Reply> {
 	const { id, key } = act;
@@ -115,7 +123,8 @@ function settle(d: ItemActionDeps, act: Act, kind: AnswerKind, raw: unknown): Pr
 		const i = stateOf(d, id);
 		if (!i) return refuse(404, "no such item");
 		const held = wokenBy(d.store, i.id);
-		const refused = unsettleable(i) ?? (held === undefined ? undefined : takenReply(held));
+		const gate = kind === "dismissed" ? undismissable(i) : unsettleable(i);
+		const refused = gate ?? (held === undefined ? undefined : takenReply(held));
 		const answer = { ...plainAnswer(kind, i.id, given.note, new Date().toISOString()), key };
 		return refused ?? claimSettled(d, i, answer);
 	});

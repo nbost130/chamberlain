@@ -41,15 +41,16 @@ describe("the buttons along an item's bottom edge", () => {
 		expect(rowOf(p.html())).toEqual(["Snooze", "Direction", "Dismiss"]);
 		expect(p.html()).toContain('<span class="open">main · t-9</span>');
 	});
-	test("a secret and a card pointer, which are settled in their own thread, get only the thread link and Snooze", async () => {
+	test("a secret and a card pointer get the thread link, Snooze and Dismiss, and never Direction", async () => {
 		for (const extra of [{ secret: true, options: [] }, { cardRequest: "req-1" }]) {
 			const p = await page(() => ({ items: [item("Q-aaaa", extra)] }));
-			expect(rowOf(p.html())).toEqual(["Open thread", "Snooze"]);
+			expect(rowOf(p.html())).toEqual(["Open thread", "Snooze", "Dismiss"]);
 			expect(p.html()).not.toContain('data-act="direction"');
-			expect(p.html()).not.toContain('data-act="dismiss"');
+			expect(p.html()).toContain('data-act="dismiss"');
 			await p.tap({ act: "direction" });
-			await p.tap({ act: "dismiss" });
 			expect(p.calls).toEqual([]);
+			await p.tap({ act: "dismiss" });
+			expect(p.calls).toEqual([{ path: "/api/items/Q-aaaa/dismiss", body: {} }]);
 		}
 	});
 	test("a quiet pill stylesheet: fully rounded, a visible border and fill, small, and a 40px touch target on a touch screen", () => {

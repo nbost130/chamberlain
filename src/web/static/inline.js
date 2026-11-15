@@ -299,8 +299,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 	// The buttons on a card, which act in place: one row across the card (dq-actions), wrapping only when the width runs out. The answer options come first
 	// (class dq-main), only slightly bigger than the rest, the recommended one filled; then the actions every card has (class dq-sec): Snooze, Dismiss,
 	// Direction, then the thread link. One tap is one request: no confirmation, no second button, no page change. Direction needs a note, so it opens a field in the same card and Send is the one tap
-	// after it. A secret and a card pointer are settled in their own thread: they get Snooze and the thread link. The card then says what happened
-	// (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
+	// after it. Every kind gets Dismiss (Nathan, 2026-11-15 #68). A secret and a card pointer are answered in their own thread: they get Snooze, Dismiss and
+	// the thread link, and never Direction. The card then says what happened (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
 	function panel(it, c, settles) {
 		const msg = el("div", "dq-msg");
 		const row = el("div", "dq-actions");
@@ -361,8 +361,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		});
 		moreBtn.setAttribute("aria-label", "More snooze times"); moreBtn.setAttribute("aria-expanded", "false"); moreBtn.setAttribute("title", "More snooze times");
 		act(moreBtn);
+		act(btn("Dismiss", "dq-sec", () => send("dismiss", {}, () => "Dismissed. It is off the queue and nothing was answered.")));
 		if (settles) {
-			act(btn("Dismiss", "dq-sec", () => send("dismiss", {}, () => "Dismissed. It is off the queue and nothing was answered.")));
 			act(btn("Direction", "dq-sec", () => { dir.style.display = dir.style.display === "none" ? "" : "none"; if (dir.style.display === "") note.focus?.(); }));
 		}
 		sendDir.addEventListener("click", () => {
@@ -470,7 +470,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			c.append(...panel(it, c, false));
 			return c;
 		}
-		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. This question closes only when the card does.")); c.append(...panel(it, c, false)); return c; }
+		if (it.cardRequest) { c.append(el("div", "dq-ctx", "Act on the question card itself, in its thread. Dismiss stops tracking this item and does not answer the card.")); c.append(...panel(it, c, false)); return c; }
 		const m = it.mirrored;
 		if (m) {
 			const where = el("div", "dq-meta", `${m.threadTitle} · ${m.server}`);
@@ -504,8 +504,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		return c;
 	}
 	// One card per snoozed question: when it returns, and the one-press actions its kind supports. Bring back now puts it on the waiting list at once; Dismiss
-	// closes it, except for a secret or a card pointer, which are settled in their own thread (the server refuses them): those get Bring back now and the thread link,
-	// as Waiting's panel gives them Snooze and the thread link. Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again.
+	// closes it for every kind, including a secret and a card pointer (Nathan, 2026-11-15 #68): those also get Bring back now and the thread link, as Waiting's
+	// panel gives them Snooze, Dismiss and the thread link. Both are the view key's own writes (src/web/view-key.ts). The server decides; on success the view reads the queue again.
 	// A card is made once per item and kept (snoozedCards), so a redraw never drops a press in flight: its lock lives with the card.
 	function snoozedCard(it) {
 		const c = el("div", "dq-card");
@@ -528,7 +528,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			lock(false);
 		}
 		taps.push(btn("Bring back now", "dq-sec rec", () => act("unsnooze", "Back on the waiting list.")));
-		if (!it.secret && !it.cardRequest) taps.push(btn("Dismiss", "dq-sec", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
+		taps.push(btn("Dismiss", "dq-sec", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
 		const own = threadLink(it);
 		row.append(...taps, ...(own ? [own] : []));
 		c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), title, meta);

@@ -102,10 +102,10 @@ export function cardQuestion(w: CardWait, id: string, createdAt: string): Questi
 		context: [
 			`- Thread: ${clip(flat(w.thread), 120)} (on ${flat(w.server)})`,
 			`- It asks for: ${k.asks}${w.label ? `: ${clip(flat(w.label), 100)}` : ""}`,
-			"- Act on the question card itself, in its thread. This question and its hold close only when the card does; answering here closes nothing.",
+			"- Act on the question card itself, in its thread. Answering here closes nothing; dismiss stops tracking this item and does not answer the card.",
 			...(secret ? ["- The value never goes through this queue."] : []),
 		].join("\n"),
-		// Neither option says the card was handled: the page refuses an answer to a pointer, and only the card resolving closes it.
+		// Neither option says the card was handled: the page refuses an answer to a pointer; dismiss stops tracking without answering the card.
 		options: [{ label: "Open the question card in its thread" }, { label: "Leave the question card waiting" }],
 		thread: clip(flat(w.thread), 80),
 		server: w.server,
