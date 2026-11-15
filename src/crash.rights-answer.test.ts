@@ -2,7 +2,7 @@
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { withDeliveryId } from "./core/deliver.ts";
+import { finalSendMessage } from "./core/deliver.ts";
 import { getQuestion } from "./core/questions.ts";
 import { LEGACY_STAMP } from "./core/rights-sent.ts";
 import {
@@ -55,7 +55,7 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 		expect(accepted.map((a) => a.deliveryId)).toEqual([first.deliveryId, ROW]);
 		expect(accepted[0]!.message).toContain("Decision rights (standing rules):");
 		expect(accepted[0]!.message).toContain("The Steward may merge green PRs.");
-		expect(accepted[1]!.message).toBe(withDeliveryId(TEXT, ROW));
+		expect(accepted[1]!.message).toBe(finalSendMessage(TEXT, ROW));
 		expect(outbox(w)).toEqual([
 			{ delivery_id: ROW, status: "delivered", attempts: 1 },
 			{ delivery_id: first.deliveryId, status: "delivered", attempts: 1 },

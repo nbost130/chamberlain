@@ -10,7 +10,13 @@ import type { Ctx, Lane } from "./relay-ctx.ts";
 import { raise } from "./relay-ctx.ts";
 import { isDischarged } from "./steward-discharge.ts";
 import { transferMessage } from "./steward-header.ts";
-import { type StewardTransfer, TRANSFER_DIGEST_MAX_BYTES, TRANSFER_DIGEST_MAX_ITEMS } from "./steward-types.ts";
+import {
+	encodedSendBytes,
+	exceedsEncodedCap,
+	type StewardTransfer,
+	TRANSFER_DIGEST_MAX_BYTES,
+	TRANSFER_DIGEST_MAX_ITEMS,
+} from "./steward-types.ts";
 import type { Store } from "./store.ts";
 import type { HeldItem, RightsStamp } from "./store-wakes.ts";
 
@@ -89,19 +95,17 @@ export function holdTransferItem(
 	});
 }
 
-/** UTF-8 encoded size of a composed transfer message (V2-M1 / M1). */
-export const encodedBytes = (message: string): number => Buffer.byteLength(message, "utf8");
-
-/** True when a held transfer alone exceeds the encoded replay bound. */
+/** True when a held transfer alone exceeds the encoded replay bound (final send framing included). */
 function isOversizedTransfer(item: HeldItem, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean {
 	if (item.kind !== "transfer") return false;
-	return encodedBytes(composeWake([item], now).message) > maxBytes;
+	const trial = composeWake([item], now);
+	return exceedsEncodedCap(trial.message, trial.deliveryId, maxBytes);
 }
 
 /**
- * Compose held transfer items into one digest, capping count and UTF-8 encoded size at the
- * real composeWake framing. An item that alone exceeds the byte cap is never admitted (R2);
- * callers dead-letter it. Overflow that would break the bound stays held for the next pass.
+ * Compose held transfer items into one digest, capping count and UTF-8 encoded size of the
+ * final send message (composeWake body + delivery-id trailer). An item that alone exceeds the
+ * byte cap is never admitted (R2); callers dead-letter it. Overflow that would break the bound stays held.
  */
 export function composeTransferBatch(
 	held: HeldItem[],
@@ -115,8 +119,7 @@ export function composeTransferBatch(
 	for (const item of transfers) {
 		const next = [...batch, item];
 		const trial = composeWake(next, now);
-		const bytes = encodedBytes(trial.message);
-		if (bytes > maxBytes || next.length > maxItems) {
+		if (exceedsEncodedCap(trial.message, trial.deliveryId, maxBytes) || next.length > maxItems) {
 			if (batch.length === 0) continue; // refuse oversized solo — never send
 			break;
 		}
@@ -127,6 +130,7 @@ export function composeTransferBatch(
 
 /**
  * Promote held transfers that alone exceed the encoded cap into dead-letter outbox rows and raise an alarm.
+ * Compose and dead-letter commit in one transaction so a failed finish cannot leave an oversized pending row.
  * Durable and non-discarding: the frozen payload stays visible; it is never POSTed.
  */
 export function deadLetterOversizedTransfers(
@@ -139,27 +143,35 @@ export function deadLetterOversizedTransfers(
 	const ids: string[] = [];
 	for (const item of oversized) {
 		if (!r.store.wakes.held(l.name).some((h) => h.deliveryId === item.deliveryId)) continue;
-		const row = r.store.wakes.compose(
-			now,
-			(held) => {
-				const hit = held.find((h) => h.deliveryId === item.deliveryId);
-				if (!hit) throw new Error(`oversized transfer vanished: ${item.deliveryId}`);
-				return {
-					...composeWake([hit], now),
-					kind: "transfer" as const,
-					...(hit.rights ? { rights: hit.rights } : {}),
-				};
-			},
-			l.name,
-		);
-		if (!row || row.deliveryId !== item.deliveryId) continue;
-		if (r.store.wakes.finish(row.id, "dead_letter", now)) {
+		try {
+			const row = r.store.tx(() => {
+				const composed = r.store.wakes.compose(
+					now,
+					(held) => {
+						const hit = held.find((h) => h.deliveryId === item.deliveryId);
+						if (!hit) throw new Error(`oversized transfer vanished: ${item.deliveryId}`);
+						return {
+							...composeWake([hit], now),
+							kind: "transfer" as const,
+							...(hit.rights ? { rights: hit.rights } : {}),
+						};
+					},
+					l.name,
+				);
+				if (!composed || composed.deliveryId !== item.deliveryId) return undefined;
+				if (!r.store.wakes.finish(composed.id, "dead_letter", now))
+					throw new Error(`oversized transfer finish failed: ${item.deliveryId}`);
+				return composed;
+			});
+			if (!row) continue;
 			ids.push(row.deliveryId);
 			r.d.log("transfer-oversized-dead-letter", {
 				deliveryId: row.deliveryId,
-				bytes: encodedBytes(row.message),
+				bytes: encodedSendBytes(row.message, row.deliveryId),
 				maxBytes,
 			});
+		} catch {
+			// Rolled back: held item remains; next pass retries. Never leave oversized pending.
 		}
 	}
 	if (ids.length) {

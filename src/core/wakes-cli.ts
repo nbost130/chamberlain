@@ -12,6 +12,7 @@
 import { selfCommand } from "./config.ts";
 import { maxAttemptsFromEnv } from "./deliver.ts";
 import { releaseWake } from "./steward-discharge.ts";
+import { TRANSFER_DIGEST_MAX_BYTES } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
@@ -50,6 +51,12 @@ function retryOrCancel(
 	const was = cmd === "retry" ? store.wakes.retry(id) : store.wakes.cancel(id, Date.now());
 	if (!was) {
 		out(`${cmd}: no outbox row has the id ${id} ("list" shows what is waiting)`);
+		return 1;
+	}
+	if (cmd === "retry" && was === "oversized") {
+		out(
+			`retry: ${id} is over the ${TRANSFER_DIGEST_MAX_BYTES}-byte encoded replay bound (delivery framing included); shrink or split the frozen payload. The row stays dead_letter; nothing will send it.`,
+		);
 		return 1;
 	}
 	if (cmd === "retry" && was !== "dead_letter") {

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { useCoreEngineExtraFixtures } from "../testing/core-engine-extra-fixtures.ts";
-import { withDeliveryId } from "./deliver.ts";
+import { finalSendMessage } from "./deliver.ts";
 import { createEngine } from "./engine.ts";
 
 const { rig, thread, question, STREAM, make, waitingOn, pointerQueued, rightsThenRow } =
@@ -251,7 +251,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		await r.engine.tick();
 		await r.until("the pointer", () => r.fake.wakes.length === 2);
 		expect(r.fake.wakes[1]!.deliveryId).toBe(row.deliveryId);
-		expect(r.fake.wakes[1]!.message).toBe(withDeliveryId(row.message, row.deliveryId));
+		expect(r.fake.wakes[1]!.message).toBe(finalSendMessage(row.message, row.deliveryId));
 		await r.engine.tick();
 		expect(r.fake.wakes).toHaveLength(2);
 		expect(r.store.wakes.rows("all").some((w) => w.deliveryId.includes(":rights-first:"))).toBe(false);
@@ -278,7 +278,7 @@ describe("a queued rights pointer is checked against the Steward it is about to 
 		expect(ids[1]!.startsWith(`${row.deliveryId}:rights-first:`)).toBe(true);
 		expect(ids[1]).not.toBe(first.deliveryId);
 		expect(ids[2]).toBe(row.deliveryId);
-		expect(r.fake.wakes[3]!.message).toBe(withDeliveryId(row.message, row.deliveryId));
+		expect(r.fake.wakes[3]!.message).toBe(finalSendMessage(row.message, row.deliveryId));
 		expect(r.store.state.get("rights-sent")).toMatchObject({ steward: "steward-3", session: "session-1" });
 	});
 });
