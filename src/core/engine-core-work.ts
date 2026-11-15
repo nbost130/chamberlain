@@ -1,8 +1,7 @@
 /** The engine's core, third layer: the tickers it builds and the housekeeping passes they run. */
 
 import { has } from "./adapter-conformance.ts";
-import { drainAlertDesk } from "./alert-desk.ts";
-import { inboxPath } from "./alert-desk-config.ts";
+import { drainDeskPass } from "./alert-triage-engine.ts";
 import { reconcileCardHolds, trackUnverified, unverifiedAlarm } from "./card-reconcile.ts";
 import { compactTokens } from "./config.ts";
 import { CoreRights } from "./engine-core-rights.ts";
@@ -228,26 +227,17 @@ export abstract class CoreWork extends CoreRights {
 
 	/** The Alert Desk's inbox, drained into the outbox; a failure is an alarm, and the inbox keeps what it holds. */
 	protected drainDesk() {
-		const { deskLane } = this;
-		if (!deskLane) return;
-		try {
-			drainAlertDesk({
-				store: this.store,
-				outbox: this.outbox,
-				inbox: inboxPath(process.env, process.env.HOME ?? ""),
-				conf: this.conf,
-				now: this.d.relay?.now?.() ?? Date.now(),
-				canDeliver: !this.DRY && deskLane.wake.ready(),
-				log: this.log,
-			});
-		} catch (e) {
-			this.log("alert-desk-error", { error: String(e).slice(0, 200) });
-			this.alarm(
-				"alert-desk",
-				"chamberlain alert desk failed",
-				"The Alert Desk drain threw an error and did not finish, so alerts are not reaching the desk thread this round. Its inbox keeps them.",
-			);
-		}
+		drainDeskPass({
+			store: this.store,
+			outbox: this.outbox,
+			conf: this.conf,
+			DRY: this.DRY,
+			deskLane: this.deskLane,
+			log: this.log,
+			alarm: this.alarm,
+			clearAlarm: this.clearAlarm,
+			now: () => this.d.relay?.now?.() ?? Date.now(),
+		});
 	}
 
 	/** The checks of one housekeeping pass that run only when housekeeping is on, added to the pass's list in order. */

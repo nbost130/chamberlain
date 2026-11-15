@@ -22,6 +22,8 @@ export function parseLine(line: string): DeskEvent | undefined {
 	const title = typeof o.title === "string" ? o.title.trim() : "";
 	const ts = typeof o.ts === "string" ? o.ts : "";
 	if (!family || !title || !Number.isFinite(Date.parse(ts))) return undefined;
+	// Keep the accepted raw timestamp: flag-off delivery IDs and wake text stay byte-identical (R2).
+	// Triage canonicalises at prepareEvent / prepareTs (B2).
 	return {
 		source: typeof o.source === "string" && o.source ? o.source : "unknown",
 		family,
