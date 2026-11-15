@@ -13,7 +13,7 @@ import { SECRETS_DIR } from "../../core/layout-schema.ts";
 import { alarms } from "../../core/messages.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { failureOf, lookOf } from "./failure.ts";
-import { historyGet, readWhenConnected } from "./history.ts";
+import { historyGet, lastCompletedText, readWhenConnected } from "./history.ts";
 import { checkProjection, isObject, type Projection, readCards } from "./projection.ts";
 import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
@@ -171,10 +171,7 @@ export class T3Link {
 		lastMessage: async (threadId) => {
 			if (!this.rpc) return "";
 			const p = await this.projection(threadId);
-			const last = [...(p.turnItems ?? [])]
-				.reverse()
-				.find((i) => i.type === "assistant_message" && i.status === "completed");
-			return String(last?.text ?? "");
+			return lastCompletedText(p.turnItems ?? [], p.runs ?? []);
 		},
 		lastAssistant: async (threadId) => {
 			if (!this.rpc) return undefined;

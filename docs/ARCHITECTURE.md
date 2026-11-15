@@ -162,7 +162,8 @@ sequenceDiagram
 
 1. **The backend changes.** The adapter turns it into a normalized `ThreadState` and reports it. The core keeps the
    previous state of every thread and finds the transitions worth a wake in `decide.ts`: a request that appeared, a
-   thread that went to `waiting`, a top-level run that `failed`, a top-level turn that ended.
+   thread that went to `waiting`, a top-level run that `failed`, a top-level turn that ended (including when a queued
+   message starts the next run with no idle gap: `LIVE` stays `LIVE` and `latestRunId` advances).
 2. **Settling.** The event waits a moment (2.5 s) and is re-checked on the newest state, so a burst of changes is one
    decision. A clean top-level completion (no running children or subagents, no pending background work) is queued as a
    durable wake after that debounce, with no quiet window: a later human message cannot cancel it. A turn end that still

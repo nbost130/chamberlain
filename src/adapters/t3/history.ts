@@ -37,6 +37,25 @@ const lastEnded = (runs: Run[] = []) =>
 	runs
 		.filter((r) => !LIVE.has(String(r.status)))
 		.reduce<Run | undefined>((a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a), undefined);
+/**
+ * Drops items that belong to a LIVE run newer than the last ended one. A queued handoff leaves the next run's prompt in
+ * the window; the completed run's report must still read that run's instruction and final message (issue #74).
+ */
+export function hideNewerLive(items: TurnItem[], runs: Run[]): TurnItem[] {
+	const ended = lastEnded(runs);
+	if (!ended?.id) return items;
+	const newer = new Set(
+		runs.filter((r) => r.id && r.id !== ended.id && LIVE.has(String(r.status))).map((r) => r.id as string),
+	);
+	return newer.size ? items.filter((i) => !i.runId || !newer.has(i.runId)) : items;
+}
+type Msg = { type?: string; status?: string; text?: string; runId?: string };
+/** The last completed assistant message, ignoring a newer LIVE run's items when a prior run has ended. */
+export function lastCompletedText(items: Msg[], runs: Run[] = []): string {
+	const pool = hideNewerLive(items as TurnItem[], runs) as Msg[];
+	const last = [...pool].reverse().find((i) => i.type === "assistant_message" && i.status === "completed");
+	return String(last?.text ?? "");
+}
 /** A retained interrupt request sits at the end of T3's window whatever its age, so it says nothing about where a run began. */
 const runItems = (items: TurnItem[], runId: string) =>
 	items.findIndex((i) => i.runId === runId && i.type !== "run_interrupt_request");
@@ -58,12 +77,14 @@ export async function readInstruction(threadId: string, get: HistoryGet): Promis
 	try {
 		const bounded = (await get(`${base}/bounded`)) as Bounded;
 		if (!Array.isArray(bounded.projection?.turnItems)) throw Error("bounded snapshot had no turnItems");
+		const runs = bounded.projection.runs ?? [];
 		let items = bounded.projection.turnItems;
-		const runId = lastEnded(bounded.projection.runs)?.id;
+		const runId = lastEnded(runs)?.id;
 		let more = bounded.hasMoreHistory === true;
 		let cursor = bounded.historyCursor;
 		for (let pages = 0; more && !(lastInstruction(items) && haveRunStart(items, runId)); pages++) {
-			if (!cursor || pages === HISTORY_PAGES_MAX) return { items, state: "truncated", byMachine: false };
+			if (!cursor || pages === HISTORY_PAGES_MAX)
+				return { items: hideNewerLive(items, runs), state: "truncated", byMachine: false };
 			const page = (await get(`${base}/history?cursor=${encodeURIComponent(cursor)}&view=conversation`)) as Page;
 			if (!Array.isArray(page.items)) throw Error("history page had no items");
 			const local = page.items
@@ -73,6 +94,7 @@ export async function readInstruction(threadId: string, get: HistoryGet): Promis
 			more = page.hasMoreHistory === true;
 			cursor = page.nextCursor;
 		}
+		items = hideNewerLive(items, runs);
 		return { items, state: "complete", byMachine: startedByMachine(items, runId) };
 	} catch (e) {
 		return { items: [], state: "failed", error: String(e).slice(0, 200), byMachine: false };

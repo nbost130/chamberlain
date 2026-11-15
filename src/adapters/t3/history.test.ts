@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { idleKey, principalWroteWithin, stewardInstruction, type TurnItem } from "../../core/decide";
-import { HISTORY_PAGES_MAX, historyGet, readInstruction, readWhenConnected } from "./history";
+import {
+	HISTORY_PAGES_MAX,
+	hideNewerLive,
+	historyGet,
+	lastCompletedText,
+	readInstruction,
+	readWhenConnected,
+} from "./history";
 
 const noise = (n: number): TurnItem[] =>
 	Array.from({ length: n }, (_, i) => ({ type: "assistant_message", id: `a${i}`, text: "working" }));
@@ -208,6 +215,24 @@ describe("who started the turn that last ended", () => {
 			(await read([run(1, "completed"), run(2, "completed"), run(3, "queued")], [start, note("r2")])).byMachine,
 		).toBe(true);
 		expect((await read([run(1, "completed"), run(2, "running")], [start, note("r2")])).byMachine).toBe(false);
+	});
+	test("a queued next run's prompt does not replace the completed run's instruction or final message", async () => {
+		const done = {
+			type: "assistant_message",
+			id: "a20",
+			runId: "r20",
+			text: "head df704346, checks green.",
+			status: "completed",
+		};
+		const nextPrompt: TurnItem = { ...steward, id: "s21", runId: "r21", text: "Steward here. Continue." };
+		const runs = [run(20, "completed"), run(21, "running")];
+		const items: TurnItem[] = [{ ...start, runId: "r20", id: "s20" }, done, nextPrompt];
+		expect(hideNewerLive(items, runs).map((i) => i.id)).toEqual(["s20", "a20"]);
+		expect(stewardInstruction(hideNewerLive(items, runs))).toBe("s20");
+		expect(lastCompletedText([done, nextPrompt], runs)).toBe("head df704346, checks green.");
+		const r = await read(runs, items);
+		expect(stewardInstruction(r.items)).toBe("s20");
+		expect(r.items.some((i) => i.id === "s21")).toBe(false);
 	});
 	test("pages back for a run start that left the window, even with the instruction in hand", async () => {
 		// A steered instruction is in the window, and the notification that started its run is one page back.

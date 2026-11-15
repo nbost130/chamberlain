@@ -34,6 +34,31 @@ describe("decide", () => {
 		expect(decide(child, { ...child, status: "failed" }, none)).toEqual([]);
 		expect(decide(child, { ...child, status: "completed" }, none)).toEqual([]);
 	});
+	test("a queued handoff (LIVE→LIVE, new latestRunId) is a turn_ended keyed by the completed run", () => {
+		const prev = { ...base, status: "running", latestRunId: "run-20" };
+		const next = { ...base, status: "running", latestRunId: "run-21" };
+		const a = decide(prev, next, none);
+		expect(a.map((c) => c.kind)).toEqual(["turn_ended"]);
+		expect(a[0]!.key).toBe("t1:ended:run-20");
+		expect(decide(prev, { ...prev }, none)).toEqual([]);
+		expect(decide({ ...base, status: "completed", latestRunId: "run-20" }, next, none)).toEqual([]);
+		const child = { ...prev, parentThreadId: "p" };
+		expect(decide(child, { ...child, latestRunId: "run-21" }, none)).toEqual([]);
+	});
+	test("idle-gap and handoff keys name the same completed run, so they cannot both wake", () => {
+		const idle = decide(
+			{ ...base, status: "running", latestRunId: "run-1" },
+			{ ...base, status: "completed", latestRunId: "run-1" },
+			none,
+		);
+		const handoff = decide(
+			{ ...base, status: "running", latestRunId: "run-1" },
+			{ ...base, status: "running", latestRunId: "run-2" },
+			none,
+		);
+		expect(idle[0]!.key).toBe("t1:ended:run-1");
+		expect(handoff[0]!.key).toBe("t1:ended:run-1");
+	});
 	test("excluded, snoozed, settled and archived threads are silent", () => {
 		const n = { ...base, status: "completed" };
 		expect(decide(base, n, new Set(["t1"]))).toEqual([]);
