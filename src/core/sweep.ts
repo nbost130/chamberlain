@@ -68,6 +68,10 @@ export function sweepAction(outcomes: readonly SourceOutcome[], sinceFullMs: num
  */
 export const fenced = (s: string) => s.replace(/\s*[\r\n\v\f\u0085\u2028\u2029]+\s*/g, " ").replace(/[<>]/g, "");
 
+/** Bullet list of notified finding texts for a sweep-style wake body. */
+export const fencedFindings = (items: readonly { dedupKey: string; payload: Record<string, unknown> }[]) =>
+	items.map((i) => `- ${fenced(String(i.payload.text ?? i.dedupKey))}`).join("\n");
+
 /** When the sweep last ran, when it last ran in full, and whether the first sweep (the baseline) has happened. */
 export type SweepClock = { lastAt: number; lastFullAt: number; seeded: boolean };
 /** Pure: where the sweep clocks stand. They run on regardless of away mode, so entering or leaving it never moves the rhythm. */

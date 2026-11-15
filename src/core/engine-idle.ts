@@ -20,7 +20,7 @@ import type { Log } from "./log.ts";
 import { idleThreadsWake } from "./messages.ts";
 import { evaluateSource, recordEvaluation } from "./source.ts";
 import type { Store } from "./store.ts";
-import { fenced, idleParentsConfig } from "./sweep.ts";
+import { fencedFindings, idleParentsConfig } from "./sweep.ts";
 
 const IDLE_CLOCK = "idle-parents-clock";
 const STEWARD_STATE = "idle-parents-steward";
@@ -129,11 +129,10 @@ async function runIdlePass(p: Pass): Promise<void> {
 			...(outcome.ok ? {} : { error: outcome.error }),
 		});
 		if (!outcome.notified.length) return undefined;
-		const block = outcome.notified.map((i) => `- ${fenced(String(i.payload.text ?? i.dedupKey))}`).join("\n");
 		return {
 			message: idleThreadsWake(
 				outcome.notified.filter((i) => !i.dedupKey.startsWith(DIGEST_PREFIX)).length,
-				block,
+				fencedFindings(outcome.notified),
 				cfg.classifier.provider !== "none" && cfg.classifier.mode === "live",
 			),
 			deliveryId: `idle-parents:${at}`,
