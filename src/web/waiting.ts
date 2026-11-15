@@ -9,6 +9,8 @@ import type { Adapter } from "../core/adapter.ts";
 import { has } from "../core/adapter-conformance.ts";
 import type { WaitingCard } from "../core/adapter-waiting.ts";
 import { releaseCardAnswer, reserveCardAnswer, settleCardAnswer } from "../core/card-answers.ts";
+import { dismissCard, isCardDismissed } from "../core/card-dismiss.ts";
+import type { KeyUsed } from "../core/questions.ts";
 import type { ServerEntry } from "../core/servers.ts";
 import type { Store } from "../core/store.ts";
 import { within } from "../core/within.ts";
@@ -253,15 +255,40 @@ export function createWaiting(d: WaitingDeps) {
 		}
 	}
 
-	const list = () => [...st.byServer.values()].flat();
+	/** Every card the adapters list, including ones dismissed from the views (the dismiss route needs them for 409). */
+	const rawList = () => [...st.byServer.values()].flat();
+	/** Cards still shown on the page and inline view: a dismissed request id is hidden until a new request appears. */
+	const list = () => rawList().filter((c) => !isCardDismissed(d.store, c.server, c.requestId));
 	/** Servers whose last read failed, so the view can say its list may be missing what waits there. */
 	const unreachable = () => [...st.failing].map(([server, since]) => ({ server, since }));
 	const answer = (id: string, choice: unknown, sig: unknown, only?: ReadonlySet<string>) =>
 		answerCard(d, st, id, { choice, sig, only });
 
+	/**
+	 * Hides a mirrored card from the views only. The thread's request stays live; a new request id shows again.
+	 * Double dismiss is 409. A card no longer waiting is 404.
+	 */
+	const dismiss = (
+		id: string,
+		o: { key: KeyUsed; note?: string; now?: number },
+	): { status: number; body: Record<string, unknown> } => {
+		const card = rawList().find((c) => c.id === id);
+		if (!card) return { status: 404, body: { error: "no such card (answered or withdrawn in its thread?)" } };
+		const result = dismissCard(d.store, card, o);
+		if (result === "already") return { status: 409, body: { error: "already dismissed", code: "already-dismissed" } };
+		d.log("card-dismissed", {
+			id,
+			server: card.server,
+			requestId: card.requestId,
+			type: card.type,
+			key: o.key,
+		});
+		return { status: 200, body: { ok: true, id, kind: "dismissed", recorded: true } };
+	};
+
 	const secret = (q: SecretAsk) => secretRequest(d, st, q);
 
-	return { poll, list, answer, unreachable, secretRequest: secret };
+	return { poll, list, answer, dismiss, unreachable, secretRequest: secret };
 }
 export type Waiting = ReturnType<typeof createWaiting>;
 

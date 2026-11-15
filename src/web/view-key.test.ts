@@ -28,6 +28,8 @@ describe("the allowlist is one explicit list", () => {
 		// the route's shape only: which kinds of card it may answer is view-key-cards.test.ts (a question card, never an approval, goal, secret or link)
 		expect(viewKeyVerdict("POST", "/api/cards/C-0123456789ab/answer")).toBe("card-answer");
 		expect(viewKeyVerdict("OPTIONS", "/api/cards/C-0123456789ab/answer")).toBe("preflight");
+		expect(viewKeyVerdict("POST", "/api/cards/C-0123456789ab/dismiss")).toBe("card-dismiss");
+		expect(viewKeyVerdict("OPTIONS", "/api/cards/C-0123456789ab/dismiss")).toBe("preflight");
 		for (const [m, p] of [
 			["POST", "/api/items/Q-abcd/not-now"],
 			["POST", "/api/accept-all"],

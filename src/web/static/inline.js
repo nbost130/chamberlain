@@ -416,7 +416,33 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		return box;
 	}
 
-	// A question card from another thread, answered in place: its options are the buttons, then the thread link, in the same one row as a question's.
+	// Dismiss a mirrored card from these views only (Nathan, 2026-11-15 #68 / B2). Same auth path as an item dismiss; the thread request stays.
+	function mirrorDismiss(m, c, { row, tell, taps, lock, busy }) {
+		const b = btn("Dismiss", "dq-sec", async () => {
+			if (busy()) return;
+			lock(true); tell("", "Sending…");
+			try {
+				const r = await post(`/api/cards/${encodeURIComponent(m.id)}/dismiss`, {});
+				if (r.ok) {
+					c.dataset.answered = "1";
+					row.replaceChildren();
+					tell("dq-ok", "Dismissed from these views. The thread request is unchanged.");
+					remaining = Math.max(0, remaining - 1);
+					count.textContent = remaining ? `${remaining} waiting` : DASH ? "clear" : "0 waiting";
+					refresh();
+					return;
+				}
+				tell("dq-bad", r.b.error || `HTTP ${r.status}`);
+				if (r.status === 409) refresh();
+			} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); }
+			lock(false);
+		});
+		b.setAttribute("title", "Hide from these views; the thread request stays");
+		taps.push(b);
+		return b;
+	}
+
+	// A question card from another thread, answered in place: its options are the buttons, then Dismiss, then the thread link, in the same one row as a question's.
 	// One tap sends the choice and the card's fingerprint (`sig`) as this view saw it; the server re-reads the card in its thread and refuses one that
 	// changed (409), and then the view reads the queue again so the live card replaces this one.
 	function cardPanel(m, c) {
@@ -450,6 +476,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			if (i === m.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
 			taps.push(b); row.append(b);
 		});
+		row.append(mirrorDismiss(m, c, { row, tell, taps, lock, busy: () => sending }));
 		if (own) row.append(own);
 		const lines = m.options.filter((o) => o.detail || String(o.label).length > LONG_LABEL).map((o) => el("div", "dq-d", o.detail ? `${o.label}: ${o.detail}` : o.label));
 		return [...lines, msg, row];
@@ -489,10 +516,19 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			// The view key never answers an approval or a goal (they run or commit to something; anyone who reads the thread holds the key), a secret or a
 			// link. Those are answered on the card itself, in its own thread, where T3 checks who you are: so their one link is that thread (in T3's phone
 			// app it opens there in place). Never the queue page, which a phone's in-app browser opens without the page's cookie ("This page needs its link").
+			// Every mirrored kind still gets Dismiss here (hides from these views only).
+			const msg = el("div", "dq-msg");
+			const row = el("div", "dq-actions");
+			const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
+			const taps = [];
+			let sending = false;
+			const lock = (on) => { sending = on; for (const b of taps) b.disabled = on; };
 			const t = threadLink(m, "dq-pill rec");
 			const verb = m.type === "question" ? "Answer it" : m.type === "approval" || m.type === "goal" ? "Approve or decline it" : "Act on it";
-			c.append(el("div", "dq-msg", t ? `${verb} on its card, in its thread: open the thread and it is there.` : `${verb} on its card, in “${m.threadTitle}” on ${m.server} in T3.`));
-			if (t) { t.textContent = "Open the thread to answer"; c.append(t); }
+			tell("", t ? `${verb} on its card, in its thread: open the thread and it is there.` : `${verb} on its card, in “${m.threadTitle}” on ${m.server} in T3.`);
+			row.append(mirrorDismiss(m, c, { row, tell, taps, lock, busy: () => sending }));
+			if (t) { t.textContent = "Open the thread to answer"; row.append(t); }
+			c.append(msg, row);
 			return c;
 		}
 		// What each option means, as the card showed it before the options became buttons: the buttons carry the labels, this carries the detail.

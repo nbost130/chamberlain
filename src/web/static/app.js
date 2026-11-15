@@ -368,16 +368,18 @@ const CARD_KIND = { question: "QUESTION CARD", approval: "APPROVAL", goal: "GOAL
 const confirmable = (c) => c.type === "approval" || c.type === "goal";
 const cardPick = (c) => S.cpick[c.id] ?? (Number.isInteger(c.recommended) ? c.recommended : -1);
 const armedFor = (c) => { const a = S.carm[c.id]; return a && a.choice === cardPick(c) && a.sig === c.sig && a.expiresAt > Date.now() ? a : undefined; };
+// Dismiss on every mirrored kind (Nathan, 2026-11-15 #68 / B2): hides the card from these views only; the thread request stays live.
+const cardDismiss = (c) => `<div class="item-actions" role="group" aria-label="Ways to handle this card"><button type="button" class="mini" data-cact="dismiss" data-cid="${esc(c.id)}" title="Hide from these views; the thread request stays">Dismiss</button></div>`;
 function cardHtml(c) {
 	const head = `<div class="crumbs"><span class="chip ${esc(c.type)}">${esc(CARD_KIND[c.type] || c.type)}</span><span>${esc(c.threadTitle)}</span><span>${esc(c.server)}</span>${threadHref(c) ? `<a class="open" href="${esc(threadHref(c))}">Open thread</a>` : ""}</div>
 		<div class="headline"><h1>${esc(c.header || "Question")}</h1>${c.question ? contextHtml(c.question) : ""}</div>${c.command ? `<pre class="cmd">${esc(c.command)}</pre>` : ""}`;
-	if (!c.answerable) return `<article class="ccard" data-card="${esc(c.id)}">${head}<div class="secret"><span>${esc(c.why || "Answer it in its thread.")}</span></div></article>`;
+	if (!c.answerable) return `<article class="ccard" data-card="${esc(c.id)}">${head}<div class="secret"><span>${esc(c.why || "Answer it in its thread.")}</span></div>${cardDismiss(c)}</article>`;
 	const pick = cardPick(c), armed = armedFor(c);
 	const opts = c.options.map((o, k) => `<label class="opt ${k === pick ? "on" : ""}"><input type="radio" name="copt-${esc(c.id)}" data-cid="${esc(c.id)}" value="${k}" ${k === pick ? "checked" : ""}><span class="txt"><span class="lbl">${esc(o.label)}${k === c.recommended ? '<span class="rec">RECOMMENDED</span>' : ""}</span>${o.detail ? `<span class="det">${esc(o.detail)}</span>` : ""}</span></label>`).join("");
 	const label = pick < 0 ? "Pick an option" : armed ? `Tap again to confirm: ${esc(c.options[pick].label)}` : confirmable(c) ? esc(c.options[pick].label) : `Answer ${esc(c.options[pick].label)}`;
 	return `<article class="ccard" data-card="${esc(c.id)}">${head}<fieldset class="answer"><legend class="legend">YOUR ANSWER</legend>${opts}</fieldset>
 		<div class="buttons"><button type="button" class="btn-answer" data-cact="answer" data-cid="${esc(c.id)}" ${pick < 0 || S.cbusy[c.id] ? "disabled" : ""}>${label}</button></div>
-		${armed ? '<div class="from">This is an approval: it needs this second tap, which expires in a minute. Changing the option cancels it.</div>' : ""}</article>`;
+		${cardDismiss(c)}${armed ? '<div class="from">This is an approval: it needs this second tap, which expires in a minute. Changing the option cancels it.</div>' : ""}</article>`;
 }
 function cardsHtml() {
 	if (!S.cards.length) return "";
@@ -385,7 +387,20 @@ function cardsHtml() {
 }
 async function cardAct(act, id) {
 	if (act === "refresh") { await load(); return; }
-	const c = S.cards.find((x) => x.id === id), choice = c ? cardPick(c) : -1;
+	const c = S.cards.find((x) => x.id === id);
+	if (act === "dismiss") {
+		if (!c || S.cbusy[id]) return;
+		if (!confirm(`Dismiss “${c.header || c.question || "this card"}”? It leaves these views only. The thread request stays live and nothing is answered.`)) return;
+		S.cbusy[id] = true; render();
+		try {
+			await api(`/api/cards/${encodeURIComponent(id)}/dismiss`, {});
+			delete S.carm[id];
+			S.cards = S.cards.filter((x) => x.id !== id);
+			toast("Dismissed from these views. The thread request is unchanged.");
+		} catch (e) { toast(e.message, true); } finally { delete S.cbusy[id]; render(); }
+		return;
+	}
+	const choice = c ? cardPick(c) : -1;
 	if (!c || !c.answerable || choice < 0 || S.cbusy[id]) return;
 	const armed = armedFor(c);
 	S.cbusy[id] = true; render();

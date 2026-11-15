@@ -47,7 +47,12 @@ describe("a builder's question card is answered in place", () => {
 		});
 		await settle();
 		const row = dq.all((e) => e.className.split(" ").includes("dq-actions"))[0]!;
-		expect(row.children.map((b) => b.textContent)).toEqual(["One table", "People + memberships", "Open the thread"]);
+		expect(row.children.map((b) => b.textContent)).toEqual([
+			"One table",
+			"People + memberships",
+			"Dismiss",
+			"Open the thread",
+		]);
 		expect(row.children[1]!.className).toContain("rec");
 		await tap(dq, "People + memberships");
 		expect(posts(calls)).toEqual([
@@ -72,7 +77,7 @@ describe("a builder's question card is answered in place", () => {
 		expect(button(dq, "One table")?.disabled).toBe(false);
 		expect(calls.filter((c) => c.path === "/api/queue").length).toBeGreaterThan(before);
 	});
-	test("an approval, a goal, a secret and a link card get no answer buttons: only the thread link", async () => {
+	test("an approval, a goal, a secret and a link card get no answer buttons: Dismiss and the thread link only", async () => {
 		for (const over of [
 			{ type: "approval", command: "rm -rf build" },
 			{ type: "goal", command: "Ship it" },

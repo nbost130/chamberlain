@@ -126,6 +126,8 @@ export const EVENTS = {
 	dismissed: e("info", { item: ITEM_FROM_ID, key: KEY_USED }),
 	"not-now": e("info", { item: ITEM_FROM_ID, key: KEY_USED }),
 	"card-answered": e("info", { key: KEY_USED }),
+	// Mirrored card dismissed from the views only: the thread request stays (src/web/waiting.ts, #68 / B2).
+	"card-dismissed": e("info", { key: KEY_USED }),
 	// The view key asked to answer a card it may not (an approval, a goal, a secret, a link): refused, nothing sent (src/web/view-key-cards.ts).
 	"card-answer-refused": e("warn", { key: KEY_USED }),
 	"wake-queued": e("info", { item: ITEM_FROM_ID }),

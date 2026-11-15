@@ -27,7 +27,7 @@ export type AppDeps = {
 	/** Each card's thread link, and where `/open/<server>/<threadId>` sends a device (./thread-links.ts). Without it no card links to its thread. */
 	links?: Linker;
 	/** Cards waiting in other threads (src/web/waiting.ts). */
-	mirror?: Pick<Waiting, "list" | "answer"> & Partial<Pick<Waiting, "unreachable" | "secretRequest">>;
+	mirror?: Pick<Waiting, "list" | "answer"> & Partial<Pick<Waiting, "dismiss" | "unreachable" | "secretRequest">>;
 	/** A directory holding index.html, app.css, app.js and inline.js; or `staticFiles`. */
 	staticDir?: string;
 	/** Each static file's path by the URL path it is served at (src/embedded.ts); wins over `staticDir`. */
