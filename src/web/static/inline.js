@@ -64,9 +64,11 @@
 .dq-pill:hover,.dq-btn:hover:not(:disabled),.dq-reload:hover{background:color-mix(in srgb,var(--foreground) 13%,transparent)}.dq-pill:focus-visible,.dq-btn:focus-visible,.dq-reload:focus-visible,.dq-go:focus-visible,.dq-tab:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .dq-btn.rec,.dq-pill.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
 .dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
-.dq-btn.dq-main{font-size:13px;font-weight:600;min-height:38px;padding:7px 16px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center}
-.dq-btn.dq-sec,.dq-pill.dq-sec{font-size:12px;font-weight:500;min-height:34px;padding:5px 14px}
-@media(pointer:coarse){.dq-btn.dq-sec,.dq-pill.dq-sec{min-height:40px}.dq-btn.dq-main{min-height:44px}}
+.dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn{display:inline-block;height:34px;min-height:0;line-height:32px;padding:0 14px;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;min-width:0;text-align:center;vertical-align:middle}
+.dq-actions>.dq-btn.dq-main{font-size:13px;font-weight:600;padding:0 16px}
+.dq-actions>.dq-more{padding:0 10px}
+.dq-snz{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.dq-snz input{height:34px;font:inherit;font-size:12px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:999px;padding:0 10px;color-scheme:dark light}
+@media(pointer:coarse){.dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn,.dq-snz input{height:40px;line-height:38px}}
 .dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--border);margin-top:2px;padding-top:12px}
 .dq-dir{display:flex;flex-direction:column;gap:8px}
 .dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
@@ -264,17 +266,34 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		return row;
 	};
 
-	// The one POST this view makes: one of the view key's writes on one item (src/web/view-key.ts). Its reply is { ok, status, b } with b the JSON body, or {}.
-	async function postItem(id, action, body) {
-		const r = await authFetch(`${BASE}/api/items/${encodeURIComponent(id)}/${action}`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) });
+	// The POSTs this view makes: one of the view key's writes (src/web/view-key.ts), on one item or one question card. Its reply is { ok, status, b }
+	// with b the JSON body, or {}.
+	async function post(path, body) {
+		const r = await authFetch(`${BASE}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-decision-queue": "1" }, body: JSON.stringify(body) });
 		let b = {};
 		// EMPTY_CATCH_OK: the body only adds detail; r.ok and r.status already say whether it was recorded.
 		try { b = await r.json(); } catch { b = {}; }
 		return { ok: r.ok, status: r.status, b };
 	}
+	const postItem = (id, action, body) => post(`/api/items/${encodeURIComponent(id)}/${action}`, body);
 
-	// One tap on Snooze puts the question off for this long. It comes back by itself and is shown again if urgent. The full page offers the others.
+	// One tap on Snooze puts the question off for this long (Nathan's choice). It comes back by itself and is shown again if urgent.
 	const SNOOZE_TAP_MS = 3600000;
+	// The other times the full page offers (app.js snoozeChoices), worked out the same way in this device's time zone; the server gets an absolute time.
+	// Later today is 18:00, or 3 hours on when 18:00 is under an hour away, and is left out when that would be tomorrow. Tomorrow morning and next week
+	// (the coming Monday) are 09:00. "1 hour" is the Snooze button itself.
+	function snoozeChoices(now) {
+		const at = (days, hour) => { const d = new Date(now.getTime()); d.setDate(d.getDate() + days); d.setHours(hour, 0, 0, 0); return d; };
+		const evening = at(0, 18);
+		const later = evening.getTime() - now.getTime() >= 3600000 ? evening : new Date(now.getTime() + 3 * 3600000);
+		return [
+			...(later.getDate() === now.getDate() ? [{ label: "Later today", at: later }] : []),
+			{ label: "Tomorrow morning", at: at(1, 9) },
+			{ label: "Next week", at: at((8 - now.getDay()) % 7 || 7, 9) },
+		];
+	}
+	// A label longer than this may not fit its one-line button at phone width, so the card also prints it in full.
+	const LONG_LABEL = 32;
 	const btn = (text, cls, onTap) => { const b = el("button", `dq-btn${cls ? ` ${cls}` : ""}`, text); b.type = "button"; b.addEventListener("click", onTap); return b; };
 
 	// The buttons on a card, which act in place: one row across the card (dq-actions), wrapping only when the width runs out. The answer options come first
@@ -286,6 +305,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		const msg = el("div", "dq-msg");
 		const row = el("div", "dq-actions");
 		const dir = el("div", "dq-dir"); dir.style.display = "none";
+		// The other snooze times, opened by the small control beside Snooze: each is one tap, and Custom takes a time of your own.
+		const more = el("div", "dq-snz"); more.style.display = "none"; more.setAttribute("role", "group"); more.setAttribute("aria-label", "Snooze until");
 		const note = el("textarea"); note.placeholder = "Direction for the thread (no option chosen)"; note.rows = 2; note.setAttribute("aria-label", "Direction for the thread");
 		const sendDir = el("button", "dq-go", "Send direction"); sendDir.type = "button";
 		dir.append(note, sendDir);
@@ -295,7 +316,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
 		function done(text, extra, action) {
 			// A snoozed card stays on screen saying so, but is replaced by a live one if the question comes back (see waiting()).
-			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove();
+			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove(); more.remove();
 			const own = threadLink(it);
 			row.replaceChildren(...(own ? [own] : []), ...extra);
 			tell("dq-ok", text);
@@ -322,7 +343,24 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			});
 		}
 		const act = (b) => { taps.push(b); acts.push(b); };
-		act(btn("Snooze", "dq-sec", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, (r) => `Snoozed. It returns ${returnsAt(r.until)}.`)));
+		const snoozed = (r) => `Snoozed. It returns ${returnsAt(r.until)}.`;
+		act(btn("Snooze", "dq-sec", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, snoozed)));
+		const moreBtn = btn("▾", "dq-sec dq-more", () => {
+			const open = more.style.display === "none";
+			more.style.display = open ? "" : "none"; moreBtn.setAttribute("aria-expanded", String(open));
+			if (!open) return;
+			const custom = el("input"); custom.type = "datetime-local"; custom.setAttribute("aria-label", "Snooze until a time of your own");
+			const set = btn("Set", "dq-sec", () => {
+				const at = new Date(custom.value);
+				if (!custom.value || Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) { tell("dq-bad", "Pick a time in the future."); return; }
+				send("snooze", { until: at.toISOString() }, snoozed);
+			});
+			const choices = snoozeChoices(new Date()).map((ch) => btn(ch.label, "dq-sec", () => send("snooze", { until: ch.at.toISOString() }, snoozed)));
+			for (const b of [...choices, set]) taps.push(b);
+			more.replaceChildren(...choices, custom, set);
+		});
+		moreBtn.setAttribute("aria-label", "More snooze times"); moreBtn.setAttribute("aria-expanded", "false"); moreBtn.setAttribute("title", "More snooze times");
+		act(moreBtn);
 		if (settles) {
 			act(btn("Dismiss", "dq-sec", () => send("dismiss", {}, () => "Dismissed. It is off the queue and nothing was answered.")));
 			act(btn("Direction", "dq-sec", () => { dir.style.display = dir.style.display === "none" ? "" : "none"; if (dir.style.display === "") note.focus?.(); }));
@@ -334,7 +372,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		});
 		const own = threadLink(it);
 		row.append(...acts, ...(own ? [own] : []));
-		return settles ? [dir, msg, row] : [msg, row];
+		return settles ? [dir, msg, row, more] : [msg, row, more];
 	}
 
 	// How long ago a question was asked, worded as the full page words it (app.js agoLong).
@@ -378,6 +416,45 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		return box;
 	}
 
+	// A question card from another thread, answered in place: its options are the buttons, then the thread link, in the same one row as a question's.
+	// One tap sends the choice and the card's fingerprint (`sig`) as this view saw it; the server re-reads the card in its thread and refuses one that
+	// changed (409), and then the view reads the queue again so the live card replaces this one.
+	function cardPanel(m, c) {
+		const msg = el("div", "dq-msg");
+		const row = el("div", "dq-actions");
+		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
+		const own = threadLink(m);
+		const taps = [];
+		let sending = false;
+		const lock = (on) => { sending = on; for (const b of taps) b.disabled = on; };
+		m.options.forEach((o, i) => {
+			const b = btn(o.label, i === m.recommended ? "dq-main rec" : "dq-main", async () => {
+				if (sending) return;
+				lock(true); tell("", "Sending…");
+				try {
+					const r = await post(`/api/cards/${encodeURIComponent(m.id)}/answer`, { choice: i, sig: m.sig });
+					if (r.ok) {
+						c.dataset.answered = "1";
+						row.replaceChildren(...(own ? [own] : []));
+						tell("dq-ok", `Answered: ${r.b.choice || o.label}. It goes to its thread.`);
+						remaining = Math.max(0, remaining - 1);
+						count.textContent = remaining ? `${remaining} waiting` : DASH ? "clear" : "0 waiting";
+						refresh();
+						return;
+					}
+					tell("dq-bad", r.b.error || `HTTP ${r.status}`);
+					if (r.status === 409) refresh();
+				} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); }
+				lock(false);
+			});
+			if (i === m.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
+			taps.push(b); row.append(b);
+		});
+		if (own) row.append(own);
+		const lines = m.options.filter((o) => o.detail || String(o.label).length > LONG_LABEL).map((o) => el("div", "dq-d", o.detail ? `${o.label}: ${o.detail}` : o.label));
+		return [...lines, msg, row];
+	}
+
 	function card(it) {
 		const c = el("div", "dq-card");
 		c.append(el("div", `dq-kind ${it.kind}`, `${KIND[it.kind] || it.kind}${it.urgent === false && !it.secret && !it.cardRequest && !/^\s*(approval|secret)\s*$/i.test(it.tag || "") ? " · NOT URGENT" : ""}`));
@@ -400,16 +477,18 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			c.insertBefore(where, c.children[1]);
 			// An approval's command, exactly as T3 holds it: what is read is what would be approved.
 			if (m.command) c.append(el("pre", "dq-cmd", m.command));
-			// Its options, as the full page lists them (read here, chosen there); a card the page cannot answer says why instead.
+			// A question card is answered here, as the full page answers it (src/web/view-key.ts: a question card only, never an approval, goal, secret or link).
+			if (m.type === "question" && m.answerable !== false && m.options?.length) { c.append(...cardPanel(m, c)); return c; }
+			// Its options, as the full page lists them (read here, chosen in its thread); a card the page cannot answer says why instead.
 			if (m.answerable === false) c.append(el("div", "dq-msg", m.why || "Answer it in its thread."));
 			else if (m.options?.length) {
 				const ol = el("ul", "dq-copts");
 				m.options.forEach((o, k) => ol.append(el("li", "", `${o.label}${k === m.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`)));
 				c.append(ol);
 			}
-			// The view key never answers a card or an approval (anyone who reads the thread holds it). The card is answered on itself, in its own thread,
-			// where T3 checks who you are: so its one link is that thread (in T3's phone app it opens there in place). Never the queue page, which a
-			// phone's in-app browser opens without the page's cookie ("This page needs its link").
+			// The view key never answers an approval or a goal (they run or commit to something; anyone who reads the thread holds the key), a secret or a
+			// link. Those are answered on the card itself, in its own thread, where T3 checks who you are: so their one link is that thread (in T3's phone
+			// app it opens there in place). Never the queue page, which a phone's in-app browser opens without the page's cookie ("This page needs its link").
 			const t = threadLink(m, "dq-pill rec");
 			const verb = m.type === "question" ? "Answer it" : m.type === "approval" || m.type === "goal" ? "Approve or decline it" : "Act on it";
 			c.append(el("div", "dq-msg", t ? `${verb} on its card, in its thread: open the thread and it is there.` : `${verb} on its card, in “${m.threadTitle}” on ${m.server} in T3.`));
@@ -417,7 +496,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			return c;
 		}
 		// What each option means, as the card showed it before the options became buttons: the buttons carry the labels, this carries the detail.
-		for (const o of it.options || []) if (o.detail) c.append(el("div", "dq-d", `${o.label}: ${o.detail}`));
+		// A long label is cut short on its button (every button is one line, so the row stays one height), so its full text is here too.
+		for (const o of it.options || []) if (o.detail || String(o.label).length > LONG_LABEL) c.append(el("div", "dq-d", o.detail ? `${o.label}: ${o.detail}` : o.label));
 		// The ruling the question proposes, as the full page shows it beside the answer. It is saved only there (the view key never saves a ruling).
 		if (it.proposedRuling) c.append(el("div", "dq-rule", `Proposed ruling: “${it.proposedRuling}”. Save it as a ruling on the full queue page.`));
 		c.append(...panel(it, c, true));

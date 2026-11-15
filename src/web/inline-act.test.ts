@@ -67,7 +67,7 @@ describe("the buttons along a card's bottom edge", () => {
 	test("each option, then Snooze, Dismiss and Direction, in one row; the recommended option is marked; no radio, no note box until Direction", async () => {
 		const { dq } = view(() => ok({}));
 		await settle();
-		expect(labels(dq)).toEqual(["Ship it", "Wait", "Cancel", "Snooze", "Dismiss", "Direction"]);
+		expect(labels(dq)).toEqual(["Ship it", "Wait", "Cancel", "Snooze", "▾", "Dismiss", "Direction"]);
 		expect(button(dq, "Wait").className).toContain("rec");
 		expect(button(dq, "Ship it").className).not.toContain("rec");
 		expect(dq.all((e) => e.tag === "input")).toHaveLength(0);
@@ -78,7 +78,7 @@ describe("the buttons along a card's bottom edge", () => {
 		for (const extra of [{ secret: true }, { cardRequest: "r1" }]) {
 			const { dq } = view(() => ok({}), [item(extra)]);
 			await settle();
-			expect(labels(dq)).toEqual(["Snooze"]);
+			expect(labels(dq)).toEqual(["Snooze", "▾"]);
 			expect(dq.all((e) => e.tag === "textarea")).toHaveLength(0);
 		}
 	});

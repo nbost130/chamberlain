@@ -184,30 +184,6 @@ test("a paragraph line after a list is its own paragraph after the list", async 
 	expect(ctx.children[1]!.textContent).toBe("Tail");
 });
 
-test("a mirrored card or approval is shown read-only: no option to pick, no button, no request to answer it", async () => {
-	const calls: { method: string; path: string }[] = [];
-	const q = { ...card("rm -rf build", "sig-1") };
-	const qc = {
-		...card("", "sig-2"),
-		id: "C-ba9876543210",
-		type: "question",
-		requestId: "q1",
-		options: [{ label: "Yes" }, { label: "No" }],
-	};
-	const dq = run(() => ({ items: [], cards: [q, qc] }), { calls });
-	await settle();
-	// each says where it is answered: on its own card, in its thread, where T3 checks who is answering
-	expect(dq.textContent).toContain("Approve or decline it on its card, in “T” on main in T3.");
-	expect(dq.textContent).toContain("Answer it on its card, in “T” on main in T3.");
-	// The command is still shown exactly, so it can be read; but nothing here can approve it.
-	expect(dq.all((e) => e.tag === "pre").map((e) => e.textContent)).toEqual(["rm -rf build"]);
-	expect(dq.all((e) => e.tag === "input")).toHaveLength(0);
-	expect(dq.all((e) => e.className.includes("dq-go"))).toHaveLength(0);
-	// never a link to the queue page: a phone's in-app browser would open it without the page's cookie (inline-links.test.ts)
-	expect(dq.all((e) => e.tag === "a" && e.href === "http://queue.test/")).toHaveLength(0);
-	expect(calls.every((c) => c.method === "GET" && INLINE_PATHS.has(c.path))).toBe(true);
-});
-
 test("a single-question view reads only the queue and recent answers, never /api/items/<id>", async () => {
 	const calls: { method: string; path: string }[] = [];
 	const answered = { id: "Q-ctx2", kind: "product", title: "Done one", status: "answered", answer: { label: "A" } };

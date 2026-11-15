@@ -21,7 +21,8 @@ import { type Ctx, cardView, view } from "./app-ctx.ts";
 import { fail, json } from "./app-http.ts";
 import { ITEM_ACTIONS } from "./queue-actions.ts";
 import { type Authority, keyUsed, mayDo } from "./view-key.ts";
-import { checkCard, needsConfirmation } from "./waiting.ts";
+import { viewKeyCardAnswer } from "./view-key-cards.ts";
+import { checkCard, needsConfirmation, UNCONFIRMED_CARD_TYPES } from "./waiting.ts";
 
 function rulingsView(ctx: Ctx) {
 	const list = readRulings(ctx.d.store);
@@ -157,11 +158,13 @@ type Call = { req: Request; url: URL; parts: string[]; body: Record<string, unkn
 async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "confirm"): Promise<Response> {
 	const { req, body, authority } = call;
 	const { d } = ctx;
-	// Approvals and cards are answered on the full page only (see inlineVerdict); this is the second lock on the same door.
-	if (authority !== "full")
+	// The view key answers a question card (./view-key.ts) and nothing else here; the page key from a frame or with no Origin answers none.
+	// This is the second lock behind the origin and key gates.
+	if (authority === "restricted" || (authority === "view" && step !== "answer"))
 		return fail(403, "refused: question cards and approvals are answered on the full page, not in an inline frame");
 	const { mirror } = d;
 	if (!mirror) return fail(404, "not found");
+	if (authority === "view") return viewKeyCardAnswer(ctx, mirror, id, body);
 	const b = body as CardBody;
 	const card = mirror.list().find((c) => c.id === id);
 	// The session is a random value in a cookie only this page's own requests carry. It is set when the first challenge is asked for.
@@ -176,10 +179,13 @@ async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "co
 		return r;
 	};
 	if (step === "confirm") return confirmCard(ctx, { id, card, b }, { session, withSession });
-	const refused =
-		card?.answerable && needsConfirmation(card) ? unconfirmedRefusal(ctx, { id, card, b }, session) : undefined;
+	const confirmed = Boolean(card?.answerable && needsConfirmation(card));
+	const refused = confirmed && card ? unconfirmedRefusal(ctx, { id, card, b }, session) : undefined;
 	if (refused) return refused;
-	const r = await ctx.serial(() => mirror.answer(id, b.choice, b.sig));
+	// An answer that presented no confirmation (the card was listed as one that needs none) may reach only such a card, checked again on the
+	// card that is sent (./waiting.ts answerCard `only`): a card replaced under the same id by an approval while this waited is refused, not
+	// approved (Sol's audit, 2026-11-15). One that did present it is bound to the card's fingerprint, which answerCard checks.
+	const r = await ctx.serial(() => mirror.answer(id, b.choice, b.sig, confirmed ? undefined : UNCONFIRMED_CARD_TYPES));
 	// Only the full page gets here, so the key is the page's own: recorded with the card it answered, whatever the card's own answer was.
 	d.log("card-answered", { id, status: r.status, key: keyUsed(authority) });
 	return json(r.body, r.status);

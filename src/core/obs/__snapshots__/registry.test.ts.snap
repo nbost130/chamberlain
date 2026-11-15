@@ -121,6 +121,7 @@ dismissed.key: enum(page|view) <- key
 not-now.item: item <- id
 not-now.key: enum(page|view) <- key
 card-answered.key: enum(page|view) <- key
+card-answer-refused.key: enum(page|view) <- key
 wake-queued.item: item <- id
 card-confirmation-issued.item: item <- id
 card-confirmation-issued.key: enum(page|view) <- key

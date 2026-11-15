@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { createFakeAdapter, type FakeAdapter } from "../testing/fake-adapter.ts";
 import { memStore } from "../testing/store.ts";
 import { useWebWaitingFixtures } from "../testing/web-waiting-fixtures.ts";
-import { createWaiting, threadSender } from "./waiting.ts";
+import { createWaiting, threadSender, UNCONFIRMED_CARD_TYPES } from "./waiting.ts";
 
 const { card, logs, pair, mirror } = useWebWaitingFixtures();
 
@@ -248,5 +248,46 @@ describe("sending to a thread", () => {
 		const r = await send("ws", "t", "x", "s");
 		expect(r.ok).toBe(false);
 		expect(r.detail).toContain("cannot send to threads");
+	});
+});
+
+describe("a caller that may answer only some kinds (the view key: a question card)", () => {
+	const only = new Set(["question"]);
+	test("checks the kind on the card it reserves and sends: a question is sent; an approval listed under the same id by then is refused, never sent", async () => {
+		const a = createFakeAdapter();
+		a.cards = [card()];
+		const m = mirror([pair(a)]);
+		await m.poll();
+		expect((await m.answer("C-aaaaaaaaaaaa", 0, "sig-1", only)).status).toBe(200);
+		// the same id, now an approval (the race Sol's audit found: listed as a question when the request was let in)
+		const b = createFakeAdapter();
+		b.cards = [card({ type: "approval", sig: "sig-2", options: [{ label: "Approve once" }, { label: "Decline" }] })];
+		const m2 = mirror([pair(b)]);
+		await m2.poll();
+		expect(await m2.answer("C-aaaaaaaaaaaa", 0, "sig-2", only)).toEqual({
+			status: 403,
+			body: {
+				error: "refused: this card is not one this request may answer (did it change? refresh and answer again)",
+			},
+		});
+		expect(b.answers).toEqual([]);
+		// the full page, which passes no `only`, still reaches it (the confirmation is the route's: app-routes.ts)
+		expect((await m2.answer("C-aaaaaaaaaaaa", 0, "sig-2")).status).toBe(200);
+	});
+	test("a goal is refused too, whatever the set says, because it takes the server's confirmation", async () => {
+		const a = createFakeAdapter();
+		a.cards = [card({ type: "goal", sig: "sig-3" })];
+		const m = mirror([pair(a)]);
+		await m.poll();
+		expect((await m.answer("C-aaaaaaaaaaaa", 0, "sig-3", new Set(["question", "goal"]))).status).toBe(403);
+		expect(a.answers).toEqual([]);
+	});
+	test("the full page's answer with no confirmation carries UNCONFIRMED_CARD_TYPES: an approval swapped in under a question's id is refused there too", async () => {
+		const b = createFakeAdapter();
+		b.cards = [card({ type: "approval", sig: "sig-4", options: [{ label: "Approve once" }, { label: "Decline" }] })];
+		const m = mirror([pair(b)]);
+		await m.poll();
+		expect((await m.answer("C-aaaaaaaaaaaa", 0, "sig-4", UNCONFIRMED_CARD_TYPES)).status).toBe(403);
+		expect(b.answers).toEqual([]);
 	});
 });
