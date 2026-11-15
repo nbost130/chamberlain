@@ -17,7 +17,7 @@ import { classifiedText, digestText, idleText } from "./idle-text.ts";
 import type { Finding, ItemSource } from "./source.ts";
 import type { Store } from "./store.ts";
 
-export { classTag, digestText, EXCERPT_CHARS, excerptOf, idleText } from "./idle-text.ts";
+export { classifiedText, classTag, digestText, EXCERPT_CHARS, excerptOf, idleText } from "./idle-text.ts";
 
 export const IDLE_PARENTS = "idle-parents";
 /** The item source name: the same `check:<name>` form every routine check has. */
@@ -91,28 +91,50 @@ export const idlePrior = (store: Pick<Store, "items">): PriorFinding[] =>
 		resolved: i.status === "resolved",
 	}));
 
+/** Open (triggered or acknowledged) idle-parents findings, for a Steward hand-off replay. */
+export const openIdleParents = (store: Pick<Store, "items">): PriorFinding[] =>
+	store.items
+		.list({ source: IDLE_PARENTS_SOURCE, status: ["triggered", "acknowledged"] })
+		.filter((i) => i.kind === "finding")
+		.map((i) => ({
+			dedupKey: i.dedupKey,
+			text: String(i.payload.text ?? i.dedupKey),
+		}));
+
 /** Ms between re-notifies from `repeatHours`. */
 export const repeatMsOf = (cfg: Pick<IdleParentsConfig, "repeatHours">) => cfg.repeatHours * 3600_000;
 
+/** Optional inputs for `idleParentFindings`: prior items, live classification, Steward-handoff replay. */
+export type IdleFindingsOpts = {
+	prior?: readonly PriorFinding[];
+	cls?: IdleClassification;
+	/** Open findings to re-notify once to a new Steward (uncapped; persisted text when unread). */
+	handoff?: readonly PriorFinding[];
+};
+
 /**
  * Pure: the findings for a selection. Cap limits NEW threads only. Already-known keys still observe with the repeat
- * policy so a long stall re-notifies after `repeatHours`. `alreadyReported` keeps a post-resolve same-message return quiet.
+ * policy so a long stall re-notifies after `repeatHours`. `handoff` findings (Steward change) always notify once more,
+ * uncapped, using persisted text when the thread cannot be reread.
  */
 export function idleParentFindings(
 	sel: IdleSelection,
 	cfg: Pick<IdleParentsConfig, "maxThreads" | "repeatHours">,
-	prior: readonly PriorFinding[] = [],
-	cls?: IdleClassification,
+	opts: IdleFindingsOpts = {},
 ): Finding[] {
+	const prior = opts.prior ?? [];
+	const handoff = opts.handoff ?? [];
 	const known = new Set(prior.map((p) => p.dedupKey));
 	const resolvedKeys = new Set(prior.filter((p) => p.resolved).map((p) => p.dedupKey));
-	const live = cls?.mode === "live" ? cls : undefined;
+	const handoffKeys = new Set(handoff.map((p) => p.dedupKey));
+	const live = opts.cls?.mode === "live" ? opts.cls : undefined;
 	const repeatIntervalMs = repeatMsOf(cfg);
 	const out = reportedThreads({
 		all: sel.threads,
 		maxThreads: cfg.maxThreads,
 		known,
 		resolvedKeys,
+		handoffKeys,
 		live,
 		repeatIntervalMs,
 	});
@@ -122,6 +144,7 @@ export function idleParentFindings(
 		if (settled.length && !known.has(key)) out.push({ dedupKey: key, text: digestText(settled) });
 	}
 	out.push(...keptOpen(sel.unreadable, prior, out, repeatIntervalMs));
+	out.push(...handoffExtras(handoff, out, repeatIntervalMs));
 	return out;
 }
 
@@ -132,11 +155,20 @@ type ReportArgs = {
 	maxThreads: number;
 	known: ReadonlySet<string>;
 	resolvedKeys: ReadonlySet<string>;
+	handoffKeys: ReadonlySet<string>;
 	live: IdleClassification | undefined;
 	repeatIntervalMs: number;
 };
 
-function reportedThreads({ all, maxThreads, known, resolvedKeys, live, repeatIntervalMs }: ReportArgs): Finding[] {
+function reportedThreads({
+	all,
+	maxThreads,
+	known,
+	resolvedKeys,
+	handoffKeys,
+	live,
+	repeatIntervalMs,
+}: ReportArgs): Finding[] {
 	const rank = (t: IdleThread, l: IdleClassification) => RANK[actionOf(t, l)] ?? 2;
 	const threads = live
 		? all
@@ -153,14 +185,16 @@ function reportedThreads({ all, maxThreads, known, resolvedKeys, live, repeatInt
 	for (const t of threads) {
 		const dedupKey = idleKey(t);
 		const seen = known.has(dedupKey);
-		if (!seen && ++fresh > maxThreads) continue;
+		const replay = handoffKeys.has(dedupKey);
+		// Cap new threads only; known and Steward-handoff keys are always observed.
+		if (!seen && !replay && ++fresh > maxThreads) continue;
 		const text = live ? classifiedText(t, live.byKey.get(dedupKey)) : idleText(t);
-		// alreadyReported only when the prior item had resolved: a still-open finding must keep its repeat policy.
+		// alreadyReported when prior had resolved, unless this is a Steward-handoff replay (must notify the new Steward).
 		out.push({
 			dedupKey,
 			text,
 			repeatIntervalMs,
-			...(resolvedKeys.has(dedupKey) ? { alreadyReported: true } : {}),
+			...(resolvedKeys.has(dedupKey) && !replay ? { alreadyReported: true } : {}),
 		});
 	}
 	return out;
@@ -183,11 +217,25 @@ function keptOpen(
 	return kept;
 }
 
+/** Steward hand-off: every open finding not already in the pass, from persisted text (no reread required). */
+function handoffExtras(handoff: readonly PriorFinding[], out: readonly Finding[], repeatIntervalMs: number): Finding[] {
+	const have = new Set(out.map((f) => f.dedupKey));
+	const extra: Finding[] = [];
+	for (const p of handoff) {
+		if (have.has(p.dedupKey)) continue;
+		extra.push({ dedupKey: p.dedupKey, text: p.text, repeatIntervalMs });
+		have.add(p.dedupKey);
+	}
+	return extra;
+}
+
 /** The check as an item source. */
 export function idleParentsSource(o: {
 	cfg: Pick<IdleParentsConfig, "maxThreads" | "repeatHours">;
 	select: () => Promise<IdleSelection>;
 	prior: () => PriorFinding[];
+	/** Open findings to re-notify once to a new Steward (uncapped; persisted text when unread). */
+	handoff?: () => readonly PriorFinding[];
 	classify?: (threads: readonly IdleThread[]) => Promise<IdleClassification>;
 }): ItemSource {
 	return {
@@ -195,23 +243,16 @@ export function idleParentsSource(o: {
 		run: async () => {
 			const sel = await o.select();
 			const cls = o.classify ? await o.classify(sel.threads) : undefined;
-			return idleParentFindings(sel, o.cfg, o.prior(), cls);
+			return idleParentFindings(sel, o.cfg, {
+				prior: o.prior(),
+				...(cls ? { cls } : {}),
+				handoff: o.handoff?.() ?? [],
+			});
 		},
 	};
 }
 
-/**
- * Pure: after a Steward thread change, open idle findings must notify the new Steward once. Dropping their keys from
- * `prior` (after resolving them) makes the next observation a fresh notify, not an alreadyReported acknowledge.
- */
-export function priorAfterStewardChange(
-	prior: readonly PriorFinding[],
-	resolvedKeys: ReadonlySet<string>,
-): PriorFinding[] {
-	return prior.filter((p) => !resolvedKeys.has(p.dedupKey));
-}
-
-/** Resolves every open idle-parents finding so the next tick can re-notify them to a new Steward. Returns their keys. */
+/** Resolves every open idle-parents finding so the next observe can re-notify them to a new Steward. Returns their keys. */
 export function resolveOpenIdleParents(store: Pick<Store, "items">, now: number): Set<string> {
 	const keys = new Set<string>();
 	for (const i of store.items.list({ source: IDLE_PARENTS_SOURCE, status: ["triggered", "acknowledged"] })) {

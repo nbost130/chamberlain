@@ -17,12 +17,16 @@ export function excerptOf(text: string, max = EXCERPT_CHARS): string {
 
 const clipTitle = (s: string) => (s.length > 80 ? `${s.slice(0, 79).toWellFormed()}…` : s);
 
-/** Pure: the tag for a wait or ask closing: `[WAITING: …]` when a wait phrase names what is owed, else `[ASKING]`. */
-function idleTag(t: Pick<IdleThread, "looksLikeAsk" | "lastMessage" | "waitingOn">): string {
+/** Pure: `[WAITING: …]` when a wait phrase names what is owed (Pilot B/C closings), else empty. */
+function waitTag(t: Pick<IdleThread, "lastMessage" | "waitingOn">): string {
 	if (t.waitingOn) return `[WAITING: ${t.waitingOn}] `;
 	const w = waitClosing(t.lastMessage);
-	if (w) return `[WAITING: ${w.awaiting}] `;
-	return t.looksLikeAsk ? "[ASKING] " : "";
+	return w ? `[WAITING: ${w.awaiting}] ` : "";
+}
+
+/** Pure: the tag for a wait or ask closing: wait first, else `[ASKING]`. */
+function idleTag(t: Pick<IdleThread, "looksLikeAsk" | "lastMessage" | "waitingOn">): string {
+	return waitTag(t) || (t.looksLikeAsk ? "[ASKING] " : "");
 }
 
 /** Pure: how one idle thread reads in the wake. */
@@ -33,10 +37,10 @@ export const idleText = (t: IdleThread) =>
 export const classTag = (c: Pick<Classified, "action" | "reasons">) =>
 	`[${c.action.toUpperCase()}${c.reasons.map((r) => ` ${r.id} ${r.p.toFixed(2)}`).join(",")}]`;
 
-/** Pure: how a thread the classifier sorted reads in a live wake. */
+/** Pure: how a thread the classifier sorted reads in a live wake. Wait labels stay beside escalate/nudge. */
 export const classifiedText = (t: IdleThread, c: Classified | undefined) =>
 	c && (c.action === "escalate" || c.action === "nudge")
-		? `${classTag(c)} thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`
+		? `${classTag(c)} ${waitTag(t)}thread "${clipTitle(t.title)}" on ${t.server} (threadId ${t.threadId}), idle ${t.idleMinutes} min. Last message: ${excerptOf(t.lastMessage)}`
 		: idleText(t);
 
 const DIGEST_TITLES = 12;

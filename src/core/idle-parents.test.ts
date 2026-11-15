@@ -236,14 +236,14 @@ describe("the findings", () => {
 		expect(idleParentFindings(sel(threads), cfg).map((x) => x.dedupKey.split(":")[1])).toEqual(["ask", "a"]);
 		// With "c" already open it stays listed (or the item system would report it again), and the cap still counts only the new ones.
 		const c = idleParentFindings(sel([threads[3]!]), cfg)[0]!;
-		const again = idleParentFindings(sel(threads), cfg, [{ dedupKey: c.dedupKey, text: c.text }]);
+		const again = idleParentFindings(sel(threads), cfg, { prior: [{ dedupKey: c.dedupKey, text: c.text }] });
 		expect(again.map((x) => x.dedupKey.split(":")[1]).sort()).toEqual(["a", "ask", "c"]);
 	});
 	test("a thread that could not be read keeps its open finding; one that was read and moved on does not", () => {
 		const a = idleParentFindings(sel([rec("a", 90)]), CFG)[0]!;
 		const prior = [{ dedupKey: a.dedupKey, text: a.text }];
-		expect(idleParentFindings(sel([], [{ server: "main", threadId: "a" }]), CFG, prior)).toEqual([a]);
-		expect(idleParentFindings(sel([], [{ server: "main", threadId: "other" }]), CFG, prior)).toEqual([]);
-		expect(idleParentFindings(sel([]), CFG, prior)).toEqual([]);
+		expect(idleParentFindings(sel([], [{ server: "main", threadId: "a" }]), CFG, { prior })).toEqual([a]);
+		expect(idleParentFindings(sel([], [{ server: "main", threadId: "other" }]), CFG, { prior })).toEqual([]);
+		expect(idleParentFindings(sel([]), CFG, { prior })).toEqual([]);
 	});
 });

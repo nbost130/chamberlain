@@ -1,7 +1,8 @@
 /**
  * The idle-parents timer: on its own schedule (`sweep.idleParents.intervalMinutes`, default 15), list the top-level
  * threads that finished and went quiet, and wake the Steward once with the ones due (first report or a `repeatHours`
- * re-raise). When `threads.steward` changes, open idle findings are resolved and re-queued as one digest for the new Steward.
+ * re-raise). When `threads.steward` changes, open idle findings are resolved and re-queued as one digest for the new Steward
+ * (uncapped, including persisted findings for servers that cannot be reread), in the same outbox commit as the wake.
  */
 import { heldOpen } from "./afk-held.ts";
 import { type ClassifyDeps, classifyIdle } from "./classifier/classify.ts";
@@ -10,7 +11,7 @@ import {
 	DIGEST_PREFIX,
 	idleParentsSource,
 	idlePrior,
-	priorAfterStewardChange,
+	openIdleParents,
 	resolveOpenIdleParents,
 } from "./idle-parents.ts";
 import { type IdleThreadSource, selectIdleThreads } from "./idle-select.ts";
@@ -92,12 +93,14 @@ async function runIdlePass(p: Pass): Promise<void> {
 	const stewardId = stewardThread(conf, "steward") ?? "";
 	const prev = store.state.get<Partial<StewardState>>(STEWARD_STATE);
 	const stewardChanged = Boolean(stewardId && prev?.threadId && prev.threadId !== stewardId);
-	const resolved = stewardChanged ? resolveOpenIdleParents(store, at) : new Set<string>();
+	// Snapshot open findings before the commit; resolve + wake share one outbox transaction.
+	const handoff = stewardChanged ? openIdleParents(store) : [];
 	const skipAll = new Set([...skip(), ...heldThreadIds(store)]);
 	const source = idleParentsSource({
 		cfg,
 		select: () => selectIdleThreads(sources(), at, { thresholdMinutes: cfg.thresholdMinutes, skip: skipAll }),
-		prior: () => priorAfterStewardChange(idlePrior(store), resolved),
+		prior: () => idlePrior(store),
+		handoff: () => handoff,
 		...(cfg.classifier.provider === "none"
 			? {}
 			: {
@@ -116,6 +119,7 @@ async function runIdlePass(p: Pass): Promise<void> {
 	});
 	const evaluation = await evaluateSource(source);
 	outbox.commit(() => {
+		if (stewardChanged) resolveOpenIdleParents(store, at);
 		const outcome = recordEvaluation(store, evaluation, { now: at });
 		store.state.set(IDLE_CLOCK, { lastAt: at } satisfies IdleClock);
 		if (stewardId) store.state.set(STEWARD_STATE, { threadId: stewardId } satisfies StewardState);

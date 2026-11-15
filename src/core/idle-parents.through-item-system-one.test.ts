@@ -143,12 +143,12 @@ describe("the findings with a classifier", () => {
 	};
 
 	test("shadow: the report is exactly as without a classifier", () =>
-		expect(idleParentFindings(sel(threads), CFG, [], cls("shadow", all))).toEqual(
+		expect(idleParentFindings(sel(threads), CFG, { cls: cls("shadow", all) })).toEqual(
 			idleParentFindings(sel(threads), CFG),
 		));
 
 	test("live: escalate, then nudge, then unknown (including unclassified), by idle time; ignore and settle are not reported", () => {
-		const f = idleParentFindings(sel(threads), CFG, [], cls("live", all));
+		const f = idleParentFindings(sel(threads), CFG, { cls: cls("live", all) });
 		expect(f.map((x) => x.dedupKey)).toEqual([
 			by(threads[0]!),
 			by(threads[1]!),
@@ -177,7 +177,7 @@ describe("the findings with a classifier", () => {
 		).toBe("[ESCALATE asks_decision 0.98, needs_principal_task 0.60]"));
 
 	test("live: the settled threads go into one digest line a day, not one line each", () => {
-		const f = idleParentFindings(sel(threads), CFG, [], cls("live", all));
+		const f = idleParentFindings(sel(threads), CFG, { cls: cls("live", all) });
 		const digest = f.find((x) => x.dedupKey === "settled-digest:2026-11-14")!;
 		expect(digest.text).toBe(
 			'1 idle thread looks finished (the classifier\'s settle; not reported one by one): "Thread s" on main.',
@@ -185,7 +185,9 @@ describe("the findings with a classifier", () => {
 		// Already sent today: not again, however many settle.
 		const prior = [{ dedupKey: "settled-digest:2026-11-14", text: digest.text, resolved: true }];
 		expect(
-			idleParentFindings(sel(threads), CFG, prior, cls("live", all)).some((x) => x.dedupKey.startsWith("settled")),
+			idleParentFindings(sel(threads), CFG, { prior, cls: cls("live", all) }).some((x) =>
+				x.dedupKey.startsWith("settled"),
+			),
 		).toBe(false);
 		// Many: the first twelve by name, then a count.
 		const many = Array.from({ length: 15 }, (_, i) => rec(`s${i}`, 100 + i));
@@ -194,12 +196,14 @@ describe("the findings with a classifier", () => {
 		expect(text).toEndWith(", and 3 more.");
 		// No settled thread: no digest.
 		expect(
-			idleParentFindings(sel([threads[0]!]), CFG, [], cls("live", all)).some((x) => x.dedupKey.startsWith("settled")),
+			idleParentFindings(sel([threads[0]!]), CFG, { cls: cls("live", all) }).some((x) =>
+				x.dedupKey.startsWith("settled"),
+			),
 		).toBe(false);
 	});
 
 	test("live: the cap counts only reported threads, in the live order", () => {
-		const f = idleParentFindings(sel(threads), { maxThreads: 1, repeatHours: 2 }, [], cls("live", all));
+		const f = idleParentFindings(sel(threads), { maxThreads: 1, repeatHours: 2 }, { cls: cls("live", all) });
 		expect(f.map((x) => x.dedupKey)).toEqual([by(threads[0]!), "settled-digest:2026-11-14"]);
 	});
 
