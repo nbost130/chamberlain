@@ -93,7 +93,7 @@ export function holdTransferItem(
 export const encodedBytes = (message: string): number => Buffer.byteLength(message, "utf8");
 
 /** True when a held transfer alone exceeds the encoded replay bound. */
-export function isOversizedTransfer(item: HeldItem, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean {
+function isOversizedTransfer(item: HeldItem, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): boolean {
 	if (item.kind !== "transfer") return false;
 	return encodedBytes(composeWake([item], now).message) > maxBytes;
 }
