@@ -1,0 +1,182 @@
+/** Shared rig for alert-triage tests: real Store, temp inbox, injected clock. */
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { drainAlertDesk } from "../core/alert-desk.ts";
+import { DESK_RECEIVER, type DeskEvent } from "../core/alert-desk-config.ts";
+import { type CrashPoint, CURSOR_KEY } from "../core/alert-desk-cursor.ts";
+import { drainTriage } from "../core/alert-triage.ts";
+import { ALERT_TRIAGE, readTriageConfig, TRIAGE_WAKE_KIND } from "../core/alert-triage-config.ts";
+import { drainDeskPass } from "../core/alert-triage-engine.ts";
+import { asOb, listObligations } from "../core/alert-triage-obligation.ts";
+import { createOutbox } from "../core/deliver.ts";
+import { openStore } from "../core/sqlite-store.ts";
+import type { Store } from "../core/store.ts";
+
+/** config.json must be mode 0600 or layout refuses to read it. */
+function writeConf(path: string, doc: unknown): void {
+	writeFileSync(path, JSON.stringify(doc), { mode: 0o600 });
+	chmodSync(path, 0o600);
+}
+
+export const T0 = Date.parse("2026-11-13T15:00:00Z");
+export const min = (n: number) => T0 + n * 60_000;
+export const MIB = 1024 * 1024;
+
+/** Temp file-backed Store for reopen tests (Sol M5). */
+export function fileStore(): { path: string; open: () => ReturnType<typeof openStore> } {
+	const path = join(mkdtempSync(join(tmpdir(), "triage-db-")), "chamberlain.db");
+	return { path, open: () => openStore(path) };
+}
+
+const ev = (over: Partial<DeskEvent> & { at?: number } = {}): DeskEvent => {
+	const { at, ...rest } = over;
+	return {
+		source: "disk-guard",
+		family: "swap-full",
+		title: "swap full",
+		body: "swap at 94%",
+		ts: new Date(at ?? T0).toISOString(),
+		severity: "critical",
+		...rest,
+	};
+};
+
+export const line = (o: Partial<DeskEvent> & { at?: number } = {}) => `${JSON.stringify({ v: 1, ...ev(o) })}\n`;
+
+export function triageRig(
+	opts: {
+		triage?: Record<string, unknown>;
+		desk?: Record<string, unknown>;
+		store?: Store;
+		dry?: boolean;
+		/** Route through drainDeskPass (flag check + inbox via ALERT_DESK_INBOX). */
+		viaEngine?: boolean;
+		noDesk?: boolean;
+		/** When viaEngine, deskLane.wake.ready(); default true unless dry. */
+		deskReady?: boolean;
+	} = {},
+) {
+	const dir = mkdtempSync(join(tmpdir(), "alert-triage-"));
+	mkdirSync(dir, { recursive: true });
+	const store = opts.store ?? openStore(":memory:");
+	const clock = { t: T0 };
+	const outbox = createOutbox({ store, log: () => {}, now: () => clock.t, dry: opts.dry });
+	const inbox = join(dir, "inbox.jsonl");
+	writeFileSync(inbox, "");
+	const desk = { startAt: "beginning", timezone: "Etc/GMT+5", morningHour: 23, enabled: true, ...opts.desk };
+	const triage = { enabled: true, rules: [], ...opts.triage };
+	writeConf(join(dir, "config.json"), { alertDesk: desk, alertTriage: triage });
+	const logged: { event: string; [k: string]: unknown }[] = [];
+	const alarms = new Map<string, { title: string; body: string }>();
+	const once = (
+		now: number,
+		over: { crash?: (p: CrashPoint) => void; read?: Parameters<typeof drainTriage>[0]["read"] } = {},
+	) => {
+		clock.t = now;
+		const live = readTriageConfig(dir);
+		const log = (event: string, data?: Record<string, unknown>) => logged.push({ event, ...data });
+		const alarm = (id: string, title: string, body: string) => {
+			alarms.set(id, { title, body });
+		};
+		const clearAlarm = (id: string) => {
+			alarms.delete(id);
+		};
+		// Engine branch (M3): same gate as production drainDeskPass, with a test inbox override.
+		if (opts.viaEngine) {
+			const prev = process.env.ALERT_DESK_INBOX;
+			process.env.ALERT_DESK_INBOX = inbox;
+			try {
+				drainDeskPass({
+					store,
+					outbox,
+					conf: dir,
+					DRY: !!opts.dry,
+					deskLane: opts.noDesk ? undefined : { wake: { ready: () => opts.deskReady !== false && !opts.dry } },
+					log,
+					alarm,
+					clearAlarm,
+					now: () => clock.t,
+				});
+			} finally {
+				if (prev === undefined) delete process.env.ALERT_DESK_INBOX;
+				else process.env.ALERT_DESK_INBOX = prev;
+			}
+			return { read: 0, woke: 0 };
+		}
+		if (!live.enabled) {
+			return drainAlertDesk({
+				store,
+				outbox,
+				inbox,
+				conf: dir,
+				now,
+				canDeliver: !opts.dry,
+				crash: over.crash,
+				log,
+			});
+		}
+		return drainTriage({
+			store,
+			outbox,
+			inbox,
+			conf: dir,
+			now,
+			crash: over.crash,
+			read: over.read,
+			log,
+			alarm,
+			clearAlarm,
+		});
+	};
+	/** One drain. For crash-point tests that control the clock themselves. */
+	const pass = once;
+	/**
+	 * Drain, then if triage left a retired file still in its 60s grace, drain again after the grace.
+	 * Most routing/dispatch tests want the post-init read without spelling the grace each time.
+	 */
+	const settle = (now: number, over: Parameters<typeof once>[1] = {}) => {
+		const first = once(now, over);
+		if (!triage.enabled) return first;
+		const cur = store.state.get<{ retired: { after: number }[] }>(CURSOR_KEY);
+		const wait = cur?.retired?.some((x) => now < x.after);
+		if (!wait) return first;
+		return once(now + 61_000, over);
+	};
+	const append = (...events: (Partial<DeskEvent> & { at?: number })[]) => {
+		for (const e of events) appendFileSync(inbox, line(e));
+	};
+	const stewardRows = () =>
+		store.wakes
+			.rows("all")
+			.filter((r) => r.kind === TRIAGE_WAKE_KIND || (!r.receiver && r.deliveryId.startsWith("triage:")));
+	const deskHeld = () => store.wakes.held(DESK_RECEIVER);
+	const obligations = () => listObligations(store);
+	const writeTriage = (t: Record<string, unknown>) => {
+		Object.assign(triage, t);
+		writeConf(join(dir, "config.json"), { alertDesk: desk, alertTriage: triage });
+	};
+	const writeDesk = (d: Record<string, unknown>) => {
+		Object.assign(desk, d);
+		writeConf(join(dir, "config.json"), { alertDesk: desk, alertTriage: triage });
+	};
+	return {
+		dir,
+		store,
+		outbox,
+		inbox,
+		clock,
+		pass,
+		settle,
+		append,
+		stewardRows,
+		deskHeld,
+		obligations,
+		logged,
+		alarms,
+		writeTriage,
+		writeDesk,
+		asOb,
+		ALERT_TRIAGE,
+	};
+}

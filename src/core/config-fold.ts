@@ -26,7 +26,7 @@ const canonical = (v: unknown): string =>
 /** Every key that came from the old settings.json, in the order they are written. */
 const SETTINGS_KEYS = ["principal", "t3Dir", "t3StateDb", "alertCmd", "compactTokens", "settledMatch"];
 /** Sections that each came from one old file (the thread ids are handled apart). */
-const FILE_SECTIONS = ["servers", "web", "sweep", "alertDesk", "operatingRules", "judge"];
+const FILE_SECTIONS = ["servers", "web", "sweep", "alertDesk", "alertTriage", "operatingRules", "judge"];
 
 /** Pure: the `KEY=value` lines of a systemd EnvironmentFile as pairs, quotes stripped, comments and blank lines dropped. */
 export function parseEnvFile(text: string): [string, string][] {

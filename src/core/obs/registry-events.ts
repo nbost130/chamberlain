@@ -174,6 +174,15 @@ export const EVENTS = {
 	"alert-desk-start": e("info", { offset: int(), skippedBytes: int() }),
 	"alert-desk": e("info", { events: int(), bad: int(), stale: int(), woke: len("woke"), deferred: int() }),
 	"alert-desk-error": failure(),
+	"alert-triage": e("info", {
+		events: int(),
+		bad: int(),
+		stale: int(),
+		woke: len("woke"),
+		fetched: int(),
+	}),
+	"alert-triage-dry": e("info"),
+	"alert-triage-error": failure(),
 	// ---- the daemon ------------------------------------------------------------------------------------
 	start: e("info", { dry: bool() }),
 	adapters: e("info"),
