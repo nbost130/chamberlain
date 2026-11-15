@@ -64,6 +64,8 @@ export function checkCard(
 }
 /** An approval or a goal proposal cannot be taken back, so answering one takes a server-issued confirmation (src/core/challenge.ts). A question card does not. */
 export const needsConfirmation = (card: WaitingCard): boolean => card.type === "approval" || card.type === "goal";
+/** The kinds an answer that presented no confirmation may reach: those that need none (`answerCard`'s `only` for such an answer). */
+export const UNCONFIRMED_CARD_TYPES: ReadonlySet<string> = new Set(["question"]);
 
 export type WaitingDeps = {
 	/** The database a card's one answer is recorded in, shared with every other page process. */
@@ -215,7 +217,12 @@ async function answerCard(
 	if (!checked.ok) return { status: checked.status, body: checked.body };
 	const card = checked.card;
 	if (only && (!only.has(card.type) || needsConfirmation(card)))
-		return { status: 403, body: { error: "refused: this kind of card is not answered with the key you used" } };
+		return {
+			status: 403,
+			body: {
+				error: "refused: this card is not one this request may answer (did it change? refresh and answer again)",
+			},
+		};
 	const pair = d.servers().find((x) => x.server.name === card.server);
 	if (!pair || !has(pair.adapter, "answer"))
 		return { status: 403, body: { error: `answer it in its thread on ${card.server}` } };

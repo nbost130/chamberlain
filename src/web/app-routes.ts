@@ -22,7 +22,7 @@ import { fail, json } from "./app-http.ts";
 import { ITEM_ACTIONS } from "./queue-actions.ts";
 import { type Authority, keyUsed, mayDo } from "./view-key.ts";
 import { viewKeyCardAnswer } from "./view-key-cards.ts";
-import { checkCard, needsConfirmation } from "./waiting.ts";
+import { checkCard, needsConfirmation, UNCONFIRMED_CARD_TYPES } from "./waiting.ts";
 
 function rulingsView(ctx: Ctx) {
 	const list = readRulings(ctx.d.store);
@@ -179,10 +179,13 @@ async function cardsRoute(ctx: Ctx, call: Call, id: string, step: "answer" | "co
 		return r;
 	};
 	if (step === "confirm") return confirmCard(ctx, { id, card, b }, { session, withSession });
-	const refused =
-		card?.answerable && needsConfirmation(card) ? unconfirmedRefusal(ctx, { id, card, b }, session) : undefined;
+	const confirmed = Boolean(card?.answerable && needsConfirmation(card));
+	const refused = confirmed && card ? unconfirmedRefusal(ctx, { id, card, b }, session) : undefined;
 	if (refused) return refused;
-	const r = await ctx.serial(() => mirror.answer(id, b.choice, b.sig));
+	// An answer that presented no confirmation (the card was listed as one that needs none) may reach only such a card, checked again on the
+	// card that is sent (./waiting.ts answerCard `only`): a card replaced under the same id by an approval while this waited is refused, not
+	// approved (Sol's audit, 2026-11-15). One that did present it is bound to the card's fingerprint, which answerCard checks.
+	const r = await ctx.serial(() => mirror.answer(id, b.choice, b.sig, confirmed ? undefined : UNCONFIRMED_CARD_TYPES));
 	// Only the full page gets here, so the key is the page's own: recorded with the card it answered, whatever the card's own answer was.
 	d.log("card-answered", { id, status: r.status, key: keyUsed(authority) });
 	return json(r.body, r.status);

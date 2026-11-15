@@ -14,6 +14,7 @@ import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";
 import { VIEW_KEY_CARD_TYPES } from "./view-key.ts";
+import { UNCONFIRMED_CARD_TYPES } from "./waiting.ts";
 
 process.env.CHAMBERLAIN_T3_STATE_DB = "/nonexistent/statev2.sqlite";
 const HOST = "127.0.0.1:3795";
@@ -188,6 +189,8 @@ describe("and nothing else about cards", () => {
 		expect((await s.send("POST", `/api/cards/${q.id}/answer`, same, { choice: 0, sig: q.sig })).status).toBe(200);
 		const a = CARDS.approval;
 		expect((await s.send("POST", `/api/cards/${a.id}/answer`, same, { choice: 0, sig: a.sig })).status).toBe(428);
-		expect(s.answers).toEqual([[q.id, 0, q.sig]]);
+		// an answer with no confirmation may reach only a card that needs none, checked again where it is sent (waiting.test.ts): the same race
+		// the view key's answer closes, closed for the full page too
+		expect(s.answers).toEqual([[q.id, 0, q.sig, UNCONFIRMED_CARD_TYPES]]);
 	});
 });
