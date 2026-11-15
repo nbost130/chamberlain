@@ -36,7 +36,7 @@ describe("links out of the view", () => {
 	const SRC = "http://queue.test/inline.js?view=decisions&k=KEY";
 	const anchors = (dq: El) =>
 		dq.all((e) => e.tag === "a").map((a) => ({ text: a.textContent, href: a.href, target: a.target }));
-	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s), neither carries a key (the view key cannot sign a browser in)", async () => {
+	test("a mirrored card links to the queue page and, through /open, to its thread: both http(s); only the thread link carries the view key (on /open, which takes it), the queue page link none", async () => {
 		const c = {
 			...card("make", "sig-1"),
 			server: "mac",
@@ -48,7 +48,7 @@ describe("links out of the view", () => {
 		await settle();
 		expect(anchors(dq)).toEqual([
 			{ text: "Open the queue page", href: "http://queue.test/", target: "_blank" },
-			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mac/mcp%3Alaunch%3Aab12?k=KEY", target: "_blank" },
 		]);
 	});
 	test("a question asked with chamberlain ask links to its thread too", async () => {
@@ -62,7 +62,7 @@ describe("links out of the view", () => {
 		const dq = run(() => ({ items: [q] }), { src: SRC });
 		await settle();
 		expect(anchors(dq)).toEqual([
-			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
+			{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
 		]);
 	});
 	test("a secret or a card pointer, answered in its thread, links to that thread and can be snoozed in place, nothing more", async () => {
@@ -70,7 +70,9 @@ describe("links out of the view", () => {
 		for (const extra of [{ secret: true }, { cardRequest: { requestId: "r" } }]) {
 			const dq = run(() => ({ items: [{ ...base, ...extra }] }), { src: SRC });
 			await settle();
-			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([["Open the thread", "http://queue.test/open/mac/t2"]]);
+			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([
+				["Open the thread", "http://queue.test/open/mac/t2?k=KEY"],
+			]);
 			expect(buttons(dq)).toEqual(["Snooze"]);
 		}
 	});
@@ -131,7 +133,7 @@ describe("the thread link inside T3's phone app", () => {
 			const dq = run(() => ({ items: [q] }), { src: SRC, window });
 			await settle();
 			expect(anchors(dq)).toEqual([
-				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1", target: "_blank" },
+				{ text: "Open the thread", href: "http://queue.test/open/mithrandir/t1?k=KEY", target: "_blank" },
 			]);
 		}
 	});
@@ -165,7 +167,7 @@ describe("the thread link inside T3's phone app", () => {
 				},
 			);
 			await settle();
-			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1"]]);
+			expect([app, anchors(dq).map((a) => a.href)]).toEqual([app, ["http://queue.test/open/mithrandir/t1?k=KEY"]]);
 		}
 	});
 });

@@ -3,7 +3,7 @@
  * allowlist, named here and nowhere derived: three reads, a plain answer, the four ways to settle, put off or bring back a question that
  * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), and one navigation: `GET /open/<server>/<threadId>`,
  * the "Open the thread" link (a redirect to the thread's app link, made by the linker from the path, never from the request; it signs
- * nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else). Every other route refuses the view key,
+ * nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else; the Decisions view's thread link is the one link out that carries the key). Every other route refuses the view key,
  * whatever its Origin: not-now, batch accept, every ruling action, the question-card and approval routes, one item's own read, evidence, pages.
  *
  * Three things use it, and nothing else decides what the view key may do:
