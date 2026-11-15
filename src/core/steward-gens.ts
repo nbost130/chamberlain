@@ -145,14 +145,13 @@ export function seedGen1(store: Store, conf: string, now = Date.now()): StewardG
 	const wake = secretPath(conf, "wake-url");
 	if (!wake) return undefined;
 	const compact = secretPath(conf, "compact-url");
-	store.tx(() => {
-		store.steward.insertGen({
-			gen: 1,
-			thread: stewardThread,
-			wakeRef: "wake-url",
-			...(compact ? { compactRef: "compact-url" } : {}),
-			createdAt: now,
-		});
-	});
-	return store.steward.current();
+	const g: StewardGen = {
+		gen: 1,
+		thread: stewardThread,
+		wakeRef: "wake-url",
+		...(compact ? { compactRef: "compact-url" } : {}),
+		createdAt: now,
+	};
+	store.tx(() => store.steward.insertGen(g));
+	return g;
 }
