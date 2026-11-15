@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { redactUrls } from "./redact.ts";
+import { redactUrlFields, redactUrls } from "./redact.ts";
 
 describe("redactUrls", () => {
 	test("replaces a scheme:// run with <url>", () => {
@@ -10,5 +10,17 @@ describe("redactUrls", () => {
 	});
 	test("leaves text with no URL alone", () => {
 		expect(redactUrls("connection refused")).toBe("connection refused");
+	});
+});
+
+describe("redactUrlFields", () => {
+	test("redacts string fields and leaves others alone", () => {
+		expect(
+			redactUrlFields({
+				error: "at https://hooks.example.test/x",
+				attempt: 1,
+				ok: false,
+			}),
+		).toEqual({ error: "at <url>", attempt: 1, ok: false });
 	});
 });
