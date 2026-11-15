@@ -41,6 +41,8 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			gh?: EngineDeps["gh"];
 			ask?: EngineDeps["ask"];
 			classifierProvider?: EngineDeps["classifierProvider"];
+			/** Override the report quiet window (default 5 ms). Incident tests use the production 180_000. */
+			quietMs?: number;
 		} = {},
 	) {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-engine-`);
@@ -69,7 +71,7 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			...(o.classifierProvider ? { classifierProvider: o.classifierProvider } : {}),
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => events.push({ event, ...data }),
-			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
+			timing: { debounceMs: 5, lagMs: 5, quietMs: o.quietMs ?? 5, tickMs: 3_600_000 },
 			relay: { retryAfterMs: () => 0, now: () => clock.t },
 		};
 		const engine = makeEngine(deps);
