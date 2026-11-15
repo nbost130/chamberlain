@@ -1,8 +1,10 @@
 /**
  * What the VIEW key may do (`secrets/view-key`, the one key a Decisions post carries: a post is copied into the thread). One explicit
- * allowlist, named here and nowhere derived: three reads, a plain answer, and the four ways to settle, put off or bring back a question that
- * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss). Every other route refuses the view key, whatever its
- * Origin: not-now, batch accept, every ruling action, the question-card and approval routes, one item's own read, evidence, pages.
+ * allowlist, named here and nowhere derived: three reads, a plain answer, the four ways to settle, put off or bring back a question that
+ * the pinned Decisions view offers in place (snooze, un-snooze, direction, dismiss), and one navigation: `GET /open/<server>/<threadId>`,
+ * the "Open the thread" link (a redirect to the thread's app link, made by the linker from the path, never from the request; it signs
+ * nothing in and sets no cookie, so `?k=<view key>` on it opens the thread and does nothing else). Every other route refuses the view key,
+ * whatever its Origin: not-now, batch accept, every ruling action, the question-card and approval routes, one item's own read, evidence, pages.
  *
  * Three things use it, and nothing else decides what the view key may do:
  *   - `viewKeyVerdict`: the request's route and method against the list (the origin gate and the key gate in ./app.ts);
@@ -23,11 +25,20 @@ export type ViewKeyWrite = (typeof VIEW_KEY_WRITES)[number];
 /** The one field a view-key answer may carry: the option chosen. Not a note (a note is a Direction, or written on the full page), not a ruling field. */
 export const VIEW_KEY_ANSWER_FIELDS: ReadonlySet<string> = new Set(["choice"]);
 
+/** `/open/<server>/<threadId>`: sends a device on to the thread's link (./thread-links.ts). The one page-shaped route the view key may GET. */
+export const OPEN_PATH = /^\/open\/[^/]+\/[^/]+$/;
+
 const ITEM_WRITE = new RegExp(`^/api/items/Q-[a-z0-9]{4,16}/(${VIEW_KEY_WRITES.join("|")})$`);
 
 /** Pure: a request's route against the view key's list. `preflight` is an OPTIONS for a route on it (it grants nothing and carries no key). */
-export function viewKeyVerdict(method: string, pathname: string): "read" | ViewKeyWrite | "preflight" | "refuse" {
-	if (method === "GET") return VIEW_KEY_READS.has(pathname) ? "read" : "refuse";
+export function viewKeyVerdict(
+	method: string,
+	pathname: string,
+): "read" | "open" | ViewKeyWrite | "preflight" | "refuse" {
+	if (method === "GET") {
+		if (VIEW_KEY_READS.has(pathname)) return "read";
+		return OPEN_PATH.test(pathname) ? "open" : "refuse";
+	}
 	const write = ITEM_WRITE.exec(pathname)?.[1] as ViewKeyWrite | undefined;
 	if (method === "POST") return write ?? "refuse";
 	if (method === "OPTIONS") return VIEW_KEY_READS.has(pathname) || write ? "preflight" : "refuse";

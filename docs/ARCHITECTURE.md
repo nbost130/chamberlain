@@ -491,8 +491,8 @@ builds ignore.
   `settled.ts` skips it. The Steward's wake says dismissed (`dismissedWakeText`), still under the `[chamberlain] answer:` head.
 
 All four routes (`snooze`, `unsnooze`, `direction`, `dismiss`) change state. The full page does all four (the page's key and own origin, as an answer
-does). The Decisions view does all four in place with the view key (Snooze on a card, Bring back now and Dismiss on the Snoozed tab): `src/web/view-key.ts` holds that allowlist (the view key's three reads
-and five writes, the answer included), and each write route takes the request's authority (`full`, `view` or `restricted`), checked in `mayDo`, in place of the old inline flag. A request's
+does). The Decisions view does all four in place with the view key (Snooze on a card, Bring back now and Dismiss on the Snoozed tab): `src/web/view-key.ts` holds that allowlist (the view key's three reads,
+five writes, the answer included, and `GET /open/<server>/<threadId>`, which sets no cookie), and each write route takes the request's authority (`full`, `view` or `restricted`), checked in `mayDo`, in place of the old inline flag. A request's
 key is recorded with it: `key: "page" | "view"` on the claim's answer (`plainAnswer`, `Answer.key`), on the snooze (`snoozedKey`) and on the logged event, and the ledger's
 `question.answered` row carries it ([SECURITY.md](SECURITY.md)).
 
