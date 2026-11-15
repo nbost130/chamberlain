@@ -56,11 +56,16 @@ function wholeLines(
  * and so is the rest of that line: a cursor that does not sit just after a newline is inside a line already counted as bad, so everything up
  * to and including its newline is consumed without being read as an event.
  */
-export function readLines(
-	path: string,
-	from: number,
-	final = false,
-): { lines: string[]; end: number; size: number; inode: number } | undefined {
+export type ReadLinesResult = {
+	lines: string[];
+	end: number;
+	size: number;
+	inode: number;
+	/** Bytes actually read: the chunk plus the 1-byte mid-line probe when performed. Additive; old callers ignore it. */
+	fetched: number;
+};
+
+export function readLines(path: string, from: number, final = false): ReadLinesResult | undefined {
 	let fd: number;
 	try {
 		fd = openSync(path, "r");
@@ -73,18 +78,25 @@ export function readLines(
 		const chunk = readChunk(fd, start, Math.min(MAX_READ, st.size - start));
 		const got = chunk.length;
 		const atEof = start + got >= st.size;
+		const probed = start > 0 && got > 0 ? 1 : 0;
 		let skip = 0;
 		if (startsMidLine(fd, start, got)) {
 			const nl = chunk.indexOf(10);
 			if (nl < 0) {
 				// Still inside the skipped line: a full chunk (or a retired file's last bytes) is consumed; a partial one waits for its newline.
 				const consumed = got >= MAX_READ || (final && atEof);
-				return { lines: [], end: consumed ? start + got : start, size: st.size, inode: st.ino };
+				return {
+					lines: [],
+					end: consumed ? start + got : start,
+					size: st.size,
+					inode: st.ino,
+					fetched: got + probed,
+				};
 			}
 			skip = nl + 1;
 		}
 		const { lines, end } = wholeLines(chunk.subarray(skip), start + skip, { start, got, skip, final, atEof });
-		return { lines, end, size: st.size, inode: st.ino };
+		return { lines, end, size: st.size, inode: st.ino, fetched: got + probed };
 	} finally {
 		closeSync(fd);
 	}

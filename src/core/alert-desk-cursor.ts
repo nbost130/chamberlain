@@ -5,14 +5,24 @@ import type { DeskConfig, DeskEvent } from "./alert-desk-config.ts";
 import { parseLine } from "./alert-desk-events.ts";
 import { readLines } from "./alert-desk-read.ts";
 
-export type Retired = { path: string; offset: number; after: number };
+export type Retired = {
+	path: string;
+	offset: number;
+	after: number;
+	/** Flag-on init: content at or before `preInitUntil` is pre-init. Post-boundary appends (lingering writer) stay post-init (M6). */
+	preInit?: boolean;
+	/** Byte offset of the end of pre-init content (size at adoption). Absent + preInit ⇒ whole file. */
+	preInitUntil?: number;
+};
 export type Cursor = {
 	offset: number;
 	inode: number;
 	/** Inbox files already renamed away, read once more after `after` in case a writer still held the old file. A file leaves this list only in a saved cursor, and is deleted after that. */
 	retired: Retired[];
-	/** Saved BEFORE the inbox is renamed, so a crash at any step of a rotation can be finished: `from` is how far the cursor had read. */
+	/** Saved BEFORE the inbox is renamed, so a crash at any step of a rotation can be finished: `from` is how far the cursor had read. Also used for flag-on init rename so flag-off recoverRotation can adopt it (M5). */
 	rotating?: { path: string; from: number; inode: number };
+	/** True when `rotating` was set by triage init; adoption then stamps preInit on the retired entry. */
+	initAdopt?: boolean;
 };
 export const CURSOR_KEY = "alert-desk-inbox";
 const freshCursor = (): Cursor => ({ offset: 0, inode: 0, retired: [] });
@@ -43,22 +53,37 @@ export type CrashPoint =
 	| "rotation-saved"
 	| "delivered"
 	| "retired-read"
-	| "retired-saved";
+	| "retired-saved"
+	| "triage-init"
+	| "triage-init-renamed"
+	| "triage-intaken"
+	| "triage-dispatched";
 
 /**
  * Finishes a rotation a crash interrupted. The intent was saved before the rename, so: if the retired file exists the rename happened and the
  * cursor restarts at the new inbox; if it does not, nothing was renamed and the intent is dropped. Either way nothing unread is lost, because a
  * rotation only starts when everything up to `from` is already committed.
+ * When `initAdopt` is set (triage init), the retired entry is stamped preInit with preInitUntil = size at adoption (M5/M6).
  */
 export function recoverRotation(cur: Cursor, now: number): boolean {
 	const r = cur.rotating;
 	if (!r) return false;
 	if (existsSync(r.path)) {
-		cur.retired.push({ path: r.path, offset: r.from, after: now + 60_000 });
+		const entry: Retired = { path: r.path, offset: r.from, after: now + 60_000 };
+		if (cur.initAdopt) {
+			entry.preInit = true;
+			try {
+				entry.preInitUntil = statSync(r.path).size;
+			} catch {
+				entry.preInitUntil = r.from;
+			}
+		}
+		cur.retired.push(entry);
 		cur.offset = 0;
 		cur.inode = 0;
 	}
 	cur.rotating = undefined;
+	cur.initAdopt = undefined;
 	return true;
 }
 
@@ -96,25 +121,28 @@ export function rotateIfDue(
 	return true;
 }
 
-/** Deletes a retired file a crash left behind after its cursor was saved (named `<inbox>.<ms>`, in no list, and old enough that no pass can still own it). */
-export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
-	const dir = dirname(inbox),
-		base = `${basename(inbox)}.`;
+/** Sibling paths named `<inbox>.<ms>` in the inbox's directory. */
+export function inboxMsSiblings(inbox: string): { path: string; ms: number }[] {
+	const dir = dirname(inbox);
+	const base = `${basename(inbox)}.`;
 	let names: string[];
 	try {
 		names = readdirSync(dir);
 	} catch {
-		return;
+		return [];
 	}
+	const out: { path: string; ms: number }[] = [];
 	for (const n of names) {
 		if (!n.startsWith(base) || !/^\d+$/.test(n.slice(base.length))) continue;
-		const path = `${dir}/${n}`;
-		if (
-			now - Number(n.slice(base.length)) < 10 * 60_000 ||
-			cur.retired.some((x) => x.path === path) ||
-			cur.rotating?.path === path
-		)
-			continue;
+		out.push({ path: `${dir}/${n}`, ms: Number(n.slice(base.length)) });
+	}
+	return out;
+}
+
+/** Deletes a retired file a crash left behind after its cursor was saved (named `<inbox>.<ms>`, in no list, and old enough that no pass can still own it). */
+export function sweepStrays(cur: Cursor, inbox: string, now: number): void {
+	for (const { path, ms } of inboxMsSiblings(inbox)) {
+		if (now - ms < 10 * 60_000 || cur.retired.some((x) => x.path === path) || cur.rotating?.path === path) continue;
 		try {
 			unlinkSync(path);
 		} catch {

@@ -56,6 +56,7 @@ export const SECTIONS = [
 	"web",
 	"sweep",
 	"alertDesk",
+	"alertTriage",
 	"operatingRules",
 	"judge",
 	"mail",

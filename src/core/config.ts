@@ -49,6 +49,7 @@ export const COMMANDS = {
 	config: "src/core/config-cmd.ts",
 	brief: "src/brief.ts",
 	wakes: "src/wakes.ts",
+	triage: "src/triage.ts",
 	"steward-health": "src/steward-health.ts",
 	"desk-allowlist": "src/desk-allowlist.ts",
 	peek: "src/adapters/t3/peek.ts",
