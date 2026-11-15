@@ -2,7 +2,7 @@
  * M4: seal pending-attempt guard, transfer pointer rights, A4, publish fsync order.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { testRelayLock } from "../testing/lock.ts";
 import { useStewardSwitchFixtures } from "../testing/steward-switch-fixtures.ts";
 import { createOutbox } from "./deliver.ts";
@@ -177,16 +177,7 @@ describe("M4: seal, transfer rights, A4, publish ordering", () => {
 		expect(posts.every((p) => !p.includes("rights-first") || posts.indexOf(p) < posts.indexOf(itemId))).toBe(true);
 	});
 
-	test("publishSwitchRef: fsync file before link, directory after; mode 0600; never overwrite", () => {
-		const src = readFileSync(new URL("./steward-gens.ts", import.meta.url), "utf8");
-		const fn = src.slice(src.indexOf("export function publishSwitchRef"));
-		const fsyncFile = fn.indexOf("fsyncSync(fd)");
-		const link = fn.indexOf("linkSync(tmp, final)");
-		const fsyncDir = fn.indexOf("fsyncSync(dirFd)");
-		expect(fsyncFile).toBeGreaterThan(0);
-		expect(link).toBeGreaterThan(fsyncFile);
-		expect(fsyncDir).toBeGreaterThan(link);
-
+	test("publishSwitchRef: mode 0600; never overwrite (C5 order spy lives in r5-evidence)", () => {
 		const w = confWorld();
 		const prep = prepareSwitch(memStoreSeeded(w.conf), w.conf, { toThread: "t", live: true });
 		if (!prep.ok) throw new Error(prep.error);

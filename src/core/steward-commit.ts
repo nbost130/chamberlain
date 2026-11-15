@@ -79,6 +79,8 @@ export function commitSwitch(
 			if (again?.phase !== "preparing" || again.fromGen !== store.steward.maxGen())
 				throw new Error("CAS failed: switch no longer preparing at current gen");
 			store.steward.insertGen(gen);
+			// After the first write: a crash or throw here must roll the whole commit back (R5 atomicity).
+			crashPoint("switch-commit-partial");
 			store.steward.insertTransfer({
 				fromGen: sw.fromGen,
 				toGen,

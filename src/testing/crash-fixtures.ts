@@ -12,6 +12,11 @@ export const TIMEOUT = 30_000;
 
 let hook: ReturnType<typeof Bun.serve>;
 export let accepted: { deliveryId: string; message: string }[] = [];
+/** Optional probe invoked at the moment the fixture webhook receives a POST (C4 ordering). */
+let wakeReceiptProbe: ((body: { deliveryId: string; message: string }) => void) | undefined;
+export const setWakeReceiptProbe = (fn: typeof wakeReceiptProbe) => {
+	wakeReceiptProbe = fn;
+};
 
 const dirs: string[] = [];
 const procs: { kill: (s?: number) => void }[] = [];
@@ -168,7 +173,13 @@ export function registerCrashHooks() {
 			hostname: "127.0.0.1",
 			port: 0,
 			fetch: async (r) => {
-				accepted.push((await r.json()) as { deliveryId: string; message: string });
+				const body = (await r.json()) as { deliveryId: string; message: string };
+				try {
+					wakeReceiptProbe?.(body);
+				} catch {
+					/* probe must not break delivery */
+				}
+				accepted.push(body);
 				return new Response(null, { status: 202 });
 			},
 		});
@@ -191,5 +202,6 @@ export function registerCrashHooks() {
 		}
 		for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 		accepted = [];
+		wakeReceiptProbe = undefined;
 	});
 }

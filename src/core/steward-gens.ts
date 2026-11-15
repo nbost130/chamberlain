@@ -58,40 +58,73 @@ export function snapshotGen(store: Store, conf?: string): GenSnapshot | undefine
 	};
 }
 
+/** Filesystem ops for publishSwitchRef — injectable so C5 can spy call order. */
+export type PublishFs = {
+	mkdirSync: typeof mkdirSync;
+	existsSync: typeof existsSync;
+	openSync: typeof openSync;
+	writeSync: typeof writeSync;
+	fsyncSync: typeof fsyncSync;
+	closeSync: typeof closeSync;
+	chmodSync: typeof chmodSync;
+	linkSync: typeof linkSync;
+	unlinkSync: typeof unlinkSync;
+};
+
+const defaultFs: PublishFs = {
+	mkdirSync,
+	existsSync,
+	openSync,
+	writeSync,
+	fsyncSync,
+	closeSync,
+	chmodSync,
+	linkSync,
+	unlinkSync,
+};
+
+/** Test-only: replace filesystem ops for C5 call-order spies. */
+let publishFsOverride: PublishFs | undefined;
+export function withPublishFs<T>(fs: PublishFs, fn: () => T): T {
+	publishFsOverride = fs;
+	try {
+		return fn();
+	} finally {
+		publishFsOverride = undefined;
+	}
+}
+
 /**
  * Publish a switch-owned ref: write temp (0600) + fsync, link (never overwrite), fsync directory, unlink temp.
- * Returns false when the final path already exists.
+ * Returns false when the final path already exists. Directory fsync failures are not swallowed (C5).
  */
 export function publishSwitchRef(conf: string, switchId: string, kind: "wake" | "compact", body: string): boolean {
+	const fs = publishFsOverride ?? defaultFs;
 	const final = switchRefPath(conf, switchId, kind);
-	mkdirSync(dirname(final), { recursive: true, mode: 0o700 });
-	if (existsSync(final)) return false;
+	fs.mkdirSync(dirname(final), { recursive: true, mode: 0o700 });
+	if (fs.existsSync(final)) return false;
 	const tmp = `${final}.tmp-${process.pid}-${Math.random().toString(16).slice(2)}`;
-	const fd = openSync(tmp, "w", 0o600);
+	const fd = fs.openSync(tmp, "w", 0o600);
 	try {
-		writeSync(fd, body);
-		fsyncSync(fd);
+		fs.writeSync(fd, body);
+		fs.fsyncSync(fd);
 	} finally {
-		closeSync(fd);
+		fs.closeSync(fd);
 	}
-	chmodSync(tmp, 0o600);
+	fs.chmodSync(tmp, 0o600);
 	try {
-		linkSync(tmp, final);
+		fs.linkSync(tmp, final);
 	} catch {
-		unlinkSync(tmp);
+		fs.unlinkSync(tmp);
 		return false;
 	}
+	const dirFd = fs.openSync(dirname(final), "r");
 	try {
-		const dirFd = openSync(dirname(final), "r");
-		try {
-			fsyncSync(dirFd);
-		} finally {
-			closeSync(dirFd);
-		}
-	} catch {
-		// best-effort directory sync
+		fs.fsyncSync(dirFd);
+	} finally {
+		fs.closeSync(dirFd);
 	}
-	unlinkSync(tmp);
+	fs.unlinkSync(tmp);
 	return true;
 }
 
