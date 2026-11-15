@@ -95,14 +95,16 @@ describe("F. adoption (B3)", () => {
 				: undefined;
 		recoverSteward({ store, conf: w.conf, log: () => {}, findReceipt: find, now: clock.t });
 
-		expect(store.steward.ledger(receipted.id)).toMatchObject({ gen: 0, origin: "adopted" });
-		expect(store.steward.receiptFor(receipted.id)?.kind).toBe("t3-run");
+		// Pre-v2 delivered rows settle as historical: no receipt hunt, no transfer, no held wake (#67).
+		expect(store.steward.ledger(receipted.id)).toMatchObject({ gen: 0, origin: "adopted-historical" });
+		expect(store.steward.receiptFor(receipted.id)).toBeUndefined();
+		expect(store.steward.transferItemForOrig(0, receipted.id)).toBeUndefined();
 
-		expect(store.steward.ledger(payload.id)).toMatchObject({ gen: 0, origin: "adopted" });
-		expect(store.steward.transferItemForOrig(0, payload.id)).toBeDefined();
-		expect(store.wakes.held(null).some((h) => h.deliveryId === transferItemId(payload.id, 0))).toBe(true);
+		expect(store.steward.ledger(payload.id)).toMatchObject({ gen: 0, origin: "adopted-historical" });
+		expect(store.steward.transferItemForOrig(0, payload.id)).toBeUndefined();
+		expect(store.wakes.held(null).some((h) => h.deliveryId === transferItemId(payload.id, 0))).toBe(false);
 
-		expect(store.steward.ledger(empty.id)).toMatchObject({ origin: "unrecoverable" });
+		expect(store.steward.ledger(empty.id)).toMatchObject({ origin: "adopted-historical" });
 
 		expect(store.wakes.find("f1-pending")?.status).toBe("pending");
 		expect(store.steward.ledger(store.wakes.find("f1-pending")!.id)).toBeUndefined();
@@ -110,10 +112,11 @@ describe("F. adoption (B3)", () => {
 		expect(store.wakes.find("f1-dead")?.status).toBe("dead_letter");
 		expect(store.steward.ledger(store.wakes.find("f1-dead")!.id)).toBeUndefined();
 
-		expect(store.steward.ledger(digest.id)).toMatchObject({ origin: "adopted" });
-		expect(store.steward.transferItemForOrig(0, digest.id)).toBeDefined();
+		expect(store.steward.ledger(digest.id)).toMatchObject({ origin: "adopted-historical" });
+		expect(store.steward.transferItemForOrig(0, digest.id)).toBeUndefined();
 
 		expect(store.steward.ledger(store.wakes.find("f1-desk")!.id)).toBeUndefined();
+		expect(store.wakes.held(null).filter((h) => h.kind === "transfer")).toHaveLength(0);
 		store.close();
 	});
 

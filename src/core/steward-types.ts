@@ -5,7 +5,17 @@
 
 import { finalSendMessage } from "./deliver.ts";
 
-export type StewardOrigin = "live" | "adopted" | "unrecoverable";
+export type StewardOrigin = "live" | "adopted" | "unrecoverable" | "adopted-historical";
+
+/** Origins that are settled without a receipt or transfer (retention/status/evidence skip them). */
+export const isSettledOrigin = (origin: StewardOrigin): boolean =>
+	origin === "unrecoverable" || origin === "adopted-historical";
+
+/**
+ * State key: JSON array of Steward outbox ids that were delivered (and unstamped) at the pre-v2→16 upgrade.
+ * Absent on databases that were already schema 15+ — adoptPass must not invent membership.
+ */
+export const HISTORICAL_ADOPT_IDS_KEY = "steward.adopt.historical_ids";
 export type SwitchPhase = "preparing" | "committed" | "mirrored" | "aborted";
 export type ReceiptKind = "t3-run" | "operator";
 

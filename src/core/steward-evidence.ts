@@ -4,7 +4,7 @@
  */
 import { crashPoint } from "./crash.ts";
 import { isDischarged } from "./steward-discharge.ts";
-import type { ReceiptHit } from "./steward-types.ts";
+import { isSettledOrigin, type ReceiptHit } from "./steward-types.ts";
 import type { Store } from "./store.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
@@ -17,7 +17,7 @@ export type EvidenceFinder = (o: {
 
 function shouldScan(store: Store, row: OutboxRow, filterGen: number | undefined): boolean {
 	const led = store.steward.ledger(row.id);
-	if (!led || led.origin === "unrecoverable") return false;
+	if (!led || isSettledOrigin(led.origin)) return false;
 	if (filterGen !== undefined && led.gen !== filterGen) return false;
 	return !isDischarged(store, row.id);
 }

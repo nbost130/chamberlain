@@ -13,6 +13,7 @@ import { transferMessage } from "./steward-header.ts";
 import {
 	encodedSendBytes,
 	exceedsEncodedCap,
+	isSettledOrigin,
 	type StewardTransfer,
 	TRANSFER_DIGEST_MAX_BYTES,
 	TRANSFER_DIGEST_MAX_ITEMS,
@@ -46,7 +47,7 @@ function transferSet(store: Store, fromGen: number): number[] {
 		.rows("delivered", null)
 		.filter((r) => {
 			const led = store.steward.ledger(r.id);
-			if (!led || led.gen !== fromGen || led.origin === "unrecoverable") return false;
+			if (!led || led.gen !== fromGen || isSettledOrigin(led.origin)) return false;
 			return !isDischarged(store, r.id);
 		})
 		.map((r) => r.id);

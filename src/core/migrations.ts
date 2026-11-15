@@ -548,6 +548,40 @@ CREATE TABLE transfer_items (
 ALTER TABLE outbox ADD COLUMN attempt_gen INTEGER;
 `,
 	},
+	{
+		version: 16,
+		name: "historical adoption origin and exact pre-v2 delivered set",
+		sql: `
+-- #67: widen steward_deliveries.origin for adopted-historical (SQLite cannot alter a CHECK in place; nothing else references this table).
+-- Exact membership: when applyMigrations sets steward.adopt.pre_v2_upgrade (this open started at schema ≤14), record the JSON array of
+-- Steward-lane delivered outbox ids that lack attempt_gen at this instant into steward.adopt.historical_ids. Pending and dead_letter rows
+-- are excluded. A database already at schema 15 gets the CHECK rebuild only — no id set — so live late-lands keep the v2 transfer path.
+-- applyMigrations runs every pending migration (15 and 16 together on a ≤14 open) inside one BEGIN EXCLUSIVE, so a crash or failure
+-- after 15's SQL cannot leave schema 15 without the set, and no other writer can insert between 15 and 16.
+CREATE TABLE steward_deliveries_v16 (
+	outbox_id INTEGER PRIMARY KEY REFERENCES outbox (id) ON DELETE CASCADE,
+	gen INTEGER NOT NULL,
+	origin TEXT NOT NULL CHECK (origin IN ('live', 'adopted', 'unrecoverable', 'adopted-historical'))
+);
+INSERT INTO steward_deliveries_v16 (outbox_id, gen, origin) SELECT outbox_id, gen, origin FROM steward_deliveries;
+DROP TABLE steward_deliveries;
+ALTER TABLE steward_deliveries_v16 RENAME TO steward_deliveries;
+INSERT INTO state (key, value, updated_at)
+SELECT 'steward.adopt.historical_ids',
+	COALESCE((
+		SELECT json_group_array(id) FROM (
+			SELECT id FROM outbox
+			WHERE receiver IS NULL AND status = 'delivered' AND attempt_gen IS NULL
+			ORDER BY id
+		)
+	), '[]'),
+	CAST(strftime('%s', 'now') AS INTEGER) * 1000
+WHERE EXISTS (SELECT 1 FROM state WHERE key = 'steward.adopt.pre_v2_upgrade' AND value = 'true')
+	AND NOT EXISTS (SELECT 1 FROM state WHERE key = 'steward.adopt.historical_ids');
+DELETE FROM state WHERE key = 'steward.adopt.pre_v2_upgrade';
+DELETE FROM state WHERE key = 'steward.adopt.historical_hi';
+`,
+	},
 ];
 
 const lastMigration = MIGRATIONS.at(-1);
