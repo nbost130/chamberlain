@@ -18,8 +18,12 @@ import { IDLE_PARENTS, type IdleParentsConfig, parseIdleParents } from "./idle-p
 import { cfg } from "./layout.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "./messages.ts";
 import { checkVersion, SCHEMA_VERSION } from "./schema.ts";
-import type { Finding, ItemSource, SourceOutcome } from "./source.ts";
+import type { ItemSource, SourceOutcome } from "./source.ts";
 import type { ItemMode } from "./store.ts";
+import { parseCheckOutput } from "./sweep-findings.ts";
+import { parseUndelivered, UNDELIVERED, type UndeliveredConfig } from "./undelivered.ts";
+
+export { parseCheckOutput };
 
 export const SWEEP_MS = 2 * 3600_000;
 export const FULL_SWEEP_MS = 6 * 3600_000;
@@ -149,17 +153,23 @@ export type SweepCheck = {
 	timeoutMs?: number /** silenced, shadow or live (default live). */;
 	mode?: ItemMode;
 };
-export type SweepConfig = { schemaVersion?: number; checks: SweepCheck[]; idleParents: IdleParentsConfig };
+export type SweepConfig = {
+	schemaVersion?: number;
+	checks: SweepCheck[];
+	idleParents: IdleParentsConfig;
+	undelivered: UndeliveredConfig;
+};
 const MODES: readonly string[] = ["silenced", "shadow", "live"];
+const BUILTIN_CHECKS = new Set([IDLE_PARENTS, UNDELIVERED]);
 
-/** Pure: a check's name: well formed, not taken, not the built-in one. `names` gains it. */
+/** Pure: a check's name: well formed, not taken, not a built-in one. `names` gains it. */
 function checkName(c: Partial<SweepCheck>, i: number, names: Set<string>): string {
 	if (!c || typeof c.name !== "string" || !/^[\w.-]{1,40}$/.test(c.name))
 		throw Error(`sweep.json: check ${i + 1} needs a name of letters, digits, dot, dash or underscore`);
 	if (names.has(c.name)) throw Error(`sweep.json: two checks are named ${c.name}`);
-	if (c.name === IDLE_PARENTS)
+	if (BUILTIN_CHECKS.has(c.name))
 		throw Error(
-			`sweep.json: "${IDLE_PARENTS}" is the built-in idle-parents check; tune it with "idleParents", not a check`,
+			`sweep.json: "${c.name}" is a built-in check; tune it with "idleParents" or "undelivered", not a check`,
 		);
 	names.add(c.name);
 	return c.name;
@@ -185,21 +195,24 @@ function parseCheck(c: Partial<SweepCheck>, i: number, names: Set<string>): Swee
 /** Pure: the checks a parsed sweep.json lists. */
 export function parseSweepConfig(raw: unknown): SweepConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("sweep.json: expected a JSON object");
-	const o = raw as { schemaVersion?: unknown; checks?: unknown; idleParents?: unknown };
+	const o = raw as { schemaVersion?: unknown; checks?: unknown; idleParents?: unknown; undelivered?: unknown };
 	checkVersion("sweep.json", o.schemaVersion);
-	// A section that only tunes the built-in idle-parents check needs no checks of its own.
-	if (o.checks === undefined && o.idleParents !== undefined) o.checks = [];
+	// A section that only tunes a built-in check needs no checks of its own.
+	if (o.checks === undefined && (o.idleParents !== undefined || o.undelivered !== undefined)) o.checks = [];
 	if (!Array.isArray(o.checks)) throw Error('sweep.json: need {"checks": [{"name", "command": [...]}]}');
 	const idleParents = parseIdleParents(o.idleParents);
+	const undelivered = parseUndelivered(o.undelivered);
 	const names = new Set<string>();
 	const checks = o.checks.map((c: Partial<SweepCheck>, i) => parseCheck(c, i, names));
-	return { schemaVersion: SCHEMA_VERSION, checks, idleParents };
+	return { schemaVersion: SCHEMA_VERSION, checks, idleParents, undelivered };
 }
 
 /** The `sweep` section of config.json (else the legacy sweep.json), or no checks. It names programs the daemon runs. */
 export function readSweepConfig(conf = CONF): SweepConfig {
 	const raw = cfg(conf, "sweep");
-	return raw === undefined ? { checks: [], idleParents: parseIdleParents(undefined) } : parseSweepConfig(raw);
+	return raw === undefined
+		? { checks: [], idleParents: parseIdleParents(undefined), undelivered: parseUndelivered(undefined) }
+		: parseSweepConfig(raw);
 }
 
 /** The idle-parents settings: the config's, or the defaults when the sweep section cannot be read (that failure already shows as the `sweep.json` source in error). */
@@ -209,70 +222,6 @@ export function idleParentsConfig(conf = CONF): IdleParentsConfig {
 	} catch {
 		return parseIdleParents(undefined);
 	}
-}
-
-const FINDING_FIELDS = new Set(["dedupKey", "text", "repeatIntervalMs", "maxNotifications", "baseline", "subject"]);
-/** Pure: a finding's shape and field names: an object, with no field this build does not know. */
-function checkFindingFields(x: Record<string, unknown>, n: number): void {
-	if (!x || typeof x !== "object" || Array.isArray(x)) throw Error(`finding ${n} is not an object`);
-	for (const k of Object.keys(x)) if (!FINDING_FIELDS.has(k)) throw Error(`finding ${n} has an unknown field "${k}"`);
-}
-
-/** Pure: a finding's repeat interval and notification cap, which go together. */
-function checkFindingRepeat(x: Record<string, unknown>, n: number): void {
-	if (
-		x.repeatIntervalMs !== undefined &&
-		(typeof x.repeatIntervalMs !== "number" || !Number.isFinite(x.repeatIntervalMs) || x.repeatIntervalMs < 0)
-	)
-		throw Error(`finding ${n}: repeatIntervalMs must be a number of milliseconds, 0 or more`);
-	if (
-		x.maxNotifications !== undefined &&
-		(typeof x.maxNotifications !== "number" ||
-			!Number.isInteger(x.maxNotifications) ||
-			x.maxNotifications < 1 ||
-			x.repeatIntervalMs === undefined)
-	)
-		throw Error(`finding ${n}: maxNotifications must be a whole number, 1 or more, and goes with repeatIntervalMs`);
-}
-
-/** Pure: a finding's subject, or undefined when it names none. */
-function findingSubject(x: Record<string, unknown>, n: number): { kind: string; id: string } | undefined {
-	const subject = x.subject as { kind?: unknown; id?: unknown } | undefined;
-	if (subject === undefined) return undefined;
-	if (typeof subject !== "object" || typeof subject?.kind !== "string" || typeof subject?.id !== "string")
-		throw Error(`finding ${n}: subject must be {"kind", "id"}`);
-	return { kind: subject.kind, id: subject.id };
-}
-
-/** Pure: one finding of a check's output, or the first thing wrong with it. */
-function parseFinding(x: Record<string, unknown>, i: number): Finding {
-	const n = i + 1;
-	checkFindingFields(x, n);
-	if (typeof x.dedupKey !== "string" || !x.dedupKey || typeof x.text !== "string" || !x.text)
-		throw Error(`finding ${n} needs a string dedupKey and text`);
-	checkFindingRepeat(x, n);
-	if (x.baseline !== undefined && typeof x.baseline !== "boolean")
-		throw Error(`finding ${n}: baseline must be true or false`);
-	const subject = findingSubject(x, n);
-	return {
-		dedupKey: x.dedupKey.slice(0, 200),
-		text: x.text.slice(0, 400),
-		...(x.repeatIntervalMs !== undefined ? { repeatIntervalMs: x.repeatIntervalMs as number } : {}),
-		...(x.maxNotifications !== undefined ? { maxNotifications: x.maxNotifications as number } : {}),
-		...(x.baseline === true ? { baseline: true } : {}),
-		...(subject ? { subject } : {}),
-	};
-}
-
-/**
- * Pure: the findings a check printed. A finding is `{dedupKey, text, repeatIntervalMs?, maxNotifications?, baseline?, subject?}`. A field this
- * build does not know is refused, never ignored: a check that still asks for something this build no longer does must read
- * as in error, not as quietly changed.
- */
-export function parseCheckOutput(out: string): Finding[] {
-	const raw = JSON.parse(out.trim() || "[]") as unknown;
-	if (!Array.isArray(raw)) throw Error("its output is not a JSON array");
-	return raw.map((x: Record<string, unknown>, i) => parseFinding(x, i));
 }
 
 /** One configured check as an item source: the command's findings are the source's items. */

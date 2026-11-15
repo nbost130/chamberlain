@@ -231,6 +231,38 @@ export class T3Link {
 			const p = await this.projection(threadId);
 			return lookOf(p.runs ?? [], p.turnItems ?? []);
 		},
+		/** The newest run by ordinal, with turn items, for the undelivered-message check. */
+		latestRun: async (threadId) => {
+			if (!this.rpc) return undefined;
+			const p = await this.projection(threadId);
+			const runs = p.runs ?? [];
+			const run = runs
+				.filter((r) => r.id)
+				.reduce<(typeof runs)[number] | undefined>(
+					(a, r) => (!a || (r.ordinal ?? -1) > (a.ordinal ?? -1) ? r : a),
+					undefined,
+				);
+			if (!run) return undefined;
+			return {
+				run: {
+					id: run.id,
+					ordinal: run.ordinal,
+					status: run.status,
+					...(typeof run.startedAt === "string" ? { startedAt: run.startedAt } : {}),
+					...(typeof run.completedAt === "string" ? { completedAt: run.completedAt } : {}),
+					...(typeof run.requestedAt === "string" ? { requestedAt: run.requestedAt } : {}),
+					executedModel: run.executedModel ?? null,
+					...(typeof run.userMessageId === "string" ? { userMessageId: run.userMessageId } : {}),
+				},
+				items: (p.turnItems ?? []).map((i) => ({
+					type: typeof i.type === "string" ? i.type : undefined,
+					id: typeof i.id === "string" ? i.id : undefined,
+					itemId: typeof i.itemId === "string" ? i.itemId : undefined,
+					status: typeof i.status === "string" ? i.status : undefined,
+					updatedAt: typeof i.updatedAt === "string" ? i.updatedAt : undefined,
+				})),
+			};
+		},
 		instruction: (threadId) =>
 			readWhenConnected(
 				Boolean(this.rpc),

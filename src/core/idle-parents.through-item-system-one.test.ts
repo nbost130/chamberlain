@@ -199,7 +199,7 @@ describe("the findings with a classifier", () => {
 	});
 
 	test("live: the cap counts only reported threads, in the live order", () => {
-		const f = idleParentFindings(sel(threads), { maxThreads: 1 }, [], cls("live", all));
+		const f = idleParentFindings(sel(threads), { maxThreads: 1, repeatHours: 2 }, [], cls("live", all));
 		expect(f.map((x) => x.dedupKey)).toEqual([by(threads[0]!), "settled-digest:2026-11-14"]);
 	});
 

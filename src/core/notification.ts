@@ -69,7 +69,10 @@ export function decideNotification(s: NotificationState, policy: RepeatPolicy, n
 	const idle: NotificationDecision = { notify: false, wouldNotify: false, count, nextAt: due };
 	if (s.mode === "silenced" || s.status === "acknowledged" || s.status === "resolved" || policy.maxNotifications < 1)
 		return idle;
-	const fires = count === 0 || (due !== null && now >= due && count < policy.maxNotifications);
+	// count>0 with nextAt null usually means "done" (NOTIFY_ONCE). When the policy now has a repeat interval and
+	// room under max, it is due again (an item first notified under NOTIFY_ONCE, then observed with repeatEvery).
+	const rearmed = count > 0 && due === null && policy.intervalsMs.length > 0 && count < policy.maxNotifications;
+	const fires = count === 0 || (due !== null && now >= due && count < policy.maxNotifications) || rearmed;
 	if (!fires) return idle;
 	const n = count + 1;
 	const step =

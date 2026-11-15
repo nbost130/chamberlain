@@ -239,13 +239,15 @@ background task, running child, or running subagent the adapter reports), and ar
 (default 30), whoever started its last turn: a thread that answered the principal's own question and then sat on a half-answer is listed like any other. The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
 Steward gets one wake with a compact list: server, thread id, title, idle minutes and the last message cut to about 300 characters,
 with the threads whose last message asks something (`looksLikeAsk`, so "say go and I'll start it" counts) marked `[ASKING]` and
-first. It is the net under a turn-end wake that missed a thread. A thread is reported once per last message, however many runs pass and however its eligibility moves in between (snoozed, briefly
-running, below the threshold: it comes back unreported only if its last message changed; the item's key is the thread plus a hash of
-that message); a new message makes a new report. It calls no model: the selection is plain
-code (`selectIdleThreads` in `src/core/idle-parents.ts`, which returns plain records).
+first, and wait-closings ("holding until…", "waiting for…", "I'll adapt once…", "no reply needed while…") marked
+`[WAITING: …]` with who or what is awaited. It is the net under a turn-end wake that missed a thread. A thread is reported on
+its last message, and **again every `repeatHours` (default 2)** while that same message still idles and the finding is open, so a
+multi-hour stall is not silent after the first wake. One digest per pass. It goes quiet when the thread runs, is settled or
+snoozed, or the Steward records a hold naming it. When `threads.steward` changes, every open idle finding is re-queued once to
+the new Steward. A new message makes a new finding. It calls no model: the selection is plain code (`selectIdleThreads`).
 
 ```json
-{ "sweep": { "idleParents": { "enabled": true, "intervalMinutes": 15, "thresholdMinutes": 30, "maxThreads": 10 } } }
+{ "sweep": { "idleParents": { "enabled": true, "intervalMinutes": 15, "thresholdMinutes": 30, "maxThreads": 10, "repeatHours": 2 } } }
 ```
 
 | Key | Default | Meaning |
@@ -253,10 +255,29 @@ code (`selectIdleThreads` in `src/core/idle-parents.ts`, which returns plain rec
 | `enabled` | `true` | `false` turns the check off. |
 | `intervalMinutes` | `15` | A positive number of minutes between runs. The housekeeping tick is once a minute, so a run starts within a minute of when it is due. |
 | `thresholdMinutes` | `30` | A positive number of minutes a thread must have been idle. |
-| `maxThreads` | `10` | The most NEW threads one wake lists, asks first, then the longest idle; the rest are listed on a later run. A thread already reported never counts again. |
+| `maxThreads` | `10` | The most NEW threads one wake lists, asks first, then the longest idle; the rest are listed on a later run. A thread already reported never counts as new. |
+| `repeatHours` | `2` | Hours between re-notifies of the same still-open idle finding (same last-message key). |
 
 A key it does not know is refused. A configured check cannot be named `idle-parents`. The check reads each candidate thread's last
 message, so it needs an adapter whose `inspect` has `lastAssistant` (the T3 adapter does); without it the check lists nothing.
+
+**`sweep.undelivered`** tunes the built-in undelivered-message check (item source `check:undelivered-message`). On every watched
+server, it looks for a top-level idle/completed thread whose latest completed run finished in under `maxDurationSeconds`
+(default 10), has `executedModel` null, and whose last chat item is a user or agent message with no assistant reply after it
+(the 2026-11-15 Pilot B shape: message delivered, model never ran). It wakes the Steward promptly to resend. Default interval
+is 1 minute.
+
+```json
+{ "sweep": { "undelivered": { "enabled": true, "intervalMinutes": 1, "maxDurationSeconds": 10 } } }
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | `false` turns the check off. |
+| `intervalMinutes` | `1` | Minutes between scans. |
+| `maxDurationSeconds` | `10` | A completed run shorter than this may be undelivered when `executedModel` is null and there is no assistant reply. |
+
+A configured check cannot be named `undelivered-message`. The check needs `inspect.latestRun` (the T3 adapter provides it).
 
 ### The idle-thread classifier
 

@@ -44,6 +44,15 @@ describe("decideNotification: the one function that says whether an item alerts"
 		).toBe(true);
 	});
 
+	test("an item notified under NOTIFY_ONCE (nextAt null) becomes due again under repeatEvery", () => {
+		const l = repeatEvery(HOUR);
+		const d = decideNotification(fresh({ notificationCount: 1, nextNotificationAt: null }), l, 5_000);
+		expect(d).toMatchObject({ notify: true, count: 2, nextAt: 5_000 + HOUR });
+		expect(
+			decideNotification(fresh({ notificationCount: 1, nextNotificationAt: null }), NOTIFY_ONCE, 5_000).notify,
+		).toBe(false);
+	});
+
 	test("an escalating ladder follows its steps, repeats the last, and stops at the cap", () => {
 		const l = repeatAtIntervals([10, 100], 4);
 		const times: number[] = [];

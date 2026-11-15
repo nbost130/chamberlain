@@ -6,23 +6,33 @@ import { idleParentCandidate, messageHash, selectIdleThreads } from "./idle-sele
 import { parseSweepConfig } from "./sweep.ts";
 
 describe("the idle-parents config", () => {
-	test("defaults: on, every 15 minutes, idle for 30 minutes, 10 threads", () => {
+	test("defaults: on, every 15 minutes, idle for 30 minutes, 10 threads, re-raise every 2 hours", () => {
 		const d = {
 			enabled: true,
 			intervalMinutes: 15,
 			thresholdMinutes: 30,
 			maxThreads: 10,
+			repeatHours: 2,
 			classifier: CLASSIFIER_DEFAULTS,
 		};
 		expect(parseIdleParents(undefined)).toEqual(d);
 		expect(parseIdleParents({})).toEqual(d);
 	});
 	test("each setting can be given", () =>
-		expect(parseIdleParents({ enabled: false, intervalMinutes: 5, thresholdMinutes: 90, maxThreads: 3 })).toEqual({
+		expect(
+			parseIdleParents({
+				enabled: false,
+				intervalMinutes: 5,
+				thresholdMinutes: 90,
+				maxThreads: 3,
+				repeatHours: 6,
+			}),
+		).toEqual({
 			enabled: false,
 			intervalMinutes: 5,
 			thresholdMinutes: 90,
 			maxThreads: 3,
+			repeatHours: 6,
 			classifier: CLASSIFIER_DEFAULTS,
 		}));
 	test("bad values and unknown keys are refused, never ignored", () => {
@@ -38,9 +48,10 @@ describe("the idle-parents config", () => {
 	test("the sweep section carries it, needs no checks to tune it, and keeps its name for itself", () => {
 		expect(parseSweepConfig({ idleParents: { thresholdMinutes: 45 } })).toMatchObject({
 			checks: [],
-			idleParents: { enabled: true, intervalMinutes: 15, thresholdMinutes: 45, maxThreads: 10 },
+			idleParents: { enabled: true, intervalMinutes: 15, thresholdMinutes: 45, maxThreads: 10, repeatHours: 2 },
 		});
 		expect(() => parseSweepConfig({ checks: [{ name: "idle-parents", command: ["x"] }] })).toThrow("built-in");
+		expect(() => parseSweepConfig({ checks: [{ name: "undelivered-message", command: ["x"] }] })).toThrow("built-in");
 		expect(() => parseSweepConfig({ checks: [], idleParents: { maxThreads: 0 } })).toThrow("maxThreads");
 	});
 });
@@ -221,7 +232,7 @@ describe("the findings", () => {
 	});
 	test("the cap limits NEW threads, in order, and never drops one already open", () => {
 		const threads = [rec("ask", 100, "Shall I go?"), rec("a", 500), rec("b", 400), rec("c", 300)];
-		const cfg = { maxThreads: 2 };
+		const cfg = { maxThreads: 2, repeatHours: 2 };
 		expect(idleParentFindings(sel(threads), cfg).map((x) => x.dedupKey.split(":")[1])).toEqual(["ask", "a"]);
 		// With "c" already open it stays listed (or the item system would report it again), and the cap still counts only the new ones.
 		const c = idleParentFindings(sel([threads[3]!]), cfg)[0]!;

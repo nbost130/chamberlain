@@ -61,6 +61,26 @@ export type Inspector = {
 	failure?(threadId: string): Promise<RunFailure | undefined>;
 	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */
 	look?(threadId: string): Promise<RunLook | undefined>;
+	/**
+	 * The thread's latest run (by ordinal) and the turn items in the same projection, for the undelivered-message check.
+	 * Absent: that check cannot see this adapter's threads.
+	 */
+	latestRun?(threadId: string): Promise<
+		| {
+				run: {
+					id?: string;
+					ordinal?: number;
+					status?: string;
+					startedAt?: string;
+					completedAt?: string;
+					requestedAt?: string;
+					executedModel?: string | null;
+					userMessageId?: string;
+				};
+				items: { type?: string; id?: string; itemId?: string; status?: string; updatedAt?: string }[];
+		  }
+		| undefined
+	>;
 };
 
 // ---- post ----------------------------------------------------------------------------------------
