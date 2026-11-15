@@ -257,8 +257,8 @@ export function createWaiting(d: WaitingDeps) {
 
 	/** Every card the adapters list, including ones dismissed from the views (the dismiss route needs them for 409). */
 	const rawList = () => [...st.byServer.values()].flat();
-	/** Cards still shown on the page and inline view: a dismissed request id is hidden until a new request appears. */
-	const list = () => rawList().filter((c) => !isCardDismissed(d.store, c.server, c.requestId));
+	/** Cards still shown on the page and inline view: a dismissed thread request is hidden until a new request id appears. */
+	const list = () => rawList().filter((c) => !isCardDismissed(d.store, c.server, c.threadId, c.requestId));
 	/** Servers whose last read failed, so the view can say its list may be missing what waits there. */
 	const unreachable = () => [...st.failing].map(([server, since]) => ({ server, since }));
 	const answer = (id: string, choice: unknown, sig: unknown, only?: ReadonlySet<string>) =>

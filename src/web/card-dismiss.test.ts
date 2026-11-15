@@ -113,7 +113,7 @@ describe("mirrored card dismiss API", () => {
 			expect(await r.json()).toEqual({ ok: true, id: c.id, kind: "dismissed", recorded: true });
 			expect(s.fake.answers).toEqual([]);
 			expect(s.fake.cards.map((x) => x.requestId)).toEqual([c.requestId]);
-			expect(isCardDismissed(s.store, c.server, c.requestId)).toBe(true);
+			expect(isCardDismissed(s.store, c.server, c.threadId, c.requestId)).toBe(true);
 			const after = await (await s.queue(s.page)).json();
 			expect(after.cards).toEqual([]);
 			expect(s.logs.filter((l) => l.event === "card-dismissed")).toMatchObject([
@@ -156,8 +156,29 @@ describe("mirrored card dismiss API", () => {
 		await s.mirror.poll();
 		const restricted = await s.post(`/api/cards/${other.id}/dismiss`, s.page, {}, { origin: "null" });
 		expect(restricted.status).toBe(403);
-		expect(isCardDismissed(s.store, other.server, other.requestId)).toBe(false);
+		expect(isCardDismissed(s.store, other.server, other.threadId, other.requestId)).toBe(false);
 		expect(s.fake.answers).toEqual([]);
+	});
+
+	test("same server and requestId in another thread stays visible (Sol R1-M2)", async () => {
+		const a = waitingCard("approval", { id: "C-a0000000000a", threadId: "t1", requestId: "req-shared" });
+		const b = waitingCard("approval", {
+			id: "C-a0000000000b",
+			threadId: "t2",
+			requestId: "req-shared",
+			threadTitle: "Other",
+			sig: "sig-b",
+		});
+		const s = await appWith([a, b]);
+		expect((await (await s.queue(s.page)).json()).cards.map((c: { id: string }) => c.id).sort()).toEqual(
+			[a.id, b.id].sort(),
+		);
+		expect((await s.post(`/api/cards/${a.id}/dismiss`, s.page)).status).toBe(200);
+		await s.mirror.poll();
+		const listed = (await (await s.queue(s.page)).json()).cards;
+		expect(listed.map((c: { id: string; threadId: string }) => [c.id, c.threadId])).toEqual([[b.id, "t2"]]);
+		expect(isCardDismissed(s.store, a.server, a.threadId, a.requestId)).toBe(true);
+		expect(isCardDismissed(s.store, b.server, b.threadId, b.requestId)).toBe(false);
 	});
 });
 
@@ -191,5 +212,36 @@ describe("mirrored card dismiss UI", () => {
 		}
 		expect(p.calls).toEqual([{ path: `/api/cards/${approval.id}/dismiss`, body: {} }]);
 		expect(p.app.innerHTML).not.toContain(approval.id);
+	});
+
+	// Sol R1-M1: dismiss must remove the node (not leave it via data-answered preserve), and Refresh must keep it gone.
+	test("inline dismiss removes the card node after POST and after Refresh", async () => {
+		const mirrored = { ...inlineCard("rm -rf build", "sig-1"), ...waitingCard("approval") };
+		let cards: (typeof mirrored)[] = [mirrored];
+		const calls: { method: string; path: string; body?: unknown }[] = [];
+		const dq = run(() => ({ items: [], cards }), {
+			calls,
+			post: () => {
+				cards = [];
+				return { status: 200, body: { ok: true, kind: "dismissed" } };
+			},
+		});
+		await settle();
+		const cardNodes = () => dq.all((e) => e.className.split(" ").includes("dq-card"));
+		expect(cardNodes()).toHaveLength(1);
+		expect(cardNodes()[0]!.dataset.answered).toBeUndefined();
+		const dismiss = dq.all((e) => e.tag === "button" && e.textContent === "Dismiss")[0]!;
+		for (const fn of dismiss.listeners.click ?? []) await fn();
+		await settle();
+		expect(calls.filter((c) => c.method === "POST")).toEqual([
+			{ method: "POST", path: `/api/cards/${mirrored.id}/dismiss`, body: {} },
+		]);
+		expect(cardNodes()).toHaveLength(0);
+		expect(dq.textContent).not.toContain(mirrored.header);
+		const refresh = dq.all((e) => e.tag === "button" && e.textContent === "Refresh")[0]!;
+		for (const fn of refresh.listeners.click ?? []) await fn();
+		await settle();
+		expect(cardNodes()).toHaveLength(0);
+		expect(dq.textContent).not.toContain(mirrored.header);
 	});
 });

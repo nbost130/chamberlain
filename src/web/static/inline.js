@@ -417,6 +417,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 	}
 
 	// Dismiss a mirrored card from these views only (Nathan, 2026-11-15 #68 / B2). Same auth path as an item dismiss; the thread request stays.
+	// Do not set data-answered: that flag preserves answered cards across refresh; a dismissal must remove the node so Refresh keeps it gone.
 	function mirrorDismiss(m, c, { row, tell, taps, lock, busy }) {
 		const b = btn("Dismiss", "dq-sec", async () => {
 			if (busy()) return;
@@ -424,9 +425,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			try {
 				const r = await post(`/api/cards/${encodeURIComponent(m.id)}/dismiss`, {});
 				if (r.ok) {
-					c.dataset.answered = "1";
-					row.replaceChildren();
-					tell("dq-ok", "Dismissed from these views. The thread request is unchanged.");
+					c.remove();
 					remaining = Math.max(0, remaining - 1);
 					count.textContent = remaining ? `${remaining} waiting` : DASH ? "clear" : "0 waiting";
 					refresh();
