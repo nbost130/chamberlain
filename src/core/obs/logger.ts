@@ -9,6 +9,7 @@
  * The same object is also the old call: `log("delivered", { deliveryId, error })`, which every existing call site still makes. It is read through
  * the registry (src/core/obs/registry.ts), so what it carries beyond the registry's typed fields stays in the old `events` table and never reaches `obs.db`.
  */
+import { redactUrlFields } from "../redact.ts";
 import type { LogEvent } from "../store.ts";
 import type { Obs } from "./obs.ts";
 import type { CallOptions } from "./obs-spec.ts";
@@ -33,7 +34,11 @@ export type Logger = ((event: string, data?: Fields) => void) & {
 /** A logger bound to `binding`. `base` is added to every old-style line, such as `{ src: "queue-web" }`. */
 export function makeLogger(obs: Obs, binding: Binding = {}, base: Record<string, unknown> = {}): Logger {
 	const call = ((event: string, data: Fields = {}) => {
-		obs.legacy(event, data, binding, { t: obs.stamp(), ...base, event, ...data } as LogEvent);
+		// Redact before the line is queued, written to events, or printed under CHAMBERLAIN_VERBOSE: the typed obs.db
+		// path does not protect this independent legacy copy.
+		const safe = redactUrlFields(data);
+		const line = redactUrlFields({ t: obs.stamp(), ...base, event, ...safe }) as LogEvent;
+		obs.legacy(event, safe, binding, line);
 	}) as Logger;
 	const at =
 		(level: "info" | "warn" | "error" | "debug"): Emit =>
