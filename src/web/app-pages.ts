@@ -4,7 +4,7 @@ import type { AppDeps, Ctx } from "./app-ctx.ts";
 import { fail, inlineCors, inlineVerdict, isJsonContentType, withSecurity } from "./app-http.ts";
 import { resolveEvidence } from "./evidence.ts";
 import { openPage } from "./thread-links.ts";
-import { viewKeyVerdict } from "./view-key.ts";
+import { OPEN_PATH, viewKeyVerdict } from "./view-key.ts";
 
 function evidence(ctx: Ctx, url: URL): Response {
 	const { d } = ctx;
@@ -50,7 +50,7 @@ const locked = (inlineReply: boolean) => {
 };
 export const isShell = (p: string) => p === "/" || p === "/rulings" || /^\/item\/Q-[a-z0-9]{4,16}$/.test(p);
 /** `/open/<server>/<threadId>`: sends a device on to the thread's link (./thread-links.ts). A link, like a page: `?k=` signs it in. */
-export const isOpen = (p: string) => /^\/open\/[^/]+\/[^/]+$/.test(p);
+export const isOpen = (p: string) => OPEN_PATH.test(p);
 /**
  * Did the person start this navigation with a tap or a click (`Sec-Fetch-User: ?1`, Fetch Metadata; Safari 16.4+, Chrome, Firefox)?
  * Then `/open` answers with a redirect straight to the app: a browser follows a redirect to an app link only inside a navigation the
@@ -125,20 +125,32 @@ export function capabilityProof(d: AppDeps, req: Request, url: URL, gate: Gate) 
 	const { inline, sameOrigin } = gate;
 	const headerKey = req.headers.get(TOKEN_HEADER);
 	const byPageKeyHeader = d.capability.accepts(headerKey);
-	const byViewKey = !byPageKeyHeader && d.capability.acceptsView(headerKey);
+	const linkKey = url.searchParams.get(TOKEN_PARAM);
+	const linkable =
+		req.method === "GET" &&
+		!inline &&
+		(isShell(url.pathname) || isOpen(url.pathname) || url.pathname.startsWith("/evidence/"));
+	// The view key opens a thread link and nothing else by `?k=`: only /open, a GET, never from a frame. It is not a link that signs in
+	// (`byLink` below is the page key's alone), so it sets no cookie and the key never leaves the address it came on.
+	const viewLink = req.method === "GET" && !inline && isOpen(url.pathname) && d.capability.acceptsView(linkKey);
+	const byViewKey = !byPageKeyHeader && (d.capability.acceptsView(headerKey) || viewLink);
 	// A cookie reaches an item's evidence only from the page's own origin (or a direct navigation): another PORT on the same host is "same-site", not
 	// "same-origin", and must not be able to embed the evidence images with the owner's cookie. The header and ?k= are explicit and unaffected.
 	const fetchSite = req.headers.get("sec-fetch-site");
 	const cookieOk = !url.pathname.startsWith("/evidence/") || fetchSite === "same-origin" || fetchSite === "none";
 	const byCookie = !inline && cookieOk && d.capability.acceptsCookie(req.headers.get("cookie"));
-	const linkable =
-		req.method === "GET" &&
-		!inline &&
-		(isShell(url.pathname) || isOpen(url.pathname) || url.pathname.startsWith("/evidence/"));
-	const linkKey = url.searchParams.get(TOKEN_PARAM);
 	const byLink = linkable && linkKey !== null && d.capability.accepts(linkKey);
 	const full = byCookie || byLink || (byPageKeyHeader && sameOrigin);
 	return { byPageKeyHeader, byViewKey, byCookie, byLink, full };
+}
+
+/**
+ * Whether the view key may make this request: its list (./view-key.ts), except /open from a null-origin frame, which has no use for it
+ * (the page key from a frame is refused it too; the view key's own is for the tab a link opened).
+ */
+function viewKeyMay(req: Request, url: URL, inline: boolean): boolean {
+	const v = viewKeyVerdict(req.method, url.pathname);
+	return v !== "refuse" && v !== "preflight" && !(v === "open" && inline);
 }
 
 /**
@@ -163,13 +175,10 @@ export function restrictedRefusal(
 	const shellRead =
 		req.method === "GET" && proof.byPageKeyHeader && (isShell(url.pathname) || (isOpen(url.pathname) && !inline));
 	if (!restricted || shellRead || !(!inline || proof.byViewKey || isOpen(url.pathname))) return undefined;
-	if (proof.byViewKey) {
-		const v = viewKeyVerdict(req.method, url.pathname);
-		if (v !== "refuse" && v !== "preflight") return undefined;
-	} else {
-		const v = inlineVerdict(req.method, url.pathname);
-		if (v === "read" || v === "answer") return undefined;
-	}
+	const ok = proof.byViewKey
+		? viewKeyMay(req, url, inline)
+		: ["read", "answer"].includes(inlineVerdict(req.method, url.pathname));
+	if (ok) return undefined;
 	return withSecurity(
 		fail(
 			403,

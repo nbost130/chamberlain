@@ -94,7 +94,7 @@ describe("each row", () => {
 		const row = pane(dq, 1).children[0]!;
 		expect(row.all((e) => e.tag === "button").map((b) => b.textContent)).toEqual(["Bring back now", "Dismiss"]);
 		expect(row.all((e) => e.tag === "a").map((a) => [a.textContent, a.href])).toEqual([
-			["Open the thread", "http://queue.test/open/main/t1"],
+			["Open the thread", "http://queue.test/open/main/t1?k=VIEWKEY"],
 		]);
 		expect(row.all((e) => e.tag === "textarea")).toEqual([]);
 		expect(row.all((e) => e.className.split(" ").includes("rec")).map((b) => b.textContent)).toEqual([

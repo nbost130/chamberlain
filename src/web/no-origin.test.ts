@@ -182,17 +182,26 @@ describe("a browser's navigation to the page keeps working", () => {
 
 describe("/open, a tap on a thread link, is a navigation GET like the page shell", () => {
 	const open = "/open/main/mcp%3Alaunch%3Aab12";
-	test("the page key in a header (no Origin, or its own) is let through to the route; the view key, and a null-origin frame, are refused and set no cookie", async () => {
+	test("the page key and the view key in a header (no Origin, or the page's own) are let through to the route; a null-origin frame is refused; no cookie is set", async () => {
 		const s = setup();
 		// no thread is configured here, so a request let through gets the route's own 404, never the 403 of the inline limit
-		expect((await s.send("GET", open, tok(s.page))).status).toBe(404);
-		expect((await s.send("GET", open, { ...tok(s.page), origin: ORIGIN })).status).toBe(404);
-		for (const h of [tok(s.view), { ...tok(s.view), origin: "null" }, { ...tok(s.page), origin: "null" }]) {
+		for (const k of [s.page, s.view]) {
+			for (const h of [tok(k), { ...tok(k), origin: ORIGIN }]) {
+				const r = await s.send("GET", open, h);
+				expect([r.status, r.headers.get("set-cookie")]).toEqual([404, null]);
+			}
+		}
+		for (const h of [
+			{ ...tok(s.view), origin: "null" },
+			{ ...tok(s.page), origin: "null" },
+		]) {
 			const r = await s.send("GET", open, h);
 			expect(r.status).toBe(403);
 			expect(r.headers.get("set-cookie")).toBeNull();
 		}
-		expect((await s.send("GET", `${open}?k=${encodeURIComponent(s.view)}`)).status).toBe(401);
+		// the view key by `?k=` reaches the route too (view-key-open.test.ts), and a wrong key does not
+		expect((await s.send("GET", `${open}?k=${encodeURIComponent(s.view)}`)).status).toBe(404);
+		expect((await s.send("GET", `${open}?k=${encodeURIComponent(newToken())}`)).status).toBe(401);
 	});
 });
 

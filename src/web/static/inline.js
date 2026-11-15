@@ -198,9 +198,11 @@ count.textContent = `${items.length} waiting`;
 	// When a snoozed question returns, in this device's own time zone.
 	const returnsAt = (iso) => { const d = new Date(iso); return isNaN(d) ? "later" : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
 	// A link out of this view: one of the page's own addresses. T3 Code's web and desktop clients show this view in a sandboxed frame that
-	// opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets. None carries a key: the frame holds only the
-	// weak view key (never the page key), which cannot sign a browser in, so a link opens signed in only where the browser already holds the page's cookie.
-	const linkOut = (text, path) => { const a = el("a", "dq-pill", text); a.href = `${BASE}${path}`; a.target = "_blank"; a.rel = "noopener"; return a; };
+	// opens only an http(s) link (it hands it to the app's browser), so that is what a frame gets. Only the thread link (`/open`) carries a key
+	// (`withKey`): the view key this script already holds, never the page key, which the server accepts on /open alone (src/web/view-key.ts) and which
+	// signs nothing in, so a new tab opens the thread from any browser. Every other link carries none: the weak view key cannot sign a browser in, so
+	// the queue page and an item open signed in only where the browser already holds the page's cookie.
+	const linkOut = (text, path, withKey) => { const a = el("a", "dq-pill", text); a.href = `${BASE}${path}${withKey ? kq : ""}`; a.target = "_blank"; a.rel = "noopener"; return a; };
 	// T3 Code's phone app shows this view as the top document of its own web view, not in a frame, and hands any link that is not http(s)
 	// to the phone's OS, which opens the app's own link (t3code://threads/…) in the app itself: the thread opens in place, no browser.
 	// So the top document links straight to the app link the server made; a frame (T3's web and desktop clients) uses /open.
@@ -212,7 +214,7 @@ count.textContent = `${items.length} waiting`;
 	// No target: an app link is a navigation the app's web view hands to the OS, and a new window would drop it.
 	const threadLink = (x) => {
 		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", "dq-pill", "Open the thread"); a.href = x.app; return a; }
-		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open) : null;
+		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open, true) : null;
 	};
 
 	// A card the view cannot act on (a snoozed question, shown on its own): the thread link and one link to the full queue page.

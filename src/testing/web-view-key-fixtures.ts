@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { newToken, TOKEN_HEADER } from "../core/capability.ts";
 import { askQuestion, type Question } from "../core/questions.ts";
 import { createApp } from "../web/app.ts";
+import type { Linker } from "../web/thread-links.ts";
 import { memoryCapability } from "./capability.ts";
 import { memStore } from "./store.ts";
 
@@ -42,7 +43,7 @@ export function useWebViewKeyFixtures() {
 
 	const IDS = ["Q-abcd", "Q-efgh", "Q-ijkl", "Q-mnop", "Q-qrst"];
 
-	function setup() {
+	function setup(links?: Linker) {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-viewkey-`);
 		dirs.push(root);
 		for (const f of ["index.html", "app.js", "app.css", "inline.js"]) writeFileSync(`${root}/${f}`, `/* ${f} */`);
@@ -75,6 +76,7 @@ export function useWebViewKeyFixtures() {
 			hosts: [HOST],
 			staticDir: root,
 			now: () => NOW,
+			...(links ? { links } : {}),
 			mirror: {
 				list: () => [card],
 				answer: async (...a: unknown[]) => {
