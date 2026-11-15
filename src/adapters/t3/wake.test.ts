@@ -1,6 +1,6 @@
 /**
- * What the webhook transport tells the relay. Every outcome is one counted attempt, so the transport only has to say whether the webhook
- * accepted the POST; a network failure is thrown and the relay counts it like any other attempt that did not deliver.
+ * What the webhook transport tells the relay. Every outcome is one counted attempt; a network failure is a fixed error
+ * class, never the exception text (which may name the webhook URL).
  */
 import { describe, expect, test } from "bun:test";
 import { postWebhook } from "./wake.ts";
@@ -14,12 +14,24 @@ describe("postWebhook", () => {
 	test("any other HTTP answer is not accepted, and says its status", async () => {
 		expect(await postWebhook("http://h/x", "id", "m", answer(503))).toEqual({ ok: false, status: 503 });
 	});
-	test("a network failure or a timeout is thrown", async () => {
-		await expect(
-			postWebhook("http://h/x", "id", "m", (async () => {
+	test("a network failure is a fixed class, never thrown", async () => {
+		expect(
+			await postWebhook("http://h/x", "id", "m", (async () => {
 				throw Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
 			}) as unknown as typeof fetch),
-		).rejects.toThrow();
+		).toEqual({ ok: false, error: "network:ECONNREFUSED" });
+	});
+	test("a TimeoutError is timeout; an AbortError is aborted", async () => {
+		expect(
+			await postWebhook("http://h/x", "id", "m", (async () => {
+				throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+			}) as unknown as typeof fetch),
+		).toEqual({ ok: false, error: "timeout" });
+		expect(
+			await postWebhook("http://h/x", "id", "m", (async () => {
+				throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+			}) as unknown as typeof fetch),
+		).toEqual({ ok: false, error: "aborted" });
 	});
 	test("it posts the delivery id and the message as JSON", async () => {
 		let body: unknown;

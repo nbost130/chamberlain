@@ -152,7 +152,7 @@ describe("the Steward check: compaction", () => {
 			["log", "delivered", { deliveryId: id, http: 202, attempt: 1 }],
 		]);
 	});
-	test("a delivery with no status logs none; a failure logs its message, or the thrown value as text", async () => {
+	test("a delivery with no status logs none; a failure logs its message URL-redacted, or the thrown value as text", async () => {
 		setSystemTime(new Date(NOW));
 		const quiet = rig({ compact: async () => ({}) });
 		quiet.state.probe = over(2000);
@@ -161,6 +161,7 @@ describe("the Steward check: compaction", () => {
 		for (const [thrown, text] of [
 			[Error("relay down"), "relay down"],
 			["plain", "plain"],
+			[Error("failed at https://hooks.example.test/x"), "failed at <url>"],
 		] as const) {
 			const bad = rig({
 				compact: async () => {

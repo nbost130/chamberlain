@@ -29,6 +29,7 @@
 import { crashPoint } from "./crash.ts";
 import { maxAttemptsFromEnv, type WakeResult, withDeliveryId } from "./deliver.ts";
 import { HOLD_CEILING_MS } from "./hold.ts";
+import { redactUrls } from "./redact.ts";
 import { audit } from "./relay-audit.ts";
 import { serially } from "./relay-compose.ts";
 import {
@@ -125,12 +126,12 @@ export function createRelay(d: RelayDeps) {
 	};
 }
 
-/** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its message. */
+/** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its text URL-redacted. */
 async function post(l: Lane, row: OutboxRow): Promise<WakeResult> {
 	try {
 		return await l.wake.send(row.deliveryId, withDeliveryId(row.message, row.deliveryId));
 	} catch (e) {
-		return { ok: false, error: e instanceof Error ? e.message : String(e) };
+		return { ok: false, error: redactUrls(e instanceof Error ? e.message : String(e)) };
 	}
 }
 

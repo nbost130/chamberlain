@@ -7,6 +7,7 @@ import type { StewardProbe } from "./adapter-inspect.ts";
 import { needsCompact } from "./decide.ts";
 import type { Log } from "./log.ts";
 import { type AlarmText, alarms } from "./messages.ts";
+import { redactUrls } from "./redact.ts";
 import { type openRightsSent, rightsHighWater } from "./rights-sent.ts";
 
 const QUEUE_READ_FAILURES_MAX = 5;
@@ -68,7 +69,11 @@ async function sendCompact(c: StewardCheckDeps, id: string): Promise<void> {
 		const r = await c.compact(deliveryId);
 		c.log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 });
 	} catch (e) {
-		c.log("deliver-error", { deliveryId, attempt: 1, error: e instanceof Error ? e.message : String(e) });
+		c.log("deliver-error", {
+			deliveryId,
+			attempt: 1,
+			error: redactUrls(e instanceof Error ? e.message : String(e)),
+		});
 	}
 }
 
