@@ -1,10 +1,12 @@
 /**
  * CLI: `chamberlain steward prepare|switch|status` and the `switch-steward` alias (requires --live).
  */
+import { readFileSync } from "node:fs";
 import { CONF } from "./config.ts";
 import { crashPoint } from "./crash.ts";
 import { defaultStore } from "./default-store.ts";
 import { commitSwitch, mirrorSwitch } from "./steward-commit.ts";
+import { publishSwitchRef } from "./steward-gens.ts";
 import { abortSwitch, prepareRollback, prepareSwitch } from "./steward-prepare.ts";
 import { stewardStatus } from "./steward-status.ts";
 
@@ -12,6 +14,7 @@ const usage = `usage:
   chamberlain steward prepare <thread> --live
   chamberlain steward prepare --rollback <gen> --live
   chamberlain steward switch <id> --live [--no-compact] [--abort]
+  chamberlain steward publish-ref <id> wake|compact --file <path> --live
   chamberlain steward status [--id <delivery id>]
   chamberlain switch-steward <thread> --live   (alias of prepare+legacy; requires --live)`;
 
@@ -29,9 +32,39 @@ export function runStewardCli(argv: string[]): number {
 	const [cmd, ...rest] = argv;
 	if (cmd === "prepare") return cmdPrepare(rest);
 	if (cmd === "switch") return cmdSwitch(rest);
+	if (cmd === "publish-ref") return cmdPublishRef(rest);
 	if (cmd === "status") return cmdStatus(rest);
 	console.error(usage);
 	return 2;
+}
+
+/** Successor publication path: durable write of a switch-owned wake/compact URL via publishSwitchRef. */
+function cmdPublishRef(argv: string[]): number {
+	if (!hasFlag(argv, "--live")) {
+		console.error("steward publish-ref requires --live");
+		return 2;
+	}
+	const id = argv.find((a) => !a.startsWith("-"));
+	const kind = argv.find((a) => a === "wake" || a === "compact") as "wake" | "compact" | undefined;
+	const file = takeArg(argv, "--file");
+	if (!id || !kind || !file) {
+		console.error(usage);
+		return 2;
+	}
+	let body: string;
+	try {
+		body = readFileSync(file, "utf8");
+	} catch (e) {
+		console.error(e instanceof Error ? e.message : String(e));
+		return 2;
+	}
+	if (!body.endsWith("\n")) body += "\n";
+	if (!publishSwitchRef(CONF, id, kind, body)) {
+		console.error(`ref already exists or could not be published: ${id}.${kind}`);
+		return 3;
+	}
+	console.log(`published ${id}.${kind}`);
+	return 0;
 }
 
 function cmdPrepare(argv: string[]): number {

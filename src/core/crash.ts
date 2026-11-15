@@ -36,6 +36,7 @@ export const CRASH_STEPS = [
 	"compact-invalidated",
 	"switch-prepared",
 	"switch-commit-begun",
+	"switch-commit-partial",
 	"switch-committed",
 	"transfer-item-held",
 	"receipt-recorded",
