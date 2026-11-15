@@ -32,6 +32,7 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	compat: () => import("./adapters/t3/compat.ts"),
 	"queue-waits": () => import("./adapters/t3/queue-waits.ts"),
 	"switch-steward": () => import("./adapters/t3/switch-steward.ts"),
+	steward: () => import("./core/steward-switch.ts"),
 	"synthetic-wake": () => import("./adapters/t3/synthetic-wake.ts"),
 	// An optional module, reached through the registry, which names it and no other file does (src/architecture.test.ts).
 	mail: async () => {
@@ -61,7 +62,8 @@ const ABOUT: Record<CommandName, string> = {
 	t3x: "act on a T3 thread by hand: threads|read|respond|send",
 	compat: "print what a T3 server reports and whether it is in the tested range",
 	"queue-waits": "how long wakes waited, from the database and T3's state",
-	"switch-steward": "make a thread the wake target: the last step of a hand-off",
+	"switch-steward": "alias: prepare a Steward switch (requires --live)",
+	steward: "steward prepare|switch|status: generation switch protocol",
 	"synthetic-wake": "queue one test wake for the Steward",
 	mail: "optional email triage (off unless config.json has a mail section): status",
 };

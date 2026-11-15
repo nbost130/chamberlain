@@ -34,6 +34,12 @@ export const CRASH_STEPS = [
 	"accepted",
 	"delivered",
 	"compact-invalidated",
+	"switch-prepared",
+	"switch-commit-begun",
+	"switch-committed",
+	"transfer-item-held",
+	"receipt-recorded",
+	"adopted",
 ] as const;
 export type CrashStep = (typeof CRASH_STEPS)[number];
 

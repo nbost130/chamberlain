@@ -132,8 +132,9 @@ describe("the new Steward's first message names commands that exist in the build
 		for (const c of [
 			"`chamberlain brief steward --mode live`",
 			"`chamberlain brief wake-prompt`",
-			"`chamberlain switch-steward <your thread id>`",
-			"/home/u/.config/chamberlain/secrets/wake-url.steward",
+			"`chamberlain steward prepare <your thread id> --live`",
+			"`chamberlain steward switch <id> --live`",
+			"/home/u/.config/chamberlain/secrets/steward/",
 		])
 			expect(out.includes(c), `missing: ${c}`).toBe(true);
 		expect(out).not.toMatch(/\{\{|bun |<!--/);
@@ -141,7 +142,8 @@ describe("the new Steward's first message names commands that exist in the build
 	test("from a checkout, it says `bun <checkout>/src/...`", () => {
 		const out = renderStartPrompt(template, { conf: "/c", compiled: false, repo: "/opt/chamberlain" });
 		expect(out).toContain("`bun /opt/chamberlain/src/brief.ts steward --mode live`");
-		expect(out).toContain("`bun /opt/chamberlain/src/adapters/t3/switch-steward.ts <your thread id>`");
+		expect(out).toContain("`bun /opt/chamberlain/src/core/steward-switch.ts prepare <your thread id> --live`");
+		expect(out).toContain("`bun /opt/chamberlain/src/core/steward-switch.ts switch <id> --live`");
 	});
 });
 

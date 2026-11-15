@@ -490,6 +490,64 @@ CREATE TABLE steward_wake_usage (
 CREATE INDEX steward_wake_usage_started ON steward_wake_usage (started_at);
 `,
 	},
+	{
+		version: 15,
+		name: "Steward switch protocol: generations, receipts, transfers",
+		sql: `
+-- Generations of the Steward wake target. Current is MAX(gen). Gen 0 is reserved ("legacy, destination unknown") and has no row.
+-- A ref is a path under secrets/; URLs never appear in SQLite. Rows are immutable after insert.
+CREATE TABLE steward_gens (
+	gen INTEGER PRIMARY KEY CHECK (gen >= 1),
+	thread TEXT NOT NULL,
+	wake_ref TEXT NOT NULL,
+	compact_ref TEXT,
+	created_at INTEGER NOT NULL
+);
+CREATE TABLE steward_switches (
+	id TEXT PRIMARY KEY,
+	from_gen INTEGER NOT NULL,
+	to_thread TEXT NOT NULL,
+	rollback_of INTEGER,
+	phase TEXT NOT NULL CHECK (phase IN ('preparing', 'committed', 'mirrored', 'aborted')),
+	prepared_at INTEGER NOT NULL,
+	to_gen INTEGER
+);
+CREATE UNIQUE INDEX one_open_switch ON steward_switches ((1)) WHERE phase = 'preparing';
+-- Ledger: which generation a Steward-lane outbox row belongs to, and how it entered the ledger.
+CREATE TABLE steward_deliveries (
+	outbox_id INTEGER PRIMARY KEY REFERENCES outbox (id) ON DELETE CASCADE,
+	gen INTEGER NOT NULL,
+	origin TEXT NOT NULL CHECK (origin IN ('live', 'adopted', 'unrecoverable'))
+);
+-- A receipt discharges an outbox row (and, for a digest, its members) when a completed T3 run had that delivery as input, or an operator releases it.
+CREATE TABLE steward_receipts (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	outbox_id INTEGER NOT NULL UNIQUE,
+	kind TEXT NOT NULL CHECK (kind IN ('t3-run', 'operator')),
+	run_id TEXT,
+	thread TEXT,
+	recorded_at INTEGER NOT NULL
+);
+CREATE TABLE steward_transfers (
+	from_gen INTEGER PRIMARY KEY,
+	to_gen INTEGER NOT NULL,
+	receipt_hw INTEGER NOT NULL,
+	notice_id TEXT NOT NULL,
+	opened_at INTEGER NOT NULL,
+	sealed_at INTEGER,
+	closed_at INTEGER
+);
+CREATE TABLE transfer_items (
+	item_id TEXT PRIMARY KEY,
+	from_gen INTEGER NOT NULL,
+	orig_outbox_id INTEGER NOT NULL,
+	root_outbox_id INTEGER NOT NULL,
+	UNIQUE (from_gen, orig_outbox_id)
+);
+-- Steward lane only: stamped at attempt, cleared on refusal, kept on delivery. Used to seal a transfer.
+ALTER TABLE outbox ADD COLUMN attempt_gen INTEGER;
+`,
+	},
 ];
 
 const lastMigration = MIGRATIONS.at(-1);

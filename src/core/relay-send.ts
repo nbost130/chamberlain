@@ -22,8 +22,9 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	}
 	const { before, go } = await sendPrerequisites(r, l, row, prerequisite);
 	if (!go) return before;
+	const expectGen = l.desk ? undefined : stewardExpectGen(store);
 	const n = store.tx(() => {
-		const n = store.wakes.beginAttempt(row.id, r.clock());
+		const n = store.wakes.beginAttempt(row.id, r.clock(), expectGen);
 		crashPoint("attempt-begun");
 		return n;
 	});
@@ -32,6 +33,12 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	const result = await r.post(l, row);
 	const posted: Posted = { l, row, n, res: result, before };
 	return result.ok ? accepted(r, posted) : refused(r, posted);
+}
+
+/** Current MAX(gen) for Steward-lane CAS; undefined before any generation is seeded. */
+function stewardExpectGen(store: Ctx["store"]): number | undefined {
+	const g = store.steward.maxGen();
+	return g >= 1 ? g : undefined;
 }
 
 /** The transport accepted the POST: the row is owed its delivered commit, which lands now (the rows delivered include it only if it did). */
@@ -70,8 +77,9 @@ function deliveredLog(l: Lane, row: OutboxRow, n: number, res: WakeResult): Reco
 	};
 }
 
-/** The POST failed: the attempt stays counted, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
+/** The POST failed: the attempt stays counted, attempt_gen is cleared, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
 function refused(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
+	r.store.tx(() => r.store.steward.clearAttemptGen(row.id));
 	r.d.log("deliver-error", {
 		deliveryId: row.deliveryId,
 		attempt: n,

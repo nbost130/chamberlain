@@ -50,6 +50,7 @@ const toOutboxRow = (c: Db, r: Row): OutboxRow => ({
 	attempts: r.attempts as number,
 	...(r.last_attempt_at !== null ? { lastAttemptAt: r.last_attempt_at as number } : {}),
 	...(r.finished_at !== null ? { finishedAt: r.finished_at as number } : {}),
+	...(r.attempt_gen !== null && r.attempt_gen !== undefined ? { attemptGen: r.attempt_gen as number } : {}),
 	members: c.all("SELECT * FROM outbox_members WHERE outbox_id = ? ORDER BY queued_at, rowid", r.id).map(toHeld),
 });
 // Known: bound to a row, held, or tombstoned (delivered or cancelled, even after retention deleted its row).
@@ -178,25 +179,55 @@ export const makeWakes = (c: Db): Store["wakes"] => ({
 			(c.one("SELECT outcome FROM wake_tombstones WHERE delivery_id = ?", id)?.outcome as string | undefined)) ===
 		"delivered",
 	known: (id) => knownWake(c, id),
-	beginAttempt: (id, now) =>
-		c.one(
-			"UPDATE outbox SET attempts = attempts + 1, last_attempt_at = ? WHERE id = ? AND status = 'pending' RETURNING attempts",
-			now,
-			id,
-		)?.attempts as number | undefined,
+	beginAttempt: (id, now, expectGen) => beginAttemptRow(c, id, now, expectGen),
 	finish: (id, status, now) =>
 		c.run("UPDATE outbox SET status = ?, finished_at = ? WHERE id = ? AND status = 'pending'", status, now, id)
 			.changes === 1,
 	retry: (id) => retryWake(c, id),
 	cancel: (id, now) => cancelWake(c, id, now),
-	// Only a terminal row goes: a delivered or cancelled row that no unresolved claim still names. Its ids stay in wake_tombstones (migration 7), which is what stops them being enqueued again.
-	prune: (before) =>
-		c.run(
-			`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
-				 AND id NOT IN (SELECT m.outbox_id FROM outbox_members m JOIN claims c ON c.delivery_id = m.delivery_id JOIN items i ON i.id = c.item_id WHERE i.state != 'resolved')`,
-			before,
-		).changes,
+	// Terminal rows only; Steward-lane delivered also need discharge or origin=unrecoverable (B2). Tombstones remain.
+	prune: (before) => pruneWakes(c, before),
 });
+
+function beginAttemptRow(c: Db, id: number, now: number, expectGen?: number): number | undefined {
+	if (expectGen !== undefined) {
+		const max = (c.one("SELECT MAX(gen) AS g FROM steward_gens")?.g as number | null) ?? 0;
+		if (max !== expectGen) return undefined;
+	}
+	const n = c.one(
+		"UPDATE outbox SET attempts = attempts + 1, last_attempt_at = ? WHERE id = ? AND status = 'pending' RETURNING attempts",
+		now,
+		id,
+	)?.attempts as number | undefined;
+	if (n !== undefined && expectGen !== undefined)
+		c.run("UPDATE outbox SET attempt_gen = ? WHERE id = ? AND status = 'pending'", expectGen, id);
+	return n;
+}
+
+function pruneWakes(c: Db, before: number): number {
+	return c.run(
+		`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
+			 AND id NOT IN (SELECT m.outbox_id FROM outbox_members m JOIN claims c ON c.delivery_id = m.delivery_id JOIN items i ON i.id = c.item_id WHERE i.state != 'resolved')
+			 AND (
+			   receiver IS NOT NULL
+			   OR status = 'cancelled'
+			   OR NOT EXISTS (SELECT 1 FROM steward_deliveries d WHERE d.outbox_id = outbox.id)
+			   OR EXISTS (
+			     SELECT 1 FROM steward_deliveries d WHERE d.outbox_id = outbox.id AND (
+			       d.origin = 'unrecoverable'
+			       OR EXISTS (SELECT 1 FROM steward_receipts r WHERE r.outbox_id = outbox.id)
+			       OR EXISTS (
+			         SELECT 1 FROM transfer_items ti
+			         JOIN outbox_members m ON m.delivery_id = ti.item_id
+			         JOIN steward_receipts r2 ON r2.outbox_id = m.outbox_id
+			         WHERE ti.root_outbox_id = outbox.id OR ti.orig_outbox_id = outbox.id
+			       )
+			     )
+			   )
+			 )`,
+		before,
+	).changes;
+}
 
 // ---- confirmation challenges --------------------------------------------------------------------
 function issueChallenge(c: Db, ch: Challenge): void {

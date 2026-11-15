@@ -233,4 +233,19 @@ export const EVENTS = {
 		err: { type: ERR_TYPE },
 	}),
 	"obs.reconciled": e("info", { scanned: int(), emitted: int(), skipped: int() }),
+	// ---- Steward switch protocol (migration 15) ---------------------------------------------------------
+	"steward.recovered": e(
+		"info",
+		{
+			seeded: bool(),
+			adopted: int(),
+			unrecoverable: int(),
+			receipts: int(),
+			transfersHeld: int(),
+			mirrors: int(),
+		},
+		"steward-recovered",
+	),
+	"steward.adopted": e("info", { unrecoverable: int(), adopted: int() }, "steward-adopted"),
+	"steward.pass-error": failure("steward-pass-error"),
 } satisfies Record<string, EventSpec>;

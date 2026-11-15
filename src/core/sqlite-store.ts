@@ -20,6 +20,7 @@ import { makeClaims, makeEvidence, makeSequence, makeState } from "./sqlite-clai
 import { makeItems } from "./sqlite-items.ts";
 import { makeDispositions, makeEvents, makeUsage } from "./sqlite-log.ts";
 import { makeAway, makeButlers, makeDecisions, makeRulings } from "./sqlite-rulings.ts";
+import { makeStewardSql } from "./sqlite-steward.ts";
 import { makeChallenges, makeWakes } from "./sqlite-wakes.ts";
 import type { Store } from "./store.ts";
 
@@ -63,6 +64,7 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		sequence: makeSequence(c),
 		usage: makeUsage(c),
 		dispositions: makeDispositions(c),
+		steward: makeStewardSql(c),
 	};
 }
 
