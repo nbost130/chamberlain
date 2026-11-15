@@ -23,11 +23,14 @@ export function smokeBasics() {
 /** A new Steward needs no checkout: its first message and its wake task's prompt come out of the binary. */
 export function smokeBriefs() {
 	const start = exec("brief", "start");
+	const startText = start.stdout.toString();
 	check(
 		"brief start prints the first Steward message with `chamberlain` commands",
 		start.exitCode === 0 &&
-			start.stdout.toString().includes("`chamberlain switch-steward <your thread id>`") &&
-			!/\{\{|bun /.test(start.stdout.toString()),
+			startText.includes("`chamberlain steward prepare") &&
+			startText.includes("steward publish-ref") &&
+			startText.includes("`chamberlain steward switch <id> --live`") &&
+			!/\{\{|bun /.test(startText),
 		`exit ${start.exitCode}: ${start.stdout}${start.stderr}`,
 	);
 	const wake = exec("brief", "wake-prompt");
