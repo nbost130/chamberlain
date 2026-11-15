@@ -83,6 +83,10 @@ export abstract class CoreBase {
 		this.store.items.observe({ source: NOTIFICATION_LOG, kind: "sent", dedupKey }).notify;
 	/** Raises an alarm whose words are in messages.ts. */
 	raiseAlarm = (key: string, a: AlarmText) => this.alarm(key, a.title, a.summary);
+	/** Clears a previously raised alarm item (idempotent). */
+	clearAlarm = (key: string) => {
+		this.store.items.resolve("alarm", key);
+	};
 	alarm = (key: string, title: string, summary: string) => {
 		if (
 			!this.store.items.observe({

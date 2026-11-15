@@ -70,7 +70,7 @@ export type Pass = {
 };
 
 /** Once a day, if the cap held anything back, the desk is told so. */
-function noteCap(c: Pass): void {
+export function noteCap(c: Pass): void {
 	if (!c.deferred.size) return;
 	c.outbox.commit(() => {
 		if (
@@ -93,7 +93,7 @@ function noteCap(c: Pass): void {
 }
 
 /** The first pass of each local day from the morning hour sends the morning wake. */
-function sendMorning(c: Pass): void {
+export function sendMorning(c: Pass): void {
 	const { store, now } = c;
 	const { day, hour } = localDay(now, c.cfg.timezone);
 	if (hour < c.cfg.morningHour) return;
@@ -124,7 +124,7 @@ function sendMorning(c: Pass): void {
 }
 
 /** Families nobody has reported for three days are resolved: a later event is a new occurrence. */
-function forgetQuietFamilies(c: Pass): void {
+export function forgetQuietFamilies(c: Pass): void {
 	const { store, now } = c;
 	store.tx(() => {
 		for (const i of store.items.list({ source: ALERT_DESK, kind: "alert", status: "triggered" }))
@@ -153,7 +153,7 @@ function openCursor(d: DrainDeps, cfg: DeskConfig): { cur: Cursor; save: () => v
 }
 
 /** After the wakes are queued and the cursor is saved: the retired files that were read to their end are deleted. */
-function deleteRetired(read: Retired[]): void {
+export function deleteRetired(read: Retired[]): void {
 	for (const x of read) {
 		try {
 			unlinkSync(x.path);
