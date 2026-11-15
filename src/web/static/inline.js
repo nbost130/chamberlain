@@ -58,6 +58,11 @@
 .dq-pill:hover,.dq-btn:hover:not(:disabled),.dq-reload:hover{background:color-mix(in srgb,var(--foreground) 13%,transparent)}.dq-pill:focus-visible,.dq-btn:focus-visible,.dq-reload:focus-visible,.dq-go:focus-visible,.dq-tab:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .dq-btn.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
 .dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
+.dq-options{display:flex;flex-wrap:wrap;gap:10px}
+.dq-btn.dq-main{font-size:16px;font-weight:600;min-height:52px;padding:14px 24px;border-radius:28px;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center}
+.dq-btn.dq-sec,.dq-pill.dq-sec{font-size:12px;font-weight:500;min-height:34px;padding:5px 14px}
+@media(pointer:coarse){.dq-btn.dq-sec,.dq-pill.dq-sec{min-height:40px}}
+@media(max-width:520px){.dq-btn.dq-main{flex:1 1 100%}}
 .dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--border);margin-top:2px;padding-top:12px}
 .dq-dir{display:flex;flex-direction:column;gap:8px}
 .dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
@@ -202,7 +207,7 @@ count.textContent = `${items.length} waiting`;
 	// (`withKey`): the view key this script already holds, never the page key, which the server accepts on /open alone (src/web/view-key.ts) and which
 	// signs nothing in, so a new tab opens the thread from any browser. Every other link carries none: the weak view key cannot sign a browser in, so
 	// the queue page and an item open signed in only where the browser already holds the page's cookie.
-	const linkOut = (text, path, withKey) => { const a = el("a", "dq-pill", text); a.href = `${BASE}${path}${withKey ? kq : ""}`; a.target = "_blank"; a.rel = "noopener"; return a; };
+	const linkOut = (text, path, withKey, cls = "dq-pill dq-sec") => { const a = el("a", cls, text); a.href = `${BASE}${path}${withKey ? kq : ""}`; a.target = "_blank"; a.rel = "noopener"; return a; };
 	// T3 Code's phone app shows this view as the top document of its own web view, not in a frame, and hands any link that is not http(s)
 	// to the phone's OS, which opens the app's own link (t3code://threads/…) in the app itself: the thread opens in place, no browser.
 	// So the top document links straight to the app link the server made; a frame (T3's web and desktop clients) uses /open.
@@ -212,9 +217,9 @@ count.textContent = `${items.length} waiting`;
 	const APP_LINK = /^(?!(?:javascript|vbscript|data|file|blob|about|filesystem|https?|wss?|ftp):)[a-z][a-z0-9+.-]{0,31}:\/\/[A-Za-z0-9._~:%/-]{1,1024}$/;
 	// The thread's own link: the app link in T3's phone app; else the page's /open route, which sends the device on (src/web/thread-links.ts).
 	// No target: an app link is a navigation the app's web view hands to the OS, and a new window would drop it.
-	const threadLink = (x) => {
-		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", "dq-pill", "Open the thread"); a.href = x.app; return a; }
-		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open, true) : null;
+	const threadLink = (x, cls = "dq-pill dq-sec") => {
+		if (TOP && typeof x?.app === "string" && APP_LINK.test(x.app)) { const a = el("a", cls, "Open the thread"); a.href = x.app; return a; }
+		return typeof x?.open === "string" && /^\/open\/[^/?#]+\/[^/?#]+$/.test(x.open) ? linkOut("Open the thread", x.open, true, cls) : null;
 	};
 
 	// A card the view cannot act on (a snoozed question, shown on its own): the thread link and one link to the full queue page.
@@ -239,13 +244,15 @@ count.textContent = `${items.length} waiting`;
 	const SNOOZE_TAP_MS = 3600000;
 	const btn = (text, cls, onTap) => { const b = el("button", `dq-btn${cls ? ` ${cls}` : ""}`, text); b.type = "button"; b.addEventListener("click", onTap); return b; };
 
-	// The little buttons along a card's bottom edge, which act in place: each option, Snooze, Dismiss, Direction, then the thread link. One tap is one
+	// The buttons on a card, which act in place. The answer options are the main buttons: big, on their own row (dq-options, class dq-main), the recommended one filled.
+	// Below them the actions every card has are a smaller, quieter row (dq-actions, class dq-sec): Snooze, Dismiss, Direction, then the thread link. One tap is one
 	// request: no confirmation, no second button, no page change. Direction needs a note, so it opens a field in the same card and Send is the one tap
 	// after it. A secret and a card pointer are settled in their own thread: they get Snooze and the thread link. The card then says what happened
 	// (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
 	function panel(it, c, settles) {
 		const msg = el("div", "dq-msg");
 		const row = el("div", "dq-actions");
+		const opts = el("div", "dq-options");
 		const dir = el("div", "dq-dir"); dir.style.display = "none";
 		const note = el("textarea"); note.placeholder = "Direction for the thread (no option chosen)"; note.rows = 2; note.setAttribute("aria-label", "Direction for the thread");
 		const sendDir = el("button", "dq-go", "Send direction"); sendDir.type = "button";
@@ -256,7 +263,7 @@ count.textContent = `${items.length} waiting`;
 		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
 		function done(text, extra, action) {
 			// A snoozed card stays on screen saying so, but is replaced by a live one if the question comes back (see waiting()).
-			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove();
+			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove(); opts.remove();
 			const own = threadLink(it);
 			row.replaceChildren(...(own ? [own] : []), ...extra);
 			tell("dq-ok", text);
@@ -276,15 +283,17 @@ count.textContent = `${items.length} waiting`;
 		const answered = (o) => (r) => `Answered: ${r.choice || o.label}. ${r.to === "thread" ? "Sent to its thread." : "Recorded; the wake to the Steward is queued."}`;
 		if (settles) {
 			(it.options || []).forEach((o, i) => {
-				const b = btn(o.label, i === it.recommended ? "rec" : "", () => send("answer", { choice: i }, answered(o)));
+				const b = btn(o.label, i === it.recommended ? "dq-main rec" : "dq-main", () => send("answer", { choice: i }, answered(o)));
 				if (i === it.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
-				taps.push(b);
+				taps.push(b); opts.append(b);
 			});
 		}
-		taps.push(btn("Snooze", "", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, (r) => `Snoozed. It returns ${returnsAt(r.until)}.`)));
+		const acts = [];
+		const act = (b) => { taps.push(b); acts.push(b); };
+		act(btn("Snooze", "dq-sec", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, (r) => `Snoozed. It returns ${returnsAt(r.until)}.`)));
 		if (settles) {
-			taps.push(btn("Dismiss", "", () => send("dismiss", {}, () => "Dismissed. It is off the queue and nothing was answered.")));
-			taps.push(btn("Direction", "", () => { dir.style.display = dir.style.display === "none" ? "" : "none"; if (dir.style.display === "") note.focus?.(); }));
+			act(btn("Dismiss", "dq-sec", () => send("dismiss", {}, () => "Dismissed. It is off the queue and nothing was answered.")));
+			act(btn("Direction", "dq-sec", () => { dir.style.display = dir.style.display === "none" ? "" : "none"; if (dir.style.display === "") note.focus?.(); }));
 		}
 		sendDir.addEventListener("click", () => {
 			const text = note.value.trim();
@@ -292,8 +301,8 @@ count.textContent = `${items.length} waiting`;
 			send("direction", { note: text }, () => "Direction sent. The Steward reads your note; no option was chosen.");
 		});
 		const own = threadLink(it);
-		row.append(...taps, ...(own ? [own] : []));
-		return settles ? [dir, msg, row] : [msg, row];
+		row.append(...acts, ...(own ? [own] : []));
+		return settles ? [dir, msg, ...(opts.children.length ? [opts] : []), row] : [msg, row];
 	}
 
 	function card(it) {
@@ -322,8 +331,8 @@ count.textContent = `${items.length} waiting`;
 			if ((m.type === "approval" || m.type === "goal") && m.command) c.append(el("pre", "dq-cmd", m.command));
 			// Cards and approvals are answered on the full page, behind a confirmation the server checks. Never from a frame.
 			c.append(el("div", "dq-msg", m.type === "question" ? "Answer this question card on the full queue page." : "Approvals and goals are answered on the full queue page, never here."));
-			c.append(linkOut("Open the queue page", "/"));
-			const t = threadLink(m);
+			c.append(linkOut("Open the queue page", "/", false, "dq-pill"));
+			const t = threadLink(m, "dq-pill");
 			if (t) c.append(t);
 			return c;
 		}
@@ -386,8 +395,8 @@ count.textContent = `${items.length} waiting`;
 				} catch (e) { msg.className = "dq-msg dq-bad"; msg.textContent = `Could not send: ${e?.message ?? e}`; }
 				lock(false);
 			}
-			taps.push(btn("Bring back now", "rec", () => act("unsnooze", "Back on the waiting list.")));
-			if (!it.secret && !it.cardRequest) taps.push(btn("Dismiss", "", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
+			taps.push(btn("Bring back now", "dq-sec rec", () => act("unsnooze", "Back on the waiting list.")));
+			if (!it.secret && !it.cardRequest) taps.push(btn("Dismiss", "dq-sec", () => act("dismiss", "Dismissed. It is off the queue and nothing was answered.")));
 			const own = threadLink(it);
 			row.append(...taps, ...(own ? [own] : []));
 			c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), title, meta);

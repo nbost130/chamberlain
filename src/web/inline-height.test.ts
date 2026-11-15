@@ -30,12 +30,11 @@ test("a single question's view (?item=, with no view=decisions) is not stretched
 	expect(dq.parent!.style.minHeight).toBeUndefined();
 });
 
-test("every button in a card's row is a pill: the option buttons, Snooze, Dismiss, Direction and the thread link share one rule", () => {
+test("every button in a card's row is a pill: the option buttons, Snooze, Dismiss, Direction and the thread link share one base rule", () => {
 	const css = readFileSync(new URL("./static/inline.js", import.meta.url), "utf8");
 	const rule = css.match(/\.dq-pill,\.dq-btn,[^{]*\{([^}]*)\}/)![1]!;
 	expect(rule).toContain("border-radius:999px");
-	expect(rule).toContain("min-height:40px");
 	expect(rule).toMatch(/border:1px solid color-mix/);
 	expect(css).toMatch(/\.dq-btn\.rec,[^{]*\{background:var\(--primary\)/); // the recommended option stays filled
-	expect(css).toContain('el("a", "dq-pill"'); // the thread link is a pill too
+	expect(css).toContain('el("a", cls, text)'); // the thread link is a pill too
 });
