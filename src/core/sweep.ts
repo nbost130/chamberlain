@@ -82,18 +82,28 @@ export function sweepClock(prior: Partial<SweepClock> | undefined, now: number):
 
 /** Pure: the full-sweep prompt from its template. The leading HTML comment is for whoever edits the template, not for the Steward. */
 /** Pure: the first message of a new Steward thread from its template (docs/steward-start.md): the commands are the ones the running build has. */
-export function renderStartPrompt(template: string, o: { conf: string; compiled?: boolean; repo?: string }): string {
-	const cmd = (sub: "brief" | "switch-steward") =>
+export function renderStartPrompt(
+	template: string,
+	o: { conf: string; compiled?: boolean; repo?: string; mode?: "test" | "live" },
+): string {
+	const cmd = (sub: "brief" | "steward") =>
 		selfCommand(sub, {
 			...(o.compiled !== undefined ? { compiled: o.compiled } : {}),
 			...(o.repo !== undefined ? { repo: o.repo } : {}),
 		});
+	if (o.mode === "test") {
+		return [
+			"You are a TEST Steward. Do not run prepare or switch. Do not touch live secrets.",
+			`Run \`${cmd("brief")} steward --mode test\` and read it. Probe titles start with SANDBOX.`,
+			"Your reply is under five lines. No action on any other thread.",
+		].join("\n");
+	}
 	return template
 		.replace(/<!--[\s\S]*?-->\s*/g, "")
 		.trim()
 		.replaceAll("{{briefSteward}}", () => `${cmd("brief")} steward --mode live`)
 		.replaceAll("{{briefWake}}", () => `${cmd("brief")} wake-prompt`)
-		.replaceAll("{{switchSteward}}", () => cmd("switch-steward"))
+		.replaceAll("{{switchSteward}}", () => cmd("steward"))
 		.replaceAll("{{conf}}", () => o.conf);
 }
 

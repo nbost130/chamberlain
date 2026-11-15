@@ -218,5 +218,16 @@ server.state.suppressed: int
 server.state.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other)
 obs.reconciled.scanned: int
 obs.reconciled.emitted: int
-obs.reconciled.skipped: int"
+obs.reconciled.skipped: int
+steward.recovered.seeded: bool
+steward.recovered.adopted: int
+steward.recovered.unrecoverable: int
+steward.recovered.receipts: int
+steward.recovered.transfersHeld: int
+steward.recovered.mirrors: int
+steward.adopted.unrecoverable: int
+steward.adopted.adopted: int
+steward.pass-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+steward.transfer-oversized.bytes: int
+steward.transfer-oversized.maxBytes: int"
 `;

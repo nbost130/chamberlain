@@ -398,7 +398,8 @@ start with exit code 3, the way a config file from a newer build is.
 | Where | What | Written by |
 | --- | --- | --- |
 | config | `config.json`: `servers` (each entry names its `adapter`), `web`, `sweep`, `alertDesk`, `operatingRules`, `judge`, `mail` (optional module), `threads` (the Steward, Decisions and desk thread ids) and the scalar settings; `decision-rights.md`, `operating-rules.md` | the operator; `chamberlain config migrate` and `switch-steward` write it too |
-| config | `secrets/`: `read-token`, `wake-url`, `compact-url`, `desk-wake-url`, `*-token`, `wake-url.steward`, `wake-url.prev` | the operator: the T3 adapter's; another adapter documents its own |
+| config | `secrets/`: `read-token`, `wake-url`, `compact-url`, `desk-wake-url`, `*-token`, `steward/<id>.wake`, `steward/<id>.compact` | the operator / successor: generation refs are immutable; shared `*.steward` names are ignored after prepare |
+| tables `steward_gens`, `steward_switches`, `steward_deliveries`, `steward_receipts`, `steward_transfers`, `transfer_items` | Steward switch protocol (migration 15): generations, prepare/commit, receipts (seen-proof), transfers and adoption | daemon recovery, `chamberlain steward`, the relay |
 | table `items` | the one item system (below): findings, questions, alarms, what woke the Steward, what is held for the operator's return | the sweep, `ask.ts`, the page, the daemon |
 | table `confirmation_challenges` | the single-use confirmations an approval answer must present (hashed, expiring) | the page |
 | tables `claims`, `relays`, `evidence` | a question's one-wake claim (wake text, delivery id, the answer, any ruling), its one direct send, and rows pointing at its evidence files | the page |

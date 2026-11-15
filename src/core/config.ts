@@ -57,6 +57,7 @@ export const COMMANDS = {
 	compat: "src/adapters/t3/compat.ts",
 	"queue-waits": "src/adapters/t3/queue-waits.ts",
 	"switch-steward": "src/adapters/t3/switch-steward.ts",
+	steward: "src/core/steward-switch.ts",
 	"synthetic-wake": "src/adapters/t3/synthetic-wake.ts",
 	mail: "src/modules/mail/cli.ts",
 } as const;

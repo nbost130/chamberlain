@@ -118,7 +118,8 @@ export abstract class CoreBase {
 	 * backend alone, so the two agree whenever the stream is quiet. No Steward thread, nothing to wait for.
 	 */
 	stewardGate = (): Gate => {
-		const id = this.privateFile("steward-thread");
+		// Gate reads MAX(gen)'s thread (B1), falling back to the mirrored config only before seeding.
+		const id = this.store.steward.current()?.thread ?? this.privateFile("steward-thread");
 		if (!id) return "idle";
 		const live = this.watchers.some((w) => w.connected && LIVE.has(w.states.get(id)?.status ?? ""));
 		return live ? "busy" : this.homeAdapter.isBusy();

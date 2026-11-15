@@ -36,7 +36,9 @@ export function main(argv: string[] = process.argv.slice(2)) {
 	}
 	// The two that need no database: the first message of a new Steward thread, and the prompt of its wake task, both from the files embedded in the build.
 	if (argv[0] === "start") {
-		console.log(renderStartPrompt(text(START_PROMPT_FILE), { conf: CONF }));
+		const modeIdx = argv.indexOf("--mode");
+		const mode = modeIdx >= 0 && argv[modeIdx + 1] === "test" ? "test" : "live";
+		console.log(renderStartPrompt(text(START_PROMPT_FILE), { conf: CONF, mode }));
 		return;
 	}
 	if (argv[0] === "wake-prompt") {

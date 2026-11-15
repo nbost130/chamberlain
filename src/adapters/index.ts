@@ -40,16 +40,30 @@ export type EnvParts = {
 /** The environment an adapter for `server` runs in: the directories, the Steward's thread, and the private files. */
 function adapterEnv(server: ServerEntry, p: EnvParts = {}): AdapterEnv {
 	const conf = p.conf ?? CONF;
+	const store = p.store;
 	return {
 		server,
 		conf,
 		state: p.state ?? STATE,
-		...(p.store ? { store: p.store } : {}),
+		...(store ? { store } : {}),
 		log: p.log ?? (() => {}),
 		alarm: p.alarm ?? (() => {}),
-		steward: () => thread(conf, "steward"),
-		readPrivate: (name) => readNamed(conf, name),
+		// MAX(gen)'s thread when generations exist; else config.json threads.steward. Shared *.steward names are never read.
+		steward: () => store?.steward.current()?.thread ?? thread(conf, "steward"),
+		readPrivate: (name) => readGenPrivate(conf, store, name),
 	};
+}
+
+/** Resolve wake-url / compact-url from the current generation's immutable refs when seeded. */
+function readGenPrivate(conf: string, store: AdapterEnv["store"] | undefined, name: string): string | undefined {
+	if (store && (name === "wake-url" || name === "compact-url")) {
+		const g = store.steward.current();
+		if (g) {
+			const ref = name === "wake-url" ? g.wakeRef : g.compactRef;
+			return ref ? readNamed(conf, ref) : undefined;
+		}
+	}
+	return readNamed(conf, name);
 }
 
 /** One adapter for one server entry, by the name the entry gives. */

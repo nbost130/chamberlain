@@ -7,11 +7,14 @@ import { deadLetter, land, readRightsNow } from "./relay-compose.ts";
 import { type Ctx, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.ts";
 import { current, findPrerequisite, prerequisiteBlocked, queuePrerequisite } from "./relay-prereq.ts";
 import { loadRightsSent, needsRights, rightsFirstKey, rightsGap, rightsStateKey } from "./rights-sent.ts";
+import { type GenSnapshot, snapshotGen } from "./steward-gens.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
 /**
  * One attempt of one row: counted and committed first, then the POST. The rows delivered: any prerequisite sent ahead of it, then the
  * row itself. It runs in the serial queue (see `serially`), the prerequisites and the row one after the other in the same job.
+ *
+ * Steward lane: rights decision, CAS stamp and transport destination bind to ONE generation snapshot read before rights (B1).
  */
 export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false): Promise<OutboxRow[]> {
 	const { store } = r;
@@ -20,18 +23,31 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 		deadLetter(r, l, row, row.attempts);
 		return [];
 	}
-	const { before, go } = await sendPrerequisites(r, l, row, prerequisite);
+	// Sample once before any awaited rights work so CAS and POST share the same generation.
+	const snap = l.desk ? undefined : readSnap(r);
+	const { before, go } = await sendPrerequisites({ r, l, row, prerequisite, snap });
 	if (!go) return before;
+	// Generation moved during rights: do not POST under a stale rights decision; next pass rechecks.
+	if (snap && !sameGen(snap, readSnap(r))) return before;
+	const expectGen = l.desk ? undefined : snap?.gen;
 	const n = store.tx(() => {
-		const n = store.wakes.beginAttempt(row.id, r.clock());
+		const n = store.wakes.beginAttempt(row.id, r.clock(), expectGen);
 		crashPoint("attempt-begun");
 		return n;
 	});
 	if (n === undefined) return before;
 	crashPoint("attempt-counted");
-	const result = await r.post(l, row);
+	const result = await r.post(l, row, snap?.wakeUrl);
 	const posted: Posted = { l, row, n, res: result, before };
 	return result.ok ? accepted(r, posted) : refused(r, posted);
+}
+
+function readSnap(r: Ctx): GenSnapshot | undefined {
+	return r.d.genSnapshot ? r.d.genSnapshot() : snapshotGen(r.store, r.d.conf);
+}
+
+function sameGen(a: GenSnapshot | undefined, b: GenSnapshot | undefined): boolean {
+	return a?.gen === b?.gen;
 }
 
 /** The transport accepted the POST: the row is owed its delivered commit, which lands now (the rows delivered include it only if it did). */
@@ -70,8 +86,9 @@ function deliveredLog(l: Lane, row: OutboxRow, n: number, res: WakeResult): Reco
 	};
 }
 
-/** The POST failed: the attempt stays counted, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
+/** The POST failed: the attempt stays counted, attempt_gen is cleared, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
 function refused(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
+	r.store.tx(() => r.store.steward.clearAttemptGen(row.id));
 	r.d.log("deliver-error", {
 		deliveryId: row.deliveryId,
 		attempt: n,
@@ -85,33 +102,40 @@ function refused(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
 	return before;
 }
 
+type PrereqArgs = {
+	r: Ctx;
+	l: Lane;
+	row: OutboxRow;
+	prerequisite: boolean;
+	snap: GenSnapshot | undefined;
+};
+
 /** What goes before a row's own POST: `before` the prerequisite rows already delivered, and whether the row may go on. */
-async function sendPrerequisites(
-	r: Ctx,
-	l: Lane,
-	row: OutboxRow,
-	prerequisite: boolean,
-): Promise<{ before: OutboxRow[]; go: boolean }> {
+async function sendPrerequisites(a: PrereqArgs): Promise<{ before: OutboxRow[]; go: boolean }> {
+	const { r, l, row, prerequisite, snap } = a;
 	const { rightsNow } = r.d;
 	if (prerequisite || l.desk || !rightsNow) return { before: [], go: true };
 	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow)))
 		return { before: [], go: false };
 	if (!needsRights(row.rights)) return { before: [], go: true };
-	const went = await ahead(r, l, row, rightsNow);
+	const went = await ahead({ r, l, row, rightsNow, snap });
 	if (went === null) return { before: [], go: false };
 	return { before: went, go: r.d.lock.held() };
 }
 
+type AheadArgs = {
+	r: Ctx;
+	l: Lane;
+	row: OutboxRow;
+	rightsNow: NonNullable<RelayDeps["rightsNow"]>;
+	snap: GenSnapshot | undefined;
+};
+
 /** One round of `ahead`: "ready" (nothing more is owed), "stop" (the row must not go now), or the prerequisite rows delivered in this round. */
-async function aheadRound(
-	r: Ctx,
-	l: Lane,
-	row: OutboxRow,
-	rightsNow: NonNullable<RelayDeps["rightsNow"]>,
-): Promise<"ready" | "stop" | OutboxRow[]> {
+async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | OutboxRow[]> {
+	const { r, l, row, rightsNow, snap } = a;
 	const { store } = r;
-	// The epoch is the database's, read now: from here to the prerequisite's enqueue nothing awaits, so its stamp has this epoch too.
-	const now = await readRightsNow(r, row, rightsNow);
+	const now = await readRightsNow(r, row, () => rightsNow(snap ? { steward: snap.thread } : undefined));
 	if (!now) return "stop";
 	const reason = rightsGap(loadRightsSent(store), now);
 	if (!reason) {
@@ -128,26 +152,16 @@ async function aheadRound(
 }
 
 /**
- * What must be delivered before an attempt of a Steward row that depends on the Steward holding the rights (`needsRights`): asked before
- * EVERY attempt, retries and restarts included, never only once. Returns the rows delivered ahead of it on this attempt ([] when the durable
- * record already shows the Steward there now holds the rights in force now), or null when the row must not be sent on this pass: the state
- * could not be read, queueing failed, or the prerequisite is owed, backing off, failed this time or dead-lettered (the row waits, using no
- * attempt, until the operator retries it; cancelling a prerequisite makes the relay queue a fresh one, so giving up means cancelling the row).
- * When the rights cannot be read, a delivered prerequisite carrying the unreadable notice is enough: nothing can show more.
+ * What must be delivered before an attempt of a Steward row that depends on the Steward holding the rights (`needsRights`).
  */
-async function ahead(
-	r: Ctx,
-	l: Lane,
-	row: OutboxRow,
-	rightsNow: NonNullable<RelayDeps["rightsNow"]>,
-): Promise<OutboxRow[] | null> {
+async function ahead(a: AheadArgs): Promise<OutboxRow[] | null> {
 	const before: OutboxRow[] = [];
 	for (let round = 0; round < ROUNDS; round++) {
-		const out = await aheadRound(r, l, row, rightsNow);
+		const out = await aheadRound(a);
 		if (out === "ready") return before;
 		if (out === "stop") return null;
 		before.push(...out);
-		if (!r.d.lock.held()) return null;
+		if (!a.r.d.lock.held()) return null;
 	}
 	return null;
 }

@@ -55,10 +55,16 @@ const MAY_POST: Record<string, string> = {
 const NAMES_A_WAKE_URL = new Set([
 	"adapters/t3/index.ts",
 	"adapters/t3/switch-steward.ts",
+	// Resolves MAX(gen)'s wake/compact refs to the same secret names the adapter used to read directly.
+	"adapters/index.ts",
+	// Seeds gen 1 from the shared wake-url / compact-url secret names when they exist.
+	"core/steward-gens.ts",
 	// A fixture of the old config directory: it names every file of it, to prove the migration moves each one (it sends nothing).
 	"testing/legacy-conf.ts",
 	// The crash tests' rig (split out of crash.test.ts): it writes the real daemon's wake-url file, pointing at its own local webhook, so the daemon under test has somewhere to send (it sends nothing itself).
 	"testing/crash-fixtures.ts",
+	// Switch-protocol fixtures write switch-owned refs and the shared names for gen-1 seeding (they send nothing themselves).
+	"testing/steward-switch-fixtures.ts",
 ]);
 /** Where each construct that can send or enable sending may appear (a definition site and its legitimate callers). */
 const MAY_CALL: Record<string, Set<string>> = {

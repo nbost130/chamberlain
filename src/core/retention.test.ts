@@ -161,6 +161,11 @@ describe("retention prunes only terminal rows", () => {
 		askQuestion(r.store, item("Q-open2"), longAgo);
 		// Terminal rows: a delivery nobody names any more, and a question that finished.
 		deliveredRow(r.store, "finished-1", longAgo);
+		r.store.steward.insertLedger({
+			outboxId: r.store.wakes.find("finished-1")!.id,
+			gen: 1,
+			origin: "unrecoverable",
+		});
 		r.store.wakes.enqueue({ deliveryId: "cancelled-1", message: "m", queuedAt: longAgo });
 		r.store.wakes.cancel("cancelled-1", longAgo);
 		askQuestion(r.store, item("Q-done1"), longAgo);

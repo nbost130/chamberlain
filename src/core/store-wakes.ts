@@ -65,6 +65,8 @@ export type OutboxRow = {
 	attempts: number;
 	lastAttemptAt?: number;
 	finishedAt?: number;
+	/** Steward lane: generation stamped at attempt (migration 15); cleared on refusal, kept on delivery. */
+	attemptGen?: number;
 	/** Every delivery id this row carries: its own, or a digest's members (folded ones included). Each belongs to this row only, ever. */
 	members: HeldItem[];
 };
@@ -96,15 +98,21 @@ export interface WakeStore {
 	isDelivered(deliveryId: string): boolean;
 	/** Is this id held or bound to a row of any status? */
 	known(deliveryId: string): boolean;
-	/** The relay, before each POST: attempts + 1 and the attempt's time, on a pending row. Returns the new count, or undefined when the row is not pending. */
-	beginAttempt(id: number, now: number): number | undefined;
+	/**
+	 * The relay, before each POST: attempts + 1 and the attempt's time, on a pending row. Returns the new count, or undefined when the row is not pending.
+	 * When `expectGen` is set (Steward lane), refuses if MAX(gen) ≠ expectGen and otherwise stamps attempt_gen.
+	 */
+	beginAttempt(id: number, now: number, expectGen?: number): number | undefined;
 	/** Moves a pending row to delivered or dead_letter. False when it was not pending (an operator cancelled it meanwhile). */
 	finish(id: number, status: "delivered" | "dead_letter", now: number): boolean;
 	/** The operator's retry: a dead_letter row only, back to pending with attempts at 0. What it found, or undefined when no row has the id. */
 	retry(deliveryId: string): OutboxStatus | undefined;
 	/** The operator's cancel: a pending or dead_letter row becomes a cancelled tombstone, members and all. What it found, or undefined. */
 	cancel(deliveryId: string, now: number): OutboxStatus | undefined;
-	/** Deletes delivered and cancelled rows finished before `before`, except those an unresolved claim still names. Nothing else is ever deleted. */
+	/**
+	 * Deletes delivered and cancelled rows finished before `before`, except those an unresolved claim still names.
+	 * Steward-lane delivered rows also require a discharge (or origin unrecoverable) before they prune (B2).
+	 */
 	prune(before: number): number;
 }
 

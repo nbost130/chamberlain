@@ -67,6 +67,11 @@ describe("the operator's retry and cancel", () => {
 			const r = rig({ store });
 			r.sweep("d");
 			await r.relay().pass();
+			store.steward.insertLedger({
+				outboxId: store.wakes.find("d")!.id,
+				gen: 1,
+				origin: "unrecoverable",
+			});
 			expect(store.wakes.prune(r.clock.t + 1)).toBe(1);
 			expect(store.wakes.isDelivered("d")).toBe(true);
 			expect(r.sweep("d")).toBe("known");

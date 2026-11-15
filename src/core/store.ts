@@ -12,6 +12,7 @@
  */
 import type { Butler } from "./butler.ts";
 import type { Ruling } from "./rulings.ts";
+import type { StewardSql } from "./sqlite-steward.ts";
 import type { DispositionStore, UsageStore } from "./store-records.ts";
 import type { ChallengeStore, WakeStore } from "./store-wakes.ts";
 
@@ -247,6 +248,7 @@ export interface Store {
 	readonly sequence: SequenceStore;
 	readonly usage: UsageStore;
 	readonly dispositions: DispositionStore;
+	readonly steward: StewardSql;
 }
 
 /** The database file's name in the state directory. */

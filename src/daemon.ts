@@ -6,6 +6,8 @@
  */
 
 import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
+import { findReceipt } from "./adapters/t3/receipts.ts";
+import { t3StateDbPath } from "./adapters/t3/settings.ts";
 import { postQuestion } from "./ask.ts";
 import { CONF, STATE, selfArgv } from "./core/config.ts";
 import { defaultStore } from "./core/default-store.ts";
@@ -18,6 +20,10 @@ import { maintain } from "./core/maintain.ts";
 import { startup } from "./core/migrate.ts";
 import { startReconciler } from "./core/obs/ledger.ts";
 import { holdRelayLock, RelayDatabaseLinkedError, type RelayLock, RelayRunningError } from "./core/singleton.ts";
+import { evidencePass } from "./core/steward-evidence.ts";
+import { checkSwitchNotice } from "./core/steward-notice.ts";
+import { recoverSteward } from "./core/steward-recover.ts";
+import { transferPass } from "./core/steward-transfer.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 import { startModules } from "./modules/index.ts";
 
@@ -35,6 +41,26 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 	}
 	// Refuse a file from a newer Chamberlain, and upgrade older ones, before anything reads them.
 	startup({ migrate: true, log });
+	/** Bound once the engine exists; recovery/notice before that no-ops until raise is wired. */
+	let raise: (key: string, title: string, summary: string) => void = () => {};
+	// Steward switch recovery (§2.7): seed, clear attempt_gen, adopt, mirror, evidence, transfer — before modules/engine.
+	const t3db = t3StateDbPath();
+	recoverSteward({
+		store,
+		conf: CONF,
+		log,
+		findReceipt: (c) => findReceipt(t3db, { ...c, threads: undefined }),
+		alarm: (k, t, s) => raise(k, t, s),
+	});
+	setInterval(() => {
+		try {
+			evidencePass(store, (c) => findReceipt(t3db, c));
+			transferPass(store);
+			checkSwitchNotice(store, raise);
+		} catch (e) {
+			log("steward-pass-error", { error: String(e).slice(0, 200) });
+		}
+	}, 30_000);
 	// The optional modules whose section of config.json turns them on (none by default: a module that is off starts nothing and makes no file).
 	const modules = startModules({ conf: CONF, state: STATE, log });
 	process.on("exit", () => modules.stop());
@@ -50,7 +76,6 @@ export async function main(_argv: string[] = process.argv.slice(2)) {
 	}, 24 * 3600_000);
 
 	/** Adapters are made before the engine that raises their alarms, so the alarm is bound once the engine exists. */
-	let raise: (key: string, title: string, summary: string) => void = () => {};
 	const servers = loadServers(CONF).map((server) => ({
 		server,
 		adapter: makeAdapter(server, { conf: CONF, state: STATE, store, log, alarm: (k, t, s) => raise(k, t, s) }),

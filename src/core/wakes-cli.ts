@@ -11,11 +11,12 @@
  */
 import { selfCommand } from "./config.ts";
 import { maxAttemptsFromEnv } from "./deliver.ts";
+import { releaseWake } from "./steward-discharge.ts";
 import type { Store } from "./store.ts";
 import type { OutboxRow } from "./store-wakes.ts";
 
 export const wakesUsage = () =>
-	["list", "retry <delivery id>", "cancel <delivery id>"]
+	["list", "retry <delivery id>", "cancel <delivery id>", "release <delivery id>"]
 		.map((c, i) => `${i ? "       " : "usage: "}${selfCommand("wakes")} ${c}`)
 		.join("\n");
 const iso = (ms: number | undefined) => (ms === undefined ? "-" : new Date(ms).toISOString());
@@ -79,6 +80,14 @@ export function runWakesCli(
 	if (cmd === "list" && argv.length === 1) return listWakes(store, max, out);
 	if ((cmd === "retry" || cmd === "cancel") && id && argv.length === 2)
 		return retryOrCancel(store, { cmd, id, max }, out);
+	if (cmd === "release" && id && argv.length === 2) {
+		if (!releaseWake(store, id)) {
+			out(`release: no outbox row has the id ${id}`);
+			return 1;
+		}
+		out(`release: operator receipt recorded for ${id}; it may prune once aged`);
+		return 0;
+	}
 	out(wakesUsage());
 	return 2;
 }

@@ -129,19 +129,18 @@ describe("the new Steward's first message names commands that exist in the build
 	});
 	test("compiled, it says `chamberlain <subcommand>`, and no placeholder is left", () => {
 		const out = renderStartPrompt(template, { conf: "/home/u/.config/chamberlain", compiled: true });
-		for (const c of [
-			"`chamberlain brief steward --mode live`",
-			"`chamberlain brief wake-prompt`",
-			"`chamberlain switch-steward <your thread id>`",
-			"/home/u/.config/chamberlain/secrets/wake-url.steward",
-		])
-			expect(out.includes(c), `missing: ${c}`).toBe(true);
+		expect(out).toContain("`chamberlain steward prepare <your thread id> --live`");
+		expect(out).toContain("`chamberlain steward publish-ref <id> wake --file <that temp> --live`");
+		expect(out).toContain("publish-ref <id> compact");
+		expect(out).toContain("`chamberlain steward switch <id> --live`");
 		expect(out).not.toMatch(/\{\{|bun |<!--/);
 	});
 	test("from a checkout, it says `bun <checkout>/src/...`", () => {
 		const out = renderStartPrompt(template, { conf: "/c", compiled: false, repo: "/opt/chamberlain" });
 		expect(out).toContain("`bun /opt/chamberlain/src/brief.ts steward --mode live`");
-		expect(out).toContain("`bun /opt/chamberlain/src/adapters/t3/switch-steward.ts <your thread id>`");
+		expect(out).toContain("steward-switch.ts prepare <your thread id> --live`");
+		expect(out).toContain("steward-switch.ts publish-ref <id> wake");
+		expect(out).toContain("steward-switch.ts switch <id> --live`");
 	});
 });
 

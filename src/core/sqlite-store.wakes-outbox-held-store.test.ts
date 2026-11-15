@@ -89,6 +89,9 @@ describe("wakes: the outbox and the held store", () => {
 		s.wakes.finish(row("new"), "delivered", 100);
 		s.wakes.finish(row("dead"), "dead_letter", 1);
 		s.wakes.cancel("gone", 1);
+		// Steward-lane delivered rows prune only when ledgered discharged/unrecoverable (B2).
+		s.steward.insertLedger({ outboxId: row("old"), gen: 1, origin: "unrecoverable" });
+		s.steward.insertLedger({ outboxId: row("new"), gen: 1, origin: "unrecoverable" });
 		expect(s.wakes.prune(50)).toBe(2);
 		expect(s.wakes.rows("all").map((r) => r.deliveryId)).toEqual(["new", "dead", "pending"]);
 		// The rows are gone, the ids are not: a tombstone per delivered or cancelled id outlives retention.

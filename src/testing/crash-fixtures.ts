@@ -51,6 +51,25 @@ export async function world(id: string) {
 	mkdirSync(conf, { recursive: true, mode: 0o700 });
 	mkdirSync(state, { recursive: true });
 	secret(`${conf}/wake-url`, `http://127.0.0.1:${hook.port}/wake`);
+	// Seedable Steward generation (migration 15): without a thread id, recover cannot seed gen 1 and land() leaves
+	// delivered Steward rows unledgered, so the next start would adopt and re-transfer them.
+	secret(`${conf}/steward-thread`, "crash-steward-thread");
+	// Idle T3 projection for that thread so the hold gate is idle (a missing DB is "unknown" and holds forever).
+	const t3db = `${root}/t3-state.sqlite`;
+	{
+		const db = new Database(t3db);
+		db.exec(`
+			CREATE TABLE orchestration_v2_projection_runs (
+				thread_id TEXT, ordinal INT, status TEXT, requested_at TEXT, payload_json TEXT
+			);
+			CREATE TABLE orchestration_v2_projection_messages (message_id TEXT, payload_json TEXT);
+			CREATE TABLE orchestration_v2_projection_turn_items (thread_id TEXT, type TEXT, updated_at TEXT);
+			CREATE TABLE orchestration_v2_projection_runtime_requests (
+				thread_id TEXT, created_at TEXT, resolved_at TEXT
+			);
+		`);
+		db.close();
+	}
 	// The daemon's one server is a port nothing listens on: it starts, recovers, and retries its socket quietly.
 	secret(
 		`${conf}/servers.json`,
@@ -72,7 +91,7 @@ export async function world(id: string) {
 		HOME: root,
 		CHAMBERLAIN_CONF: conf,
 		CHAMBERLAIN_STATE: state,
-		CHAMBERLAIN_T3_STATE_DB: `${root}/none.sqlite`,
+		CHAMBERLAIN_T3_STATE_DB: t3db,
 		CHAMBERLAIN_ALERT_CMD: "/bin/true",
 		CHAMBERLAIN_DRY: "0",
 		CHAMBERLAIN_VERBOSE: "",

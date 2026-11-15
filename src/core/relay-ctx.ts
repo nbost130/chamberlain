@@ -4,6 +4,7 @@ import type { Gate } from "./hold.ts";
 import type { AlarmText } from "./messages.ts";
 import type { RightsState } from "./rights-sent.ts";
 import type { RelayLock } from "./singleton.ts";
+import type { GenSnapshot } from "./steward-gens.ts";
 import type { Store } from "./store.ts";
 import type { HoldClock, OutboxRow, RightsStamp } from "./store-wakes.ts";
 
@@ -44,8 +45,15 @@ export type RelayDeps = {
 	 * otherwise the prerequisite for that state is queued (`<id>:rights-first:<state key>`, once per row and state: the outbox refuses a known
 	 * id) and sent first, and the row follows EXACTLY as it was queued: no row's text is ever rewritten or searched. The prerequisite carries a
 	 * `full` stamp, so its delivery writes the record in the transaction that marks it delivered. Absent: such rows are sent as they are.
+	 * Optional `steward` is the generation snapshot's thread (B1); otherwise the reader uses MAX(gen).
 	 */
-	rightsNow?: () => Promise<RightsState & { wake: (forId: string) => { message: string; stamp?: RightsStamp } }>;
+	rightsNow?: (o?: {
+		steward?: string;
+	}) => Promise<RightsState & { wake: (forId: string) => { message: string; stamp?: RightsStamp } }>;
+	/** Config dir: used with store to resolve a generation's wake URL when `genSnapshot` is absent. */
+	conf?: string;
+	/** One-generation snapshot for rights/CAS/transport; default reads store (+ conf). */
+	genSnapshot?: () => GenSnapshot | undefined;
 	/** Runs for each delivery id a row carries, right after the row is committed delivered. Idempotent: recovery may run it again. */
 	onDelivered?: (deliveryId: string) => void;
 	/** Attempts per row before it is dead-lettered (default CHAMBERLAIN_MAX_ATTEMPTS, else 3). */
@@ -93,8 +101,8 @@ export type Ctx = {
 	waitingOn: Set<string>;
 	/** Alerts and notices already raised or logged once, by key. */
 	reported: Set<string>;
-	/** The one POST of a row to its lane's transport. It lives in relay.ts, the only module that calls a transport; the steps that send a row reach it through here. */
-	post: (l: Lane, row: OutboxRow) => Promise<WakeResult>;
+	/** The one POST of a row to its lane's transport. Optional target pins the generation snapshot's wake URL (B1). */
+	post: (l: Lane, row: OutboxRow, target?: string) => Promise<WakeResult>;
 	run: {
 		lockLost: boolean;
 		/** The serial queue's tail: each POST job starts when the one before has settled. */

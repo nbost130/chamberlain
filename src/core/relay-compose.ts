@@ -4,6 +4,7 @@ import { composeWake, observe } from "./hold.ts";
 import { alarms } from "./messages.ts";
 import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "./rights-sent.ts";
+import { composeTransferBatch, deadLetterOversizedTransfers } from "./steward-transfer.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "./store-wakes.ts";
 
 /**
@@ -21,7 +22,13 @@ export function land(r: Ctx, row: OutboxRow): boolean {
 	let stale: number | undefined;
 	try {
 		const done = store.tx(() => {
+			// Read attempt_gen before finish: the in-memory row is often the pre-attempt snapshot (A1).
+			const stamped = store.wakes.find(row.deliveryId)?.attemptGen ?? row.attemptGen;
 			const done = store.wakes.finish(row.id, "delivered", r.clock());
+			if (done && !row.receiver) {
+				const gen = stamped ?? store.steward.maxGen();
+				if (gen >= 1) store.steward.insertLedger({ outboxId: row.id, gen, origin: "live" });
+			}
 			if (full) {
 				const current = rightsEpoch(store);
 				if (epochOf(full) === current) store.state.set(RIGHTS_SENT_KEY, { ...recordOf(full), epoch: current });
@@ -59,6 +66,9 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
 	if (!store.wakes.held(l.name).length) return;
+	// Oversized solo transfers never enter a batch: dead-letter with alarm before compose (R2).
+	deadLetterOversizedTransfers(r, l, now);
+	if (!store.wakes.held(l.name).length) return;
 	const look = observe(l.look, l.gate(), now, r.ceiling);
 	if (!look.post) return;
 	let kept: string[] = [];
@@ -75,18 +85,28 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	});
 }
 
-/** Pure: the row a receiver's held wakes freeze into: the composed text and members, the kind and thread of a single item (else a digest), the receiver, and the members' stamps. */
+/**
+ * Pure: the row a receiver's held wakes freeze into.
+ * Transfer items compose alone under the encoded-byte cap (V2-M1/M1); mixed ordinary traffic never expands a replay digest.
+ * Overflow transfers and ordinary held wakes stay held for later passes.
+ */
 function digestOf(l: Lane, held: HeldItem[], now: number, onKept: (kept: string[]) => void): Composed {
-	const { kept, ...c } = composeWake(held, now);
+	const transfers = held.filter((h) => h.kind === "transfer");
+	const others = held.filter((h) => h.kind !== "transfer");
+	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
+	// Prefer the capped transfer batch alone so framing+payload stay inside the bound; ordinary wakes wait.
+	const use = transferBatch ? transfers.filter((h) => transferBatch.members.includes(h.deliveryId)) : others;
+	const composed = transferBatch ?? composeWake(use, now);
+	const { kept, ...c } = composed;
 	onKept(kept);
-	const only = held.length === 1 ? held[0] : undefined;
+	const only = use.length === 1 ? use[0] : undefined;
 	return {
 		...c,
 		...(only
 			? { ...(only.kind ? { kind: only.kind } : {}), ...(only.thread ? { thread: only.thread } : {}) }
 			: { kind: "digest" }),
 		...(l.name ? { receiver: l.name } : {}),
-		...digestStamps(held, c.members, kept),
+		...digestStamps(use, c.members, kept),
 	};
 }
 

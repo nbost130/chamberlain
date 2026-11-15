@@ -26,8 +26,8 @@ export type WakeResult = {
 export type WakeTransport = {
 	/** Is there a place to send to right now? Read fresh on every call. False means nothing is attempted: rows wait (the `wake-not-ready` alarm says why) and no attempt is used. */
 	ready: () => boolean;
-	/** One attempt, with its own deadline. */
-	send: (deliveryId: string, message: string) => Promise<WakeResult>;
+	/** One attempt, with its own deadline. Optional `target` pins the URL to the send's generation snapshot (B1). */
+	send: (deliveryId: string, message: string, opts?: { target?: string }) => Promise<WakeResult>;
 };
 /** A wake ready to enter the outbox: the text, its one delivery id and what it is about. */
 export type WakeDraft = { message: string; deliveryId: string; meta?: WakeMeta };
