@@ -6,6 +6,9 @@ import { createEngine } from "./engine.ts";
 
 const { rig, thread, stewardSigned } = useCoreEngineFixtures(createEngine);
 
+/** Posts that are not the rights-first prerequisite (slim turn_ended may send that ahead). */
+const posts = (r: ReturnType<typeof rig>) => r.fake.wakes.filter((w) => !w.deliveryId.includes(":rights-first:"));
+
 describe("a turn end waits for the Steward to be free", () => {
 	const ended = (r: ReturnType<typeof rig>, id: string) => {
 		r.fake.threads.set(id, {
@@ -19,11 +22,11 @@ describe("a turn end waits for the Steward to be free", () => {
 	test("idle: the report goes at once, as one wake", async () => {
 		const r = rig({ steward: "steward-1" });
 		ended(r, "t2");
-		await r.until("the report", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain(
-			'thread "Thread t2" finished a turn on the work you sent it and has gone quiet.',
-		);
-		expect(r.fake.wakes[0]!.deliveryId).toContain("t2:ended:");
+		await r.until("the report", () => posts(r).some((w) => w.message.includes('thread "Thread t2"')));
+		const w = posts(r).find((x) => x.message.includes('thread "Thread t2"'))!;
+		expect(w.message).toContain('thread "Thread t2" finished a turn on the work you sent it and has gone quiet.');
+		expect(w.deliveryId).toContain("t2:ended:");
+		expect(w.message).not.toContain("Last message");
 		expect(r.held()).toEqual([]);
 	});
 
@@ -39,8 +42,8 @@ describe("a turn end waits for the Steward to be free", () => {
 		expect(r.fake.wakes).toEqual([]);
 		r.fake.setBusy("idle");
 		await r.engine.tick();
-		expect(r.fake.wakes).toHaveLength(1);
-		const w = r.fake.wakes[0]!;
+		await r.until("the digest", () => posts(r).some((w) => w.deliveryId.startsWith("digest:")));
+		const w = posts(r).find((x) => x.deliveryId.startsWith("digest:"))!;
 		expect(w.deliveryId).toMatch(/^digest:[a-f0-9]{16}$/);
 		expect(w.message).toContain("digest: 2 wakes were held while you were busy");
 		expect(w.message).toContain('thread "Thread t2"');
@@ -48,7 +51,7 @@ describe("a turn end waits for the Steward to be free", () => {
 		expect(r.held()).toEqual([]);
 		// Nothing more goes on a later heartbeat.
 		await r.engine.tick();
-		expect(r.fake.wakes).toHaveLength(1);
+		expect(posts(r).filter((x) => x.deliveryId.startsWith("digest:"))).toHaveLength(1);
 	});
 
 	test("unknown counts as busy: held, not posted", async () => {
@@ -106,16 +109,16 @@ describe("a turn end waits for the Steward to be free", () => {
 		test("a go-phrase in the closing line wakes it as a handed-back question, not skipped", async () => {
 			const r = rig({ steward: "steward-1" });
 			principalDriven(r, "t5", SIGN_OFF);
-			await r.until("the wake", () => r.fake.wakes.length === 1);
-			expect(r.fake.wakes[0]!.message).toContain("finished and handed a question back");
+			await r.until("the wake", () => posts(r).some((w) => w.message.includes("handed a question back")));
+			expect(posts(r).at(-1)!.message).toContain("finished and handed a question back");
 			expect(r.events.some((e) => e.event === "skip-turn-ended")).toBe(false);
 		});
 		test("a go-phrase that also says 'I'll start' is an ask, not a stall", async () => {
 			const r = rig({ steward: "steward-1" });
 			principalDriven(r, "t5", "The endpoint is not built yet. Say go and I'll start it.");
-			await r.until("the wake", () => r.fake.wakes.length === 1);
-			expect(r.fake.wakes[0]!.message).toContain("finished and handed a question back");
-			expect(r.fake.wakes[0]!.message).not.toContain("stalled");
+			await r.until("the wake", () => posts(r).some((w) => w.message.includes("handed a question back")));
+			expect(posts(r).at(-1)!.message).toContain("finished and handed a question back");
+			expect(posts(r).at(-1)!.message).not.toContain("stalled");
 		});
 		test("a plain finish on the same thread is still skipped", async () => {
 			const r = rig({ steward: "steward-1" });
@@ -167,9 +170,9 @@ describe("an adapter with only the four required capabilities", () => {
 			r.clock.t += 60_000;
 			r.fake.emit({ kind: "state", thread: thread("t2", "running") });
 			r.fake.emit({ kind: "state", thread: thread("t2", "completed") });
-			await r.until(`report ${n}`, () => r.fake.wakes.length === n);
+			await r.until(`report ${n}`, () => posts(r).length === n);
 		}
-		expect(r.fake.wakes.map((w) => w.deliveryId.split(":")[1])).toEqual(["ended", "ended"]);
+		expect(posts(r).map((w) => w.deliveryId.split(":")[1])).toEqual(["ended", "ended"]);
 	});
 
 	test("the heartbeat runs without a probe, a compaction target or a transcript, and records the connection", async () => {

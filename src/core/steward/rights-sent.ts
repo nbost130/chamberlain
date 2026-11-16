@@ -121,6 +121,8 @@ export const rightsHash = (stewardId: string | undefined, rules: string) =>
  * Pure: the rights text a wake carries, the record to keep if it is delivered, and whether it is the full block. `at` is when the full text
  * last went out. A wake that carries the pointer instead (`full` false) is stamped with what it was composed for (`rightsStamp`), so the
  * relay can tell, just before it sends it, whether the Steward it reaches still holds them.
+ * `forcePointer` never returns the full body: holdable producers (turn_ended) use it so digests do not repeat the block; the relay's
+ * rights-first path fills a gap with one full prerequisite instead.
  */
 export function rightsFor(
 	sent: RightsSent | undefined,
@@ -131,6 +133,7 @@ export function rightsFor(
 		used,
 		now = new Date().toISOString(),
 		epoch,
+		forcePointer,
 	}: {
 		stewardId: string | undefined;
 		rules: string;
@@ -138,10 +141,11 @@ export function rightsFor(
 		used: number | undefined;
 		now?: string;
 		epoch?: number;
+		forcePointer?: boolean;
 	},
 ): { text: string; record: RightsSent; full: boolean } {
 	const hash = rightsHash(stewardId, rules),
-		full = rightsInFull(sent, hash, used);
+		full = !forcePointer && rightsInFull(sent, hash, used);
 	const body = full ? `${RIGHTS_MARKER}\n${rules}` : rightsUnchanged(sent?.at);
 	return {
 		text: [body, mandate].filter(Boolean).join("\n"),

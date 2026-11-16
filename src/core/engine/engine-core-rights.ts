@@ -11,11 +11,12 @@ export abstract class CoreRights extends CoreBase {
 	/**
 	 * The rights a wake carries. The full text goes after anything that could have cost the Steward its copy, and doubt sends it again: the
 	 * durable record (rights-sent.ts, written by the relay when a full block is delivered) must name this Steward thread and session. The away
-	 * mandate is state, so it goes every time.
+	 * mandate is state, so it goes every time. `forcePointer` keeps the one-line pointer and pointer stamp even when a full block would
+	 * otherwise go (holdable turn_ended); rights-first still fills a gap before send.
 	 */
 	wakeRights(
 		mandate: string,
-		o: { full?: boolean; session?: string | undefined; steward?: string } = {},
+		o: { full?: boolean; forcePointer?: boolean; session?: string | undefined; steward?: string } = {},
 	): { text: string; record?: RightsSent; full?: boolean } {
 		const rules = this.rightsRules();
 		if (rules === undefined) {
@@ -38,6 +39,7 @@ export abstract class CoreRights extends CoreBase {
 			used: id ? this.probe()?.contextTokens : undefined,
 			now: new Date().toISOString(),
 			epoch,
+			...(o.forcePointer ? { forcePointer: true } : {}),
 		});
 	}
 

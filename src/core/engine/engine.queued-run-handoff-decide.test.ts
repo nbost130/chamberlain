@@ -127,10 +127,17 @@ test("handoff persist: several pending rows; new interval clears terminal withou
 				await restarted.engine.tick();
 				await advance(20);
 			}
-			const all = [...r.fake.wakes.map((w) => w.message), ...restarted.held().map((w) => JSON.stringify(w))].join("\n");
-			for (const final of [PLAIN, "RUN21 FINAL", "RUN22 FINAL"]) expect(all).toContain(final);
-			for (const run of ["r20", "r21", "r22"])
+			const all = [
+				...r.fake.wakes.map((w) => `${w.deliveryId}\n${w.message}`),
+				...restarted.held().map((w) => JSON.stringify(w)),
+			].join("\n");
+			// Slim turn_ended: run identity in delivery ids (not assistant finals in the body).
+			for (const run of ["r20", "r21", "r22"]) {
+				expect(all).toContain(`:ended:${run}:`);
 				expect(restarted.store.handoffs.get("fake", HANDOFF_THREAD, run)?.disposition).toBe("confirmed");
+			}
+			expect(all).not.toContain(PLAIN);
+			expect(all).not.toContain("RUN21 FINAL");
 		},
 		s,
 	);

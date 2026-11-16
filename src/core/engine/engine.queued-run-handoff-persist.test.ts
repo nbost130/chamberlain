@@ -22,6 +22,9 @@ const dirs: string[] = [];
 afterEach(() => {
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
+/** Report posts for a run (rights-first ids also embed `:ended:<run>:`). */
+const endedReports = (wakes: { deliveryId: string }[], run = "r20") =>
+	wakes.filter((w) => w.deliveryId.includes(`:ended:${run}:`) && !w.deliveryId.includes(":rights-first:"));
 
 const scratchDb = () => {
 	const dir = mkdtempSync(join(tmpdir(), "chamberlain-handoff-"));
@@ -54,9 +57,13 @@ test("handoff persist: pending handoff survives engine restart with same persist
 			restarted.clock.t += 31_000;
 			await restarted.engine.tick();
 			await advance(20);
-			const all = [...r.fake.wakes.map((w) => w.message), ...restarted.held().map((w) => JSON.stringify(w))].join("\n");
-			expect(all).toContain("SUCCESSOR FINAL");
-			expect(all).toContain(PLAIN);
+			const all = [
+				...r.fake.wakes.map((w) => `${w.deliveryId}\n${w.message}`),
+				...restarted.held().map((w) => JSON.stringify(w)),
+			].join("\n");
+			// Slim turn_ended: run identity in delivery ids, not assistant finals in the body.
+			expect(all).toContain(":ended:r21:");
+			expect(all).toContain(":ended:r20:");
 		},
 		openStore(path),
 	);
@@ -71,9 +78,9 @@ test("handoff persist: already-delivered handoff does not double-send after rest
 			next();
 			state(21);
 			await advance(20);
-			expect(r.fake.wakes.some((w) => w.message.includes(PLAIN))).toBe(true);
+			expect(endedReports(r.fake.wakes).length).toBeGreaterThan(0);
 			expect(r.store.handoffs.get("fake", HANDOFF_THREAD, "r20")?.disposition).toBe("confirmed");
-			const before = r.fake.wakes.length;
+			const before = endedReports(r.fake.wakes).length;
 			await r.engine.stop();
 			r.store.close();
 			const restarted = rig({ store: openStore(path), adapter: r.fake, steward: "steward-1", quietMs: 180_000 });
@@ -82,9 +89,9 @@ test("handoff persist: already-delivered handoff does not double-send after rest
 			restarted.clock.t += 31_000;
 			await restarted.engine.tick();
 			await advance(20);
-			expect(r.fake.wakes.filter((w) => w.message.includes(PLAIN))).toHaveLength(1);
-			expect(r.fake.wakes.length).toBe(before);
-			expect(restarted.held().filter((w) => JSON.stringify(w).includes(PLAIN))).toHaveLength(0);
+			expect(endedReports(r.fake.wakes)).toHaveLength(1);
+			expect(endedReports(r.fake.wakes).length).toBe(before);
+			expect(endedReports(restarted.held())).toHaveLength(0);
 		},
 		openStore(path),
 	);
@@ -156,8 +163,8 @@ test("crash: a throw while confirming rolls back claim and wake; restart deliver
 			restarted.clock.t += 31_000;
 			await restarted.engine.tick();
 			await advance(20);
-			expect(r.fake.wakes.filter((w) => w.message.includes(PLAIN))).toHaveLength(1);
-			expect(restarted.held().filter((w) => JSON.stringify(w).includes(PLAIN))).toHaveLength(0);
+			expect(endedReports(r.fake.wakes)).toHaveLength(1);
+			expect(endedReports(restarted.held())).toHaveLength(0);
 			expect(restarted.store.handoffs.get("fake", HANDOFF_THREAD, "r20")?.disposition).toBe("confirmed");
 			await advance(ITEM_KEEP_MS + 1);
 			restarted.clock.t += ITEM_KEEP_MS + 1;
@@ -170,7 +177,7 @@ test("crash: a throw while confirming rolls back claim and wake; restart deliver
 			restarted.clock.t += 31_000;
 			await restarted.engine.tick();
 			await advance(20);
-			expect(r.fake.wakes.filter((w) => w.message.includes(PLAIN))).toHaveLength(1);
+			expect(endedReports(r.fake.wakes)).toHaveLength(1);
 		},
 		s,
 	);

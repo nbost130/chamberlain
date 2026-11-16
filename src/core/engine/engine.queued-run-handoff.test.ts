@@ -14,6 +14,14 @@ import { createEngine } from "./engine.ts";
 const fixtures = useCoreEngineFixtures(createEngine);
 const { thread, question } = fixtures;
 const scenario = (body: Parameters<typeof handoffScenario>[1]) => handoffScenario(fixtures, body);
+/** Slim turn_ended may POST rights-first ahead; count only the report posts. */
+const reports = (r: { fake: { wakes: { deliveryId: string; message: string }[] } }) =>
+	r.fake.wakes.filter((w) => !w.deliveryId.includes(":rights-first:"));
+const corpus = (r: {
+	fake: { wakes: { deliveryId: string; message: string }[] };
+	held: () => { deliveryId: string; message: string }[];
+}) =>
+	[...r.fake.wakes.map((w) => `${w.deliveryId}\n${w.message}`), ...r.held().map((w) => JSON.stringify(w))].join("\n");
 
 test("handoff: exact incident timestamps, duplicates and reconnect re-sighting", async () =>
 	scenario(async ({ r, advance, state, next }) => {
@@ -24,14 +32,16 @@ test("handoff: exact incident timestamps, duplicates and reconnect re-sighting",
 		state(21);
 		state(21);
 		await advance(10);
-		expect(r.fake.wakes).toHaveLength(1);
-		expect(r.fake.wakes[0]!.message).toContain(PLAIN);
-		expect(r.fake.wakes[0]!.message).not.toContain("LIVE PARTIAL");
+		expect(reports(r)).toHaveLength(1);
+		expect(reports(r)[0]!.deliveryId).toContain(":ended:r20:");
+		expect(reports(r)[0]!.message).toContain("finished a turn on the work you sent it");
+		expect(reports(r)[0]!.message).not.toContain("LIVE PARTIAL");
+		expect(reports(r)[0]!.message).not.toContain("Last message");
 		r.fake.setConnected(false);
 		r.fake.setConnected(true);
 		state(21);
 		await advance(100);
-		expect(r.fake.wakes).toHaveLength(1);
+		expect(reports(r)).toHaveLength(1);
 	}));
 
 test("handoff: fast successor preserves both completed reports (M1)", async () =>
@@ -46,9 +56,12 @@ test("handoff: fast successor preserves both completed reports (M1)", async () =
 		r.clock.t += 31_000;
 		await r.engine.tick();
 		await advance(10);
-		const messages = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(messages).toContain(PLAIN);
-		expect(messages).toContain("run 21 final distinct");
+		const messages = corpus(r);
+		// Slim bodies omit finals; run identity is the delivery id (fold key).
+		expect(messages).toContain(":ended:r20:");
+		expect(messages).toContain(":ended:r21:");
+		expect(messages).not.toContain(PLAIN);
+		expect(messages).not.toContain("run 21 final distinct");
 	}));
 
 test("handoff: skipped ordinals keep run N's final and schedule the intervening run (M1)", async () =>
@@ -61,8 +74,7 @@ test("handoff: skipped ordinals keep run N's final and schedule the intervening 
 		r.clock.t += 31_000;
 		await r.engine.tick();
 		await advance(10);
-		const messages = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(messages).toContain(PLAIN);
+		const messages = corpus(r);
 		expect(messages).toContain(":ended:r20:");
 		expect(messages).toContain(":ended:r21:");
 	}));
@@ -101,8 +113,9 @@ test("handoff: idle gap and duplicate completion only wake once", async () =>
 		r.fake.setConnected(true);
 		state(21);
 		await advance(100);
-		expect(r.fake.wakes).toHaveLength(1);
-		expect(r.fake.wakes[0]!.message).toContain(PLAIN);
+		expect(reports(r)).toHaveLength(1);
+		expect(reports(r)[0]!.deliveryId).toContain(":ended:r20:");
+		expect(reports(r)[0]!.message).toContain("finished a turn on the work you sent it");
 	}));
 
 for (const status of ["cancelled", "interrupted"] as const) {

@@ -15,6 +15,9 @@ const IDS = [
 const PLAIN = "PR #106, head 624d79b4. Tests passed. No merge/deploy.";
 const ASK = "Not merged or deployed; waiting on Steward review/land. Say go and I'll continue.";
 
+/** Non-prerequisite posts (slim turn_ended may send rights-first ahead). */
+const posts = (r: ReturnType<typeof rig>) => r.fake.wakes.filter((w) => !w.deliveryId.includes(":rights-first:"));
+
 describe("issue #72: clean completion report survives a human follow-up", () => {
 	for (const id of IDS) {
 		for (const ordinal of [0, 1] as const) {
@@ -32,8 +35,12 @@ describe("issue #72: clean completion report survives a human follow-up", () => 
 				r.fake.emit({ kind: "state", thread: thread(id, "running") });
 				r.fake.emit({ kind: "state", thread: thread(id, "completed") });
 				// With the fix: wake after debounce only. Reverting stageClean makes this time out against quietMs.
-				await r.until("run 1 report", () => r.fake.wakes.length === 1, 500);
-				expect(r.fake.wakes[0]!.message).toContain("finished a turn on the work you sent it and has gone quiet");
+				await r.until(
+					"run 1 report",
+					() => posts(r).some((w) => w.message.includes("finished a turn on the work you sent it")),
+					500,
+				);
+				expect(posts(r).at(-1)!.message).toContain("finished a turn on the work you sent it and has gone quiet");
 				expect(r.engine.notified().has(`report:${instrId}:${ordinal}`)).toBe(true);
 
 				r.fake.threads.set(id, {
@@ -112,9 +119,13 @@ describe("issue #72: clean completion report survives a human follow-up", () => 
 		r.fake.emit({ kind: "state", thread: thread(id, "completed") });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed") });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed") });
-		await r.until("one report", () => r.fake.wakes.length === 1, 500);
+		await r.until(
+			"one report",
+			() => posts(r).some((w) => w.message.includes("finished a turn on the work you sent it")),
+			500,
+		);
 		await r.quiet(80);
-		expect(r.fake.wakes).toHaveLength(1);
+		expect(posts(r)).toHaveLength(1);
 		expect([...r.engine.notified()].filter((k) => k.startsWith("report:s-dup:"))).toEqual(["report:s-dup:0"]);
 	});
 });
