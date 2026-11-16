@@ -169,7 +169,12 @@ export function parseAxiStatus(out: string, expectedRunId?: string): AxiParkedRu
 	const awaiting = parkedMsFromAwaiting(runId, runBlock);
 	const gate = gateFields(trimmed);
 	const stepAwaiting = firstAwaitingStep(trimmed);
-	const looksAwaiting = gate.status === "awaiting_approval" || stepAwaiting !== null || awaiting.raw !== null;
+	// Top-level status awaiting_approval is itself an awaiting claim: require a complete gate (fail closed).
+	const looksAwaiting =
+		status === "awaiting_approval" ||
+		gate.status === "awaiting_approval" ||
+		stepAwaiting !== null ||
+		awaiting.raw !== null;
 	const resolved = looksAwaiting ? requireAwaitingGate(runId, gate, stepAwaiting) : null;
 
 	return {

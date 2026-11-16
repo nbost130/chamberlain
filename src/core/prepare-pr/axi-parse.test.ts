@@ -107,6 +107,16 @@ describe("parseAxiStatus", () => {
 `),
 		).toThrow(/complete gate/);
 	});
+	test("fail closed when top-level status is awaiting_approval without gate/age", () => {
+		expect(() =>
+			parseAxiStatus(`other_branch_run:
+  id: "R"
+  branch: main
+  status: awaiting_approval
+  head: deadbeef
+`),
+		).toThrow(/complete gate/);
+	});
 	test("fail closed when awaiting gate has no timing and caller has no fallback", () => {
 		expect(() =>
 			parseAxiStatus(`other_branch_run:
