@@ -51,8 +51,14 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 /** Dead-letter an oversized pending row without POSTing; raise the bound alarm once. */
 function refuseOversized(r: Ctx, l: Lane, row: OutboxRow): void {
 	const maxBytes = TRANSFER_DIGEST_MAX_BYTES;
+	const transfer = row.kind === "transfer";
+	const event = transfer ? "transfer-oversized-dead-letter" : "digest-oversized-dead-letter";
+	const alarmKey = transfer ? "transfer-oversized" : "digest-oversized";
+	const alarmText = transfer
+		? alarms.transferOversized([row.deliveryId], maxBytes)
+		: alarms.digestOversized([row.deliveryId], maxBytes);
 	if (r.store.wakes.finish(row.id, "dead_letter", r.clock())) {
-		r.d.log("transfer-oversized-dead-letter", {
+		r.d.log(event, {
 			deliveryId: row.deliveryId,
 			bytes: encodedSendBytes(row.message, row.deliveryId),
 			maxBytes,
@@ -61,7 +67,7 @@ function refuseOversized(r: Ctx, l: Lane, row: OutboxRow): void {
 		r.owed.delete(row.id);
 		if (!r.reported.has(row.deliveryId)) {
 			r.reported.add(row.deliveryId);
-			raise(r, l.akey("transfer-oversized"), alarms.transferOversized([row.deliveryId], maxBytes));
+			raise(r, l.akey(alarmKey), alarmText);
 		}
 	}
 }

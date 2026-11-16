@@ -260,4 +260,5 @@ export const EVENTS = {
 	"steward.adopted": e("info", { unrecoverable: int(), adopted: int() }, "steward-adopted"),
 	"steward.pass-error": failure("steward-pass-error"),
 	"steward.transfer-oversized": e("error", { bytes: int(), maxBytes: int() }, "transfer-oversized-dead-letter"),
+	"steward.digest-oversized": e("error", { bytes: int(), maxBytes: int() }, "digest-oversized-dead-letter"),
 } satisfies Record<string, EventSpec>;

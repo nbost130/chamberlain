@@ -1,9 +1,14 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "../crash.ts";
-import { composeWake, observe } from "../decide/hold.ts";
+import { type composeWake, observe } from "../decide/hold.ts";
+import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
 import { alarms } from "../messages.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "../steward/rights-sent.ts";
-import { composeTransferBatch, deadLetterOversizedTransfers } from "../steward/steward-transfer.ts";
+import {
+	composeTransferBatch,
+	deadLetterOversizedDigests,
+	deadLetterOversizedTransfers,
+} from "../steward/steward-transfer.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "../store/store-wakes.ts";
 import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
@@ -68,12 +73,15 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	if (!store.wakes.held(l.name).length) return;
 	// Oversized solo transfers never enter a batch: dead-letter with alarm before compose (R2).
 	deadLetterOversizedTransfers(r, l, now);
+	// Oversized solo held wakes never enter a digest batch: dead-letter before compose.
+	deadLetterOversizedDigests(r, l, now);
 	const heldNow = store.wakes.held(l.name);
 	if (!heldNow.length) return;
 	// Only unbatchable (oversized) transfers remain: wait — never compose an empty digest.
 	const transfers = heldNow.filter((h) => h.kind === "transfer");
 	const others = heldNow.filter((h) => h.kind !== "transfer");
 	if (transfers.length && !others.length && !composeTransferBatch(transfers, now)) return;
+	if (others.length && !transfers.length && !composeDigestBatch(others, now)) return;
 	const look = observe(l.look, l.gate(), now, r.ceiling);
 	if (!look.post) return;
 	let kept: string[] = [];
@@ -122,7 +130,10 @@ function digestOf(l: Lane, held: HeldItem[], now: number, onKept: (kept: string[
 		const use = transfers.filter((h) => transferBatch.members.includes(h.deliveryId));
 		return withMeta(l, use, transferBatch, onKept);
 	}
-	return withMeta(l, others, composeWake(others, now), onKept);
+	const digestBatch = others.length ? composeDigestBatch(others, now) : undefined;
+	if (!digestBatch) throw new Error("digestOf: no batch under encoded cap");
+	const use = others.filter((h) => digestBatch.members.includes(h.deliveryId));
+	return withMeta(l, use, digestBatch, onKept);
 }
 
 /**
