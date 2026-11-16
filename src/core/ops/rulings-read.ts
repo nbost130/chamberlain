@@ -15,7 +15,7 @@ export const expiredNow = (list: Ruling[], nowMs: number = Date.now()) =>
 	list.filter((r) => r.status === "in-force" && isExpired(r, nowMs));
 
 /** Pure: one wake/brief cite line for a ruling: ID + decides (no quoted words). Markers for expires/until/unconfirmed stay. */
-export function renderCiteLine(r: Ruling): string {
+function renderCiteLine(r: Ruling): string {
 	return `- ${r.id}: ${r.decides}${r.expires ? ` [expires ${r.expires}]` : ""}${r.until ? ` [until ${r.until}]` : ""}${r.confirmed ? "" : " [unconfirmed: began as a card answer]"}`;
 }
 
