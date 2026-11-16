@@ -14,6 +14,7 @@
  *   - Confirmation challenges that expired or were consumed more than a day ago.
  *   - Idle-thread classifier dispositions classified more than 30 days ago, except those marked right or wrong (they are the next
  *     evaluation set, and stay).
+ *   - Terminal queued-run handoffs (confirmed or rejected) updated more than 30 days ago. Pending handoffs are never pruned.
  */
 
 import { DELIVERED_KEEP_MS } from "./deliver.ts";
@@ -34,6 +35,7 @@ export type Maintained = {
 	events: number;
 	challenges: number;
 	dispositions: number;
+	handoffs: number;
 };
 
 export function maintain(store: Store, now = Date.now()): Maintained {
@@ -54,6 +56,7 @@ export function maintain(store: Store, now = Date.now()): Maintained {
 			events: store.events.prune(new Date(now - EVENT_KEEP_MS).toISOString()),
 			challenges: store.challenges.prune(now - CHALLENGE_KEEP_MS),
 			dispositions: store.dispositions.prune(now - ITEM_KEEP_MS),
+			handoffs: store.handoffs.prune(now - ITEM_KEEP_MS),
 		};
 	});
 }

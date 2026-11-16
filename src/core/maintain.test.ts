@@ -29,7 +29,15 @@ describe("maintain", () => {
 		s.events.append({ t: new Date(NOW - DAY).toISOString(), event: "fire" });
 
 		const r = maintain(s, NOW);
-		expect(r).toEqual({ delivered: 1, resolved: 1, items: 2, events: 1, challenges: 0, dispositions: 0 });
+		expect(r).toEqual({
+			delivered: 1,
+			resolved: 1,
+			items: 2,
+			events: 1,
+			challenges: 0,
+			dispositions: 0,
+			handoffs: 0,
+		});
 		// The row is gone; the id is not (migration 7's tombstone), so it can never be queued again.
 		expect(s.wakes.rows("all").map((w) => w.deliveryId)).toEqual(["old", "new"]);
 		expect([s.wakes.isDelivered("ancient"), s.wakes.isDelivered("new")]).toEqual([true, true]);
@@ -46,7 +54,21 @@ describe("maintain", () => {
 			events: 0,
 			challenges: 0,
 			dispositions: 0,
+			handoffs: 0,
 		});
+	});
+
+	test("prunes old terminal handoffs and keeps pending ones", () => {
+		const s = memStore();
+		const base = { threadId: "t1", runId: "r1", successorId: "r2" };
+		s.handoffs.put("fake", { ...base, disposition: "confirmed" }, NOW - 40 * DAY);
+		s.handoffs.put("fake", { ...base, runId: "r2", disposition: "rejected-human" }, NOW - 40 * DAY);
+		s.handoffs.put("fake", { ...base, runId: "r3", disposition: "pending" }, NOW - 40 * DAY);
+		s.handoffs.put("fake", { ...base, runId: "r4", disposition: "confirmed" }, NOW - DAY);
+		expect(maintain(s, NOW).handoffs).toBe(2);
+		expect(s.handoffs.get("fake", "t1", "r3")?.disposition).toBe("pending");
+		expect(s.handoffs.get("fake", "t1", "r4")?.disposition).toBe("confirmed");
+		expect(s.handoffs.get("fake", "t1", "r1")).toBeUndefined();
 	});
 
 	test("prunes confirmation challenges that expired or were used more than a day ago, and keeps a live one", () => {
