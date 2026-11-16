@@ -44,4 +44,8 @@ busy/queued state read and a "thread is waiting on input" event first among them
   recognised by phrase patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide.ts`](../src/core/decide.ts)
   before relying on either.
 - **`chamberlain debug t3x send` is lightly tested** on T3 0.1.x. Linux and macOS only; Windows is untested.
+- **Rolling back past migration 17.** A build that only knows migrations up to 16 (Chamberlain 0.5.0) refuses a database at
+  schema 17 and exits 3. To reopen that file on 0.5.0 after a bad upgrade, restore a pre-migration copy, or run
+  `DROP TABLE run_handoffs; DELETE FROM migrations WHERE version = 17;` (the indexes drop with the table; only in-flight
+  queued-run handoffs are lost). Prefer a `VACUUM INTO` copy before applying a migration when a rollback may be needed.
 - **Your checks run as you.** The `sweep` commands in `config.json` are executed directly (no shell) by the daemon's user; keep the file yours alone to write.

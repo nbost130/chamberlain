@@ -51,7 +51,8 @@ export const makeHandoffs = (c: Db): HandoffStore => ({
 		);
 	},
 	prune(before) {
-		return c.run("DELETE FROM run_handoffs WHERE updated_at < ? AND disposition != ?", before, "pending").changes;
+		// Terminal and aged pending alike: a pending row that stayed unconfirmed for ITEM_KEEP_MS is abandoned.
+		return c.run("DELETE FROM run_handoffs WHERE updated_at < ?", before).changes;
 	},
 });
 

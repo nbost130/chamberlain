@@ -588,9 +588,9 @@ DELETE FROM state WHERE key = 'steward.adopt.historical_hi';
 		sql: `
 -- #76: a LIVE→LIVE queued-run handoff (completed run, causing successor, disposition) survives a daemon restart.
 -- The process Map in the watcher is a cache; this table is the durable record. disposition is pending until confirmed
--- after a successful wake, or rejected-human / rejected-not-completed for a permanent skip. Housekeeping prunes only
--- terminal rows (never pending). Additive only: nothing existing changes. A build that knows only migrations up to 16
--- refuses this database.
+-- (wake sent, or the fire decided with no wake), or rejected-human / rejected-not-completed for a permanent skip.
+-- Housekeeping prunes rows older than 30 days, including aged pending. Additive only: nothing existing changes. A build
+-- that knows only migrations up to 16 refuses this database.
 CREATE TABLE run_handoffs (
 	server TEXT NOT NULL,
 	thread_id TEXT NOT NULL,

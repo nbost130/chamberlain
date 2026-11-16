@@ -14,7 +14,8 @@
  *   - Confirmation challenges that expired or were consumed more than a day ago.
  *   - Idle-thread classifier dispositions classified more than 30 days ago, except those marked right or wrong (they are the next
  *     evaluation set, and stay).
- *   - Terminal queued-run handoffs (confirmed or rejected) updated more than 30 days ago. Pending handoffs are never pruned.
+ *   - Queued-run handoffs (confirmed, rejected, or still pending) updated more than 30 days ago. Aged pending is safe to
+ *     drop once reconciliation has closed any row that already had a durable claim.
  */
 
 import { DELIVERED_KEEP_MS } from "./deliver.ts";

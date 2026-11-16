@@ -18,19 +18,21 @@ export class Watcher extends WatcherHandoffs {
 	}
 
 	protected async fireWith(c: Candidate, mine: string[]) {
-		if (this.core.notified.has(c.key)) {
-			// A crash after the claim but before "confirmed" left a pending row; close it so restart does not retry forever.
-			this.markHandoffConfirmed(c.key);
-			return;
-		}
+		if (this.core.notified.has(c.key)) return;
 		const live = this.states.get(c.thread.id);
 		// Re-check after the debounce: the condition must still hold on the newest state.
-		if (!live || live.archived || live.settled || live.snoozed) return;
+		// Settled/archived/snoozed (or gone) is a terminal decision for a queued handoff: do not leave it pending.
+		if (!live || live.archived || live.settled || live.snoozed) {
+			this.closeHandoffDecided(c.key);
+			return;
+		}
 		if (live.id === this.core.decisionsThread && c.kind !== "failed") {
 			this.log("skip-decisions-thread", { kind: c.kind });
+			this.closeHandoffDecided(c.key);
 			return;
 		}
 		const runId = this.endedRun(c);
+		// confirmQueuedEnd false = retry (leave pending) or permanent reject (already terminal).
 		if (c.kind === "turn_ended" && runId && !(await this.confirmQueuedEnd(c, live, runId))) return;
 		const ended =
 			c.kind === "turn_ended" || c.kind === "failed" ? await this.instructionRead(c.thread.id, runId) : undefined;
@@ -44,7 +46,11 @@ export class Watcher extends WatcherHandoffs {
 			question: "",
 			failedWhat: "run failed",
 		};
-		if (!(await this.draftWake({ c, live, draft, mine }, ended))) return;
+		// After confirmation, every no-wake exit is a decision: close the handoff so it cannot re-fire forever.
+		if (!(await this.draftWake({ c, live, draft, mine }, ended))) {
+			this.closeHandoffDecided(c.key);
+			return;
+		}
 		await this.queueWake(c, live, draft, mine);
 	}
 

@@ -22,6 +22,6 @@ export interface HandoffStore {
 	listOpen(server: string): PersistedHandoff[];
 	/** Drop terminal dispositions for a thread when a new distinct LIVE→LIVE interval is remembered. */
 	clearTerminal(server: string, threadId: string): void;
-	/** Delete terminal rows older than `before`. Never touches pending. */
+	/** Delete rows older than `before` (terminal and aged pending). */
 	prune(before: number): number;
 }

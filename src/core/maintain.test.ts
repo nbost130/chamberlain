@@ -58,16 +58,18 @@ describe("maintain", () => {
 		});
 	});
 
-	test("prunes old terminal handoffs and keeps pending ones", () => {
+	test("prunes old handoffs including aged pending, and keeps recent ones", () => {
 		const s = memStore();
 		const base = { threadId: "t1", runId: "r1", successorId: "r2" };
 		s.handoffs.put("fake", { ...base, disposition: "confirmed" }, NOW - 40 * DAY);
 		s.handoffs.put("fake", { ...base, runId: "r2", disposition: "rejected-human" }, NOW - 40 * DAY);
 		s.handoffs.put("fake", { ...base, runId: "r3", disposition: "pending" }, NOW - 40 * DAY);
 		s.handoffs.put("fake", { ...base, runId: "r4", disposition: "confirmed" }, NOW - DAY);
-		expect(maintain(s, NOW).handoffs).toBe(2);
-		expect(s.handoffs.get("fake", "t1", "r3")?.disposition).toBe("pending");
+		s.handoffs.put("fake", { ...base, runId: "r5", disposition: "pending" }, NOW - DAY);
+		expect(maintain(s, NOW).handoffs).toBe(3);
+		expect(s.handoffs.get("fake", "t1", "r3")).toBeUndefined();
 		expect(s.handoffs.get("fake", "t1", "r4")?.disposition).toBe("confirmed");
+		expect(s.handoffs.get("fake", "t1", "r5")?.disposition).toBe("pending");
 		expect(s.handoffs.get("fake", "t1", "r1")).toBeUndefined();
 	});
 

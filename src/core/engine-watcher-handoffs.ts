@@ -151,10 +151,13 @@ export abstract class WatcherHandoffs extends WatcherDrafts {
 		}
 	}
 
-	/** Close a pending row that already has a durable claim (restart repair when a fire is scheduled). */
-	protected markHandoffConfirmed(key: string) {
-		if (!this.durableClaim(key)) return;
-		this.persistHandoffConfirmed(key);
-		this.publishHandoffConfirmed(key);
+	/**
+	 * Mark a pending handoff decided with no further wake (report budget used, settled/archived thread, decisions
+	 * thread, …). `confirmed` means the fire finished its decision — only `confirmQueuedEnd`'s retry leaves pending.
+	 */
+	protected closeHandoffDecided(key: string) {
+		const done = this.pendingHandoffs.get(key);
+		if (done?.disposition !== "pending") return;
+		this.saveHandoff(key, { ...done, disposition: "confirmed" });
 	}
 }

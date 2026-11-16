@@ -122,11 +122,10 @@ test("handoff persist: rejected-human disposition survives restart and is not ad
 });
 
 /**
- * Sol R78-1: a throw while writing "confirmed" must not leave a durable claim with a forever-pending handoff
- * that can resend after notification retention expires. Same-tx confirm rolls the claim back with the throw;
- * a later healthy restart delivers exactly once and closes the row. Includes Sol's aging step.
+ * Sol R78-1: a throw while writing "confirmed" rolls back claim and wake with the confirm; a later healthy restart
+ * delivers exactly once and closes the row. Includes Sol's aging step.
  */
-test("crash: claim committed but confirmation throws; restart delivers exactly once and closes pending", async () => {
+test("crash: a throw while confirming rolls back claim and wake; restart delivers once", async () => {
 	const path = scratchDb();
 	const s = openStore(path);
 	const original = s.handoffs.put.bind(s.handoffs);
