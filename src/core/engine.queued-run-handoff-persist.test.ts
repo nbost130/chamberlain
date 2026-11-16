@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { useCoreEngineFixtures } from "../testing/core-engine-fixtures.ts";
 import { HANDOFF_THREAD, handoffScenario, HANDOFF_PLAIN as PLAIN } from "../testing/queued-run-handoff-scenario.ts";
 import { createEngine } from "./engine.ts";
+import { ITEM_KEEP_MS, maintain } from "./maintain.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
+import { NOTIFICATION_LOG } from "./notification.ts";
 import { openStore } from "./sqlite-store.ts";
 
 const fixtures = useCoreEngineFixtures(createEngine);
@@ -117,6 +119,80 @@ test("handoff persist: rejected-human disposition survives restart and is not ad
 		},
 		openStore(path),
 	);
+});
+
+/**
+ * Sol R78-1: a throw while writing "confirmed" must not leave a durable claim with a forever-pending handoff
+ * that can resend after notification retention expires. Same-tx confirm rolls the claim back with the throw;
+ * a later healthy restart delivers exactly once and closes the row. Includes Sol's aging step.
+ */
+test("crash: claim committed but confirmation throws; restart delivers exactly once and closes pending", async () => {
+	const path = scratchDb();
+	const s = openStore(path);
+	const original = s.handoffs.put.bind(s.handoffs);
+	let blocked = false;
+	s.handoffs.put = (server, h, now) => {
+		if (h.disposition === "confirmed") {
+			blocked = true;
+			throw Error("simulated crash after claim");
+		}
+		original(server, h, now);
+	};
+	await handoffScenario(
+		fixtures,
+		async ({ r, state, next, advance }) => {
+			state(20);
+			next();
+			state(21);
+			await advance(20);
+			expect(blocked).toBe(true);
+			// Same-tx confirm: the throw aborts claim + wake + confirm together; the handoff stays pending.
+			expect(s.items.get(NOTIFICATION_LOG, `${HANDOFF_THREAD}:ended:r20`)?.notificationCount ?? 0).toBe(0);
+			expect(s.handoffs.get("fake", HANDOFF_THREAD, "r20")?.disposition).toBe("pending");
+			await r.engine.stop();
+			s.close();
+			const restarted = rig({ store: openStore(path), adapter: r.fake, steward: "steward-1", quietMs: 180_000 });
+			state(21);
+			await advance(20);
+			restarted.clock.t += 31_000;
+			await restarted.engine.tick();
+			await advance(20);
+			expect(r.fake.wakes.filter((w) => w.message.includes(PLAIN))).toHaveLength(1);
+			expect(restarted.held().filter((w) => JSON.stringify(w).includes(PLAIN))).toHaveLength(0);
+			expect(restarted.store.handoffs.get("fake", HANDOFF_THREAD, "r20")?.disposition).toBe("confirmed");
+			await advance(ITEM_KEEP_MS + 1);
+			restarted.clock.t += ITEM_KEEP_MS + 1;
+			maintain(restarted.store, Date.now());
+			expect(restarted.store.items.get(NOTIFICATION_LOG, `${HANDOFF_THREAD}:ended:r20`)).toBeUndefined();
+			// Confirmed rows may age out with the claim; they must not remain pending (the R78-1 resend path).
+			expect(restarted.store.handoffs.get("fake", HANDOFF_THREAD, "r20")?.disposition).not.toBe("pending");
+			state(21);
+			await advance(20);
+			restarted.clock.t += 31_000;
+			await restarted.engine.tick();
+			await advance(20);
+			expect(r.fake.wakes.filter((w) => w.message.includes(PLAIN))).toHaveLength(1);
+		},
+		s,
+	);
+});
+
+/** Leftover claim+pending from an older build: maintain closes it before pruning the claim. */
+test("crash leftover: maintain confirms claimed-pending before pruning the notification claim", () => {
+	const s = openStore(":memory:");
+	const key = `${HANDOFF_THREAD}:ended:r20`;
+	const now = Date.now();
+	s.handoffs.put(
+		"fake",
+		{ threadId: HANDOFF_THREAD, runId: "r20", successorId: "r21", disposition: "pending" },
+		now - ITEM_KEEP_MS - 1,
+	);
+	s.items.observe({ source: NOTIFICATION_LOG, kind: "sent", dedupKey: key, now: now - ITEM_KEEP_MS - 1 });
+	expect(s.items.get(NOTIFICATION_LOG, key)?.notificationCount).toBe(1);
+	maintain(s, now);
+	expect(s.handoffs.get("fake", HANDOFF_THREAD, "r20")?.disposition).toBe("confirmed");
+	expect(s.items.get(NOTIFICATION_LOG, key)).toBeUndefined();
+	s.close();
 });
 
 test("handoff persist: migration 17 upgrades an existing migration-16 database", () => {

@@ -46,7 +46,6 @@ export class Watcher extends WatcherHandoffs {
 		};
 		if (!(await this.draftWake({ c, live, draft, mine }, ended))) return;
 		await this.queueWake(c, live, draft, mine);
-		this.markHandoffConfirmed(c.key);
 	}
 
 	/** The rights block a wake carries, stamped with the Steward it was composed for. */
@@ -95,12 +94,18 @@ export class Watcher extends WatcherHandoffs {
 		// the same event: the database says so, inside this transaction, and nothing is queued.
 		// The Steward holds these rights once this wake is delivered, not before: the relay writes the record from its stamp then.
 		const deliveryId = `${c.key}:${Date.now()}`;
-		this.core.deliver(
+		// Claim, durable wake, and handoff "confirmed" commit together; the process cache updates only after.
+		const result = this.core.deliver(
 			message,
 			deliveryId,
 			{ kind: c.kind, thread: live.id, ...(rights.stamp ? { rights: [rights.stamp] } : {}) },
-			() => mine.map(this.core.markNotified).every(Boolean),
+			() => {
+				if (!mine.map(this.core.markNotified).every(Boolean)) return false;
+				this.persistHandoffConfirmed(c.key);
+				return true;
+			},
 		);
+		if (result !== "none" || this.durableClaim(c.key)) this.publishHandoffConfirmed(c.key);
 	}
 
 	/** An answer given in the thread reaches no one else, so the ledger closes here or it shows a settled decision as waiting. */

@@ -36,6 +36,9 @@ export const makeHandoffs = (c: Db): HandoffStore => ({
 	listPending(server) {
 		return c.all("SELECT * FROM run_handoffs WHERE server = ? AND disposition = ?", server, "pending").map(toRow);
 	},
+	listAllPending() {
+		return c.all("SELECT * FROM run_handoffs WHERE disposition = ?", "pending").map(toRow);
+	},
 	listOpen(server) {
 		return c.all("SELECT * FROM run_handoffs WHERE server = ? AND disposition != ?", server, "confirmed").map(toRow);
 	},

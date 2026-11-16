@@ -19,6 +19,7 @@
 
 import { DELIVERED_KEEP_MS } from "./deliver.ts";
 import { NOTIFICATION_LOG } from "./notification.ts";
+import { handoffKey } from "./sqlite-handoffs.ts";
 import type { Store } from "./store.ts";
 
 export const ITEM_KEEP_MS = 30 * 24 * 3600_000;
@@ -38,8 +39,28 @@ export type Maintained = {
 	handoffs: number;
 };
 
+/**
+ * Close pending handoffs whose wake was already claimed (crash between claim and confirm on older builds).
+ * Uses the durable notification-log item only — never the process-local staged set. Runs before item prune.
+ */
+function reconcileClaimedHandoffs(store: Store, now = Date.now()): number {
+	let n = 0;
+	for (const h of store.handoffs.listAllPending()) {
+		const key = handoffKey(h.threadId, h.runId);
+		if ((store.items.get(NOTIFICATION_LOG, key)?.notificationCount ?? 0) <= 0) continue;
+		store.handoffs.put(
+			h.server,
+			{ threadId: h.threadId, runId: h.runId, successorId: h.successorId, disposition: "confirmed" },
+			now,
+		);
+		n++;
+	}
+	return n;
+}
+
 export function maintain(store: Store, now = Date.now()): Maintained {
 	return store.tx(() => {
+		reconcileClaimedHandoffs(store, now);
 		let resolved = 0;
 		for (const source of EPHEMERAL_SOURCES) {
 			for (const i of store.items.list({ source, status: ["triggered", "acknowledged"] })) {

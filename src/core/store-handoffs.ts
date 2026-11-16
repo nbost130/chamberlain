@@ -13,6 +13,8 @@ export interface HandoffStore {
 	get(server: string, threadId: string, runId: string): PersistedHandoff | undefined;
 	/** Pending rows for one server (retry after a later state). */
 	listPending(server: string): PersistedHandoff[];
+	/** Every pending row (all servers): used by maintain to close claimed-but-unconfirmed leftovers. */
+	listAllPending(): PersistedHandoff[];
 	/**
 	 * Pending and rejected rows for one server: loaded into the watcher on start so a restart neither loses an
 	 * unconfirmed final nor revives a permanent skip as an ordinary completion.
