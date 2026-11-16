@@ -36,28 +36,37 @@ export class WatcherDrafts extends WatcherReads {
 
 	protected async draftTurnEnded(f: Fire, read: InstructionRead): Promise<boolean> {
 		const { c, live, draft } = f;
+		const runId = this.endedRun(c);
 		// A hung child must not swallow a report, so the wait below covers it. It stays no reason to wake anyone yet.
 		const children =
 			this.liveChildren(live.id) > 0 ||
 			(await this.subagents(live.id).catch(this.readFailed("subagents", live.id, 0))) > 0;
-		draft.excerpt = await this.lastMessage(c.thread.id).catch(this.readFailed("last message", live.id, ""));
+		draft.excerpt = await this.lastMessage(c.thread.id, runId).catch(this.readFailed("last message", live.id, ""));
 		const kind = endKind(draft.excerpt);
 		draft.stalled = kind === "stall";
 		if (!children && kind !== "plain") return true;
 		return this.settleTurn(f, read, children);
 	}
 
+	/** The completed run's final on the draft, scoped when the candidate names a run. */
+	protected async fillReportExcerpt(f: Fire) {
+		const { c, live, draft } = f;
+		draft.excerpt = await this.lastMessage(live.id, this.endedRun(c)).catch(
+			this.readFailed("last message", live.id, draft.excerpt),
+		);
+		draft.reported = true;
+	}
+
 	/** Stages a clean completion's report at once: no quiet window, and a later human message cannot cancel it. */
 	protected async stageClean(f: Fire, due: string | { key: string; work: string }): Promise<boolean> {
-		const { live, draft, mine } = f;
+		const { draft, mine } = f;
 		const key = typeof due === "string" ? due : due.key;
 		const work = typeof due === "string" ? "" : due.work;
 		if (this.core.notified.has(key)) return false;
 		this.stage(mine, key);
 		draft.idleLine = work;
 		draft.stalled = false;
-		draft.excerpt = await this.lastMessage(live.id).catch(this.readFailed("last message", live.id, draft.excerpt));
-		draft.reported = true;
+		await this.fillReportExcerpt(f);
 		return true;
 	}
 
@@ -91,13 +100,13 @@ export class WatcherDrafts extends WatcherReads {
 		draft.stalled = false;
 		if (notified.has(settled.key)) return false;
 		this.stage(mine, settled.key);
-		draft.excerpt = await this.lastMessage(live.id).catch(this.readFailed("last message", live.id, draft.excerpt));
-		draft.reported = true;
+		await this.fillReportExcerpt(f);
 		return true;
 	}
 
 	/** Waits out the quiet window of a finished turn, and says whether the report is still due. */
 	protected awaitQuiet(c: Candidate, live: ThreadState): Promise<ReportOutcome> {
+		const runId = this.endedRun(c);
 		return settleReport({
 			now: () => Date.now(),
 			sleep: (ms) => Bun.sleep(ms),
@@ -106,7 +115,7 @@ export class WatcherDrafts extends WatcherReads {
 			children: async () =>
 				this.liveChildren(live.id) + (await this.subagents(live.id).catch(this.readFailed("subagents", live.id, 0))),
 			oldCards: () => this.oldCards.get(live.id) ?? new Set(),
-			read: () => this.instructionRead(live.id),
+			read: () => this.instructionRead(live.id, runId),
 			reportKey: (r) => this.reportOf(c, reportKey(r.items, r.byMachine, this.core.notified)),
 			idleWork: (th, r) => this.idleWork(th, r),
 		}).finally(() => this.quietUntil.delete(live.id));

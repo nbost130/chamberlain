@@ -1,6 +1,7 @@
 /** The adapter contract for reading a thread: why a run failed, its last message, the Steward's own probe and a snapshot of a server's threads. */
 
 import type { WaitingRead } from "./adapter-waiting.ts";
+import type { TurnItem } from "./decide.ts";
 import type { InstructionRead } from "./history.ts";
 
 /**
@@ -44,8 +45,11 @@ export type LastAssistant = {
 };
 
 export type Inspector = {
-	/** The text of the thread's last finished assistant message, or "" when there is none or it can't be read. */
-	lastMessage(threadId: string): Promise<string>;
+	/**
+	 * The text of the thread's last finished assistant message, or "" when there is none or it can't be read.
+	 * `runId` keeps the excerpt on that completed run (queued handoff, issue #74).
+	 */
+	lastMessage(threadId: string, runId?: string): Promise<string>;
 	/**
 	 * The thread's last finished assistant message with its own id and the time it finished (ISO), or undefined when there is none.
 	 * The idle-parents sweep check (src/core/idle-parents.ts) reads it. Absent: that check cannot see this adapter's threads.
@@ -55,8 +59,23 @@ export type Inspector = {
 	waiting(threadId: string): Promise<WaitingRead>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
 	runningSubagents(threadId: string): Promise<number>;
-	/** The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means). */
-	instruction(threadId: string): Promise<InstructionRead>;
+	/**
+	 * The thread's latest instruction, past the backend's window if need be (src/core/history.ts says what the state means).
+	 * `runId` scopes the read to that completed run so a later successor cannot replace its report (issue #74).
+	 */
+	instruction(threadId: string, runId?: string): Promise<InstructionRead>;
+	/**
+	 * Every run on the thread (id, ordinal, status). Absent: the adapter has no runs reader (explicit handoff
+	 * compatibility path). A capable reader that fails must reject, not return an empty list as success.
+	 */
+	runs?(threadId: string): Promise<{ id?: string; ordinal?: number; status?: string }[]>;
+	/**
+	 * One coherent handoff observation (runs + items together). Preferred over separate `runs` + `instruction` reads so
+	 * ownership is not judged across mismatched snapshots. Absent: the core falls back to those separate reads.
+	 */
+	handoffSnapshot?(
+		threadId: string,
+	): Promise<{ runs: { id?: string; ordinal?: number; status?: string }[]; items: TurnItem[] }>;
 	/** The newest failed run of the thread and its error. Absent: the adapter cannot say, and stalled-thread recovery stays off for its threads. */
 	failure?(threadId: string): Promise<RunFailure | undefined>;
 	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */

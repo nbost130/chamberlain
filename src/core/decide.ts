@@ -9,13 +9,28 @@ export type Candidate = { kind: WakeKind; thread: ThreadState; key: string };
 export const LIVE = new Set(["running", "queued", "starting", "preparing", "waiting"]);
 const ENDED = new Set(["completed", "idle", "interrupted"]);
 
-/**
- * The dedupe key of one failure. It names the failed run: a thread that fails, is started again and fails again is two failures,
- * and a key of thread and previous status alone swallowed the second one (2026-11-13). A backend that names no run keeps the
- * old key, which is the best it can do.
- */
+/** Failure key: names the failed run so a retry that fails again is a second failure (2026-11-13). No run id → old key. */
 const failureKey = (next: ThreadState, prev: ThreadState): string =>
 	next.latestRunId ? `${next.id}:failed:${next.latestRunId}:${prev.status}` : `${next.id}:failed:${prev.status}`;
+
+/** Turn-end key: the completed run when named, so a queued handoff and an idle gap cannot both wake for the same run. */
+const endedKey = (threadId: string, runId: string | null | undefined): string =>
+	runId ? `${threadId}:ended:${runId}` : `${threadId}:ended:${Date.now()}`;
+
+/** Top-level turn end: left LIVE, or a newer run started while still LIVE (queued handoff, no idle gap). */
+function turnEnded(prev: ThreadState, next: ThreadState): Candidate | undefined {
+	if (next.parentThreadId !== null) return undefined;
+	if (LIVE.has(prev.status) && ENDED.has(next.status))
+		return { kind: "turn_ended", thread: next, key: endedKey(next.id, next.latestRunId) };
+	const handoff =
+		LIVE.has(prev.status) &&
+		LIVE.has(next.status) &&
+		prev.latestRunId &&
+		next.latestRunId &&
+		prev.latestRunId !== next.latestRunId;
+	if (handoff) return { kind: "turn_ended", thread: next, key: endedKey(next.id, prev.latestRunId) };
+	return undefined;
+}
 
 /** Transitions worth a wake. `prev` undefined means first sighting: nothing fires. */
 export function decide(prev: ThreadState | undefined, next: ThreadState, exclude: ReadonlySet<string>): Candidate[] {
@@ -32,8 +47,8 @@ export function decide(prev: ThreadState | undefined, next: ThreadState, exclude
 		out.push({ kind: "needs_input", thread: next, key: `${next.id}:waiting:${Date.now()}` });
 	if (topLevel && next.status === "failed" && prev.status !== "failed")
 		out.push({ kind: "failed", thread: next, key: failureKey(next, prev) });
-	if (topLevel && LIVE.has(prev.status) && ENDED.has(next.status))
-		out.push({ kind: "turn_ended", thread: next, key: `${next.id}:ended:${Date.now()}` });
+	const ended = turnEnded(prev, next);
+	if (ended) out.push(ended);
 	return out;
 }
 
@@ -146,6 +161,8 @@ export type TurnItem = {
 	id?: string;
 	runId?: string;
 	text?: string;
+	/** Assistant messages: `completed` when the turn's final text is the one a report should carry. */
+	status?: string;
 	createdBy?: string;
 	creationSource?: string;
 	updatedAt?: string;

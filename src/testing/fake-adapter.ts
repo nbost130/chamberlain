@@ -79,7 +79,17 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		},
 	};
 	const inspect: Inspector = {
-		lastMessage: async (id) => fake.threads.get(id)?.lastMessage ?? "",
+		lastMessage: async (id, runId) => {
+			const th = fake.threads.get(id);
+			if (runId && th?.runMessages?.[runId] !== undefined) return th.runMessages[runId]!;
+			if (runId && th?.instruction?.items.length) {
+				const last = [...th.instruction.items]
+					.reverse()
+					.find((i) => i.runId === runId && i.type === "assistant_message" && i.status === "completed");
+				if (last) return String(last.text ?? "");
+			}
+			return th?.lastMessage ?? "";
+		},
 		lastAssistant: async (id) => fake.threads.get(id)?.lastAssistant,
 		waiting: async (id): Promise<WaitingRead> => {
 			const th = fake.threads.get(id);
@@ -89,7 +99,21 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 			return { ok: true, cards: th?.waiting ?? [], resolved: th?.resolved ?? [] };
 		},
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
-		instruction: async (id) => fake.threads.get(id)?.instruction ?? { items: [], state: "complete", byMachine: false },
+		instruction: async (id, runId) => {
+			const base = fake.threads.get(id)?.instruction ?? { items: [], state: "complete" as const, byMachine: false };
+			if (!runId) return base;
+			return {
+				...base,
+				items: base.items.filter((i) => i.runId === runId && i.type !== "run_interrupt_request"),
+			};
+		},
+		runs: async (id) => fake.threads.get(id)?.runs ?? [],
+		/** Prefers the live inspect overrides so tests that replace `runs` / `instruction` stay coherent. */
+		handoffSnapshot: async (id) => {
+			const runs = await inspect.runs!(id);
+			const read = await inspect.instruction(id);
+			return { runs, items: read.items };
+		},
 		failure: async (id) => fake.threads.get(id)?.failure,
 		/** The failure's run, still failed with nothing going, unless the test says otherwise. */
 		look: async (id) => {

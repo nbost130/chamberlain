@@ -4,10 +4,14 @@ import { closeHeldForCard, readAfk } from "./afk-held.ts";
 import { type Candidate, decide, LIVE, turnBegan } from "./decide.ts";
 import { clip, type Draft, defaultServerLine, wakeWhat } from "./engine-support.ts";
 import { WatcherDrafts } from "./engine-watcher-draft.ts";
+import { confirmHandoff, type HandoffObservation, type HandoffRecord, rejectedDisposition } from "./handoff.ts";
 import { awayModeLine, threadWakeHead } from "./messages.ts";
 import { fullStamp, rightsStamp } from "./rights-sent.ts";
 
 export class Watcher extends WatcherDrafts {
+	/** Queued LIVE→LIVE handoffs awaiting confirmation after the debounce (interval + causing successor). */
+	protected pendingHandoffs = new Map<string, HandoffRecord>();
+
 	async fire(c: Candidate) {
 		const mine: string[] = [];
 		try {
@@ -19,8 +23,6 @@ export class Watcher extends WatcherDrafts {
 
 	protected async fireWith(c: Candidate, mine: string[]) {
 		if (this.core.notified.has(c.key)) return;
-		const ended = c.kind === "turn_ended" || c.kind === "failed" ? await this.instructionRead(c.thread.id) : undefined;
-		if (ended) this.countTurn(c.thread, ended);
 		const live = this.states.get(c.thread.id);
 		// Re-check after the debounce: the condition must still hold on the newest state.
 		if (!live || live.archived || live.settled || live.snoozed) return;
@@ -28,6 +30,11 @@ export class Watcher extends WatcherDrafts {
 			this.log("skip-decisions-thread", { kind: c.kind });
 			return;
 		}
+		const runId = this.endedRun(c);
+		if (c.kind === "turn_ended" && runId && !(await this.confirmQueuedEnd(c, live, runId))) return;
+		const ended =
+			c.kind === "turn_ended" || c.kind === "failed" ? await this.instructionRead(c.thread.id, runId) : undefined;
+		if (ended) this.countTurn(c.thread, ended);
 		const draft: Draft = {
 			excerpt: "",
 			stalled: false,
@@ -39,6 +46,98 @@ export class Watcher extends WatcherDrafts {
 		};
 		if (!(await this.draftWake({ c, live, draft, mine }, ended))) return;
 		await this.queueWake(c, live, draft, mine);
+		const done = this.pendingHandoffs.get(c.key);
+		if (done) this.pendingHandoffs.set(c.key, { ...done, disposition: "confirmed" });
+	}
+
+	/**
+	 * Confirm a named turn end. Queued handoffs need one coherent observation; a capable reader's failure leaves the
+	 * record pending so a later state can retry. Permanent skips keep a terminal disposition and cancel any second timer.
+	 */
+	protected async confirmQueuedEnd(c: Candidate, live: ThreadState, runId: string): Promise<boolean> {
+		const record = this.pendingHandoffs.get(c.key);
+		const obs = await this.handoffObservation(live.id);
+		// Re-read watcher state after the observation: a successor may have arrived during the awaits.
+		const latest = this.states.get(live.id)?.latestRunId;
+		const decision = confirmHandoff(obs, runId, record, latest);
+		if (decision.action === "retry") {
+			this.log(decision.reason, { server: this.srv.name, threadId: live.id, runId });
+			return false;
+		}
+		if (decision.action === "skip") {
+			this.log(decision.reason, { server: this.srv.name, threadId: live.id, runId });
+			if (record) this.pendingHandoffs.set(c.key, { ...record, disposition: rejectedDisposition(decision.reason) });
+			// A state mid-read may have scheduled another fire; that must not revive this rejection as an idle-gap.
+			clearTimeout(this.timers.get(c.key));
+			this.timers.delete(c.key);
+			return false;
+		}
+		for (const id of decision.intervening) {
+			const key = `${live.id}:ended:${id}`;
+			if (this.core.notified.has(key) || this.timers.has(key) || this.pendingHandoffs.has(key)) continue;
+			if (record)
+				this.pendingHandoffs.set(key, {
+					threadId: live.id,
+					runId: id,
+					successorId: record.successorId,
+					disposition: "pending",
+				});
+			this.schedule({ kind: "turn_ended", thread: live, key });
+		}
+		return true;
+	}
+
+	/** One coherent runs+items read when the adapter offers it; otherwise separate reads with fail-closed semantics. */
+	protected async handoffObservation(threadId: string): Promise<HandoffObservation> {
+		if (this.inspect?.handoffSnapshot) {
+			try {
+				const snap = await this.inspect.handoffSnapshot(threadId);
+				return { kind: "ok", runs: snap.runs, items: snap.items };
+			} catch (e) {
+				return { kind: "failed", error: String(e).slice(0, 200) };
+			}
+		}
+		if (!this.inspect?.runs) return { kind: "unsupported" };
+		try {
+			const runs = await this.inspect.runs(threadId);
+			const items = (await this.instructionRead(threadId)).items;
+			return { kind: "ok", runs, items };
+		} catch (e) {
+			return { kind: "failed", error: String(e).slice(0, 200) };
+		}
+	}
+
+	/** Remember a LIVE→LIVE handoff so confirmation after debounce still knows the causing successor and interval. */
+	protected rememberHandoff(prev: ThreadState | undefined, next: ThreadState, c: Candidate) {
+		if (
+			c.kind !== "turn_ended" ||
+			!prev ||
+			!LIVE.has(prev.status) ||
+			!LIVE.has(next.status) ||
+			!prev.latestRunId ||
+			!next.latestRunId ||
+			prev.latestRunId === next.latestRunId
+		)
+			return;
+		// A new distinct interval drops prior terminal dispositions for this thread.
+		for (const [key, h] of this.pendingHandoffs) {
+			if (h.threadId === next.id && h.disposition !== "pending") this.pendingHandoffs.delete(key);
+		}
+		this.pendingHandoffs.set(c.key, {
+			threadId: next.id,
+			runId: prev.latestRunId,
+			successorId: next.latestRunId,
+			disposition: "pending",
+		});
+	}
+
+	/** Re-queue only still-pending (unconfirmed) handoffs after a later state. Rejected ones stay terminal. */
+	protected retryPendingHandoffs(th: ThreadState) {
+		for (const [key, h] of this.pendingHandoffs) {
+			if (h.disposition !== "pending") continue;
+			if (h.threadId !== th.id || this.core.notified.has(key) || this.timers.has(key)) continue;
+			this.schedule({ kind: "turn_ended", thread: th, key });
+		}
 	}
 
 	/** The rights block a wake carries, stamped with the Steward it was composed for. */
@@ -155,7 +254,11 @@ export class Watcher extends WatcherDrafts {
 		const next = normalizeThread(e.thread);
 		const prev = this.take(next);
 		if (e.kind === "state") {
-			for (const c of decide(prev, next, this.core.EXCLUDE)) this.schedule(c);
+			for (const c of decide(prev, next, this.core.EXCLUDE)) {
+				this.rememberHandoff(prev, next, c);
+				this.schedule(c);
+			}
+			this.retryPendingHandoffs(next);
 			return;
 		}
 		if (this.core.EXCLUDE.has(next.id) || next.archived || next.settled || next.snoozed) return;
@@ -167,6 +270,7 @@ export class Watcher extends WatcherDrafts {
 		this.controller.abort();
 		for (const timer of this.timers.values()) clearTimeout(timer);
 		this.timers.clear();
+		this.pendingHandoffs.clear();
 	}
 	run(): Promise<void> {
 		return this.adapter

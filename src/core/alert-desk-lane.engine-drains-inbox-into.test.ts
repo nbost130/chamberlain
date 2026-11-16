@@ -31,7 +31,11 @@ describe("the engine drains the inbox into the desk", () => {
 		const conf = `${root}/conf`;
 		mkdirSync(conf, { recursive: true, mode: 0o700 });
 		writeFileSync(`${conf}/decision-rights.md`, "ask", { mode: 0o600 });
-		writeFileSync(`${conf}/alert-desk.json`, JSON.stringify({ morningHour: 23, ...desk }));
+		writeFileSync(
+			`${conf}/alert-desk.json`,
+			JSON.stringify({ morningHour: 23, timezone: "America/New_York", ...desk }),
+			{ mode: 0o600 },
+		);
 		process.env.ALERT_DESK_INBOX = `${root}/inbox.jsonl`;
 		const store = memStore();
 		const logged: { event: string; [k: string]: unknown }[] = [];

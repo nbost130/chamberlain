@@ -51,6 +51,8 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 			test("live: escalate and nudge are reported, tagged; the finished one only in the digest line; then the cache makes no call", async () => {
 				const jev = fakeJev();
 				const { r, ago, seen, pass } = idleRig(classifier("live"), jev.make);
+				// Stay on one UTC day: pass(16)×3 near end-of-UTC-day would open a new settled-digest key.
+				r.clock.t = Date.parse("2026-11-15T12:00:00Z");
 				three(seen, ago);
 				await r.quiet();
 				await r.engine.tick();

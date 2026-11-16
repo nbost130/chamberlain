@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { idleKey, principalWroteWithin, stewardInstruction, type TurnItem } from "../../core/decide";
-import { HISTORY_PAGES_MAX, historyGet, readInstruction, readWhenConnected } from "./history";
+import {
+	HISTORY_PAGES_MAX,
+	hideNewerLive,
+	historyGet,
+	lastCompletedText,
+	readInstruction,
+	readWhenConnected,
+} from "./history";
 
 const noise = (n: number): TurnItem[] =>
 	Array.from({ length: n }, (_, i) => ({ type: "assistant_message", id: `a${i}`, text: "working" }));
@@ -208,6 +215,34 @@ describe("who started the turn that last ended", () => {
 			(await read([run(1, "completed"), run(2, "completed"), run(3, "queued")], [start, note("r2")])).byMachine,
 		).toBe(true);
 		expect((await read([run(1, "completed"), run(2, "running")], [start, note("r2")])).byMachine).toBe(false);
+	});
+	test("a scoped read keeps the completed run's instruction and final after a successor starts", async () => {
+		const done = {
+			type: "assistant_message",
+			id: "a20",
+			runId: "r20",
+			text: "head df704346, checks green.",
+			status: "completed",
+		};
+		const nextPrompt: TurnItem = { ...steward, id: "s21", runId: "r21", text: "Steward here. Continue." };
+		const nextDone = {
+			type: "assistant_message",
+			id: "a21",
+			runId: "r21",
+			text: "run 21 final distinct",
+			status: "completed",
+		};
+		const runs = [run(20, "completed"), run(21, "completed")];
+		const items: TurnItem[] = [{ ...start, runId: "r20", id: "s20" }, done, nextPrompt, nextDone];
+		expect(hideNewerLive(items, [run(20, "completed"), run(21, "running")]).map((i) => i.id)).toEqual(["s20", "a20"]);
+		expect(lastCompletedText(items, "r20")).toBe("head df704346, checks green.");
+		expect(lastCompletedText(items, "r21")).toBe("run 21 final distinct");
+		const r = await readInstruction("t", async () => snapshot(runs, items), "r20");
+		expect(stewardInstruction(r.items)).toBe("s20");
+		expect(r.items.some((i) => i.id === "s21")).toBe(false);
+		// Unscoped reads keep the live prompt so ownership checks still see a human successor.
+		const open = await read(runs, items);
+		expect(open.items.some((i) => i.id === "s21")).toBe(true);
 	});
 	test("pages back for a run start that left the window, even with the instruction in hand", async () => {
 		// A steered instruction is in the window, and the notification that started its run is one page back.

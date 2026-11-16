@@ -158,7 +158,8 @@ describe("the other snooze times, beside the one-tap Snooze", () => {
 		const at = new Date(posts(calls)[0]!.body.until);
 		expect([at.getDay(), at.getHours(), at.getMinutes()]).toEqual([1, 9, 0]);
 		expect(at.getTime()).toBeGreaterThan(Date.now());
-		expect(at.getTime() - Date.now()).toBeLessThanOrEqual(7 * 86_400_000);
+		// On Monday before 09:00 the target is next Monday 09:00: just over seven midnights away.
+		expect(at.getTime() - Date.now()).toBeLessThanOrEqual(8 * 86_400_000);
 	});
 	test("Custom takes a time of your own; a time in the past or none is refused here, with nothing sent", async () => {
 		const { dq, calls } = view();

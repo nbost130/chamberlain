@@ -13,7 +13,7 @@ import { SECRETS_DIR } from "../../core/layout-schema.ts";
 import { alarms } from "../../core/messages.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { failureOf, lookOf } from "./failure.ts";
-import { historyGet, readWhenConnected } from "./history.ts";
+import { historyGet, lastCompletedText, readWhenConnected } from "./history.ts";
 import { checkProjection, isObject, type Projection, readCards } from "./projection.ts";
 import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
@@ -168,13 +168,10 @@ export class T3Link {
 	}
 
 	readonly inspector: Inspector = {
-		lastMessage: async (threadId) => {
+		lastMessage: async (threadId, runId) => {
 			if (!this.rpc) return "";
 			const p = await this.projection(threadId);
-			const last = [...(p.turnItems ?? [])]
-				.reverse()
-				.find((i) => i.type === "assistant_message" && i.status === "completed");
-			return String(last?.text ?? "");
+			return lastCompletedText(p.turnItems ?? [], runId);
 		},
 		lastAssistant: async (threadId) => {
 			if (!this.rpc) return undefined;
@@ -263,11 +260,23 @@ export class T3Link {
 				})),
 			};
 		},
-		instruction: (threadId) =>
+		runs: async (threadId) => {
+			if (!this.rpc) throw Error(`${this.srv.name} is not connected`);
+			const p = await this.projection(threadId);
+			return p.runs ?? [];
+		},
+		/** One projection: runs and items together so handoff ownership is not split across RPC and HTTP. */
+		handoffSnapshot: async (threadId) => {
+			if (!this.rpc) throw Error(`${this.srv.name} is not connected`);
+			const p = await this.projection(threadId);
+			return { runs: p.runs ?? [], items: p.turnItems ?? [] };
+		},
+		instruction: (threadId, runId) =>
 			readWhenConnected(
 				Boolean(this.rpc),
 				threadId,
 				historyGet(this.srv.origin, () => this.token()),
+				runId,
 			).catch((e) => failedRead(String(e).slice(0, 200))),
 	};
 }
