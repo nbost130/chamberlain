@@ -230,5 +230,7 @@ steward.adopted.unrecoverable: int
 steward.adopted.adopted: int
 steward.pass-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 steward.transfer-oversized.bytes: int
-steward.transfer-oversized.maxBytes: int"
+steward.transfer-oversized.maxBytes: int
+steward.digest-oversized.bytes: int
+steward.digest-oversized.maxBytes: int"
 `;
