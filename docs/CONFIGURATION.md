@@ -235,8 +235,8 @@ turns of their own (a runaway), with no configuration, and one built-in check on
 **`sweep.preparePr`** tunes the built-in prepare-pr monitor (item sources `check:prepare-pr` and `check:prepare-pr-other`).
 It polls no-mistakes / AXI for parked prepare-pr runs on the **same host as the daemon** (v1: MemberHero on Mithrandir), on
 **its own timer** (`intervalMinutes`, default 1) — not the two-hourly routine sweep — so the 1m / 15m wake policy can fire.
-Ship both modes **`shadow`** first; after soak, Nathan may flip **`oneWayMode`** to `"live"` while **`otherMode`** stays
-`"shadow"`. Do not register `prepare-pr` under `sweep.checks` (reserved built-in names).
+Do not register `prepare-pr` under `sweep.checks` (reserved built-in names). Code defaults keep both modes **`shadow`**
+and `enabled: false` until configured. **Nathan 2026-11-16:** Mithrandir runs both modes **`live`** (no shadow soak).
 
 ```json
 {
@@ -246,8 +246,8 @@ Ship both modes **`shadow`** first; after soak, Nathan may flip **`oneWayMode`**
       "intervalMinutes": 1,
       "stateDb": "~/.no-mistakes/state.sqlite",
       "repos": [{ "name": "MemberHero", "path": "/home/nbost/dev/MemberHero" }],
-      "oneWayMode": "shadow",
-      "otherMode": "shadow"
+      "oneWayMode": "live",
+      "otherMode": "live"
     }
   }
 }
@@ -259,8 +259,8 @@ Ship both modes **`shadow`** first; after soak, Nathan may flip **`oneWayMode`**
 | `intervalMinutes` | `1` | Minutes between scans; housekeeping asks each minute whether due. |
 | `stateDb` | `~/.no-mistakes/state.sqlite` | Read-only no-mistakes state database. |
 | `repos` | MemberHero path | Non-empty list of `{ name, path }` targets. |
-| `oneWayMode` | `shadow` | Mode for urgent one-way-door findings (`check:prepare-pr`). |
-| `otherMode` | `shadow` | Mode for other gates + settled-mismatch (`check:prepare-pr-other`). |
+| `oneWayMode` | `shadow` | Mode for urgent one-way-door findings (`check:prepare-pr`). Mithrandir: `live`. |
+| `otherMode` | `shadow` | Mode for other gates + settled-mismatch (`check:prepare-pr-other`). Mithrandir: `live`. |
 
 Each finding is one parked run (`dedupKey` `prepare-pr:<runId>`): repo, branch, run id, short head, **exact gate step**, and
 seconds parked. Wake policy (Nathan 2026-11-16):
