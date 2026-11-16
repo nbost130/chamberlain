@@ -2,95 +2,18 @@
  * Sol round-1 properties for PR #75 / issue #74: run-scoped reports, human-successor suppress,
  * completed-only handoff, and skipped-ordinal reconciliation. These fail on 5c8f1a0c and pass after the fix.
  */
-import { expect, setSystemTime, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { useCoreEngineFixtures } from "../testing/core-engine-fixtures.ts";
-import type { TurnItem } from "./decide.ts";
+import {
+	handoffScenario,
+	HANDOFF_THREAD as id,
+	HANDOFF_PLAIN as PLAIN,
+} from "../testing/queued-run-handoff-scenario.ts";
 import { createEngine } from "./engine.ts";
-import { itemsForRun, lastCompletedForRun } from "./handoff.ts";
 
-const { rig, thread, stewardSigned, question } = useCoreEngineFixtures(createEngine);
-
-const id = "mcp:launch:f707bc64-review";
-const PLAIN = "head df704346, checks green. No merge/deploy.";
-const doneAt = Date.parse("2026-11-15T22:43:57.057Z");
-
-async function scenario(
-	body: (x: {
-		r: ReturnType<typeof rig>;
-		advance: (ms: number) => Promise<void>;
-		state: (run: number, status?: string, over?: Record<string, unknown>) => void;
-		next: (human?: boolean, ordinal?: number, status?: string) => void;
-		runs: { id: string; ordinal: number; status: string }[];
-		items: TurnItem[];
-	}) => Promise<void>,
-) {
-	const original = globalThis.setTimeout;
-	let now = doneAt - 1000;
-	const timers = new Map<number, { at: number; fn: () => void }>();
-	let seq = 500_000;
-	globalThis.setTimeout = ((fn: () => void, ms?: number) => {
-		const n = ++seq;
-		timers.set(n, { at: now + (ms ?? 0), fn });
-		return n as unknown as ReturnType<typeof setTimeout>;
-	}) as typeof setTimeout;
-	setSystemTime(now);
-	const advance = async (ms: number) => {
-		now += ms;
-		setSystemTime(now);
-		for (let i = 0; i < 40; i++) {
-			for (const [k, t] of timers) {
-				if (t.at <= now) {
-					timers.delete(k);
-					t.fn();
-				}
-			}
-			await Bun.sleep(1);
-		}
-	};
-	const r = rig({ steward: "steward-1", quietMs: 180_000 });
-	const runs: { id: string; ordinal: number; status: string }[] = [{ id: "r20", ordinal: 20, status: "running" }];
-	const items: TurnItem[] = [
-		{ ...stewardSigned, id: "s20", runId: "r20" },
-		{ type: "assistant_message", id: "a20", runId: "r20", status: "completed", text: PLAIN },
-	];
-	r.fake.inspect!.instruction = async (_tid, runId) => ({
-		items: runId ? itemsForRun(items, runId) : items,
-		state: "complete" as const,
-		byMachine: false,
-	});
-	r.fake.inspect!.lastMessage = async (_tid, runId) =>
-		runId ? lastCompletedForRun(items, runId) : lastCompletedForRun(items, items.at(-1)?.runId ?? "");
-	r.fake.inspect!.runs = async () => runs;
-	const state = (run: number, status = "running", over: Record<string, unknown> = {}) =>
-		r.fake.emit({ kind: "state", thread: thread(id, status, { latestRunId: `r${run}`, ...over }) });
-	const next = (human = false, ordinal = 21, status = "running") => {
-		const prev = runs.at(-1);
-		if (prev) prev.status = "completed";
-		runs.push({ id: `r${ordinal}`, ordinal, status });
-		items.push({
-			...stewardSigned,
-			id: `s${ordinal}`,
-			runId: `r${ordinal}`,
-			...(human
-				? { createdBy: "user" as const, creationSource: "web", text: "continue?", updatedAt: new Date().toISOString() }
-				: {}),
-		});
-		items.push({
-			type: "assistant_message",
-			id: `a${ordinal}`,
-			runId: `r${ordinal}`,
-			status: "completed",
-			text: status === "completed" ? "run 21 final distinct" : "LIVE PARTIAL MUST NOT LEAK",
-		});
-	};
-	try {
-		await body({ r, advance, state, next, runs, items });
-	} finally {
-		await r.engine.stop();
-		globalThis.setTimeout = original;
-		setSystemTime();
-	}
-}
+const fixtures = useCoreEngineFixtures(createEngine);
+const { thread, question } = fixtures;
+const scenario = (body: Parameters<typeof handoffScenario>[1]) => handoffScenario(fixtures, body);
 
 test("handoff: exact incident timestamps, duplicates and reconnect re-sighting", async () =>
 	scenario(async ({ r, advance, state, next }) => {
@@ -220,75 +143,3 @@ for (const work of ["child", "subagent", "background"] as const) {
 			expect(r.events.some((e) => e.event === "fire")).toBe(false);
 		}));
 }
-
-/** Sol round-2 probes (fail on 08d3197, pass after the coherent handoff record). */
-test("handoff r2: skipped ordinal survives newest run completing before debounce (M1)", async () =>
-	scenario(async ({ r, state, next, runs, items, advance }) => {
-		state(20);
-		next(false, 21, "completed");
-		next(false, 22, "running");
-		state(22);
-		runs[2]!.status = "completed";
-		items.at(-1)!.text = "RUN22 FINAL";
-		state(22, "completed");
-		await advance(20);
-		r.clock.t += 31_000;
-		await r.engine.tick();
-		await advance(20);
-		const all = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(all).toContain(PLAIN);
-		expect(all).toContain("RUN22 FINAL");
-		expect(all).toContain("run 21 final distinct");
-	}));
-
-test("handoff r2: fast human successor does not admit old handoff (M2)", async () =>
-	scenario(async ({ r, state, next, runs, items, advance }) => {
-		state(20);
-		next(true);
-		state(21);
-		runs[1]!.status = "completed";
-		items.at(-1)!.text = "HUMAN RUN FINAL";
-		state(21, "completed");
-		await advance(20);
-		const all = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(all).not.toContain(PLAIN);
-	}));
-
-test("handoff r2: human successor appearing between runs and history reads suppresses handoff (M2)", async () =>
-	scenario(async ({ r, state, next, advance }) => {
-		state(20);
-		next();
-		state(21);
-		const orig = r.fake.inspect!.instruction!;
-		let changed = false;
-		r.fake.inspect!.runs = async () => [
-			{ id: "r20", ordinal: 20, status: "completed" },
-			{ id: "r21", ordinal: 21, status: "running" },
-		];
-		r.fake.inspect!.instruction = async (tid, runId) => {
-			if (!runId && !changed) {
-				changed = true;
-				next(true, 22);
-				state(22);
-			}
-			return orig(tid, runId);
-		};
-		await advance(20);
-		const all = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(all).not.toContain(PLAIN);
-	}));
-
-test("handoff r2: unreadable runs cannot certify cancelled run as completed (M3)", async () =>
-	scenario(async ({ r, state, next, runs, advance }) => {
-		state(20);
-		next();
-		runs[0]!.status = "cancelled";
-		r.fake.inspect!.runs = async () => {
-			throw Error("projection temporarily unavailable");
-		};
-		state(21);
-		await advance(20);
-		const all = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(all).not.toContain(PLAIN);
-		expect(r.events.some((e) => e.event === "skip-handoff-unconfirmed")).toBe(true);
-	}));

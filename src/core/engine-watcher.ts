@@ -4,7 +4,7 @@ import { closeHeldForCard, readAfk } from "./afk-held.ts";
 import { type Candidate, decide, LIVE, turnBegan } from "./decide.ts";
 import { clip, type Draft, defaultServerLine, wakeWhat } from "./engine-support.ts";
 import { WatcherDrafts } from "./engine-watcher-draft.ts";
-import { confirmHandoff, type HandoffObservation, type HandoffRecord } from "./handoff.ts";
+import { confirmHandoff, type HandoffObservation, type HandoffRecord, rejectedDisposition } from "./handoff.ts";
 import { awayModeLine, threadWakeHead } from "./messages.ts";
 import { fullStamp, rightsStamp } from "./rights-sent.ts";
 
@@ -46,12 +46,13 @@ export class Watcher extends WatcherDrafts {
 		};
 		if (!(await this.draftWake({ c, live, draft, mine }, ended))) return;
 		await this.queueWake(c, live, draft, mine);
-		this.pendingHandoffs.delete(c.key);
+		const done = this.pendingHandoffs.get(c.key);
+		if (done) this.pendingHandoffs.set(c.key, { ...done, disposition: "confirmed" });
 	}
 
 	/**
 	 * Confirm a named turn end. Queued handoffs need one coherent observation; a capable reader's failure leaves the
-	 * record pending so a later state can retry. Permanent skips drop the record.
+	 * record pending so a later state can retry. Permanent skips keep a terminal disposition and cancel any second timer.
 	 */
 	protected async confirmQueuedEnd(c: Candidate, live: ThreadState, runId: string): Promise<boolean> {
 		const record = this.pendingHandoffs.get(c.key);
@@ -65,13 +66,22 @@ export class Watcher extends WatcherDrafts {
 		}
 		if (decision.action === "skip") {
 			this.log(decision.reason, { server: this.srv.name, threadId: live.id, runId });
-			this.pendingHandoffs.delete(c.key);
+			if (record) this.pendingHandoffs.set(c.key, { ...record, disposition: rejectedDisposition(decision.reason) });
+			// A state mid-read may have scheduled another fire; that must not revive this rejection as an idle-gap.
+			clearTimeout(this.timers.get(c.key));
+			this.timers.delete(c.key);
 			return false;
 		}
 		for (const id of decision.intervening) {
 			const key = `${live.id}:ended:${id}`;
 			if (this.core.notified.has(key) || this.timers.has(key) || this.pendingHandoffs.has(key)) continue;
-			if (record) this.pendingHandoffs.set(key, { threadId: live.id, runId: id, successorId: record.successorId });
+			if (record)
+				this.pendingHandoffs.set(key, {
+					threadId: live.id,
+					runId: id,
+					successorId: record.successorId,
+					disposition: "pending",
+				});
 			this.schedule({ kind: "turn_ended", thread: live, key });
 		}
 		return true;
@@ -109,16 +119,22 @@ export class Watcher extends WatcherDrafts {
 			prev.latestRunId === next.latestRunId
 		)
 			return;
+		// A new distinct interval drops prior terminal dispositions for this thread.
+		for (const [key, h] of this.pendingHandoffs) {
+			if (h.threadId === next.id && h.disposition !== "pending") this.pendingHandoffs.delete(key);
+		}
 		this.pendingHandoffs.set(c.key, {
 			threadId: next.id,
 			runId: prev.latestRunId,
 			successorId: next.latestRunId,
+			disposition: "pending",
 		});
 	}
 
-	/** Re-queue unconfirmed handoffs for this thread after a later state (transient observation failure). */
+	/** Re-queue only still-pending (unconfirmed) handoffs after a later state. Rejected ones stay terminal. */
 	protected retryPendingHandoffs(th: ThreadState) {
 		for (const [key, h] of this.pendingHandoffs) {
+			if (h.disposition !== "pending") continue;
 			if (h.threadId !== th.id || this.core.notified.has(key) || this.timers.has(key)) continue;
 			this.schedule({ kind: "turn_ended", thread: th, key });
 		}

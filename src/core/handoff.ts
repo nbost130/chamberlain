@@ -6,11 +6,15 @@ import type { TurnItem } from "./decide.ts";
 
 export type HandoffRun = { id?: string; ordinal?: number; status?: string };
 
-/** Carried across the debounce: which run ended and which successor caused the LIVE→LIVE sighting. */
+/** Terminal or in-flight disposition for one queued handoff, kept until the next distinct run interval. */
+export type HandoffDisposition = "pending" | "confirmed" | "rejected-human" | "rejected-not-completed";
+
+/** Carried across the debounce: which run ended, which successor caused the LIVE→LIVE sighting, and its disposition. */
 export type HandoffRecord = {
 	threadId: string;
 	runId: string;
 	successorId: string;
+	disposition: HandoffDisposition;
 };
 
 export type HandoffObservation =
@@ -84,6 +88,8 @@ export function confirmHandoff(
 	record: HandoffRecord | undefined,
 	currentLatest?: string | null,
 ): HandoffDecision {
+	if (record?.disposition === "rejected-human") return { action: "skip", reason: "skip-human-successor" };
+	if (record?.disposition === "rejected-not-completed") return { action: "skip", reason: "skip-not-completed" };
 	if (!record) return { action: "go", intervening: [] };
 	if (obs.kind === "unsupported") return { action: "go", intervening: [] };
 	if (obs.kind === "failed" || !obs.runs.length) return { action: "retry", reason: "skip-handoff-unconfirmed" };
@@ -102,3 +108,7 @@ export function confirmHandoff(
 			: record.successorId;
 	return { action: "go", intervening: interveningCompleted(runs, runId, untilId) };
 }
+
+/** Map a permanent skip reason onto the record's terminal disposition. */
+export const rejectedDisposition = (reason: "skip-not-completed" | "skip-human-successor"): HandoffDisposition =>
+	reason === "skip-human-successor" ? "rejected-human" : "rejected-not-completed";

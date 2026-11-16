@@ -40,12 +40,28 @@ describe("confirmHandoff", () => {
 		text: "continue?",
 	};
 	const human22: TurnItem = { ...human, id: "h22", runId: "r22" };
-	const record = { threadId: "t", runId: "r20", successorId: "r21" };
+	const record = { threadId: "t", runId: "r20", successorId: "r21", disposition: "pending" as const };
 
 	test("idle-gap with no record goes without a runs check", () => {
 		expect(confirmHandoff({ kind: "failed", error: "x" }, "r20", undefined)).toEqual({
 			action: "go",
 			intervening: [],
+		});
+	});
+
+	test("a rejected record never returns go, even with a healthy observation", () => {
+		const runs = [
+			{ id: "r20", ordinal: 20, status: "completed" },
+			{ id: "r21", ordinal: 21, status: "running" },
+		];
+		const ok = { kind: "ok" as const, runs, items: [steward] };
+		expect(confirmHandoff(ok, "r20", { ...record, disposition: "rejected-human" })).toEqual({
+			action: "skip",
+			reason: "skip-human-successor",
+		});
+		expect(confirmHandoff(ok, "r20", { ...record, disposition: "rejected-not-completed" })).toEqual({
+			action: "skip",
+			reason: "skip-not-completed",
 		});
 	});
 
