@@ -229,8 +229,8 @@ sequenceDiagram
    Steward wake queued **before** the stamps existed has none, so migration 10 stamps **every** undelivered Steward wake with no stamp (a
    pending or dead-lettered row, or a held wake, receiver NULL), whatever its text, as `legacy-unstamped` (`{"hash":"","legacy":"unstamped"}`),
    so each of those depends on the record like a pointer. A digest keeps each
-   member's text byte for byte, repeated rights blocks included (they cost tokens, not correctness), and keeps a full stamp only from an item
-   whose text it carries (a folded item's block is not sent).
+   member's text byte for byte (holdable `turn_ended` producers already use the rights pointer, so digests no longer repeat full
+   blocks for that kind), and keeps a full stamp only from an item whose text it carries (a folded item's block is not sent).
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
    ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the

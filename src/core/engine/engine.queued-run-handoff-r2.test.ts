@@ -23,10 +23,16 @@ test("handoff r2: skipped ordinal survives newest run completing before debounce
 		r.clock.t += 31_000;
 		await r.engine.tick();
 		await advance(20);
-		const all = [...r.fake.wakes.map((w) => w.message), ...r.held().map((w) => JSON.stringify(w))].join("\n");
-		expect(all).toContain(PLAIN);
-		expect(all).toContain("RUN22 FINAL");
-		expect(all).toContain("run 21 final distinct");
+		const all = [
+			...r.fake.wakes.map((w) => `${w.deliveryId}\n${w.message}`),
+			...r.held().map((w) => JSON.stringify(w)),
+		].join("\n");
+		// Slim bodies omit finals; each completed run keeps its own delivery id.
+		expect(all).toContain(":ended:r20:");
+		expect(all).toContain(":ended:r21:");
+		expect(all).toContain(":ended:r22:");
+		expect(all).not.toContain(PLAIN);
+		expect(all).not.toContain("RUN22 FINAL");
 	}));
 
 test("handoff r2: fast human successor does not admit old handoff (M2)", async () =>

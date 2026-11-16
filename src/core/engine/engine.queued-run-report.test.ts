@@ -14,6 +14,9 @@ const IDS = [
 const PLAIN = "head df704346, checks green. No merge/deploy.";
 const ASK = "Waiting on Steward review/land. Say go and I'll continue.";
 
+/** Non-prerequisite posts (slim turn_ended may send rights-first ahead). */
+const posts = (r: ReturnType<typeof rig>) => r.fake.wakes.filter((w) => !w.deliveryId.includes(":rights-first:"));
+
 describe("issue #74: queued handoff still yields the completed run's report", () => {
 	for (const id of IDS) {
 		test(`${id}: LIVE→LIVE within 1s fires exactly one wake for run N`, async () => {
@@ -35,12 +38,19 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 			r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-20" }) });
 			// Queued run 21 starts with no idle gap (Omar / Pilot C #701). Reverting the decide handoff makes this time out.
 			r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-21" }) });
-			await r.until("run N report", () => r.fake.wakes.length === 1, 500);
-			expect(r.fake.wakes[0]!.message).toContain("finished a turn on the work you sent it and has gone quiet");
-			expect(r.fake.wakes[0]!.message).toContain(PLAIN);
+			await r.until(
+				"run N report",
+				() => posts(r).some((w) => w.message.includes("finished a turn on the work you sent it")),
+				500,
+			);
+			const report = posts(r).find((w) => w.message.includes("finished a turn on the work you sent it"))!;
+			expect(report.message).toContain("finished a turn on the work you sent it and has gone quiet");
+			// Slim turn_ended: outcome is the head line; no Last-message enclosure of the run's final.
+			expect(report.message).not.toContain("Last message");
+			expect(report.message).not.toContain(PLAIN);
 			expect(r.engine.notified().has(`report:${instrId}:0`)).toBe(true);
 			await r.quiet(80);
-			expect(r.fake.wakes).toHaveLength(1);
+			expect(posts(r)).toHaveLength(1);
 		});
 	}
 
@@ -59,10 +69,14 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 		});
 		r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-1" }) });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed", { latestRunId: "run-1" }) });
-		await r.until("idle-gap report", () => r.fake.wakes.length === 1, 500);
+		await r.until(
+			"idle-gap report",
+			() => posts(r).some((w) => w.message.includes("finished a turn on the work you sent it")),
+			500,
+		);
 		r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-2" }) });
 		await r.quiet(80);
-		expect(r.fake.wakes).toHaveLength(1);
+		expect(posts(r)).toHaveLength(1);
 		expect([...r.engine.notified()].filter((k) => k.startsWith("report:s-gap:"))).toEqual(["report:s-gap:0"]);
 	});
 
@@ -81,7 +95,11 @@ describe("issue #74: queued handoff still yields the completed run's report", ()
 		});
 		r.fake.emit({ kind: "state", thread: thread(id, "running", { latestRunId: "run-1" }) });
 		r.fake.emit({ kind: "state", thread: thread(id, "completed", { latestRunId: "run-1" }) });
-		await r.until("run 1 report", () => r.fake.wakes.length === 1, 500);
+		await r.until(
+			"run 1 report",
+			() => posts(r).some((w) => w.message.includes("finished a turn on the work you sent it")),
+			500,
+		);
 		expect(r.engine.notified().has("report:s-human:0")).toBe(true);
 
 		r.fake.threads.set(id, {

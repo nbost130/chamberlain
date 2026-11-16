@@ -16,7 +16,9 @@ whose delivery id it has already handled as a repeat and do nothing more.
 - A row that used its attempts is kept as a **dead letter** and reported, never sent without end and never dropped for its age; you
   decide what happens to it (below).
 - While the Steward is busy, wakes wait in a held store and go out as one **digest** when it is idle again (or after a 20-minute
-  ceiling), each member keeping its own id.
+  ceiling), each member keeping its own id. A holdable `turn_ended` is queued slim (one-line outcome, server, threadId, rights
+  pointer — no full rights block and no Last-message fence); Steward peeks the thread for detail. A rights gap still gets one
+  rights-first prerequisite at send time, not a full block copied into every held item.
 
 The windows that remain, exactly, are in [ARCHITECTURE.md](ARCHITECTURE.md#delivery-guarantees-and-the-windows-that-remain). The crash
 tests start the real daemon and page as child processes and kill them at each step.

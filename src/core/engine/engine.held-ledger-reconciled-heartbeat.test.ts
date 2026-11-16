@@ -220,10 +220,18 @@ describe("an alert is never recorded as sent without its wake (a crash between t
 		expect(r.fake.wakes).toEqual([]);
 		fail.at = undefined;
 		ended();
-		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain(
-			'thread "Thread t9" finished a turn on the work you sent it and has gone quiet.',
+		await r.until("the wake", () =>
+			r.fake.wakes.some(
+				(w) =>
+					!w.deliveryId.includes(":rights-first:") &&
+					w.message.includes('thread "Thread t9" finished a turn on the work you sent it and has gone quiet.'),
+			),
 		);
+		expect(
+			r.fake.wakes.some((w) =>
+				w.message.includes('thread "Thread t9" finished a turn on the work you sent it and has gone quiet.'),
+			),
+		).toBe(true);
 	});
 
 	test("a sweep finding: when the wake cannot be queued, the finding is not recorded as notified and the clock does not move, so the next sweep wakes with it", async () => {

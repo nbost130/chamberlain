@@ -51,16 +51,35 @@ describe("what a fire decides before it wakes the Steward", () => {
 		});
 		r.fake.emit({ kind: "state", thread: thread("t1", "running") });
 		r.fake.emit({ kind: "state", thread: thread("t1", "completed") });
-		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain("ended its turn on a promise of next work and is now idle (stalled)");
+		await r.until("the wake", () =>
+			r.fake.wakes.some(
+				(w) =>
+					!w.deliveryId.includes(":rights-first:") &&
+					w.message.includes("ended its turn on a promise of next work and is now idle (stalled)"),
+			),
+		);
+		expect(
+			r.fake.wakes.some((w) =>
+				w.message.includes("ended its turn on a promise of next work and is now idle (stalled)"),
+			),
+		).toBe(true);
 	});
 
 	test("a thread that went idle with an open PR wakes with the open work named", async () => {
 		const r = rig({ steward: "steward-1" });
 		principalDriven(r, "t7", "All done and verified.\n\n🗣️ Done.", { openPrs: [7, 9] });
-		await r.until("the wake", () => r.fake.wakes.length === 1);
-		expect(r.fake.wakes[0]!.message).toContain("went idle with work still open: open PR #7, #9");
-		expect(r.fake.wakes[0]!.deliveryId).toMatch(/^t7:ended:/);
+		await r.until("the wake", () =>
+			r.fake.wakes.some(
+				(w) =>
+					!w.deliveryId.includes(":rights-first:") &&
+					w.message.includes("went idle with work still open: open PR #7, #9"),
+			),
+		);
+		const w = r.fake.wakes.find(
+			(x) => !x.deliveryId.includes(":rights-first:") && x.message.includes("went idle with work still open"),
+		)!;
+		expect(w.message).toContain("went idle with work still open: open PR #7, #9");
+		expect(w.deliveryId).toMatch(/^t7:ended:/);
 	});
 
 	test("a wait with nothing on it is skipped, and says so", async () => {
