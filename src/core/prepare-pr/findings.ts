@@ -29,7 +29,7 @@ function resolveParkedMs(run: AxiParkedRun, nowMs: number, parkedSinceMs?: numbe
  * Pure: awaiting_approval runs need a trustworthy gate step and age (AXI parked duration or DB awaiting_agent_since).
  * Covers top-level status and gate status. Throws so the check is evaluation_error instead of silently clearing findings.
  */
-export function requireParkedAge(run: AxiParkedRun, nowMs: number, parkedSinceMs?: number | null): void {
+function requireParkedAge(run: AxiParkedRun, nowMs: number, parkedSinceMs?: number | null): void {
 	const awaiting = run.gateStatus === "awaiting_approval" || run.status === "awaiting_approval";
 	if (!awaiting) return;
 	if (!run.gateStep || run.gateStatus !== "awaiting_approval")
