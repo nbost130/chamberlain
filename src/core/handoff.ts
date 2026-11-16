@@ -6,7 +6,11 @@ import type { TurnItem } from "./decide.ts";
 
 export type HandoffRun = { id?: string; ordinal?: number; status?: string };
 
-/** Terminal or in-flight disposition for one queued handoff, kept until the next distinct run interval. */
+/**
+ * Terminal or in-flight disposition for one queued handoff, kept until the next distinct run interval.
+ * `confirmed` means the fire finished its decision (wake sent, or a deliberate no-wake exit). Only
+ * `confirmQueuedEnd`'s retry leaves `pending`.
+ */
 export type HandoffDisposition = "pending" | "confirmed" | "rejected-human" | "rejected-not-completed";
 
 /** Carried across the debounce: which run ended, which successor caused the LIVE→LIVE sighting, and its disposition. */
