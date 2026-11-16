@@ -172,12 +172,7 @@ function deadLetterOneOversizedHeld(r: Ctx, l: Lane, item: HeldItem, now: number
  * Promote held ordinary wakes that alone exceed the encoded cap into dead-letter outbox rows and raise an alarm.
  * Compose and dead-letter commit in one transaction so a failed finish cannot leave an oversized pending row.
  */
-export function deadLetterOversizedDigests(
-	r: Ctx,
-	l: Lane,
-	now: number,
-	maxBytes = TRANSFER_DIGEST_MAX_BYTES,
-): string[] {
+function deadLetterOversizedDigests(r: Ctx, l: Lane, now: number, maxBytes = TRANSFER_DIGEST_MAX_BYTES): string[] {
 	const oversized = r.store.wakes.held(l.name).filter((h) => isOversizedHeldDigest(h, now, maxBytes));
 	const ids: string[] = [];
 	for (const item of oversized) {
