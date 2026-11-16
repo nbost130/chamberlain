@@ -605,6 +605,25 @@ CREATE INDEX run_handoffs_by_updated ON run_handoffs (updated_at);
 CREATE INDEX run_handoffs_pending ON run_handoffs (server, disposition);
 `,
 	},
+	{
+		version: 18,
+		name: "prepare-pr thread↔run links",
+		sql: `
+-- prepare-pr sweep: Steward (or \`chamberlain prepare-pr link\`) records which T3 thread launched a no-mistakes run.
+-- Sweep emits an extra finding when the linked thread is settled but the run is still awaiting_approval / running.
+-- Interim: table may be empty; parked-run findings still fire without links.
+CREATE TABLE prepare_pr_links (
+	thread_id TEXT NOT NULL,
+	run_id TEXT NOT NULL,
+	repo TEXT NOT NULL,
+	started_at INTEGER NOT NULL,
+	cleared_at INTEGER,
+	PRIMARY KEY (thread_id, run_id)
+);
+CREATE INDEX prepare_pr_links_by_run ON prepare_pr_links (run_id);
+CREATE INDEX prepare_pr_links_open ON prepare_pr_links (repo) WHERE cleared_at IS NULL;
+`,
+	},
 ];
 
 const lastMigration = MIGRATIONS.at(-1);

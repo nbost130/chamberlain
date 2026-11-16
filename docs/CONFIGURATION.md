@@ -232,6 +232,45 @@ notifications, so going `"live"` starts from a true zero); `"silenced"` tracks o
 turns of their own (a runaway), with no configuration, and one built-in check on its own timer, `idle-parents`, described next. Any future monitor plugs in the same way, as another source
 ([`ARCHITECTURE.md`](ARCHITECTURE.md#the-item-system)).
 
+**`prepare-pr`** (command check, item source `check:prepare-pr`) polls no-mistakes / AXI for parked prepare-pr runs on the
+**same host as the daemon** (v1: MemberHero on Mithrandir). It is not a built-in with its own timer: register it under
+`sweep.checks` like any other command. Ship **`mode: "shadow"`** first; flip to `"live"` only after a Sol pass and operator
+approval (urgent one-way-door wakes first).
+
+```json
+{
+  "sweep": {
+    "checks": [
+      {
+        "name": "prepare-pr",
+        "command": ["bun", "/path/to/chamberlain/src/prepare-pr.ts", "status", "--repo", "MemberHero=/home/nbost/dev/MemberHero"],
+        "timeoutMs": 60000,
+        "mode": "shadow"
+      }
+    ]
+  }
+}
+```
+
+From a compiled install, use `chamberlain prepare-pr status --repo MemberHero=/home/nbost/dev/MemberHero` as the command.
+Each finding is one parked run (`dedupKey` `prepare-pr:<runId>`): repo, branch, run id, short head, **exact gate step**, and
+seconds parked. Wake policy (Nathan 2026-11-16):
+
+| Condition | Finding |
+| --- | --- |
+| `awaiting_approval` on `gate.review.one-way-door` (or any step name containing `one-way-door`) for **> 1m** | `[URGENT]` text, `repeatIntervalMs` 1m |
+| `awaiting_approval` on other gates for **> 15m** | plain text, `repeatIntervalMs` 15m |
+
+**Discovery:** running run ids from `~/.no-mistakes/state.sqlite` (`runs.status = 'running'` for the repo's `working_path`),
+supplemented by top-level `bun run no-mistakes axi` (`other_branch_active_run`). Detail from `axi status --run <id>` (TOON).
+Malformed axi output fails the check (evaluation_error), never a quiet clear. When the Chamberlain daemon moves off
+Mithrandir, add a host runner (ROADMAP 0.2) or run this sweep only on a mithrandir server entry — v1 has no SSH.
+
+**Thread ↔ run links** (optional): `chamberlain prepare-pr link <threadId> <runId> [--repo MemberHero]` writes a row in
+`prepare_pr_links`. While a link is open, `status` also emits `prepare-pr:settled-mismatch:<runId>` if that thread is
+settled on a configured T3 server but the run is still `awaiting_approval` / `running`. Until Steward records links, the
+table may be empty; parked-run findings still fire. `prepare-pr clear` / `prepare-pr links` manage the table.
+
 **`sweep.idleParents`** tunes the built-in `idle-parents` check (item source `check:idle-parents`). It runs on **its own timer**, every
 `intervalMinutes` (default 15), not on the two-hourly routine sweep; the daemon's once-a-minute housekeeping asks whether it is due, and
 the check keeps its own clock in the database, so the schedule survives a restart. Each run lists the top-level threads on every

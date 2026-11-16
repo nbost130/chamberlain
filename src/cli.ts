@@ -35,6 +35,7 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	"switch-steward": () => import("./adapters/t3/switch-steward.ts"),
 	steward: () => import("./core/steward/steward-switch.ts"),
 	"synthetic-wake": () => import("./adapters/t3/synthetic-wake.ts"),
+	"prepare-pr": () => import("./prepare-pr.ts"),
 	// An optional module, reached through the registry, which names it and no other file does (src/architecture.test.ts).
 	mail: async () => {
 		const { moduleMain } = await import("./modules/index.ts");
@@ -67,6 +68,7 @@ const ABOUT: Record<CommandName, string> = {
 	"switch-steward": "alias: prepare a Steward switch (requires --live)",
 	steward: "steward prepare|switch|status: generation switch protocol",
 	"synthetic-wake": "queue one test wake for the Steward",
+	"prepare-pr": "poll no-mistakes prepare-pr runs: status|link|clear|links (sweep check)",
 	mail: "optional email triage (off unless config.json has a mail section): status",
 };
 
