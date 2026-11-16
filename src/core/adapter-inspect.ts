@@ -1,6 +1,7 @@
 /** The adapter contract for reading a thread: why a run failed, its last message, the Steward's own probe and a snapshot of a server's threads. */
 
 import type { WaitingRead } from "./adapter-waiting.ts";
+import type { TurnItem } from "./decide.ts";
 import type { InstructionRead } from "./history.ts";
 
 /**
@@ -64,10 +65,17 @@ export type Inspector = {
 	 */
 	instruction(threadId: string, runId?: string): Promise<InstructionRead>;
 	/**
-	 * Every run on the thread (id, ordinal, status), for the handoff gate: a LIVE→LIVE wake only goes when the named run
-	 * completed successfully and the successor was not human-started. Absent: the gate stays open.
+	 * Every run on the thread (id, ordinal, status). Absent: the adapter has no runs reader (explicit handoff
+	 * compatibility path). A capable reader that fails must reject, not return an empty list as success.
 	 */
 	runs?(threadId: string): Promise<{ id?: string; ordinal?: number; status?: string }[]>;
+	/**
+	 * One coherent handoff observation (runs + items together). Preferred over separate `runs` + `instruction` reads so
+	 * ownership is not judged across mismatched snapshots. Absent: the core falls back to those separate reads.
+	 */
+	handoffSnapshot?(
+		threadId: string,
+	): Promise<{ runs: { id?: string; ordinal?: number; status?: string }[]; items: TurnItem[] }>;
 	/** The newest failed run of the thread and its error. Absent: the adapter cannot say, and stalled-thread recovery stays off for its threads. */
 	failure?(threadId: string): Promise<RunFailure | undefined>;
 	/** The thread read again from the backend itself (never from what the watcher last saw), right before a retry ping. Absent: recovery stays off for its threads. */

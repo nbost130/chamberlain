@@ -261,9 +261,15 @@ export class T3Link {
 			};
 		},
 		runs: async (threadId) => {
-			if (!this.rpc) return [];
+			if (!this.rpc) throw Error(`${this.srv.name} is not connected`);
 			const p = await this.projection(threadId);
 			return p.runs ?? [];
+		},
+		/** One projection: runs and items together so handoff ownership is not split across RPC and HTTP. */
+		handoffSnapshot: async (threadId) => {
+			if (!this.rpc) throw Error(`${this.srv.name} is not connected`);
+			const p = await this.projection(threadId);
+			return { runs: p.runs ?? [], items: p.turnItems ?? [] };
 		},
 		instruction: (threadId, runId) =>
 			readWhenConnected(

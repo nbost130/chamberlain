@@ -108,6 +108,12 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 			};
 		},
 		runs: async (id) => fake.threads.get(id)?.runs ?? [],
+		/** Prefers the live inspect overrides so tests that replace `runs` / `instruction` stay coherent. */
+		handoffSnapshot: async (id) => {
+			const runs = await inspect.runs!(id);
+			const read = await inspect.instruction(id);
+			return { runs, items: read.items };
+		},
 		failure: async (id) => fake.threads.get(id)?.failure,
 		/** The failure's run, still failed with nothing going, unless the test says otherwise. */
 		look: async (id) => {
