@@ -17,6 +17,7 @@ import { type OpenOptions, openDatabase, queries } from "./database.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { SchemaTooNewError } from "./schema.ts";
 import { makeClaims, makeEvidence, makeSequence, makeState } from "./sqlite-claims.ts";
+import { makeHandoffs } from "./sqlite-handoffs.ts";
 import { makeItems } from "./sqlite-items.ts";
 import { makeDispositions, makeEvents, makeUsage } from "./sqlite-log.ts";
 import { makeAway, makeButlers, makeDecisions, makeRulings } from "./sqlite-rulings.ts";
@@ -64,6 +65,7 @@ export function openStore(path: string, o: OpenOptions = {}): Store {
 		sequence: makeSequence(c),
 		usage: makeUsage(c),
 		dispositions: makeDispositions(c),
+		handoffs: makeHandoffs(c),
 		steward: makeStewardSql(c),
 	};
 }

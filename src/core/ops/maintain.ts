@@ -14,10 +14,13 @@
  *   - Confirmation challenges that expired or were consumed more than a day ago.
  *   - Idle-thread classifier dispositions classified more than 30 days ago, except those marked right or wrong (they are the next
  *     evaluation set, and stay).
+ *   - Queued-run handoffs (confirmed, rejected, or still pending) updated more than 30 days ago. Aged pending is safe to
+ *     drop once reconciliation has closed any row that already had a durable claim.
  */
 
 import { DELIVERED_KEEP_MS } from "../delivery/deliver.ts";
 import { NOTIFICATION_LOG } from "../items/notification.ts";
+import { handoffKey } from "../store/sqlite-handoffs.ts";
 import type { Store } from "../store/store.ts";
 
 export const ITEM_KEEP_MS = 30 * 24 * 3600_000;
@@ -34,10 +37,31 @@ export type Maintained = {
 	events: number;
 	challenges: number;
 	dispositions: number;
+	handoffs: number;
 };
+
+/**
+ * Close pending handoffs whose wake was already claimed (crash between claim and confirm on older builds).
+ * Uses the durable notification-log item only — never the process-local staged set. Runs before item prune.
+ */
+function reconcileClaimedHandoffs(store: Store, now = Date.now()): number {
+	let n = 0;
+	for (const h of store.handoffs.listAllPending()) {
+		const key = handoffKey(h.threadId, h.runId);
+		if ((store.items.get(NOTIFICATION_LOG, key)?.notificationCount ?? 0) <= 0) continue;
+		store.handoffs.put(
+			h.server,
+			{ threadId: h.threadId, runId: h.runId, successorId: h.successorId, disposition: "confirmed" },
+			now,
+		);
+		n++;
+	}
+	return n;
+}
 
 export function maintain(store: Store, now = Date.now()): Maintained {
 	return store.tx(() => {
+		reconcileClaimedHandoffs(store, now);
 		let resolved = 0;
 		for (const source of EPHEMERAL_SOURCES) {
 			for (const i of store.items.list({ source, status: ["triggered", "acknowledged"] })) {
@@ -54,6 +78,7 @@ export function maintain(store: Store, now = Date.now()): Maintained {
 			events: store.events.prune(new Date(now - EVENT_KEEP_MS).toISOString()),
 			challenges: store.challenges.prune(now - CHALLENGE_KEEP_MS),
 			dispositions: store.dispositions.prune(now - ITEM_KEEP_MS),
+			handoffs: store.handoffs.prune(now - ITEM_KEEP_MS),
 		};
 	});
 }

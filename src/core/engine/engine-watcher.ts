@@ -3,20 +3,11 @@ import { normalizeThread, type ThreadEvent, type ThreadState } from "../adapter/
 import { type Candidate, decide, LIVE, turnBegan } from "../decide/decide.ts";
 import { awayModeLine, threadWakeHead } from "../messages.ts";
 import { closeHeldForCard, readAfk } from "../ops/afk-held.ts";
-import {
-	confirmHandoff,
-	type HandoffObservation,
-	type HandoffRecord,
-	rejectedDisposition,
-} from "../steward/handoff.ts";
 import { fullStamp, rightsStamp } from "../steward/rights-sent.ts";
 import { clip, type Draft, defaultServerLine, wakeWhat } from "./engine-support.ts";
-import { WatcherDrafts } from "./engine-watcher-draft.ts";
+import { WatcherHandoffs } from "./engine-watcher-handoffs.ts";
 
-export class Watcher extends WatcherDrafts {
-	/** Queued LIVE→LIVE handoffs awaiting confirmation after the debounce (interval + causing successor). */
-	protected pendingHandoffs = new Map<string, HandoffRecord>();
-
+export class Watcher extends WatcherHandoffs {
 	async fire(c: Candidate) {
 		const mine: string[] = [];
 		try {
@@ -30,12 +21,18 @@ export class Watcher extends WatcherDrafts {
 		if (this.core.notified.has(c.key)) return;
 		const live = this.states.get(c.thread.id);
 		// Re-check after the debounce: the condition must still hold on the newest state.
-		if (!live || live.archived || live.settled || live.snoozed) return;
+		// Settled/archived/snoozed (or gone) is a terminal decision for a queued handoff: do not leave it pending.
+		if (!live || live.archived || live.settled || live.snoozed) {
+			this.closeHandoffDecided(c.key);
+			return;
+		}
 		if (live.id === this.core.decisionsThread && c.kind !== "failed") {
 			this.log("skip-decisions-thread", { kind: c.kind });
+			this.closeHandoffDecided(c.key);
 			return;
 		}
 		const runId = this.endedRun(c);
+		// confirmQueuedEnd false = retry (leave pending) or permanent reject (already terminal).
 		if (c.kind === "turn_ended" && runId && !(await this.confirmQueuedEnd(c, live, runId))) return;
 		const ended =
 			c.kind === "turn_ended" || c.kind === "failed" ? await this.instructionRead(c.thread.id, runId) : undefined;
@@ -49,100 +46,12 @@ export class Watcher extends WatcherDrafts {
 			question: "",
 			failedWhat: "run failed",
 		};
-		if (!(await this.draftWake({ c, live, draft, mine }, ended))) return;
-		await this.queueWake(c, live, draft, mine);
-		const done = this.pendingHandoffs.get(c.key);
-		if (done) this.pendingHandoffs.set(c.key, { ...done, disposition: "confirmed" });
-	}
-
-	/**
-	 * Confirm a named turn end. Queued handoffs need one coherent observation; a capable reader's failure leaves the
-	 * record pending so a later state can retry. Permanent skips keep a terminal disposition and cancel any second timer.
-	 */
-	protected async confirmQueuedEnd(c: Candidate, live: ThreadState, runId: string): Promise<boolean> {
-		const record = this.pendingHandoffs.get(c.key);
-		const obs = await this.handoffObservation(live.id);
-		// Re-read watcher state after the observation: a successor may have arrived during the awaits.
-		const latest = this.states.get(live.id)?.latestRunId;
-		const decision = confirmHandoff(obs, runId, record, latest);
-		if (decision.action === "retry") {
-			this.log(decision.reason, { server: this.srv.name, threadId: live.id, runId });
-			return false;
-		}
-		if (decision.action === "skip") {
-			this.log(decision.reason, { server: this.srv.name, threadId: live.id, runId });
-			if (record) this.pendingHandoffs.set(c.key, { ...record, disposition: rejectedDisposition(decision.reason) });
-			// A state mid-read may have scheduled another fire; that must not revive this rejection as an idle-gap.
-			clearTimeout(this.timers.get(c.key));
-			this.timers.delete(c.key);
-			return false;
-		}
-		for (const id of decision.intervening) {
-			const key = `${live.id}:ended:${id}`;
-			if (this.core.notified.has(key) || this.timers.has(key) || this.pendingHandoffs.has(key)) continue;
-			if (record)
-				this.pendingHandoffs.set(key, {
-					threadId: live.id,
-					runId: id,
-					successorId: record.successorId,
-					disposition: "pending",
-				});
-			this.schedule({ kind: "turn_ended", thread: live, key });
-		}
-		return true;
-	}
-
-	/** One coherent runs+items read when the adapter offers it; otherwise separate reads with fail-closed semantics. */
-	protected async handoffObservation(threadId: string): Promise<HandoffObservation> {
-		if (this.inspect?.handoffSnapshot) {
-			try {
-				const snap = await this.inspect.handoffSnapshot(threadId);
-				return { kind: "ok", runs: snap.runs, items: snap.items };
-			} catch (e) {
-				return { kind: "failed", error: String(e).slice(0, 200) };
-			}
-		}
-		if (!this.inspect?.runs) return { kind: "unsupported" };
-		try {
-			const runs = await this.inspect.runs(threadId);
-			const items = (await this.instructionRead(threadId)).items;
-			return { kind: "ok", runs, items };
-		} catch (e) {
-			return { kind: "failed", error: String(e).slice(0, 200) };
-		}
-	}
-
-	/** Remember a LIVE→LIVE handoff so confirmation after debounce still knows the causing successor and interval. */
-	protected rememberHandoff(prev: ThreadState | undefined, next: ThreadState, c: Candidate) {
-		if (
-			c.kind !== "turn_ended" ||
-			!prev ||
-			!LIVE.has(prev.status) ||
-			!LIVE.has(next.status) ||
-			!prev.latestRunId ||
-			!next.latestRunId ||
-			prev.latestRunId === next.latestRunId
-		)
+		// After confirmation, every no-wake exit is a decision: close the handoff so it cannot re-fire forever.
+		if (!(await this.draftWake({ c, live, draft, mine }, ended))) {
+			this.closeHandoffDecided(c.key);
 			return;
-		// A new distinct interval drops prior terminal dispositions for this thread.
-		for (const [key, h] of this.pendingHandoffs) {
-			if (h.threadId === next.id && h.disposition !== "pending") this.pendingHandoffs.delete(key);
 		}
-		this.pendingHandoffs.set(c.key, {
-			threadId: next.id,
-			runId: prev.latestRunId,
-			successorId: next.latestRunId,
-			disposition: "pending",
-		});
-	}
-
-	/** Re-queue only still-pending (unconfirmed) handoffs after a later state. Rejected ones stay terminal. */
-	protected retryPendingHandoffs(th: ThreadState) {
-		for (const [key, h] of this.pendingHandoffs) {
-			if (h.disposition !== "pending") continue;
-			if (h.threadId !== th.id || this.core.notified.has(key) || this.timers.has(key)) continue;
-			this.schedule({ kind: "turn_ended", thread: th, key });
-		}
+		await this.queueWake(c, live, draft, mine);
 	}
 
 	/** The rights block a wake carries, stamped with the Steward it was composed for. */
@@ -191,12 +100,18 @@ export class Watcher extends WatcherDrafts {
 		// the same event: the database says so, inside this transaction, and nothing is queued.
 		// The Steward holds these rights once this wake is delivered, not before: the relay writes the record from its stamp then.
 		const deliveryId = `${c.key}:${Date.now()}`;
-		this.core.deliver(
+		// Claim, durable wake, and handoff "confirmed" commit together; the process cache updates only after.
+		const result = this.core.deliver(
 			message,
 			deliveryId,
 			{ kind: c.kind, thread: live.id, ...(rights.stamp ? { rights: [rights.stamp] } : {}) },
-			() => mine.map(this.core.markNotified).every(Boolean),
+			() => {
+				if (!mine.map(this.core.markNotified).every(Boolean)) return false;
+				this.persistHandoffConfirmed(c.key);
+				return true;
+			},
 		);
+		if (result !== "none" || this.durableClaim(c.key)) this.publishHandoffConfirmed(c.key);
 	}
 
 	/** An answer given in the thread reaches no one else, so the ledger closes here or it shows a settled decision as waiting. */
@@ -274,20 +189,25 @@ export class Watcher extends WatcherDrafts {
 		this.controller.abort();
 		for (const timer of this.timers.values()) clearTimeout(timer);
 		this.timers.clear();
+		// Pending rows stay in SQLite; the Map is only a process cache.
 		this.pendingHandoffs.clear();
 	}
 	run(): Promise<void> {
-		// Fresh connection: reconcile cards that resolved while we were down.
-		const connected = (up: boolean, info?: { version?: string }) => {
-			if (up !== this.connected) this.epoch++;
-			this.connected = up;
-			if (!up) this.lastOk = Date.now();
-			if (info?.version) this.version = info.version;
-			if (up) void this.core.cardReconcileTick();
-		};
+		this.loadPendingHandoffs();
 		return this.adapter
 			.watch(
-				{ event: (e) => this.onEvent(e), connected, log: (event, data) => this.log(event, data) },
+				{
+					event: (e) => this.onEvent(e),
+					// A fresh connection is when a restart can first see which held cards resolved while the daemon was down.
+					connected: (up, info) => {
+						if (up !== this.connected) this.epoch++;
+						this.connected = up;
+						if (!up) this.lastOk = Date.now();
+						if (info?.version) this.version = info.version;
+						if (up) void this.core.cardReconcileTick();
+					},
+					log: (event, data) => this.log(event, data),
+				},
 				this.controller.signal,
 			)
 			.catch((e) =>

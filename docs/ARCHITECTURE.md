@@ -175,10 +175,10 @@ sequenceDiagram
    previous state of every thread and finds the transitions worth a wake in `decide.ts`: a request that appeared, a
    thread that went to `waiting`, a top-level run that `failed`, a top-level turn that ended (including when a queued
    message starts the next run with no idle gap: `LIVE` stays `LIVE` and `latestRunId` advances). That handoff is kept as
-   a small record (named run, causing successor) across the debounce and confirmed from one coherent observation: the
-   named run must be `completed`, the causing successor and current tip must not be human-started, skipped completed
-   runs in the interval are scheduled whether or not the tip is still LIVE, and a capable reader's failure leaves the
-   record unconfirmed for a later retry.
+   a small record (named run, causing successor, disposition) in `run_handoffs` across the debounce and across a daemon
+   restart, and confirmed from one coherent observation: the named run must be `completed`, the causing successor and
+   current tip must not be human-started, skipped completed runs in the interval are scheduled whether or not the tip is
+   still LIVE, and a capable reader's failure leaves the record unconfirmed for a later retry.
 2. **Settling.** The event waits a moment (2.5 s) and is re-checked on the newest state, so a burst of changes is one
    decision. A clean top-level completion (no running children or subagents, no pending background work) is queued as a
    durable wake after that debounce, with no quiet window: a later human message cannot cancel it. A turn end that still
@@ -426,6 +426,7 @@ start with exit code 3, the way a config file from a newer build is.
 | tables `rulings`, `decisions`, `butlers`, `away` | the rulings ledger (see [Rulings](#rulings)), the Steward's self-answers, the butler ledger, the away record | the Steward's tools and the page |
 | table `events` | every wake, skip, alarm and answer; read with SQL by the return brief and `queue-waits.ts`. The old log: each line is also written, typed, to `obs.db`, and release C drops this table | daemon, page |
 | `obs.db`, beside the database | the telemetry database (`src/core/obs/`): `events` with level, host, run, module, correlation id and a typed, redacted `data`, and the logger's counters. Its own migrations; never a table of the ledger. The ledger's rows reach it as derived events (`decision.logged`, `question.asked`, `question.answered`, `hold.closed`) by an inline emission and an hourly reconciler that opens `chamberlain.db` read-only | every process that logs; the reconciler: the daemon |
+| table `run_handoffs` | queued LIVE→LIVE handoffs (completed run, causing successor, disposition: pending / confirmed / rejected-*) so a daemon restart cannot lose an unconfirmed final or revive a permanent skip (migration 17) | daemon watcher |
 | table `state` | the sweep clock, `rights-sent`, `steward-health`, `heartbeat` | daemon |
 | file, beside the database (module on only) | `mail.db`: the email triage module's own database, never created while the module is off | the module |
 | files, beside the database | `evidence/<item>/` (copied in by `ask.ts`, served by the page, listed by `evidence` rows) and `steward-brief.md` | `ask.ts`, `brief.ts` |

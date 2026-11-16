@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { useStewardSwitchFixtures } from "../../testing/steward-switch-fixtures.ts";
 import { applyMigrations } from "../store/apply-migrations.ts";
-import { MIGRATIONS } from "../store/migrations.ts";
+import { LATEST_MIGRATION, MIGRATIONS } from "../store/migrations.ts";
 import { openStore } from "../store/sqlite-store.ts";
 import { historicalAdoptIds } from "./steward-adopt.ts";
 import { recoverSteward } from "./steward-recover.ts";
@@ -81,7 +81,7 @@ describe("#67 atomic pre-v2→16 boundary", () => {
 
 		const w = confWorld();
 		const store = openStore(path);
-		expect(schemaVersion(path)).toBe(16);
+		expect(schemaVersion(path)).toBe(LATEST_MIGRATION);
 		expect([...historicalAdoptIds(store)]).toEqual([1]);
 		recoverSteward({ store, conf: w.conf, log: () => {}, findReceipt: () => undefined, now: 50 });
 		expect(store.steward.ledger(1)).toMatchObject({ origin: "adopted-historical" });

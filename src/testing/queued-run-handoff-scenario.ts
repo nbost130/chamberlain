@@ -1,7 +1,8 @@
-/** Shared fake-clock scenario for queued-handoff engine tests (issue #74 / PR #75). */
+/** Shared fake-clock scenario for queued-handoff engine tests (issue #74 / PR #75 / #76). */
 import { setSystemTime } from "bun:test";
 import type { TurnItem } from "../core/decide/decide.ts";
 import { itemsForRun, lastCompletedForRun } from "../core/steward/handoff.ts";
+import type { Store } from "../core/store/store.ts";
 import type { useCoreEngineFixtures } from "./core-engine-fixtures.ts";
 
 export const HANDOFF_THREAD = "mcp:launch:f707bc64-review";
@@ -20,6 +21,8 @@ export async function handoffScenario(
 		runs: { id: string; ordinal: number; status: string }[];
 		items: TurnItem[];
 	}) => Promise<void>,
+	/** Optional file-backed store so a restart can reopen the same database (issue #76). */
+	store?: Store,
 ) {
 	const { rig, thread, stewardSigned } = fixtures;
 	const original = globalThis.setTimeout;
@@ -45,7 +48,7 @@ export async function handoffScenario(
 			await Bun.sleep(1);
 		}
 	};
-	const r = rig({ steward: "steward-1", quietMs: 180_000 });
+	const r = rig({ steward: "steward-1", quietMs: 180_000, ...(store ? { store } : {}) });
 	const runs: { id: string; ordinal: number; status: string }[] = [{ id: "r20", ordinal: 20, status: "running" }];
 	const items: TurnItem[] = [
 		{ ...stewardSigned, id: "s20", runId: "r20" },

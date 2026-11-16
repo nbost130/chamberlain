@@ -36,11 +36,16 @@ busy/queued state read and a "thread is waiting on input" event first among them
 - **Wake timing is heuristic.** A finished turn with outstanding work is held for a quiet window (three minutes) in case
   more work follows; a clean completion skips that window. A run that hands straight into a queued next run (no idle gap)
   still yields one report wake for the completed run. That wake is a small handoff record (completed run, causing
-  successor, interval) confirmed from one coherent observation after the debounce: scoped instruction/final, suppressed
-  when the causing successor or current tip was human-started, withheld unless the named run's status is `completed`,
-  and left unconfirmed (retryable) when a capable runs reader fails. Distinct completed-run reports are not folded into
-  each other while held. "Turn ended on a promise" and "turn ended handing a question back" are recognised by phrase
-  patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide/decide.ts`](../src/core/decide/decide.ts) before relying on
-  either.
+  successor, interval, disposition) persisted in `run_handoffs` and confirmed from one coherent observation after the
+  debounce: scoped instruction/final, suppressed when the causing successor or current tip was human-started, withheld
+  unless the named run's status is `completed`, and left unconfirmed (retryable, including across a daemon restart) when
+  a capable runs reader fails. A permanent rejection stays terminal across a restart. Distinct completed-run reports are
+  not folded into each other while held. "Turn ended on a promise" and "turn ended handing a question back" are
+  recognised by phrase patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide/decide.ts`](../src/core/decide/decide.ts)
+  before relying on either.
 - **`chamberlain debug t3x send` is lightly tested** on T3 0.1.x. Linux and macOS only; Windows is untested.
+- **Rolling back past migration 17.** A build that only knows migrations up to 16 (Chamberlain 0.5.0) refuses a database at
+  schema 17 and exits 3. To reopen that file on 0.5.0 after a bad upgrade, restore a pre-migration copy, or run
+  `DROP TABLE run_handoffs; DELETE FROM migrations WHERE version = 17;` (the indexes drop with the table; only in-flight
+  queued-run handoffs are lost). Prefer a `VACUUM INTO` copy before applying a migration when a rollback may be needed.
 - **Your checks run as you.** The `sweep` commands in `config.json` are executed directly (no shell) by the daemon's user; keep the file yours alone to write.
