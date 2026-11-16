@@ -26,12 +26,14 @@ function resolveParkedMs(run: AxiParkedRun, nowMs: number, parkedSinceMs?: numbe
 }
 
 /**
- * Pure: awaiting_approval runs need a trustworthy age (AXI parked duration or DB awaiting_agent_since).
- * Throws so the check is evaluation_error instead of silently clearing findings.
+ * Pure: awaiting_approval runs need a trustworthy gate step and age (AXI parked duration or DB awaiting_agent_since).
+ * Covers top-level status and gate status. Throws so the check is evaluation_error instead of silently clearing findings.
  */
 function requireParkedAge(run: AxiParkedRun, nowMs: number, parkedSinceMs?: number | null): void {
-	if (run.gateStatus !== "awaiting_approval") return;
-	if (!run.gateStep) throw Error(`prepare-pr: run ${run.runId} awaiting_approval without gate step`);
+	const awaiting = run.gateStatus === "awaiting_approval" || run.status === "awaiting_approval";
+	if (!awaiting) return;
+	if (!run.gateStep || run.gateStatus !== "awaiting_approval")
+		throw Error(`prepare-pr: run ${run.runId} awaiting_approval without a complete gate step/status`);
 	if (resolveParkedMs(run, nowMs, parkedSinceMs) == null)
 		throw Error(`prepare-pr: run ${run.runId} awaiting_approval without a parked age`);
 }

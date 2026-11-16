@@ -50,10 +50,10 @@
       "maxThreads": 10
     },
     "preparePr": {
-      "enabled": false,
+      "enabled": true,
       "intervalMinutes": 1,
-      "oneWayMode": "shadow",
-      "otherMode": "shadow",
+      "oneWayMode": "live",
+      "otherMode": "live",
       "repos": [
         {
           "name": "MemberHero",

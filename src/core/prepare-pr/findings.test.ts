@@ -97,4 +97,13 @@ describe("preparePrFindings", () => {
 			}),
 		).toThrow(/without a parked age/);
 	});
+	test("top-level status awaiting_approval without gate fails closed (no silent clear)", () => {
+		expect(() =>
+			preparePrFindings({
+				repo: "MemberHero",
+				runs: [run({ status: "awaiting_approval", gateStep: null, gateStatus: null, parkedMs: null })],
+				nowMs: Date.now(),
+			}),
+		).toThrow(/complete gate/);
+	});
 });
