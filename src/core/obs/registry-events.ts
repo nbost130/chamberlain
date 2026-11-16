@@ -102,6 +102,8 @@ export const EVENTS = {
 	"idle-parents-error": failure(),
 	"undelivered-message": e("info", { reported: int(), err: ERR }),
 	"undelivered-message-error": failure(),
+	"prepare-pr": e("info", { reported: int(), err: ERR }),
+	"prepare-pr-error": failure(),
 	sweep: e("info", { wake: WAKE_ACTION, findings: len("findings"), errored: int(), shadow: len("shadow") }),
 	"sweep-error": failure(),
 	"sweep-afk-unreadable": failure(),

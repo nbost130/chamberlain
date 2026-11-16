@@ -60,6 +60,7 @@ export const COMMANDS = {
 	"switch-steward": "src/adapters/t3/switch-steward.ts",
 	steward: "src/core/steward/steward-switch.ts",
 	"synthetic-wake": "src/adapters/t3/synthetic-wake.ts",
+	"prepare-pr": "src/prepare-pr.ts",
 	mail: "src/modules/mail/cli.ts",
 } as const;
 export type CommandName = keyof typeof COMMANDS;

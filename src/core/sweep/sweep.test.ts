@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { ready, src, sweep } from "../../testing/core-sweep-fixtures.ts";
 import { memStore } from "../../testing/store.ts";
 import { CLASSIFIER_DEFAULTS } from "../classifier/config.ts";
+import { PREPARE_PR_DEFAULTS } from "../prepare-pr/config.ts";
 import {
 	FULL_SWEEP_MS,
 	fenced,
@@ -168,6 +169,7 @@ describe("sweep.json", () => {
 				classifier: CLASSIFIER_DEFAULTS,
 			},
 			undelivered: { enabled: true, intervalMinutes: 1, maxDurationSeconds: 10 },
+			preparePr: { ...PREPARE_PR_DEFAULTS, repos: [...PREPARE_PR_DEFAULTS.repos] },
 		});
 	});
 	test("a check may be set to shadow or silenced, and an unknown mode is refused", () => {
@@ -214,7 +216,11 @@ describe("sweep.json, every refusal", () => {
 		refused([{ name: "a".repeat(41), command: ["x"] }], `sweep.json: check 1 ${naming}`);
 		refused(
 			[{ name: "idle-parents", command: ["x"] }],
-			'sweep.json: "idle-parents" is a built-in check; tune it with "idleParents" or "undelivered", not a check',
+			'sweep.json: "idle-parents" is a built-in check; tune it with "idleParents", "undelivered" or "preparePr", not a check',
+		);
+		refused(
+			[{ name: "prepare-pr", command: ["x"] }],
+			'sweep.json: "prepare-pr" is a built-in check; tune it with "idleParents", "undelivered" or "preparePr", not a check',
 		);
 		refused([{ name: "a", command: "x" }], 'sweep.json: check a needs "command": ["program", "arg", ...]');
 		refused([{ name: "a", command: ["x", 1] }], 'sweep.json: check a needs "command": ["program", "arg", ...]');

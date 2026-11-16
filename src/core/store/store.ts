@@ -14,6 +14,7 @@ import type { Butler } from "../ops/butler.ts";
 import type { Ruling } from "../ops/rulings.ts";
 import type { StewardSql } from "./sqlite-steward.ts";
 import type { HandoffStore } from "./store-handoffs.ts";
+import type { PreparePrLinkStore } from "./store-prepare-pr-links.ts";
 import type { DispositionStore, UsageStore } from "./store-records.ts";
 import type { ChallengeStore, WakeStore } from "./store-wakes.ts";
 
@@ -250,6 +251,7 @@ export interface Store {
 	readonly usage: UsageStore;
 	readonly dispositions: DispositionStore;
 	readonly handoffs: HandoffStore;
+	readonly preparePrLinks: PreparePrLinkStore;
 	readonly steward: StewardSql;
 }
 

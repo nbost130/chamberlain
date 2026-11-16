@@ -87,6 +87,9 @@ idle-parents-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|
 undelivered-message.reported: int
 undelivered-message.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 undelivered-message-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+prepare-pr.reported: int
+prepare-pr.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+prepare-pr-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 sweep.wake: enum(none|findings|full) <- wake
 sweep.findings: int <- findings (len)
 sweep.errored: int

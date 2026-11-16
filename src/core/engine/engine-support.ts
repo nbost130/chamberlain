@@ -87,6 +87,14 @@ export type EngineDeps = {
 	classifierProvider?: ClassifyDeps["provider"];
 	/** Reads GitHub for the held-ledger reconciler (src/core/gh.ts). Undefined: holds that name a PR, issue or branch are not checked. */
 	gh?: GhRead;
+	/**
+	 * no-mistakes state.sqlite readers for the built-in prepare-pr monitor (daemon wires from prepare-pr-nm-state.ts).
+	 * Required when `sweep.preparePr.enabled`; without it an enabled tick fails closed.
+	 */
+	preparePrNm?: {
+		listRunning: (workingPath: string) => string[];
+		parkedSinceOf: (runIds: readonly string[]) => Map<string, number>;
+	};
 };
 
 export const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);

@@ -52,6 +52,8 @@ describe("the idle-parents config", () => {
 		});
 		expect(() => parseSweepConfig({ checks: [{ name: "idle-parents", command: ["x"] }] })).toThrow("built-in");
 		expect(() => parseSweepConfig({ checks: [{ name: "undelivered-message", command: ["x"] }] })).toThrow("built-in");
+		expect(() => parseSweepConfig({ checks: [{ name: "prepare-pr", command: ["x"] }] })).toThrow("built-in");
+		expect(() => parseSweepConfig({ checks: [{ name: "prepare-pr-other", command: ["x"] }] })).toThrow("built-in");
 		expect(() => parseSweepConfig({ checks: [], idleParents: { maxThreads: 0 } })).toThrow("maxThreads");
 	});
 });

@@ -19,6 +19,7 @@ import {
 	RelayRunningError,
 } from "./core/delivery/singleton.ts";
 import { createEngine } from "./core/engine/engine.ts";
+import { preparePrConfig } from "./core/engine/engine-prepare-pr.ts";
 import { networkFilesystem, RelayLockUnavailableError } from "./core/flock.ts";
 import { ghRead } from "./core/gh.ts";
 import { type Logger, logFor } from "./core/log.ts";
@@ -31,6 +32,7 @@ import { transferPass } from "./core/steward/steward-transfer.ts";
 import { defaultStore } from "./core/store/default-store.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 import { startModules } from "./modules/index.ts";
+import { listRunningRunIdsFromStateDb, parkedSinceFromStateDb } from "./prepare-pr-nm-state.ts";
 
 /** Runs the daemon until it is stopped. It takes no arguments: its settings are the environment and the config directory. */
 export async function main(_argv: string[] = process.argv.slice(2)) {
@@ -138,6 +140,11 @@ function engineDeps(
 		sweepPromptFile: SWEEP_PROMPT_FILE,
 		// The held ledger closes holds whose PR, issue or branch is done (src/core/decide/hold-reconcile.ts).
 		gh: ghRead,
+		// prepare-pr reads no-mistakes state.sqlite outside core (bun:sqlite boundary); stateDb from sweep.preparePr.
+		preparePrNm: {
+			listRunning: (workingPath) => listRunningRunIdsFromStateDb(preparePrConfig(CONF).stateDb, workingPath),
+			parkedSinceOf: (runIds) => parkedSinceFromStateDb(preparePrConfig(CONF).stateDb, runIds),
+		},
 		// The Steward-health hand-off question goes through ask.ts like any other, asked only when the adapter cannot start the hand-off itself.
 		// A live alarm recurs by nature, so it is never "already settled": the daemon says so, and the question records it.
 		ask: async (raw) => {

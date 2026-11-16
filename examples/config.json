@@ -49,6 +49,18 @@
       "thresholdMinutes": 30,
       "maxThreads": 10
     },
+    "preparePr": {
+      "enabled": false,
+      "intervalMinutes": 1,
+      "oneWayMode": "shadow",
+      "otherMode": "shadow",
+      "repos": [
+        {
+          "name": "MemberHero",
+          "path": "/home/nbost/dev/MemberHero"
+        }
+      ]
+    },
     "checks": [
       {
         "name": "disk",

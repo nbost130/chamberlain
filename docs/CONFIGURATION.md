@@ -232,6 +232,55 @@ notifications, so going `"live"` starts from a true zero); `"silenced"` tracks o
 turns of their own (a runaway), with no configuration, and one built-in check on its own timer, `idle-parents`, described next. Any future monitor plugs in the same way, as another source
 ([`ARCHITECTURE.md`](ARCHITECTURE.md#the-item-system)).
 
+**`sweep.preparePr`** tunes the built-in prepare-pr monitor (item sources `check:prepare-pr` and `check:prepare-pr-other`).
+It polls no-mistakes / AXI for parked prepare-pr runs on the **same host as the daemon** (v1: MemberHero on Mithrandir), on
+**its own timer** (`intervalMinutes`, default 1) — not the two-hourly routine sweep — so the 1m / 15m wake policy can fire.
+Ship both modes **`shadow`** first; after soak, Nathan may flip **`oneWayMode`** to `"live"` while **`otherMode`** stays
+`"shadow"`. Do not register `prepare-pr` under `sweep.checks` (reserved built-in names).
+
+```json
+{
+  "sweep": {
+    "preparePr": {
+      "enabled": true,
+      "intervalMinutes": 1,
+      "stateDb": "~/.no-mistakes/state.sqlite",
+      "repos": [{ "name": "MemberHero", "path": "/home/nbost/dev/MemberHero" }],
+      "oneWayMode": "shadow",
+      "otherMode": "shadow"
+    }
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | `true` turns the built-in on. |
+| `intervalMinutes` | `1` | Minutes between scans; housekeeping asks each minute whether due. |
+| `stateDb` | `~/.no-mistakes/state.sqlite` | Read-only no-mistakes state database. |
+| `repos` | MemberHero path | Non-empty list of `{ name, path }` targets. |
+| `oneWayMode` | `shadow` | Mode for urgent one-way-door findings (`check:prepare-pr`). |
+| `otherMode` | `shadow` | Mode for other gates + settled-mismatch (`check:prepare-pr-other`). |
+
+Each finding is one parked run (`dedupKey` `prepare-pr:<runId>`): repo, branch, run id, short head, **exact gate step**, and
+seconds parked. Wake policy (Nathan 2026-11-16):
+
+| Condition | Source | Finding |
+| --- | --- | --- |
+| `awaiting_approval` on `gate.review.one-way-door` (or any step name containing `one-way-door`) for **> 1m** | `check:prepare-pr` | `[URGENT]` text, `repeatIntervalMs` 1m |
+| `awaiting_approval` on other gates for **> 15m** | `check:prepare-pr-other` | plain text, `repeatIntervalMs` 15m |
+
+**Discovery:** running run ids from `state.sqlite` for every checkout sharing the configured path's `upstream_url`
+(temp agent checkouts included), plus top-level `bun run no-mistakes axi`, plus open `prepare_pr_links` run ids. Detail from
+`axi status --run <id>` (TOON) in the configured repo path. Offline AXI, nonzero exits, unreadable/unknown DB path, or
+incomplete parked status fail closed (`evaluation_error`), never a quiet clear. Manual CLI: `chamberlain prepare-pr status`
+(optional `--kind one-way|other|all`). When the daemon moves off Mithrandir, add a host runner (ROADMAP 0.2) — v1 has no SSH.
+
+**Thread ↔ run links** (optional): `chamberlain prepare-pr link <threadId> <runId> [--repo MemberHero]` writes a row in
+`prepare_pr_links`. While a link is open, the other-mode source also emits `prepare-pr:settled-mismatch:<runId>` if that
+thread is settled but the run is still open. Linked run ids are always statused even when discovery would miss them.
+`prepare-pr clear` / `prepare-pr links` manage the table.
+
 **`sweep.idleParents`** tunes the built-in `idle-parents` check (item source `check:idle-parents`). It runs on **its own timer**, every
 `intervalMinutes` (default 15), not on the two-hourly routine sweep; the daemon's once-a-minute housekeeping asks whether it is due, and
 the check keeps its own clock in the database, so the schedule survives a restart. Each run lists the top-level threads on every

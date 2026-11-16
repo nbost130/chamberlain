@@ -15,6 +15,7 @@ import { usageTicker } from "../steward/steward-tokens.ts";
 import { CoreRights } from "./engine-core-rights.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createIdleParents } from "./engine-idle.ts";
+import { createPreparePr } from "./engine-prepare-pr.ts";
 import { createStewardCheck } from "./engine-steward.ts";
 import { clip, closeCardCommand } from "./engine-support.ts";
 import { createUndelivered } from "./engine-undelivered.ts";
@@ -75,6 +76,32 @@ export abstract class CoreWork extends CoreRights {
 			conf: this.conf,
 			sources: () => this.watchers.map((w) => w.undeliveredSource()),
 			skip: () => this.chamberlainSkip(),
+			...(d.relay?.now ? { now: d.relay.now } : {}),
+		});
+	}
+
+	/** Built-in prepare-pr: parked no-mistakes runs on its own 1m timer; modes split one-way vs other. */
+	protected makePreparePr() {
+		const { d } = this;
+		const nm = d.preparePrNm;
+		return createPreparePr({
+			store: this.store,
+			log: this.log,
+			outbox: this.outbox,
+			conf: this.conf,
+			listRunning: (workingPath) => {
+				if (!nm) throw Error("prepare-pr: daemon did not wire preparePrNm (state.sqlite readers)");
+				return nm.listRunning(workingPath);
+			},
+			parkedSinceOf: (runIds) => {
+				if (!nm) throw Error("prepare-pr: daemon did not wire preparePrNm (state.sqlite readers)");
+				return nm.parkedSinceOf(runIds);
+			},
+			settledThreadIds: () => {
+				const ids = new Set<string>();
+				for (const w of this.watchers) for (const th of w.states.values()) if (th.settled) ids.add(th.id);
+				return ids;
+			},
 			...(d.relay?.now ? { now: d.relay.now } : {}),
 		});
 	}
@@ -254,6 +281,9 @@ export abstract class CoreWork extends CoreRights {
 			this.undelivered
 				.tick()
 				.catch((e: unknown) => log("undelivered-message-error", { error: String(e).slice(0, 200) })),
+		);
+		checks.push(
+			this.preparePr.tick().catch((e: unknown) => log("prepare-pr-error", { error: String(e).slice(0, 200) })),
 		);
 		checks.push(
 			this.sweep.tick().catch((e) => {
