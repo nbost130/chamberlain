@@ -1,13 +1,13 @@
 import { afterEach, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WakeTransport } from "../core/deliver.ts";
-import { createOutbox, type WakeResult } from "../core/deliver.ts";
-import type { Gate } from "../core/hold.ts";
-import type { Relay } from "../core/relay.ts";
-import type { RelayDeps } from "../core/relay-ctx.ts";
-import { RIGHTS_SENT_KEY, rightsEpoch, rightsFirstId, rightsStateKey } from "../core/rights-sent.ts";
-import type { Store } from "../core/store.ts";
+import type { Gate } from "../core/decide/hold.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
+import { createOutbox, type WakeResult } from "../core/delivery/deliver.ts";
+import type { Relay } from "../core/delivery/relay.ts";
+import type { RelayDeps } from "../core/delivery/relay-ctx.ts";
+import { RIGHTS_SENT_KEY, rightsEpoch, rightsFirstId, rightsStateKey } from "../core/steward/rights-sent.ts";
+import type { Store } from "../core/store/store.ts";
 import { testRelayLock } from "./lock.ts";
 import { memStore } from "./store.ts";
 

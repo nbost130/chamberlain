@@ -96,7 +96,7 @@ A user who installs 0.1 gets a clock and no useful checks. Most of 0.2 moves wel
 
 Each plugin is a command speaking JSON; the interfaces are the core's view.
 
-**Item source** (exists today, `src/core/source.ts`). Everything a monitor, a check or a gate reports goes through it.
+**Item source** (exists today, `src/core/items/source.ts`). Everything a monitor, a check or a gate reports goes through it.
 
 ```ts
 interface ItemSource {

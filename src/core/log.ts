@@ -9,7 +9,7 @@ import { dirname } from "node:path";
 import { obsPath } from "./obs/db.ts";
 import { type Logger, makeLogger } from "./obs/logger.ts";
 import { Obs } from "./obs/obs.ts";
-import type { Store } from "./store.ts";
+import type { Store } from "./store/store.ts";
 
 export type Log = (event: string, data?: Record<string, unknown>) => void;
 export type { Logger };

@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InsecureModeError } from "../../core/private.ts";
-import { openStore } from "../../core/sqlite-store.ts";
-import { dbPath } from "../../core/store.ts";
+import { openStore } from "../../core/store/sqlite-store.ts";
+import { dbPath } from "../../core/store/store.ts";
 import { MAIL_DB_FILE, MailDatabaseTooNewError, type MailDb, mailDbPath, openMailDb } from "./db.ts";
 import { LATEST_MAIL_MIGRATION, MAIL_MIGRATIONS } from "./migrations.ts";
 

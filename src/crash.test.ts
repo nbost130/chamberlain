@@ -10,11 +10,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { CRASH_STEPS } from "./core/crash.ts";
+import { getQuestion } from "./core/items/questions.ts";
+import { readClaim } from "./core/items/questions-claim.ts";
 import { obsFor } from "./core/log.ts";
 import { reconcileStore } from "./core/obs/ledger.ts";
-import { getQuestion } from "./core/questions.ts";
-import { readClaim } from "./core/questions-claim.ts";
-import { readRulings } from "./core/rulings.ts";
+import { readRulings } from "./core/ops/rulings.ts";
 import {
 	accepted,
 	daemon,
@@ -34,11 +34,11 @@ registerCrashHooks();
 
 describe("the crash steps are the ones the code names", () => {
 	test("every step in CRASH_STEPS is reached by a crashPoint call in the source, and every call names a listed step", () => {
-		// The page's answer path and the relay each span a few modules (web/app*.ts, core/relay*.ts), and every one of them is read.
-		const files = ["web/app*.ts", "core/relay*.ts", "core/steward-*.ts"]
+		// The page's answer path and the relay each span a few modules (web/app*.ts, core/delivery/relay*.ts), and every one of them is read.
+		const files = ["web/app*.ts", "core/delivery/relay*.ts", "core/steward/steward-*.ts"]
 			.flatMap((glob) => [...new Bun.Glob(glob).scanSync({ cwd: SRC })])
 			.filter((f) => !f.endsWith(".test.ts"));
-		const sources = ["core/deliver.ts", "core/crash.ts", ...files]
+		const sources = ["core/delivery/deliver.ts", "core/crash.ts", ...files]
 			.map((f) => readFileSync(`${SRC}${f}`, "utf8"))
 			.join("\n");
 		const named = [...sources.matchAll(/crashPoint\("([^"]+)"\)/g)].map((m) => m[1]!);

@@ -1,5 +1,5 @@
 /**
- * A process that tries to take the relay's lock on a database, for tests of the singleton (src/core/singleton.test.ts).
+ * A process that tries to take the relay's lock on a database, for tests of the singleton (src/core/delivery/singleton.test.ts).
  * Usage: bun hold-relay.ts <database> <hold-ms> [start-at-epoch-ms] [flags]
  * Prints one line: "held" (then keeps the lock for hold-ms), "refused", "linked" (the database has another hard link), or the error. A
  * start time lines up many starters.
@@ -16,8 +16,13 @@ import { Database } from "bun:sqlite";
 import { spawn as nodeSpawn } from "node:child_process";
 import { closeSync, openSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { holdRelayLock, RelayDatabaseLinkedError, type RelayLock, RelayRunningError } from "../core/singleton.ts";
-import { openStore } from "../core/sqlite-store.ts";
+import {
+	holdRelayLock,
+	RelayDatabaseLinkedError,
+	type RelayLock,
+	RelayRunningError,
+} from "../core/delivery/singleton.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
 
 const [db, holdMs, startAt] = [process.argv[2]!, Number(process.argv[3] ?? 1000), Number(process.argv[4] ?? 0)];
 const flags = new Set((process.argv[5] ?? "").split(",").filter(Boolean));

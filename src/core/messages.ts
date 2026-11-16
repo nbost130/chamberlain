@@ -3,7 +3,7 @@
  * apart from the code that decides when to say them, so the wording can be read and changed in one place. Each function is pure: the caller
  * passes the facts, this returns the text. (The longer standing prompts are the markdown templates in docs/steward-*.md.)
  */
-import { Principal, principal, principalPoss, selfCommand } from "./config.ts";
+import { Principal, principal, principalPoss, selfCommand } from "./config/config.ts";
 
 /** One alarm: the line that names it and the sentence that says what it means. */
 export type AlarmText = { title: string; summary: string };
@@ -108,7 +108,7 @@ export const routineSweepHead = () =>
 export const routineSweepAsk = () =>
 	`Anything on the ASK list goes to ${principalPoss()} queue first, with \`${selfCommand("ask")} '<json>'\` (add \`"urgent": false\` when it can wait), never to ${principal()} mid-sweep as a message. Hold it only afterwards, with \`${selfCommand("afk")} hold ... --item <the Q-id ask.ts printed>\`; a hold with no queue item is refused, and so is anything already settled.`;
 
-/** The wake that lists idle top-level threads (src/core/engine-idle.ts). `block` is the findings' lines, already fenced. */
+/** The wake that lists idle top-level threads (src/core/engine/engine-idle.ts). `block` is the findings' lines, already fenced. */
 export const idleThreadsWake = (count: number, block: string, classified = false) =>
 	[
 		`[chamberlain] idle threads: ${count} top-level thread${count === 1 ? "" : "s"} finished and went quiet, and ${count === 1 ? "has" : "have"} not been reported with its last message before${count ? "" : " (only the day's line of finished threads is new)"}. ${

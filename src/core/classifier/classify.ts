@@ -16,10 +16,10 @@
  * Nothing it writes holds message text: answers, reasons, how many characters left the machine and how many redactions were made.
  */
 import { createHash } from "node:crypto";
-import { readSecret } from "../layout.ts";
+import { readSecret } from "../config/layout.ts";
 import type { Log } from "../log.ts";
-import type { Store } from "../store.ts";
-import type { DispositionAction } from "../store-records.ts";
+import type { Store } from "../store/store.ts";
+import type { DispositionAction } from "../store/store-records.ts";
 import type { Bank } from "./bank.ts";
 import { budgetLeft, readDailyUsage, utcDayStart } from "./classify-budget.ts";
 import { classifyOne } from "./classify-one.ts";

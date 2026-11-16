@@ -1,11 +1,11 @@
 /**
  * `mail.db`: the email triage module's own database, beside `chamberlain.db` in the state directory. Opened by the same code as
- * `chamberlain.db` (src/core/database.ts: private, WAL, its own migrations), so a database from a newer build is refused with the same
+ * `chamberlain.db` (src/core/store/database.ts: private, WAL, its own migrations), so a database from a newer build is refused with the same
  * words, and the file is made only when the module is on: nothing here runs while `mail` is off.
  */
 import { join } from "node:path";
-import { type Db, type OpenOptions, openDatabase, queries } from "../../core/database.ts";
-import { SchemaTooNewError } from "../../core/schema.ts";
+import { type Db, type OpenOptions, openDatabase, queries } from "../../core/store/database.ts";
+import { SchemaTooNewError } from "../../core/store/schema.ts";
 import { LATEST_MAIL_MIGRATION, MAIL_MIGRATIONS } from "./migrations.ts";
 
 export const MAIL_DB_FILE = "mail.db";

@@ -2,10 +2,10 @@ import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, expect } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { ensureToken } from "../core/capability.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath, type Store } from "../core/store.ts";
+import { askQuestion, type Question } from "../core/items/questions.ts";
+import { ensureToken } from "../core/ops/capability.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath, type Store } from "../core/store/store.ts";
 
 export const SRC = new URL("..", import.meta.url).pathname;
 export const TIMEOUT = 30_000;

@@ -10,7 +10,7 @@
  * the registry (src/core/obs/registry.ts), so what it carries beyond the registry's typed fields stays in the old `events` table and never reaches `obs.db`.
  */
 import { redactUrlFields } from "../redact.ts";
-import type { LogEvent } from "../store.ts";
+import type { LogEvent } from "../store/store.ts";
 import type { Obs } from "./obs.ts";
 import type { CallOptions } from "./obs-spec.ts";
 import type { EventName } from "./registry.ts";

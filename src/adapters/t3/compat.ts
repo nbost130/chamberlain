@@ -7,7 +7,7 @@
  * Chamberlain relies on T3 internals (see docs/upstream-asks.md): the orchestration protocol over /ws, the shell
  * stream, `runtime-request.respond`, and a read-only look at T3's `statev2.sqlite`. A newer T3 can change any of them.
  */
-import { setting } from "../../core/layout.ts";
+import { setting } from "../../core/config/layout.ts";
 
 export const T3_TESTED = {
 	/** Oldest and newest T3 server version exercised, inclusive. */

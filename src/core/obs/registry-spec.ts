@@ -79,7 +79,7 @@ export const FAILURE = f(
 	"kind",
 );
 export const ORIGIN = f(T.enm("page", "batch", "card", "daemon", "reconciler"), "by");
-/** The key a write on the page was made with (`KeyUsed`, src/core/questions.ts): the page's own, or the Decisions view's. Absent on a record from before it. */
+/** The key a write on the page was made with (`KeyUsed`, src/core/items/questions.ts): the page's own, or the Decisions view's. Absent on a record from before it. */
 export const KEY_USED = f(T.enm("page", "view"), "key");
 export const WAKE_ACTION = f(T.enm("none", "findings", "full"), "wake");
 

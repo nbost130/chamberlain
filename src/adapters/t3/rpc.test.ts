@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Rpc, shellSnapshot } from "./rpc";
+import { Rpc, shellSnapshot } from "./rpc.ts";
 
 /** A socket stand-in: records sends, and close() fires the close event like a real WebSocket. */
 class FakeSocket extends EventTarget {

@@ -1,29 +1,34 @@
 /**
- * Chamberlain's daemon: the engine (src/core/engine.ts) wired to the real world. Every server in servers.json is served
+ * Chamberlain's daemon: the engine (src/core/engine/engine.ts) wired to the real world. Every server in servers.json is served
  * by the adapter it names (src/adapters/index.ts); the Steward's own server's adapter wakes the Steward.
  * Config dir: ~/.config/chamberlain/ (CHAMBERLAIN_CONF), state dir: ~/.local/state/chamberlain/ (CHAMBERLAIN_STATE).
- * It is the one relay that sends wakes (core/relay.ts), so one daemon runs per state directory: a second exits 5 (core/singleton.ts).
+ * It is the one relay that sends wakes (core/delivery/relay.ts), so one daemon runs per state directory: a second exits 5 (core/delivery/singleton.ts).
  */
 
 import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
 import { findReceipt } from "./adapters/t3/receipts.ts";
 import { t3StateDbPath } from "./adapters/t3/settings.ts";
 import { postQuestion } from "./ask.ts";
-import { CONF, STATE, selfArgv } from "./core/config.ts";
-import { defaultStore } from "./core/default-store.ts";
-import { createEngine } from "./core/engine.ts";
+import { CONF, STATE, selfArgv } from "./core/config/config.ts";
+import { setting } from "./core/config/layout.ts";
+import { startup } from "./core/config/migrate.ts";
+import {
+	holdRelayLock,
+	RelayDatabaseLinkedError,
+	type RelayLock,
+	RelayRunningError,
+} from "./core/delivery/singleton.ts";
+import { createEngine } from "./core/engine/engine.ts";
 import { networkFilesystem, RelayLockUnavailableError } from "./core/flock.ts";
 import { ghRead } from "./core/gh.ts";
-import { setting } from "./core/layout.ts";
 import { type Logger, logFor } from "./core/log.ts";
-import { maintain } from "./core/maintain.ts";
-import { startup } from "./core/migrate.ts";
 import { startReconciler } from "./core/obs/ledger.ts";
-import { holdRelayLock, RelayDatabaseLinkedError, type RelayLock, RelayRunningError } from "./core/singleton.ts";
-import { evidencePass } from "./core/steward-evidence.ts";
-import { checkSwitchNotice } from "./core/steward-notice.ts";
-import { recoverSteward } from "./core/steward-recover.ts";
-import { transferPass } from "./core/steward-transfer.ts";
+import { maintain } from "./core/ops/maintain.ts";
+import { evidencePass } from "./core/steward/steward-evidence.ts";
+import { checkSwitchNotice } from "./core/steward/steward-notice.ts";
+import { recoverSteward } from "./core/steward/steward-recover.ts";
+import { transferPass } from "./core/steward/steward-transfer.ts";
+import { defaultStore } from "./core/store/default-store.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 import { startModules } from "./modules/index.ts";
 
@@ -122,16 +127,16 @@ function engineDeps(
 		store,
 		servers,
 		dry: process.env.CHAMBERLAIN_DRY === "1",
-		// Stalled-thread recovery is OFF until `recover` (CHAMBERLAIN_RECOVER=1 or config.json, src/core/recover.ts): merging it changes nothing until it is turned on.
+		// Stalled-thread recovery is OFF until `recover` (CHAMBERLAIN_RECOVER=1 or config.json, src/core/ops/recover.ts): merging it changes nothing until it is turned on.
 		recover: setting("recover", CONF) === true,
-		// The Steward's token usage per wake is OFF until `stewardTokens` (CHAMBERLAIN_STEWARD_TOKENS=1 or config.json, src/core/steward-tokens.ts).
+		// The Steward's token usage per wake is OFF until `stewardTokens` (CHAMBERLAIN_STEWARD_TOKENS=1 or config.json, src/core/steward/steward-tokens.ts).
 		stewardTokens: setting("stewardTokens", CONF) === true,
 		exclude: setting("exclude", CONF) ?? [],
 		log,
 		// A snoozed urgent question that returns is shown where the operator reads, in the pinned view like a new one (ask.ts).
 		post: postQuestion,
 		sweepPromptFile: SWEEP_PROMPT_FILE,
-		// The held ledger closes holds whose PR, issue or branch is done (src/core/hold-reconcile.ts).
+		// The held ledger closes holds whose PR, issue or branch is done (src/core/decide/hold-reconcile.ts).
 		gh: ghRead,
 		// The Steward-health hand-off question goes through ask.ts like any other, asked only when the adapter cannot start the hand-off itself.
 		// A live alarm recurs by nature, so it is never "already settled": the daemon says so, and the question records it.

@@ -1,6 +1,6 @@
 /** The T3 adapter's wiring (./index.ts): what it declares, and how each hook behaves when the thread ids or tokens are missing. */
 import { describe, expect, test } from "bun:test";
-import type { AdapterEnv } from "../../core/adapter.ts";
+import type { AdapterEnv } from "../../core/adapter/adapter.ts";
 import { createT3Adapter, defaultT3Server, t3ServerLine } from "./index.ts";
 
 const env = (over: Partial<AdapterEnv> = {}): AdapterEnv => ({

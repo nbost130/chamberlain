@@ -40,7 +40,7 @@ busy/queued state read and a "thread is waiting on input" event first among them
   when the causing successor or current tip was human-started, withheld unless the named run's status is `completed`,
   and left unconfirmed (retryable) when a capable runs reader fails. Distinct completed-run reports are not folded into
   each other while held. "Turn ended on a promise" and "turn ended handing a question back" are recognised by phrase
-  patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide.ts`](../src/core/decide.ts) before relying on
+  patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide/decide.ts`](../src/core/decide/decide.ts) before relying on
   either.
 - **`chamberlain debug t3x send` is lightly tested** on T3 0.1.x. Linux and macOS only; Windows is untested.
 - **Your checks run as you.** The `sweep` commands in `config.json` are executed directly (no shell) by the daemon's user; keep the file yours alone to write.

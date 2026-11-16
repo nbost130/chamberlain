@@ -6,10 +6,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "../core/adapter-waiting.ts";
-import { newToken } from "../core/capability.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
-import { propose, readRulings } from "../core/rulings.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
+import { askQuestion, type Question } from "../core/items/questions.ts";
+import { newToken } from "../core/ops/capability.ts";
+import { propose, readRulings } from "../core/ops/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { memStore } from "../testing/store.ts";

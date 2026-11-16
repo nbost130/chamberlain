@@ -6,10 +6,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createRelay } from "../../core/relay.ts";
-import { holdRelayLock } from "../../core/singleton.ts";
-import { openStore } from "../../core/sqlite-store.ts";
-import { dbPath } from "../../core/store.ts";
+import { createRelay } from "../../core/delivery/relay.ts";
+import { holdRelayLock } from "../../core/delivery/singleton.ts";
+import { openStore } from "../../core/store/sqlite-store.ts";
+import { dbPath } from "../../core/store/store.ts";
 import { webhookWake } from "./wake.ts";
 
 const TOOL = new URL("./synthetic-wake.ts", import.meta.url).pathname;

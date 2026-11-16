@@ -1,28 +1,28 @@
 /**
  * The decision-queue page: bun src/web/server.ts [--test | link | rotate-token]
  *
- *   (no argument)   serve the page. Every request must prove it holds the install's capability token (src/core/capability.ts).
+ *   (no argument)   serve the page. Every request must prove it holds the install's capability token (src/core/ops/capability.ts).
  *   link            print the page's links with the token on them: the one to open on a phone or laptop, and the inline view's script address
  *   rotate-token    make a new token; every old link, cookie and rendered view stops working at once, and the new links are printed
  *
  * Binds only to the address in the `web` section of ~/.config/chamberlain/config.json (loopback or a Tailscale IP) and refuses a wildcard or a
- * missing one. An answer's wake is an outbox row written in the answer's own transaction; the daemon's relay sends it (src/core/relay.ts).
+ * missing one. An answer's wake is an outbox row written in the answer's own transaction; the daemon's relay sends it (src/core/delivery/relay.ts).
  *
  * --test runs against fixture data: CHAMBERLAIN_CONF and CHAMBERLAIN_STATE must point away from the live directories, the
  * address must be loopback, no wake is sent and no card is touched.
  */
 import { loadServers, makeAdapter } from "../adapters/index.ts";
-import type { Adapter } from "../core/adapter.ts";
-import { has } from "../core/adapter-conformance.ts";
-import { ensureToken, ensureViewKey, fileCapability } from "../core/capability.ts";
-import { CONF, STATE } from "../core/config.ts";
-import { defaultStore } from "../core/default-store.ts";
-import { readNamed } from "../core/layout.ts";
+import type { Adapter } from "../core/adapter/adapter.ts";
+import { has } from "../core/adapter/adapter-conformance.ts";
+import { CONF, STATE } from "../core/config/config.ts";
+import { readNamed } from "../core/config/layout.ts";
+import { startup } from "../core/config/migrate.ts";
+import type { ServerEntry } from "../core/config/servers.ts";
 import { type Logger, logFor } from "../core/log.ts";
-import { maintain } from "../core/maintain.ts";
-import { startup } from "../core/migrate.ts";
-import type { ServerEntry } from "../core/servers.ts";
+import { ensureToken, ensureViewKey, fileCapability } from "../core/ops/capability.ts";
+import { maintain } from "../core/ops/maintain.ts";
 import { configDir, stateDir } from "../core/state-dir.ts";
+import { defaultStore } from "../core/store/default-store.ts";
 import { STATIC_FILES } from "../embedded.ts";
 import { createApp } from "./app.ts";
 import type { WebConfig } from "./config.ts";
@@ -67,7 +67,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	startup({ migrate: true, log });
 	// The page's capability: made on the first start, kept in secrets/web-token, followed if `chamberlain web rotate-token` replaces it.
 	ensureToken(CONF);
-	// The view key a Decisions post carries instead of that token: made once, never replaced by a start (src/core/capability.ts).
+	// The view key a Decisions post carries instead of that token: made once, never replaced by a start (src/core/ops/capability.ts).
 	ensureViewKey(CONF);
 	maintain(store);
 	const qs = cfg.decisionsServer;

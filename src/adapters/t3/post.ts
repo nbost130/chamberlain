@@ -5,11 +5,11 @@
  */
 
 import { readFileSync } from "node:fs";
-import type { Adapter, PostOptions, PostResult } from "../../core/adapter.ts";
-import { holdsToken, inlineScriptSrc, TOKEN_FILE, withoutToken } from "../../core/capability.ts";
-import { CONF, PrincipalPoss } from "../../core/config.ts";
-import { thread as configThread } from "../../core/layout.ts";
-import { cardTag, type Question } from "../../core/questions.ts";
+import type { Adapter, PostOptions, PostResult } from "../../core/adapter/adapter.ts";
+import { CONF, PrincipalPoss } from "../../core/config/config.ts";
+import { thread as configThread } from "../../core/config/layout.ts";
+import { cardTag, type Question } from "../../core/items/questions.ts";
+import { holdsToken, inlineScriptSrc, TOKEN_FILE, withoutToken } from "../../core/ops/capability.ts";
 import { type PingResult, pingViaCli } from "./ping.ts";
 
 /**

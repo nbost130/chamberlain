@@ -1,4 +1,4 @@
-import type { ThreadState } from "../core/decide.ts";
+import type { ThreadState } from "../core/decide/decide.ts";
 
 export const base: ThreadState = {
 	id: "t1",

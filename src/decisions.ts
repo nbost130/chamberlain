@@ -11,8 +11,8 @@
  */
 import { repostView } from "./adapters/t3/post.ts";
 import { inlineView } from "./ask.ts";
-import { CONF } from "./core/config.ts";
-import { startup } from "./core/migrate.ts";
+import { CONF } from "./core/config/config.ts";
+import { startup } from "./core/config/migrate.ts";
 
 /** What `repost` found out: whether the view was posted, and the one line to say so. */
 export type Reposted = { ok: boolean; line: string };

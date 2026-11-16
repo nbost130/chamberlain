@@ -9,15 +9,15 @@
  * events table records `synthetic-wake-queued`. (An earlier version POSTed straight to the webhook, beside whatever the relay had in flight.)
  */
 import { readFileSync } from "node:fs";
-import { readAfk } from "../../core/afk-held.ts";
-import { CONF, selfCommand } from "../../core/config.ts";
-import { RIGHTS_MARKER } from "../../core/decide.ts";
-import { defaultStore } from "../../core/default-store.ts";
-import { createOutbox } from "../../core/deliver.ts";
+import { CONF, selfCommand } from "../../core/config/config.ts";
+import { readServers } from "../../core/config/servers.ts";
+import { RIGHTS_MARKER } from "../../core/decide/decide.ts";
+import { createOutbox } from "../../core/delivery/deliver.ts";
 import { logFor } from "../../core/log.ts";
 import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
-import { rulingsText } from "../../core/rulings-read.ts";
-import { readServers } from "../../core/servers.ts";
+import { readAfk } from "../../core/ops/afk-held.ts";
+import { rulingsText } from "../../core/ops/rulings-read.ts";
+import { defaultStore } from "../../core/store/default-store.ts";
 import { t3ServerLine } from "./index.ts";
 
 export function main(argv: string[] = process.argv.slice(2)) {

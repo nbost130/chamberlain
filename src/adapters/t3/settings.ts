@@ -1,5 +1,5 @@
 /** The T3 adapter's two settings (settings.json keys read by the adapter): where T3 keeps its files. */
-import { readSettings, tilde } from "../../core/config.ts";
+import { readSettings, tilde } from "../../core/config/config.ts";
 
 const HOME = process.env.HOME;
 /** T3's base directory: CHAMBERLAIN_T3_DIR, then settings.json, then ~/.t3. */

@@ -1,7 +1,7 @@
 /** What the telemetry writer's layers share: its options and results, a row, and the limits and patterns every layer checks against. */
 import { hostname } from "node:os";
-import type { OpenOptions } from "../sqlite-store.ts";
-import type { LogEvent } from "../store.ts";
+import type { OpenOptions } from "../store/sqlite-store.ts";
+import type { LogEvent } from "../store/store.ts";
 import type { FieldValue } from "./fields.ts";
 import type { EventSpec, Level } from "./registry-spec.ts";
 import type { Columns, Ctx } from "./row.ts";

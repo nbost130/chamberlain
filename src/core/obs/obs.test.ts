@@ -215,7 +215,7 @@ describe("the file", () => {
 		const dir = scratch();
 		const store = memStore();
 		expect(obsFor(store).handle).toBeDefined();
-		const real = (require("../sqlite-store.ts") as typeof import("../sqlite-store.ts")).openStore(
+		const real = (require("../store/sqlite-store.ts") as typeof import("../store/sqlite-store.ts")).openStore(
 			`${dir}/chamberlain.db`,
 		);
 		logFor(real).info("wake.delivered", { http: 202 });

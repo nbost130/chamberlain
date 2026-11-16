@@ -1,7 +1,7 @@
 /** The queue page's config: the `web` section of ~/.config/chamberlain/config.json. It must name the one address to bind, never a wildcard. */
-import { cfg } from "../core/layout.ts";
-import { CONFIG_FILE } from "../core/layout-schema.ts";
-import { checkVersion, SCHEMA_VERSION } from "../core/schema.ts";
+import { cfg } from "../core/config/layout.ts";
+import { CONFIG_FILE } from "../core/config/layout-schema.ts";
+import { checkVersion, SCHEMA_VERSION } from "../core/store/schema.ts";
 
 export type WebConfig = {
 	schemaVersion?: number;

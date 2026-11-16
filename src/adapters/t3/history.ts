@@ -6,9 +6,9 @@
  * A handoff wake names the completed run (issue #74). Pass that run id so the read keeps that run's instruction and final,
  * even after a later run ends. An unscoped read returns the full window: runaway and ownership checks need the live prompt.
  */
-import { LIVE, lastInstruction, type TurnItem } from "../../core/decide.ts";
-import { itemsForRun, lastCompletedForRun } from "../../core/handoff.ts";
-import type { InstructionRead } from "../../core/history.ts";
+import { LIVE, lastInstruction, type TurnItem } from "../../core/decide/decide.ts";
+import type { InstructionRead } from "../../core/ops/history.ts";
+import { itemsForRun, lastCompletedForRun } from "../../core/steward/handoff.ts";
 
 /** A page holds at most 75 items, and the conversation view leaves out tool noise, so this reaches thousands of messages back. */
 export const HISTORY_PAGES_MAX = 40;

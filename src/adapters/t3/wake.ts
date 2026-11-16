@@ -2,7 +2,7 @@
  * How a wake reaches a T3 thread: a POST of `{deliveryId, message}` to the webhook of a scheduled task bound to the
  * thread. The webhook cannot de-duplicate, so the daemon's relay (core) sends each outbox row under its one frozen delivery id.
  */
-import type { WakeTransport } from "../../core/deliver.ts";
+import type { WakeTransport } from "../../core/delivery/deliver.ts";
 
 const ERRNO = /^[A-Z_]+$/;
 

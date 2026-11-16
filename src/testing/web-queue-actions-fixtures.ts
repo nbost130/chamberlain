@@ -1,11 +1,11 @@
 import { afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld, HELD } from "../core/afk-held.ts";
-import { newToken, TOKEN_HEADER } from "../core/capability.ts";
-import { QUEUE, type Question } from "../core/questions.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath, type Store } from "../core/store.ts";
+import { QUEUE, type Question } from "../core/items/questions.ts";
+import { appendHeld, HELD } from "../core/ops/afk-held.ts";
+import { newToken, TOKEN_HEADER } from "../core/ops/capability.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath, type Store } from "../core/store/store.ts";
 import { createApp } from "../web/app.ts";
 import { memoryCapability } from "./capability.ts";
 

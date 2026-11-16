@@ -9,10 +9,10 @@
  *                    committed (src/web/app.ts): a kill here leaves none of them.
  *   committed        that transaction has committed: the claim, the answer and the pending outbox row are durable, nothing is sent.
  *   notified         inside the ONE transaction that records a notification decision (the notified keys of a daemon wake, the findings
- *                    and the clock of a sweep) and writes the wake's outbox or held row, before it commits (src/core/deliver.ts):
+ *                    and the clock of a sweep) and writes the wake's outbox or held row, before it commits (src/core/delivery/deliver.ts):
  *                    a kill here leaves neither, so the restart notifies again.
  *   enqueued         that transaction has committed: the decision and the wake's row both exist.
- *   composed         the relay's composition has committed: held items are bound to one new pending row (src/core/relay.ts).
+ *   composed         the relay's composition has committed: held items are bound to one new pending row (src/core/delivery/relay.ts).
  *   rights-first-queued  the relay's standalone full-rights prerequisite (`<id>:rights-first:<state key>`) for a Steward row that depends on the rights has committed, and
  *                    neither it nor the row has been sent.
  *   attempt-begun    inside the relay's attempt transaction, before it commits: the count is not raised and nothing is sent.

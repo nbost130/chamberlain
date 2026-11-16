@@ -1,8 +1,8 @@
 import type { Rpc } from "../adapters/t3/rpc.ts";
 import { T3Link } from "../adapters/t3/watch.ts";
-import type { AdapterEnv } from "../core/adapter.ts";
-import type { WaitingItem } from "../core/adapter-waiting.ts";
-import type { CardThreadRead } from "../core/card-reconcile.ts";
+import type { AdapterEnv } from "../core/adapter/adapter.ts";
+import type { WaitingItem } from "../core/adapter/adapter-waiting.ts";
+import type { CardThreadRead } from "../core/items/card-reconcile.ts";
 
 export const approval = { type: "approval_request", status: "waiting", requestId: "a1", label: "deploy" };
 

@@ -1,6 +1,6 @@
-import { reportKey, type ThreadState, type TurnItem } from "../core/decide";
-import type { InstructionRead } from "../core/history";
-import { type ReportWatch, settleReport } from "../core/report";
+import { reportKey, type ThreadState, type TurnItem } from "../core/decide/decide.ts";
+import type { InstructionRead } from "../core/ops/history.ts";
+import { type ReportWatch, settleReport } from "../core/report.ts";
 
 export const QUIET = 180_000;
 

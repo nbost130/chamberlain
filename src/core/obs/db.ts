@@ -8,10 +8,10 @@
  * measured, p99 3 ms against 0.09 ms without it). The daemon checkpoints from its hourly pass instead (`Obs.checkpoint`), and a closing connection does.
  */
 import { Database } from "bun:sqlite";
-import { applyMigrations } from "../apply-migrations.ts";
-import { type OpenOptions, preparePrivateFile } from "../database.ts";
-import type { Migration } from "../migrations.ts";
-import { SchemaTooNewError } from "../schema.ts";
+import { applyMigrations } from "../store/apply-migrations.ts";
+import { type OpenOptions, preparePrivateFile } from "../store/database.ts";
+import type { Migration } from "../store/migrations.ts";
+import { SchemaTooNewError } from "../store/schema.ts";
 
 /** The telemetry database's handle, and the ledger's read-only one: the only types of the driver that leave this file. */
 export type ObsDb = Database;

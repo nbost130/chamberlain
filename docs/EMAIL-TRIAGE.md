@@ -209,7 +209,7 @@ How it uses the existing pieces:
   the claim is written as now, and no wake row is queued. The module reads answered mail cards by item id on every run and on a one-minute
   timer, carries out the choice (archive, label, route), and records the item id as done in `mail.db`, so a crash repeats an archive, which
   is harmless, and never skips one. The existing rule stands: an answer with a note always reaches the Steward as an answer wake.
-  Record-only claims need two more changes in B5. Today `recoverClaims` (`src/core/questions.ts`) walks the page's unresolved claims and
+  Record-only claims need two more changes in B5. Today `recoverClaims` (`src/core/items/questions.ts`) walks the page's unresolved claims and
   enqueues the stored wake of any whose delivery id is neither delivered nor known to the outbox; a record-only claim's id never reaches
   the outbox, so recovery would send it. B5 marks the claim record-only, and recovery treats it as done once the module has recorded the
   item done (and resolves the item then), never enqueueing it. Every action is idempotent, so a crash at any point repeats it safely:

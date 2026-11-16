@@ -3,9 +3,9 @@
  * approval, a secret or link request, a goal proposal), and the fingerprint each carries. Nothing here reads or answers.
  */
 import { createHash } from "node:crypto";
-import type { WaitingCard } from "../../core/adapter-waiting.ts";
-import { OPERATOR_ONLY_KINDS } from "../../core/decide.ts";
-import { tagIn } from "../../core/questions.ts";
+import type { WaitingCard } from "../../core/adapter/adapter-waiting.ts";
+import { OPERATOR_ONLY_KINDS } from "../../core/decide/decide.ts";
+import { tagIn } from "../../core/items/questions.ts";
 import { normalizeWaitKind } from "./state.ts";
 
 type Question = {
@@ -48,7 +48,7 @@ export function secretWaits(i: Pick<TurnItem, "secretStatus" | "runId">, runs: r
 	const run = i.runId ? runs.find((r) => r.id === i.runId) : undefined;
 	return !(run && RUN_ENDED.has(String(run.status ?? "")));
 }
-/** A thread in the shell snapshot (field names as T3 sends them; see toState in src/core/decide.ts). */
+/** A thread in the shell snapshot (field names as T3 sends them; see toState in src/core/decide/decide.ts). */
 export type ShellThread = {
 	id: string;
 	title?: string;

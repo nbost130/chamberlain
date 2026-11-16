@@ -2,9 +2,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { AdapterEnv } from "../../core/adapter.ts";
-import { migrateLayout } from "../../core/config-migrate.ts";
-import { resetLayout } from "../../core/layout-legacy.ts";
+import type { AdapterEnv } from "../../core/adapter/adapter.ts";
+import { migrateLayout } from "../../core/config/config-migrate.ts";
+import { resetLayout } from "../../core/config/layout-legacy.ts";
 import { T3Link } from "./watch.ts";
 
 const dirs: string[] = [];

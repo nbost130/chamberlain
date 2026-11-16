@@ -5,8 +5,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { publishSwitchRef, seedGen1 } from "./core/steward-gens.ts";
-import { prepareSwitch } from "./core/steward-prepare.ts";
+import { publishSwitchRef, seedGen1 } from "./core/steward/steward-gens.ts";
+import { prepareSwitch } from "./core/steward/steward-prepare.ts";
 import {
 	accepted,
 	daemon,

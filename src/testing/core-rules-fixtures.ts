@@ -1,4 +1,4 @@
-import type { RuleSpec } from "../core/rules.ts";
+import type { RuleSpec } from "../core/ops/rules.ts";
 
 export const source = `# Operating rules
 

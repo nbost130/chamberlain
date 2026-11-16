@@ -95,7 +95,7 @@ describe("the disposition store (migration 13)", () => {
 		expect(s.dispositions.get(k)).toBeDefined();
 	});
 	test("the table has no column that could hold message text", async () => {
-		const { MIGRATIONS } = await import("../migrations.ts");
+		const { MIGRATIONS } = await import("../store/migrations.ts");
 		const sql = MIGRATIONS.find((m) => m.version === 13)!.sql;
 		const body = sql.slice(sql.indexOf("CREATE TABLE thread_dispositions ("), sql.indexOf("PRIMARY KEY"));
 		const columns = [...body.matchAll(/^\t(\w+) (TEXT|INTEGER|REAL)/gm)].map((m) => m[1]);

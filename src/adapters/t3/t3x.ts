@@ -9,10 +9,10 @@
  *   bun src/adapters/t3/t3x.ts send    <server> <threadId> <text>
  */
 
-import { CONF } from "../../core/config.ts";
-import { readSecret } from "../../core/layout.ts";
-import { startup } from "../../core/migrate.ts";
-import { readServers } from "../../core/servers.ts";
+import { CONF } from "../../core/config/config.ts";
+import { readSecret } from "../../core/config/layout.ts";
+import { startup } from "../../core/config/migrate.ts";
+import { readServers } from "../../core/config/servers.ts";
 import { activeRunOf, messageCommand } from "./ping.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import { type T3Server, t3Server } from "./server.ts";

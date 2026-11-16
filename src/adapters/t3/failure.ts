@@ -1,9 +1,9 @@
 /**
  * Why T3's newest failed run failed, from the thread's projection. T3 records a failed run's error as a turn item of type
  * `error` carrying the run's id and a `failure` object (`class`, `code`, `message`, `retryable`, `resetAt`), and an interrupt as a
- * `run_interrupt_request` item with the run's id. Both are read here and nowhere else; the core classifies them (src/core/recover.ts).
+ * `run_interrupt_request` item with the run's id. Both are read here and nowhere else; the core classifies them (src/core/ops/recover.ts).
  */
-import type { RunFailure, RunLook } from "../../core/adapter-inspect.ts";
+import type { RunFailure, RunLook } from "../../core/adapter/adapter-inspect.ts";
 
 type Run = { id?: string; ordinal?: number; status?: string };
 type Item = {

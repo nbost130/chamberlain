@@ -1,9 +1,9 @@
 import { afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { askQuestion, type Question } from "../core/questions.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath, type Store } from "../core/store.ts";
+import { askQuestion, type Question } from "../core/items/questions.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath, type Store } from "../core/store/store.ts";
 import { createApp } from "../web/app.ts";
 import type { SendToThread } from "../web/waiting.ts";
 import { openCapability } from "./capability.ts";

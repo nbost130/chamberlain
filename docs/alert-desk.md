@@ -1,7 +1,7 @@
 # The Alert Desk
 
 Alerts get their own standing thread, the **desk**, instead of a Steward wake kind. Alert sources append one JSON line each to an inbox file; the
-daemon drains it (`src/core/alert-desk.ts`), dedupes per alert family through the item system, and queues wakes for the `desk` receiver. The daemon's
+daemon drains it (`src/core/desk/alert-desk.ts`), dedupes per alert family through the item system, and queues wakes for the `desk` receiver. The daemon's
 one relay sends them, as a second receiver (`receivers: { desk }`), through the adapter's `alertDesk` capability and the relay's one serial POST
 queue, with the desk thread's own busy gate, so
 the hold-and-digest path folds a burst of families into one wake and a busy desk never holds the Steward's wakes. The desk's standing prompt is
@@ -25,7 +25,7 @@ One object per line, written with a single `write` on a file opened with `O_APPE
 
 ## What decides, and where
 
-Every decision is the item system's (`src/core/notification.ts`); there is no second record of what already woke the desk. For each family:
+Every decision is the item system's (`src/core/items/notification.ts`); there is no second record of what already woke the desk. For each family:
 
 | Case | How the items express it |
 | --- | --- |
@@ -57,7 +57,7 @@ shows each row with `for desk`, so `chamberlain wakes cancel <id>` can give it u
 
 At-least-once, with stable ids. A wake's id comes from the event (`desk:<hash of family, signature and time>`), a replay after a crash makes the same id, and
 an id already bound to an outbox row (any status) or tombstoned is never enqueued again. One window cannot be closed: a crash after the webhook accepts a
-POST and before the row is committed `delivered` sends that wake once more after the restart (`src/core/relay.ts` describes it), under the same id. So the
+POST and before the row is committed `delivered` sends that wake once more after the restart (`src/core/delivery/relay.ts` describes it), under the same id. So the
 desk skips an id it has already handled: its prompt says to search the thread for the id first and answer `repeat of <id>` (docs/alert-desk-prompt.md).
 
 ## The command allowlist is enforced

@@ -5,9 +5,9 @@
  * task must not swallow a report.
  */
 
-import { reportStillDue, type ThreadState } from "./decide.ts";
-import { type InstructionRead, skipEvent } from "./history.ts";
-import { setting } from "./layout.ts";
+import { setting } from "./config/layout.ts";
+import { reportStillDue, type ThreadState } from "./decide/decide.ts";
+import { type InstructionRead, skipEvent } from "./ops/history.ts";
 
 export const REPORT_HOLD_MS = 60 * 60_000;
 /** The hold in force: `reportHoldMs` (CHAMBERLAIN_REPORT_HOLD_MS, else config.json), else the default above. */

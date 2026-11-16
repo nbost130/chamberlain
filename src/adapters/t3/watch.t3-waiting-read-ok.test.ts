@@ -3,11 +3,11 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingItem } from "../../core/adapter-waiting.ts";
-import { heldOpen } from "../../core/afk-held.ts";
-import { cardWaitOf, holdCard } from "../../core/card-hold.ts";
-import { reconcileCardHolds } from "../../core/card-reconcile.ts";
-import { questionStates } from "../../core/questions.ts";
+import type { WaitingItem } from "../../core/adapter/adapter-waiting.ts";
+import { cardWaitOf, holdCard } from "../../core/items/card-hold.ts";
+import { reconcileCardHolds } from "../../core/items/card-reconcile.ts";
+import { questionStates } from "../../core/items/questions.ts";
+import { heldOpen } from "../../core/ops/afk-held.ts";
 import { approval, asCardRead, card, link } from "../../testing/adapters-t3-watch-fixtures.ts";
 import { memStore } from "../../testing/store.ts";
 import { TERMINAL_CARD_STATUSES } from "./projection.ts";

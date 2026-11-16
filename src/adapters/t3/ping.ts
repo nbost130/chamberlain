@@ -1,7 +1,7 @@
 /**
  * The one way Chamberlain puts a message into a T3 thread. Every sender goes through this module: the decision-queue post
  * (the Decisions thread, over the T3 CLI), the page's direct send and goal acceptance, `t3x send`, and the daemon's own
- * stalled-thread retry (src/core/recover.ts). A second send path is a second place to get an identity, a seed or a timeout
+ * stalled-thread retry (src/core/ops/recover.ts). A second send path is a second place to get an identity, a seed or a timeout
  * wrong, so there is none: src/adapters/t3/ping.test.ts fails when another file builds a `message.dispatch` command.
  *
  * Two transports, one result shape:
@@ -20,7 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
-import { readSecret } from "../../core/layout.ts";
+import { readSecret } from "../../core/config/layout.ts";
 import { within as deadline } from "../../core/within.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";

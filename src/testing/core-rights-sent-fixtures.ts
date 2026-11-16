@@ -1,5 +1,5 @@
-import { openRightsSent, rightsFor } from "../core/rights-sent.ts";
-import type { Store } from "../core/store.ts";
+import { openRightsSent, rightsFor } from "../core/steward/rights-sent.ts";
+import type { Store } from "../core/store/store.ts";
 
 export const STEWARD = "steward-thread-1";
 

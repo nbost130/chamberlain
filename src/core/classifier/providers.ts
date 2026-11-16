@@ -13,7 +13,7 @@
  * thread `unknown`; a missing answer is never read as no. Errors never carry response bodies or model output, which may echo the
  * thread's text: only a status, an exit code or a fixed phrase.
  */
-import { looksLikeAsk, looksLikeStall } from "../decide.ts";
+import { looksLikeAsk, looksLikeStall } from "../decide/decide.ts";
 import {
 	type CliReply,
 	type CliRunner,

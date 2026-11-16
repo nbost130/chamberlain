@@ -1,9 +1,9 @@
-import { appendHeld, HELD, type Held, heldOpen } from "../core/afk-held.ts";
-import type { GhRead } from "../core/hold-lookup.ts";
-import { reconcileRefHolds } from "../core/hold-reconcile.ts";
-import type { MachineSnapshot, ThreadFacts } from "../core/hold-threads.ts";
-import type { Answer, Question } from "../core/questions.ts";
-import type { Store } from "../core/store.ts";
+import type { GhRead } from "../core/decide/hold-lookup.ts";
+import { reconcileRefHolds } from "../core/decide/hold-reconcile.ts";
+import type { MachineSnapshot, ThreadFacts } from "../core/decide/hold-threads.ts";
+import type { Answer, Question } from "../core/items/questions.ts";
+import { appendHeld, HELD, type Held, heldOpen } from "../core/ops/afk-held.ts";
+import type { Store } from "../core/store/store.ts";
 
 const T0 = new Date("2026-11-13T01:00:00.000Z");
 

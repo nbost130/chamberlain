@@ -15,7 +15,7 @@
  */
 
 import { obsFor } from "../log.ts";
-import type { Item, Store } from "../store.ts";
+import type { Item, Store } from "../store/store.ts";
 import { type LedgerDb, openLedger } from "./db.ts";
 import { corrOf, isUuid } from "./fields.ts";
 import type { Obs } from "./obs.ts";

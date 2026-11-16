@@ -1,6 +1,6 @@
-/** The sentences of the Steward's hand-off that are about T3 (BriefNotes, src/core/adapter.ts): its tools, and the helpers that read it. */
-import type { BriefNotes } from "../../core/adapter.ts";
-import { selfCommand } from "../../core/config.ts";
+/** The sentences of the Steward's hand-off that are about T3 (BriefNotes, src/core/adapter/adapter.ts): its tools, and the helpers that read it. */
+import type { BriefNotes } from "../../core/adapter/adapter.ts";
+import { selfCommand } from "../../core/config/config.ts";
 
 export const t3Brief = ({ repo }: { repo: string }): BriefNotes => ({
 	threads: "T3 threads",

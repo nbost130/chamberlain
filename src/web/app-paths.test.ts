@@ -5,8 +5,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { getQuestion } from "../core/questions.ts";
-import { addInForce, readRulings } from "../core/rulings.ts";
+import { getQuestion } from "../core/items/questions.ts";
+import { addInForce, readRulings } from "../core/ops/rulings.ts";
 import { useWebAppPathsFixtures } from "../testing/web-app-paths-fixtures.ts";
 
 const { question, setup, read } = useWebAppPathsFixtures();

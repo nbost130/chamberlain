@@ -23,7 +23,7 @@
  * `inlineVerdict` (./app.ts) is the OLD list, three reads and a plain answer, and still holds for the page key from a frame or with no Origin.
  */
 
-import type { KeyUsed } from "../core/questions.ts";
+import type { KeyUsed } from "../core/items/questions.ts";
 
 /** The reads the view key may make. */
 export const VIEW_KEY_READS: ReadonlySet<string> = new Set(["/api/queue", "/api/recent", "/api/rulings"]);

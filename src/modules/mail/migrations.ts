@@ -9,7 +9,7 @@
  * pieces own are added by their own migrations: rules (B3, #36), cards, actions and the unattended-archive state (B5, #38), highlights
  * and labelled examples (B7, #40).
  */
-import type { Migration } from "../../core/migrations.ts";
+import type { Migration } from "../../core/store/migrations.ts";
 
 export const MAIL_MIGRATIONS: readonly Migration[] = [
 	{

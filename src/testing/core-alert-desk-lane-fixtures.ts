@@ -1,4 +1,4 @@
-import type { WakeTransport } from "../core/deliver.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
 
 export const transport = () => {
 	const sent: { deliveryId: string; message: string }[] = [];

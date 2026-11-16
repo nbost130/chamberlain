@@ -2,7 +2,7 @@
  * The T3 adapter's `setTitle`: renames the Decisions thread through T3's thread.metadata.update command, which needs the
  * orchestration:operate token. Without the token the title stays as it was.
  */
-import { readSecret } from "../../core/layout.ts";
+import { readSecret } from "../../core/config/layout.ts";
 import { connect } from "./rpc.ts";
 
 export type SetTitle = (title: string) => Promise<"set" | "no-token" | "failed">;

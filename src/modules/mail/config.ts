@@ -21,7 +21,7 @@ import {
 	probability,
 	required,
 	str,
-} from "../../core/config-fields.ts";
+} from "../../core/config/config-fields.ts";
 import { MODEL_ID } from "../../core/llm/cli.ts";
 import { KEYS, MAIL_DEFAULTS, type MailConfig, type Newsletter, PROVIDERS, UNATTENDED_FLOORS, W } from "./defaults.ts";
 import { parseRoutes, type Route } from "./routes.ts";

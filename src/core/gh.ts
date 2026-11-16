@@ -1,11 +1,11 @@
 /**
- * The GitHub reader the held-ledger reconciler uses (src/core/hold-reconcile.ts): the GitHub CLI's `api` command with a
+ * The GitHub reader the held-ledger reconciler uses (src/core/decide/hold-reconcile.ts): the GitHub CLI's `api` command with a
  * `--jq` filter, parsed. The command is `gh` unless `gh` (CHAMBERLAIN_GH, or config.json) names another (a wrapper, or a stub in tests). Any
  * failure rejects, and the reconciler leaves the hold open on a rejection.
  */
 import { execFile } from "node:child_process";
-import type { GhRead } from "./hold-lookup.ts";
-import { setting } from "./layout.ts";
+import { setting } from "./config/layout.ts";
+import type { GhRead } from "./decide/hold-lookup.ts";
 
 export const ghRead: GhRead = (path, jq) =>
 	new Promise((resolve, reject) => {

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import type { Server, WaitingDeps } from "../adapters/t3/wait-ctx.ts";
 import { createT3Waiting } from "../adapters/t3/waiting.ts";
-import type { Adapter } from "../core/adapter.ts";
+import type { Adapter } from "../core/adapter/adapter.ts";
 import { createWaiting, threadSender } from "../web/waiting.ts";
 import { memStore } from "./store.ts";
 

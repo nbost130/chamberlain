@@ -1,7 +1,7 @@
 /** Shared fake-clock scenario for queued-handoff engine tests (issue #74 / PR #75). */
 import { setSystemTime } from "bun:test";
-import type { TurnItem } from "../core/decide.ts";
-import { itemsForRun, lastCompletedForRun } from "../core/handoff.ts";
+import type { TurnItem } from "../core/decide/decide.ts";
+import { itemsForRun, lastCompletedForRun } from "../core/steward/handoff.ts";
 import type { useCoreEngineFixtures } from "./core-engine-fixtures.ts";
 
 export const HANDOFF_THREAD = "mcp:launch:f707bc64-review";

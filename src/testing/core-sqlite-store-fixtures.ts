@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import { afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { openStore } from "../core/sqlite-store.ts";
-import type { Store } from "../core/store.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import type { Store } from "../core/store/store.ts";
 
 /** Registers this suite's scratch cleanup for the test file that calls it, and returns its fixtures. */
 export function useCoreSqliteStoreFixtures() {

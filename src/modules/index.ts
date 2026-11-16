@@ -7,7 +7,7 @@
  * nothing: no timer, no file, no event.
  */
 
-import { cfg } from "../core/layout.ts";
+import { cfg } from "../core/config/layout.ts";
 import type { Module, ModuleContext, RunningModule } from "../core/module.ts";
 import { mail } from "./mail/index.ts";
 

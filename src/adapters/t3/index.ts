@@ -4,10 +4,16 @@
  * state database (read-only), posts questions to the Decisions thread with the T3 CLI, and, where the page has been
  * granted an operate token, answers cards and renames the Decisions thread through T3's own commands.
  */
-import type { Adapter, AdapterEntry, AdapterEnv, AdapterFactory, OptionalCapability } from "../../core/adapter.ts";
-import type { Gate } from "../../core/hold.ts";
-import { setting } from "../../core/layout.ts";
-import type { ServerEntry } from "../../core/servers.ts";
+import type {
+	Adapter,
+	AdapterEntry,
+	AdapterEnv,
+	AdapterFactory,
+	OptionalCapability,
+} from "../../core/adapter/adapter.ts";
+import { setting } from "../../core/config/layout.ts";
+import type { ServerEntry } from "../../core/config/servers.ts";
+import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { t3Linker } from "./links.ts";
 import { postCard } from "./post.ts";

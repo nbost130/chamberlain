@@ -4,10 +4,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { eventRows, THREAD } from "../../testing/obs.ts";
 import { obsFor } from "../log.ts";
-import { openStore } from "../sqlite-store.ts";
-import { dbPath } from "../store.ts";
+import { openStore } from "../store/sqlite-store.ts";
+import { dbPath } from "../store/store.ts";
 
-const SRC = new URL("..", import.meta.url).pathname;
+const DECIDED = new URL("../ops/decided.ts", import.meta.url).pathname;
 const dirs: string[] = [];
 afterEach(() => {
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -17,20 +17,17 @@ test("a decision logged by the CLI has its decision.logged event, keyed by the l
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-decided-`);
 	dirs.push(root);
 	for (const d of ["conf", "state"]) mkdirSync(`${root}/${d}`, { mode: 0o700 });
-	const run = Bun.spawn(
-		["bun", `${SRC}decided.ts`, THREAD, "shipped the thing at https://example.com/x", "R12, R30: words"],
-		{
-			env: {
-				...process.env,
-				HOME: root,
-				CHAMBERLAIN_CONF: `${root}/conf`,
-				CHAMBERLAIN_STATE: `${root}/state`,
-				CHAMBERLAIN_VERBOSE: "",
-			},
-			stdout: "pipe",
-			stderr: "pipe",
+	const run = Bun.spawn(["bun", DECIDED, THREAD, "shipped the thing at https://example.com/x", "R12, R30: words"], {
+		env: {
+			...process.env,
+			HOME: root,
+			CHAMBERLAIN_CONF: `${root}/conf`,
+			CHAMBERLAIN_STATE: `${root}/state`,
+			CHAMBERLAIN_VERBOSE: "",
 		},
-	);
+		stdout: "pipe",
+		stderr: "pipe",
+	});
 	expect(await run.exited).toBe(0);
 	const store = openStore(dbPath(`${root}/state`));
 	try {

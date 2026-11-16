@@ -8,8 +8,8 @@ description: Hand the Steward role to a fresh thread with a clean context, then 
 Hand the Steward role to a fresh thread. The operator runs this, or asks you to. Do it in order and stop at the first step that fails.
 
 1. **Rebuild the brief, then write down the open work.** First rebuild `{{state}}/steward-brief.md` from the builder, so the next Steward gets today's rules and rulings, not an old copy's: `bun {{chamberlain}}/src/brief.ts steward --mode <live|test, as the current brief's "## Mode:" says> > /tmp/brief.new && command mv -f /tmp/brief.new {{state}}/steward-brief.md`. Then add the section `## Open work at hand-over` at the end. For each item, give the thread name, server and full thread id, the PR number and pinned head, what is waiting and on whom, and any answer the operator has given, quoted with its time. Sources:
-   - `bun {{chamberlain}}/src/core/afk.ts held`
-   - `bun {{chamberlain}}/src/core/decided.ts list 20`
+   - `bun {{chamberlain}}/src/core/ops/afk.ts held`
+   - `bun {{chamberlain}}/src/core/decide/decided.ts list 20`
    - `list_thread_pull_requests` for this thread
    - what you know
 

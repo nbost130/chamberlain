@@ -2,8 +2,8 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { deskAskCommand, renderDeskPrompt } from "./core/alert-desk-prompt.ts";
-import { selfCommand, setCompiled } from "./core/config.ts";
+import { selfCommand, setCompiled } from "./core/config/config.ts";
+import { deskAskCommand, renderDeskPrompt } from "./core/desk/alert-desk-prompt.ts";
 import { checkCommand } from "./desk-allowlist.ts";
 import { ASK, allowed, MONITOR, refused } from "./testing/desk-allowlist-fixtures.ts";
 

@@ -37,19 +37,19 @@ describe("one relay: the only code that calls a wake transport", () => {
 				(stripComments(readFileSync(join(SRC, f), "utf8")).match(new RegExp(`\\b${name}\\(`, "g")) ?? []).map(() => f),
 			);
 		// The definitions are `function createRelay(` / `function createEngine(`; every other match is a call.
-		expect(calls("createRelay").sort()).toEqual([RELAY, "core/engine.ts", "testing/relay.ts"].sort());
-		expect(calls("createEngine").sort()).toEqual(["core/engine.ts", "daemon.ts"]);
+		expect(calls("createRelay").sort()).toEqual([RELAY, "core/engine/engine.ts", "testing/relay.ts"].sort());
+		expect(calls("createEngine").sort()).toEqual(["core/engine/engine.ts", "daemon.ts"]);
 		// Every receiver (the Steward, the Alert Desk) is a lane of that relay, never a relay of its own.
-		expect(stripComments(readFileSync(join(SRC, "core/engine.ts"), "utf8"))).toMatch(
+		expect(stripComments(readFileSync(join(SRC, "core/engine/engine.ts"), "utf8"))).toMatch(
 			/receivers:\s*\{\s*\[DESK_RECEIVER\]/,
 		);
 	});
 
 	test("one relay per process and per store, at run time: a second relay or engine on the held lock is refused, and so is a second lock", async () => {
-		const { holdRelayLock, RelayRunningError } = await import("./core/singleton.ts");
-		const { openStore } = await import("./core/sqlite-store.ts");
-		const { createRelay } = await import("./core/relay.ts");
-		const { createEngine } = await import("./core/engine.ts");
+		const { holdRelayLock, RelayRunningError } = await import("./core/delivery/singleton.ts");
+		const { openStore } = await import("./core/store/sqlite-store.ts");
+		const { createRelay } = await import("./core/delivery/relay.ts");
+		const { createEngine } = await import("./core/engine/engine.ts");
 		const { createFakeAdapter } = await import("./testing/fake-adapter.ts");
 		const root = mkdtempSync(join(tmpdir(), "chamberlain-one-relay-"));
 		const db = join(root, "chamberlain.db");
@@ -92,7 +92,7 @@ describe("one relay: the only code that calls a wake transport", () => {
 			/export (async )?function (testRelay|testRelayLock|holdTestRelayLock)\b/.test(readFileSync(join(SRC, f), "utf8")),
 		);
 		// holdTestRelayLock is the stub-lock handle's maker: it lives beside holdRelayLock, is called only by testing/lock.ts, and refuses to run outside a test.
-		expect(defs.sort()).toEqual(["core/singleton.ts", "testing/lock.ts", "testing/relay.ts"]);
+		expect(defs.sort()).toEqual(["core/delivery/singleton.ts", "testing/lock.ts", "testing/relay.ts"]);
 	});
 
 	test("a transport destructured out of its object is caught (const {send} = backend.wake; send(...))", () => {
@@ -135,7 +135,9 @@ describe("one relay: the only code that calls a wake transport", () => {
 		).toEqual([]);
 		expect(senderViolations("adapters/t3/index.ts", 'env.readPrivate("wake-url"); webhookWake(() => u);')).toEqual([]);
 		expect(senderViolations("adapters/t3/rpc.ts", 'ws.send(frame); fetch(u, { method: "POST" })')).toEqual([]);
-		expect(senderViolations("core/engine.ts", "createRelay({ lock: d.lock, wake: homeAdapter.wake })")).toEqual([]);
+		expect(senderViolations("core/engine/engine.ts", "createRelay({ lock: d.lock, wake: homeAdapter.wake })")).toEqual(
+			[],
+		);
 		expect(senderViolations("daemon.ts", "const lock = holdRelayLock(p); createEngine({ lock })")).toEqual([]);
 		expect(
 			senderViolations(
@@ -161,7 +163,7 @@ describe("one relay: the only code that calls a wake transport", () => {
 				"const { deliveryId, message } = out.wake!; const o = { send: 1 }; const { a, b } = o;",
 			),
 		).toEqual([]);
-		expect(senderViolations("core/engine.ts", "const { wake, compact } = homeAdapter;")).toEqual([]);
+		expect(senderViolations("core/engine/engine.ts", "const { wake, compact } = homeAdapter;")).toEqual([]);
 		expect(senderViolations(RELAY, "const t = d.wake; await t.send(id, m);")).toEqual([]);
 		// The test-only boundary: a static, literal or computed way in.
 		expect(testingViolations("daemon.ts", 'import { testRelay } from "./testing/relay.ts";')).toHaveLength(3);
@@ -169,7 +171,7 @@ describe("one relay: the only code that calls a wake transport", () => {
 		expect(testingViolations("core/x.ts", 'const m = await import("../testing/lock.ts");')).toHaveLength(2);
 		expect(testingViolations("adapters/t3/x.ts", "export const a = testRelayLock();")).toHaveLength(1);
 		expect(testingViolations("adapters/t3/x.ts", "export const a = holdTestRelayLock('x');")).toHaveLength(1);
-		expect(testingViolations("core/singleton.ts", "export function holdTestRelayLock() {}")).toEqual([]);
+		expect(testingViolations("core/delivery/singleton.ts", "export function holdTestRelayLock() {}")).toEqual([]);
 		expect(testingViolations("cli/x.ts", 'import { a } from "/srv/app/src/testing/relay.ts";')).toHaveLength(2);
 		expect(testingViolations("cli/x.ts", 'import { a } from "file:///srv/app/src/testing/relay.ts";')).toHaveLength(2);
 		expect(testingViolations("cli/x.ts", 'import { a } from "src/testing/relay.ts";')).toHaveLength(2);
@@ -194,7 +196,7 @@ describe("one relay: the only code that calls a wake transport", () => {
 		).toEqual([]);
 		// Dynamic imports: only a plain string literal is allowed in production code.
 		expect(dynamicImportViolations("cli/x.ts", "await import(name);")).toHaveLength(1);
-		expect(dynamicImportViolations("cli/x.ts", 'await import("../a/" + n + ".ts");')).toHaveLength(1);
+		expect(dynamicImportViolations("cli/x.ts", 'await import("../a.ts" + n + ".ts");')).toHaveLength(1);
 		expect(dynamicImportViolations("cli/x.ts", `await import(\`../a/\${n}.ts\`);`)).toHaveLength(1);
 		expect(dynamicImportViolations("cli/x.ts", "await import(`../a/b.ts`);")).toHaveLength(1);
 		expect(dynamicImportViolations("cli/x.ts", "const r = require(path);")).toHaveLength(1);

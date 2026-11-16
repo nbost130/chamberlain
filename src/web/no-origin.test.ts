@@ -7,10 +7,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { newToken } from "../core/capability.ts";
-import { getQuestion, QUEUE } from "../core/questions.ts";
-import { readClaim } from "../core/questions-claim.ts";
-import { readRulings } from "../core/rulings.ts";
+import { getQuestion, QUEUE } from "../core/items/questions.ts";
+import { readClaim } from "../core/items/questions-claim.ts";
+import { newToken } from "../core/ops/capability.ts";
+import { readRulings } from "../core/ops/rulings.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { useWebNoOriginFixtures } from "../testing/web-no-origin-fixtures.ts";
 

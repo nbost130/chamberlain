@@ -1,13 +1,13 @@
 import { afterEach } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { appendHeld, closeHeld, heldId } from "../core/afk-held.ts";
-import { decisionRecord } from "../core/decided.ts";
+import { type Answer, askQuestion, QUEUE, type Question } from "../core/items/questions.ts";
+import { claimWake, pageClaim } from "../core/items/questions-claim.ts";
 import { obsFor } from "../core/log.ts";
-import { type Answer, askQuestion, QUEUE, type Question } from "../core/questions.ts";
-import { claimWake, pageClaim } from "../core/questions-claim.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath, type Store } from "../core/store.ts";
+import { appendHeld, closeHeld, heldId } from "../core/ops/afk-held.ts";
+import { decisionRecord } from "../core/ops/decided.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath, type Store } from "../core/store/store.ts";
 import { eventRows, OTHER_THREAD, THREAD } from "./obs.ts";
 import { MARK } from "./secrets.ts";
 

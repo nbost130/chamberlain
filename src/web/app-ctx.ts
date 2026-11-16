@@ -1,10 +1,10 @@
 /** What the page's handlers run on: its dependencies, the context made from them, and how an item or card is shown. */
-import type { WaitingCard } from "../core/adapter-waiting.ts";
-import type { Capability } from "../core/capability.ts";
-import { type QuestionState, questionStates } from "../core/questions.ts";
-import { batchable } from "../core/questions-wake.ts";
-import type { Clock } from "../core/rulings.ts";
-import type { Store } from "../core/store.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
+import { type QuestionState, questionStates } from "../core/items/questions.ts";
+import { batchable } from "../core/items/questions-wake.ts";
+import type { Capability } from "../core/ops/capability.ts";
+import type { Clock } from "../core/ops/rulings.ts";
+import type { Store } from "../core/store/store.ts";
 import { createItemActions } from "./queue-actions.ts";
 import type { Linker } from "./thread-links.ts";
 import type { SendToThread, Waiting } from "./waiting.ts";
@@ -20,7 +20,7 @@ export type AppDeps = {
 	/** Host header values accepted, e.g. "<tailscale-ip>:3790". A request for any other host is refused (DNS rebinding). */
 	hosts: string[];
 	/**
-	 * The capability token every request to the API, an item's evidence and the page itself must prove it holds (src/core/capability.ts). There is
+	 * The capability token every request to the API, an item's evidence and the page itself must prove it holds (src/core/ops/capability.ts). There is
 	 * no way to leave it out: a page without one would answer anything that reaches its port.
 	 */
 	capability: Capability;

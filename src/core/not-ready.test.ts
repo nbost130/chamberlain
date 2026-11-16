@@ -11,9 +11,9 @@ import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { testRelayLock } from "../testing/lock.ts";
 import { memStore } from "../testing/store.ts";
 import { recordingWake } from "../testing/wake.ts";
-import { createOutbox } from "./deliver.ts";
-import { createEngine } from "./engine.ts";
-import { createRelay } from "./relay.ts";
+import { createOutbox } from "./delivery/deliver.ts";
+import { createRelay } from "./delivery/relay.ts";
+import { createEngine } from "./engine/engine.ts";
 
 const dirs: string[] = [];
 const stops: (() => Promise<void>)[] = [];

@@ -1,4 +1,4 @@
-import type { Clock } from "../core/rulings.ts";
+import type { Clock } from "../core/ops/rulings.ts";
 
 export const at =
 	(iso: string): Clock =>

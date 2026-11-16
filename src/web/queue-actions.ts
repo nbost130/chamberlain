@@ -4,13 +4,20 @@
  * the app wires it to its serial queue and clock (./app.ts). The full page does all four, and so does the Decisions view's key
  * (`mayDo` in ./view-key.ts). Each change is recorded with the key it was made with.
  */
-import { closeHeldForItem } from "../core/afk-held.ts";
+
 import { crashPoint } from "../core/crash.ts";
-import { type Answer, type AnswerKind, type KeyUsed, type QuestionState, questionStates } from "../core/questions.ts";
-import { claimWake, enqueueClaim, PAGE, pageClaim, wokenBy } from "../core/questions-claim.ts";
-import { plainAnswer } from "../core/questions-wake.ts";
-import { clearSnooze, parseSnoozeUntil, snoozeQuestionAs, unsnoozeQuestion } from "../core/snooze.ts";
-import type { Store } from "../core/store.ts";
+import {
+	type Answer,
+	type AnswerKind,
+	type KeyUsed,
+	type QuestionState,
+	questionStates,
+} from "../core/items/questions.ts";
+import { claimWake, enqueueClaim, PAGE, pageClaim, wokenBy } from "../core/items/questions-claim.ts";
+import { plainAnswer } from "../core/items/questions-wake.ts";
+import { clearSnooze, parseSnoozeUntil, snoozeQuestionAs, unsnoozeQuestion } from "../core/items/snooze.ts";
+import { closeHeldForItem } from "../core/ops/afk-held.ts";
+import type { Store } from "../core/store/store.ts";
 
 /** A reply the page's API sends: its status and JSON body. */
 export type Reply = { status: number; body: unknown };
@@ -130,7 +137,7 @@ function settle(d: ItemActionDeps, act: Act, kind: AnswerKind, raw: unknown): Pr
 	});
 }
 
-/** Snooze: the item stays open and unanswered, so its hold and its claim are untouched (src/core/snooze.ts). */
+/** Snooze: the item stays open and unanswered, so its hold and its claim are untouched (src/core/items/snooze.ts). */
 function snooze(d: ItemActionDeps, act: Act, until: unknown): Promise<Reply> {
 	const { id, key } = act;
 	return d.serial((): Reply => {

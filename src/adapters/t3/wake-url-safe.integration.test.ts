@@ -6,13 +6,13 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createOutbox, type WakeResult, type WakeTransport } from "../../core/deliver.ts";
-import { createStewardCheck } from "../../core/engine-steward.ts";
+import { createOutbox, type WakeResult, type WakeTransport } from "../../core/delivery/deliver.ts";
+import { createRelay } from "../../core/delivery/relay.ts";
+import { createStewardCheck } from "../../core/engine/engine-steward.ts";
 import { logFor, obsFor } from "../../core/log.ts";
 import { obsPath } from "../../core/obs/db.ts";
-import { createRelay } from "../../core/relay.ts";
-import { openStore } from "../../core/sqlite-store.ts";
-import { dbPath } from "../../core/store.ts";
+import { openStore } from "../../core/store/sqlite-store.ts";
+import { dbPath } from "../../core/store/store.ts";
 import { testRelayLock } from "../../testing/lock.ts";
 import { postWebhook, webhookWake } from "./wake.ts";
 

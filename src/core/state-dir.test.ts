@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { defaultStore } from "./default-store.ts";
 import { configDir, stateDir } from "./state-dir.ts";
-import { DB_FILE } from "./store.ts";
+import { defaultStore } from "./store/default-store.ts";
+import { DB_FILE } from "./store/store.ts";
 
 const scratch = () => mkdtempSync(`${tmpdir()}/chamberlain-state-`);
 const HOME = "/home/u";

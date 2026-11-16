@@ -1,9 +1,9 @@
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { drainAlertDesk } from "../core/alert-desk.ts";
-import { DESK_RECEIVER, type DeskEvent } from "../core/alert-desk-config.ts";
-import type { CrashPoint } from "../core/alert-desk-cursor.ts";
-import { createOutbox } from "../core/deliver.ts";
+import { createOutbox } from "../core/delivery/deliver.ts";
+import { drainAlertDesk } from "../core/desk/alert-desk.ts";
+import { DESK_RECEIVER, type DeskEvent } from "../core/desk/alert-desk-config.ts";
+import type { CrashPoint } from "../core/desk/alert-desk-cursor.ts";
 import { memStore } from "./store.ts";
 
 export const MIB = 1024 * 1024;

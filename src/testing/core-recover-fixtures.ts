@@ -1,10 +1,10 @@
-import type { ThreadState } from "../core/adapter.ts";
-import { normalizeThread } from "../core/adapter.ts";
-import type { RunFailure, RunLook } from "../core/adapter-inspect.ts";
-import type { JudgeAnswer } from "../core/judge.ts";
-import { createRecovery } from "../core/recover.ts";
-import type { FailureKind } from "../core/recover-classify.ts";
-import type { Handling, RecoverDeps, RecoverStore } from "../core/recover-state.ts";
+import type { ThreadState } from "../core/adapter/adapter.ts";
+import { normalizeThread } from "../core/adapter/adapter.ts";
+import type { RunFailure, RunLook } from "../core/adapter/adapter-inspect.ts";
+import type { JudgeAnswer } from "../core/ops/judge.ts";
+import { createRecovery } from "../core/ops/recover.ts";
+import type { FailureKind } from "../core/ops/recover-classify.ts";
+import type { Handling, RecoverDeps, RecoverStore } from "../core/ops/recover-state.ts";
 
 export const NOW = Date.parse("2026-11-13T12:00:00Z");
 

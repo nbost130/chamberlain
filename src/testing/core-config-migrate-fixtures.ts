@@ -1,7 +1,7 @@
 import { afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resetLayout } from "../core/layout-legacy.ts";
+import { resetLayout } from "../core/config/layout-legacy.ts";
 import { tokensFor } from "./legacy-conf.ts";
 
 /** Registers this suite's scratch cleanup for the test file that calls it, and returns its fixtures. */

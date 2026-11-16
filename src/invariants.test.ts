@@ -13,12 +13,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "./core/adapter-waiting.ts";
-import { createEngine } from "./core/engine.ts";
-import { askQuestion, getQuestion, type Question } from "./core/questions.ts";
-import { evaluateSource, recordEvaluation } from "./core/source.ts";
-import { openStore } from "./core/sqlite-store.ts";
-import type { Store } from "./core/store.ts";
+import type { WaitingCard } from "./core/adapter/adapter-waiting.ts";
+import { createEngine } from "./core/engine/engine.ts";
+import { askQuestion, getQuestion, type Question } from "./core/items/questions.ts";
+import { evaluateSource, recordEvaluation } from "./core/items/source.ts";
+import { openStore } from "./core/store/sqlite-store.ts";
+import type { Store } from "./core/store/store.ts";
 import { noAlert } from "./testing/alert.ts";
 import { openCapability } from "./testing/capability.ts";
 import { createFakeAdapter, type FakeAdapter } from "./testing/fake-adapter.ts";
@@ -136,7 +136,7 @@ describe("a card is answered once", () => {
 	});
 
 	test("a reservation whose process died mid-send is retaken after five minutes, and not before", async () => {
-		const { reserveCardAnswer, CARD_ANSWER_STALE_MS } = await import("./core/card-answers.ts");
+		const { reserveCardAnswer, CARD_ANSWER_STALE_MS } = await import("./core/items/card-answers.ts");
 		const store = connect(scratch());
 		const t0 = Date.parse("2026-11-12T12:00:00Z");
 		expect(reserveCardAnswer(store, { cardId: card.id, sig: "s", choice: 0, now: t0 })).toBe(true);

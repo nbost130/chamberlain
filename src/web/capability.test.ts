@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { COOKIE_MAX_AGE_S, newToken, TOKEN_HEADER } from "../core/capability.ts";
+import { COOKIE_MAX_AGE_S, newToken, TOKEN_HEADER } from "../core/ops/capability.ts";
 import { useWebCapabilityFixtures } from "../testing/web-capability-fixtures.ts";
 
 const { HOST, ORIGIN, setup, key, cookieFrom } = useWebCapabilityFixtures();

@@ -3,7 +3,7 @@
  * database or its directory cannot be made private. Usage: bun src/testing/mode-probe.ts <state directory>
  * Expected: exit 4 and the reason on stderr, with no stack trace.
  */
-import { defaultStore } from "../core/default-store.ts";
+import { defaultStore } from "../core/store/default-store.ts";
 
 defaultStore(process.argv[2]!, {
 	chmod: () => {

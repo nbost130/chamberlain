@@ -1,13 +1,13 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { heldOpen } from "../core/afk-held.ts";
-import { holdCard } from "../core/card-hold.ts";
-import { reconcileCardHolds } from "../core/card-reconcile.ts";
-import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import { getQuestion, questionStates } from "../core/questions.ts";
-import { claimWake, pageClaim } from "../core/questions-claim.ts";
-import { HEALTH_KEY } from "../core/steward-health.ts";
-import { dbPath } from "../core/store.ts";
+import { reconcileItemHolds } from "../core/decide/hold-reconcile.ts";
+import { holdCard } from "../core/items/card-hold.ts";
+import { reconcileCardHolds } from "../core/items/card-reconcile.ts";
+import { getQuestion, questionStates } from "../core/items/questions.ts";
+import { claimWake, pageClaim } from "../core/items/questions-claim.ts";
+import { heldOpen } from "../core/ops/afk-held.ts";
+import { HEALTH_KEY } from "../core/steward/steward-health.ts";
+import { dbPath } from "../core/store/store.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { useWebWebFixtures } from "../testing/web-web-fixtures.ts";
 

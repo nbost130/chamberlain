@@ -1,6 +1,6 @@
 /** The telemetry writer, first layer: its settings, its database and the checks on a value a caller hands it. */
 import { randomBytes } from "node:crypto";
-import type { LogEvent } from "../store.ts";
+import type { LogEvent } from "../store/store.ts";
 import { Transitions } from "./change.ts";
 import { type ObsDb, openObsDb } from "./db.ts";
 import {

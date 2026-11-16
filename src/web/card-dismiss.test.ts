@@ -5,9 +5,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "../core/adapter-waiting.ts";
-import { newToken, TOKEN_HEADER } from "../core/capability.ts";
-import { isCardDismissed } from "../core/card-dismiss.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
+import { isCardDismissed } from "../core/items/card-dismiss.ts";
+import { newToken, TOKEN_HEADER } from "../core/ops/capability.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { createFakeAdapter } from "../testing/fake-adapter.ts";
 import { run, settle } from "../testing/inline-dom.ts";

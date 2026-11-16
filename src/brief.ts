@@ -1,6 +1,6 @@
 /**
  * Prints the Steward's hand-off: `bun src/brief.ts steward [--predecessor <threadId>] [--mode test|live]`. The text is built by
- * src/core/brief.ts; the sentences about the backend come from the adapter that serves the Steward's own server, and the operator's
+ * src/core/steward/brief.ts; the sentences about the backend come from the adapter that serves the Steward's own server, and the operator's
  * brief fragments (`<config>/brief.d/*.md`) are appended last.
  *
  * `bun src/brief.ts start` prints the first message of a new Steward thread (docs/steward-start.md) with the commands of the running build, and
@@ -9,20 +9,20 @@
  * `bun src/brief.ts desk` prints the Alert Desk's standing prompt (docs/alert-desk-prompt.md, or `alert-desk-prompt.md` in the config
  * directory when there is one), filled in from the config: `principalName`, the Steward's own server in servers.json, the command that
  * runs the desk allowlist hook, the ask command the desk allowlist accepts (`deskAskCommand`: DESK_ASK_PATH, else this build's own), and
- * the morning sources in alert-desk.json (src/core/alert-desk.ts `renderDeskPrompt`).
+ * the morning sources in alert-desk.json (src/core/desk/alert-desk.ts `renderDeskPrompt`).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { adapterEntry, loadServers } from "./adapters/index.ts";
-import { readAfk } from "./core/afk-held.ts";
-import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/alert-desk-prompt.ts";
-import { loadBriefFragments, stewardBrief } from "./core/brief.ts";
-import { CONF, principal, REPO, selfCommand } from "./core/config.ts";
-import { defaultStore } from "./core/default-store.ts";
-import { startup } from "./core/migrate.ts";
-import { loadOperatingRules } from "./core/rules.ts";
-import { rulingsBriefText } from "./core/rulings-read.ts";
-import { homeServer } from "./core/servers.ts";
-import { renderStartPrompt } from "./core/sweep.ts";
+import { CONF, principal, REPO, selfCommand } from "./core/config/config.ts";
+import { startup } from "./core/config/migrate.ts";
+import { homeServer } from "./core/config/servers.ts";
+import { deskAskCommand, readOperator, renderDeskPrompt } from "./core/desk/alert-desk-prompt.ts";
+import { readAfk } from "./core/ops/afk-held.ts";
+import { loadOperatingRules } from "./core/ops/rules.ts";
+import { rulingsBriefText } from "./core/ops/rulings-read.ts";
+import { loadBriefFragments, stewardBrief } from "./core/steward/brief.ts";
+import { defaultStore } from "./core/store/default-store.ts";
+import { renderStartPrompt } from "./core/sweep/sweep.ts";
 import { DESK_PROMPT_FILE, START_PROMPT_FILE, WAKE_PROMPT_FILE } from "./embedded.ts";
 
 export function main(argv: string[] = process.argv.slice(2)) {

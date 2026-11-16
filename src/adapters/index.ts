@@ -7,10 +7,10 @@
  * adapters directly: it is handed an Adapter, and only the entry points (daemon, page, tools) read the registry.
  */
 
-import type { Adapter, AdapterEntry, AdapterEnv } from "../core/adapter.ts";
-import { CONF, STATE } from "../core/config.ts";
-import { readNamed, thread } from "../core/layout.ts";
-import { homeServer, readServers, type ServerEntry } from "../core/servers.ts";
+import type { Adapter, AdapterEntry, AdapterEnv } from "../core/adapter/adapter.ts";
+import { CONF, STATE } from "../core/config/config.ts";
+import { readNamed, thread } from "../core/config/layout.ts";
+import { homeServer, readServers, type ServerEntry } from "../core/config/servers.ts";
 import { defaultT3Server, t3Entry } from "./t3/index.ts";
 
 const ADAPTERS: Record<string, AdapterEntry> = {
