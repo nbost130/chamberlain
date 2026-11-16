@@ -82,7 +82,7 @@ describe("nothing goes in force without the principal's confirm", () => {
 		expect(c.status).toBe("in-force");
 		expect(c.confirmed).toBe(true);
 		expect(c.confirmedAt).toBeTruthy();
-		expect(rulingsText(d)).toContain(`- ${p.id} (`);
+		expect(rulingsText(d)).toContain(`- ${p.id}:`);
 		expect(rulingsText(d)).toContain("Gates like this are the Steward's to clear");
 	});
 	test("editing wording never confirms or enforces a proposal", () => {
@@ -121,9 +121,10 @@ describe("nothing goes in force without the principal's confirm", () => {
 			list[1]!.confirmed = false;
 		});
 		const lines = renderInForce(readRulings(d)).split("\n");
-		expect(lines.every((l) => /^- R\d+ \(/.test(l))).toBe(true);
-		expect(lines.find((l) => l.startsWith("- R2 "))).toContain("[unconfirmed");
-		expect(lines.find((l) => l.startsWith("- R1 "))).not.toContain("[unconfirmed");
+		expect(lines.every((l) => /^- R\d+: /.test(l))).toBe(true);
+		expect(lines.every((l) => !l.includes('"') && !l.includes(" -> "))).toBe(true);
+		expect(lines.find((l) => l.startsWith("- R2:"))).toContain("[unconfirmed");
+		expect(lines.find((l) => l.startsWith("- R1:"))).not.toContain("[unconfirmed");
 	});
 	test("with no rulings there is no rulings text", () => expect(rulingsText(memStore())).toBe(""));
 });
@@ -140,6 +141,19 @@ describe("citations by ID", () => {
 			"R4",
 		]);
 	});
+	test("a wake cite line still yields its ID for decided.ts", () => {
+		const d = memStore();
+		addInForce(d, {
+			words: "you can handle all merge conflicts",
+			decides: "merge conflicts are the Steward's",
+			source: "chat",
+			how: "stated",
+		});
+		const line = renderInForce(readRulings(d));
+		expect(line).toBe("- R1: merge conflicts are the Steward's");
+		expect(citedIds(line.replace(/^- /, ""))).toEqual(["R1"]);
+		expect(decisionRecord({ thread: "t", decision: "merged", ruling: "R1: applies here" }).rulingIds).toEqual(["R1"]);
+	});
 	test("counts citations per ruling, newest first", () => {
 		const c = citations([
 			decisionRecord({ thread: "a", decision: "first", ruling: "R1" }, "2026-11-01T00:00:00Z"),
@@ -149,5 +163,54 @@ describe("citations by ID", () => {
 		expect(c.get("R1")!.map((x) => x.decision)).toEqual(["second", "first"]);
 		expect(c.get("R2")).toHaveLength(1);
 		expect(c.size).toBe(2);
+	});
+});
+
+describe("concise cite lines shrink the rights rulings block", () => {
+	test("snapshot: quoted-words block is larger than decides-only cites", () => {
+		const rows = [
+			{
+				id: "R11",
+				date: "2026-11-01",
+				words: "60 opus session?!?!? What in the world???",
+				decides: "Watch fan-out and spend. Stay inside plan windows; no pay-per-token lane.",
+				source: "chat" as const,
+				status: "in-force" as const,
+				confirmed: true,
+				history: [],
+			},
+			{
+				id: "R89",
+				date: "2026-11-14",
+				words: "Additive migrations stay with Nathan / An ERD is required for every database change",
+				decides:
+					"One-way-door gates. Steward clears narrow kinds; Nathan keeps migrations, deps, visibility, new gate rules.",
+				source: "chat" as const,
+				status: "in-force" as const,
+				confirmed: true,
+				history: [],
+			},
+			{
+				id: "R103",
+				date: "2026-11-16",
+				words: "2 use astra instead we don't have much opus usage left",
+				decides:
+					"For migration/auth Opus judges when Opus budget is tight, route the judge to Astra instead of Opus unless Nathan explicitly requests Opus.",
+				source: "chat" as const,
+				status: "in-force" as const,
+				confirmed: true,
+				history: [],
+			},
+		];
+		const before = rows.map((r) => `- ${r.id} (${r.date}): "${r.words}" -> ${r.decides}`).join("\n");
+		const after = renderInForce(rows);
+		expect(Buffer.byteLength(before, "utf8")).toBe(577);
+		expect(Buffer.byteLength(after, "utf8")).toBe(342);
+		expect(Buffer.byteLength(after, "utf8")).toBeLessThan(Buffer.byteLength(before, "utf8"));
+		expect(after).not.toContain('"');
+		expect(after).not.toContain(" -> ");
+		expect(after).toContain("- R11:");
+		expect(after).toContain("- R89:");
+		expect(after).toContain("- R103:");
 	});
 });

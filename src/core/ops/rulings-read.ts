@@ -14,14 +14,14 @@ export const inForceNow = (list: Ruling[], nowMs: number = Date.now()) =>
 export const expiredNow = (list: Ruling[], nowMs: number = Date.now()) =>
 	list.filter((r) => r.status === "in-force" && isExpired(r, nowMs));
 
+/** Pure: one wake/brief cite line for a ruling: ID + decides (no quoted words). Markers for expires/until/unconfirmed stay. */
+export function renderCiteLine(r: Ruling): string {
+	return `- ${r.id}: ${r.decides}${r.expires ? ` [expires ${r.expires}]` : ""}${r.until ? ` [until ${r.until}]` : ""}${r.confirmed ? "" : " [unconfirmed: began as a card answer]"}`;
+}
+
 /** Pure: the in-force rulings as the hand-off and every wake carry them, each with its ID. An expired one is left out. */
 export function renderInForce(list: Ruling[], nowMs: number = Date.now()): string {
-	return inForceNow(list, nowMs)
-		.map(
-			(r) =>
-				`- ${r.id} (${r.date}): "${r.words}" -> ${r.decides}${r.expires ? ` [expires ${r.expires}]` : ""}${r.until ? ` [until ${r.until}]` : ""}${r.confirmed ? "" : " [unconfirmed: began as a card answer]"}`,
-		)
-		.join("\n");
+	return inForceNow(list, nowMs).map(renderCiteLine).join("\n");
 }
 
 /** Pure: one line naming the rulings past their expiry, so a reader of the hand-off does not act on one from memory. Empty when none. */

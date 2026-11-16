@@ -226,8 +226,8 @@ describe("expiry reads an injectable clock", () => {
 		addInForce(d, { words: "stays", decides: "Stays.", source: "chat", how: "x" });
 		addInForce(d, { words: "goes", decides: "Goes.", source: "chat", how: "x", opts: { expires: "2026-11-20" } }, NOW);
 		const brief = rulingsBriefText(d, at("2026-11-25T00:00:00Z"));
-		expect(brief).toContain("- R1 (");
-		expect(brief).not.toContain("- R2 (");
+		expect(brief).toContain("- R1:");
+		expect(brief).not.toContain("- R2:");
 		expect(brief).toContain("Expired, NOT in force (do not act on them): R2 (expired 2026-11-20).");
 		// The wakes carry only what is in force: no expired line there.
 		expect(rulingsText(d, at("2026-11-25T00:00:00Z"))).not.toContain("Expired");
