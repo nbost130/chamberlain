@@ -33,7 +33,7 @@ describe("the engine drains the inbox into the desk", () => {
 		writeFileSync(`${conf}/decision-rights.md`, "ask", { mode: 0o600 });
 		writeFileSync(
 			`${conf}/alert-desk.json`,
-			JSON.stringify({ morningHour: 23, timezone: "America/New_York", ...desk }),
+			JSON.stringify({ morningHour: 7, timezone: "America/New_York", ...desk }),
 			{ mode: 0o600 },
 		);
 		process.env.ALERT_DESK_INBOX = `${root}/inbox.jsonl`;
@@ -49,7 +49,7 @@ describe("the engine drains the inbox into the desk", () => {
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => logged.push({ event, ...data }),
 			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
-			relay: { retryAfterMs: () => 0 },
+			relay: { retryAfterMs: () => 0, now: () => Date.parse("2026-11-13T11:00:00Z") },
 		});
 		engines.push(engine);
 		void engine.start();
