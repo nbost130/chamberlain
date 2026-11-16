@@ -19,6 +19,7 @@ import { IDLE_PARENTS, type IdleParentsConfig, parseIdleParents } from "../decid
 import { parseUndelivered, UNDELIVERED, type UndeliveredConfig } from "../decide/undelivered.ts";
 import type { ItemSource, SourceOutcome } from "../items/source.ts";
 import { fullSweepHead, notAwayNote, routineSweepAsk, routineSweepHead } from "../messages.ts";
+import { PREPARE_PR, PREPARE_PR_OTHER, type PreparePrConfig, parsePreparePr } from "../prepare-pr/config.ts";
 import { checkVersion, SCHEMA_VERSION } from "../store/schema.ts";
 import type { ItemMode } from "../store/store.ts";
 import { parseCheckOutput } from "./sweep-findings.ts";
@@ -172,9 +173,10 @@ export type SweepConfig = {
 	checks: SweepCheck[];
 	idleParents: IdleParentsConfig;
 	undelivered: UndeliveredConfig;
+	preparePr: PreparePrConfig;
 };
 const MODES: readonly string[] = ["silenced", "shadow", "live"];
-const BUILTIN_CHECKS = new Set([IDLE_PARENTS, UNDELIVERED]);
+const BUILTIN_CHECKS = new Set([IDLE_PARENTS, UNDELIVERED, PREPARE_PR, PREPARE_PR_OTHER]);
 
 /** Pure: a check's name: well formed, not taken, not a built-in one. `names` gains it. */
 function checkName(c: Partial<SweepCheck>, i: number, names: Set<string>): string {
@@ -183,7 +185,7 @@ function checkName(c: Partial<SweepCheck>, i: number, names: Set<string>): strin
 	if (names.has(c.name)) throw Error(`sweep.json: two checks are named ${c.name}`);
 	if (BUILTIN_CHECKS.has(c.name))
 		throw Error(
-			`sweep.json: "${c.name}" is a built-in check; tune it with "idleParents" or "undelivered", not a check`,
+			`sweep.json: "${c.name}" is a built-in check; tune it with "idleParents", "undelivered" or "preparePr", not a check`,
 		);
 	names.add(c.name);
 	return c.name;
@@ -209,23 +211,39 @@ function parseCheck(c: Partial<SweepCheck>, i: number, names: Set<string>): Swee
 /** Pure: the checks a parsed sweep.json lists. */
 export function parseSweepConfig(raw: unknown): SweepConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw Error("sweep.json: expected a JSON object");
-	const o = raw as { schemaVersion?: unknown; checks?: unknown; idleParents?: unknown; undelivered?: unknown };
+	const o = raw as {
+		schemaVersion?: unknown;
+		checks?: unknown;
+		idleParents?: unknown;
+		undelivered?: unknown;
+		preparePr?: unknown;
+	};
 	checkVersion("sweep.json", o.schemaVersion);
 	// A section that only tunes a built-in check needs no checks of its own.
-	if (o.checks === undefined && (o.idleParents !== undefined || o.undelivered !== undefined)) o.checks = [];
+	if (
+		o.checks === undefined &&
+		(o.idleParents !== undefined || o.undelivered !== undefined || o.preparePr !== undefined)
+	)
+		o.checks = [];
 	if (!Array.isArray(o.checks)) throw Error('sweep.json: need {"checks": [{"name", "command": [...]}]}');
 	const idleParents = parseIdleParents(o.idleParents);
 	const undelivered = parseUndelivered(o.undelivered);
+	const preparePr = parsePreparePr(o.preparePr);
 	const names = new Set<string>();
 	const checks = o.checks.map((c: Partial<SweepCheck>, i) => parseCheck(c, i, names));
-	return { schemaVersion: SCHEMA_VERSION, checks, idleParents, undelivered };
+	return { schemaVersion: SCHEMA_VERSION, checks, idleParents, undelivered, preparePr };
 }
 
 /** The `sweep` section of config.json (else the legacy sweep.json), or no checks. It names programs the daemon runs. */
 export function readSweepConfig(conf = CONF): SweepConfig {
 	const raw = cfg(conf, "sweep");
 	return raw === undefined
-		? { checks: [], idleParents: parseIdleParents(undefined), undelivered: parseUndelivered(undefined) }
+		? {
+				checks: [],
+				idleParents: parseIdleParents(undefined),
+				undelivered: parseUndelivered(undefined),
+				preparePr: parsePreparePr(undefined),
+			}
 		: parseSweepConfig(raw);
 }
 

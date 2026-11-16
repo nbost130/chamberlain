@@ -23,6 +23,7 @@ import { openRightsSent } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
 import { CoreWork } from "./engine-core-work.ts";
 import type { createIdleParents } from "./engine-idle.ts";
+import type { createPreparePr } from "./engine-prepare-pr.ts";
 import {
 	adapterOf,
 	defaultTiming,
@@ -56,6 +57,7 @@ export class Core extends CoreWork {
 	protected readonly sweep: ReturnType<typeof createSweep>;
 	protected readonly idleParents: ReturnType<typeof createIdleParents>;
 	protected readonly undelivered: ReturnType<typeof createUndelivered>;
+	protected readonly preparePr: ReturnType<typeof createPreparePr>;
 	protected readonly heartbeat: () => void;
 	protected readonly healthTick: (() => Promise<unknown>) | undefined;
 	protected readonly usageTick: (() => Promise<unknown>) | undefined;
@@ -102,6 +104,7 @@ export class Core extends CoreWork {
 		});
 		this.idleParents = this.makeIdleParents();
 		this.undelivered = this.makeUndelivered();
+		this.preparePr = this.makePreparePr();
 		this.heartbeat = this.makeHeartbeat();
 		this.healthTick = this.makeHealthTick();
 		this.usageTick = this.makeUsageTick();

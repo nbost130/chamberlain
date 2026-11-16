@@ -11,10 +11,10 @@ export const DEFAULT_REPOS: readonly RepoTarget[] = [{ name: "MemberHero", path:
 
 export const DEFAULT_NO_MISTAKES_STATE = `${process.env.HOME ?? ""}/.no-mistakes/state.sqlite`;
 
-/** Merge state.sqlite ids with axi overview ids (deduped, state first). */
-export function mergeActiveRunIds(fromDb: readonly string[], fromAxi: readonly string[]): string[] {
+/** Merge discovery sources (deduped, first occurrence wins). Typical order: DB, AXI, open links. */
+export function mergeActiveRunIds(...sources: readonly (readonly string[])[]): string[] {
 	const out: string[] = [];
-	for (const id of [...fromDb, ...fromAxi]) if (!out.includes(id)) out.push(id);
+	for (const src of sources) for (const id of src) if (!out.includes(id)) out.push(id);
 	return out;
 }
 

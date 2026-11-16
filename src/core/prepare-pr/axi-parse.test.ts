@@ -57,6 +57,7 @@ describe("parseParkedDuration", () => {
 	test("refuses nonsense", () => {
 		expect(parseParkedDuration("idle 5m")).toBeNull();
 		expect(parseParkedDuration("parked")).toBeNull();
+		expect(parseParkedDuration("parked garbage2mgarbage")).toBeNull();
 	});
 });
 
@@ -84,6 +85,51 @@ describe("parseAxiStatus", () => {
 	});
 	test("fail closed on run id mismatch", () => {
 		expect(() => parseAxiStatus(STATUS_ONE_WAY, "OTHER")).toThrow("expected run");
+	});
+	test("fail closed on unknown status", () => {
+		expect(() =>
+			parseAxiStatus(`other_branch_run:
+  id: "R"
+  branch: main
+  status: nonsense
+  head: deadbeef
+`),
+		).toThrow(/unknown status/);
+	});
+	test("fail closed when parked without a complete gate", () => {
+		expect(() =>
+			parseAxiStatus(`other_branch_run:
+  id: "R"
+  branch: main
+  status: running
+  awaiting_agent: parked 20m
+  head: deadbeef
+`),
+		).toThrow(/complete gate/);
+	});
+	test("fail closed when awaiting gate has no timing and caller has no fallback", () => {
+		expect(() =>
+			parseAxiStatus(`other_branch_run:
+  id: "R"
+  branch: main
+  status: running
+  head: deadbeef
+gate:
+  step: gate.review.one-way-door
+  status: awaiting_approval
+`),
+		).not.toThrow();
+		const r = parseAxiStatus(`other_branch_run:
+  id: "R"
+  branch: main
+  status: running
+  head: deadbeef
+gate:
+  step: gate.review.one-way-door
+  status: awaiting_approval
+`);
+		expect(r.parkedMs).toBeNull();
+		expect(r.gateStatus).toBe("awaiting_approval");
 	});
 });
 

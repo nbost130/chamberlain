@@ -71,4 +71,30 @@ describe("preparePrFindings", () => {
 		expect(f.map((x) => x.dedupKey).sort()).toEqual(["prepare-pr:01TEST", "prepare-pr:settled-mismatch:01TEST"]);
 		expect(f.find((x) => x.dedupKey.includes("settled"))!.text).toContain("thr-1");
 	});
+	test("kinds one-way omits other-gate and mismatch; other omits one-way", () => {
+		const nowMs = Date.now();
+		const runs = [
+			run({ runId: "OW", parkedMs: ONE_WAY_DOOR_URGENT_MS + 1 }),
+			run({ runId: "OT", gateStep: "lint", parkedMs: OTHER_GATE_WAKE_MS + 1 }),
+		];
+		const links = [{ threadId: "thr-1", runId: "OT", repo: "MemberHero", startedAt: 1, clearedAt: null }];
+		const settled = new Set(["thr-1"]);
+		expect(preparePrFindings({ repo: "MemberHero", runs, nowMs, kinds: "one-way" }).map((f) => f.dedupKey)).toEqual([
+			"prepare-pr:OW",
+		]);
+		expect(
+			preparePrFindings({ repo: "MemberHero", runs, nowMs, kinds: "other", links, settledThreadIds: settled }).map(
+				(f) => f.dedupKey,
+			),
+		).toEqual(["prepare-pr:OT", "prepare-pr:settled-mismatch:OT"]);
+	});
+	test("awaiting_approval without parked age fails closed", () => {
+		expect(() =>
+			preparePrFindings({
+				repo: "MemberHero",
+				runs: [run({ parkedMs: null })],
+				nowMs: Date.now(),
+			}),
+		).toThrow(/without a parked age/);
+	});
 });

@@ -11,29 +11,35 @@ export type AxiParkedRun = {
 	/** Exact gate step when status is awaiting_approval (e.g. gate.review.one-way-door, lint). */
 	gateStep: string | null;
 	gateStatus: string | null;
-	/** Milliseconds the agent has been parked awaiting approval, when AXI reports it. */
+	/** Milliseconds the agent has been parked awaiting approval, when AXI reports a valid duration. */
 	parkedMs: number | null;
 };
 
-/** Pure: parse `parked 25m3s`, `parked 2d10h`, `parked 45s` into milliseconds. */
+/** Pure: overview stdout looks like AXI (not garbage that would silently yield zero runs). */
+export function isValidAxiOverview(out: string): boolean {
+	return /^\s*(bin|daemon|repo|current_branch|description):/m.test(out.trim());
+}
+
+/**
+ * Pure: parse `parked 25m3s`, `parked 2d10h`, `parked 45s` into milliseconds.
+ * The whole remainder after `parked ` must be duration tokens only (no garbage).
+ */
 export function parseParkedDuration(s: string): number | null {
 	const m = s.trim().match(/^parked\s+(.+)$/i);
 	const body = m?.[1];
 	if (!body) return null;
+	if (!/^(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?$/i.test(body) || !/\d/.test(body)) return null;
 	let ms = 0;
-	let matched = false;
-	// Units are adjacent (`23m27s`); no word-boundary between digit runs.
 	for (const part of body.matchAll(/(\d+)(d|h|m|s)/gi)) {
 		const n = Number(part[1]);
 		const u = part[2]?.toLowerCase();
 		if (!u) continue;
-		matched = true;
 		if (u === "d") ms += n * 86_400_000;
 		else if (u === "h") ms += n * 3_600_000;
 		else if (u === "m") ms += n * 60_000;
 		else ms += n * 1_000;
 	}
-	return matched ? ms : null;
+	return ms;
 }
 
 /** Pure: first quoted or bare value after `key:` on its own line (TOON scalar). */
@@ -81,6 +87,7 @@ function blockUnder(text: string, key: string): string | null {
  * Today AXI surfaces at most one `other_branch_active_run`; callers may supplement via state.sqlite.
  */
 export function parseAxiOverviewActiveRunIds(out: string): string[] {
+	if (!isValidAxiOverview(out)) throw Error("axi overview: unrecognized output");
 	const ids: string[] = [];
 	const other = blockUnder(out, "other_branch_active_run");
 	if (other) {
@@ -121,9 +128,29 @@ function gateFields(trimmed: string): { step: string | null; status: string | nu
 	return { step: step ?? fromSteps.step, status: status ?? fromSteps.status };
 }
 
+function parkedMsFromAwaiting(runId: string, runBlock: string): { raw: string | null; parkedMs: number | null } {
+	const raw = scalarAfter(runBlock, "awaiting_agent");
+	if (raw === null) return { raw: null, parkedMs: null };
+	const parkedMs = parseParkedDuration(raw);
+	if (parkedMs === null) throw Error(`axi status: run ${runId} awaiting_agent is not a parked duration ("${raw}")`);
+	return { raw, parkedMs };
+}
+
+function requireAwaitingGate(
+	runId: string,
+	gate: { step: string | null; status: string | null },
+	stepAwaiting: { step: string; status: string } | null,
+): { step: string; status: string } {
+	const step = gate.step ?? stepAwaiting?.step ?? null;
+	const status = gate.status ?? stepAwaiting?.status ?? null;
+	if (!step || status !== "awaiting_approval")
+		throw Error(`axi status: run ${runId} shows awaiting approval without a complete gate step/status`);
+	return { step, status };
+}
+
 /**
- * Pure: one run from `axi status --run <id>` (or the other_branch_run / other_branch_active_run shape).
- * Throws when the output cannot be read as a run (fail closed).
+ * Pure: one run from `axi status --run <id>`.
+ * Throws when the output cannot be read as a run, or when awaiting/parked evidence is incomplete (fail closed).
  */
 export function parseAxiStatus(out: string, expectedRunId?: string): AxiParkedRun {
 	const trimmed = out.trim();
@@ -134,18 +161,25 @@ export function parseAxiStatus(out: string, expectedRunId?: string): AxiParkedRu
 	if (expectedRunId && runId !== expectedRunId) throw Error(`axi status: expected run ${expectedRunId}, got ${runId}`);
 	const branch = requireScalar(runBlock, "branch", runId);
 	const status = requireScalar(runBlock, "status", runId);
+	const KNOWN = new Set(["running", "completed", "cancelled", "pending", "handed_off", "awaiting_approval", "failed"]);
+	if (!KNOWN.has(status)) throw Error(`axi status: run ${runId} unknown status "${status}"`);
 	const head = scalarAfter(runBlock, "head") ?? scalarAfter(runBlock, "head_sha")?.slice(0, 8) ?? null;
 	if (!head) throw Error(`axi status: run ${runId} missing head`);
-	const awaiting = scalarAfter(runBlock, "awaiting_agent");
+
+	const awaiting = parkedMsFromAwaiting(runId, runBlock);
 	const gate = gateFields(trimmed);
+	const stepAwaiting = firstAwaitingStep(trimmed);
+	const looksAwaiting = gate.status === "awaiting_approval" || stepAwaiting !== null || awaiting.raw !== null;
+	const resolved = looksAwaiting ? requireAwaitingGate(runId, gate, stepAwaiting) : null;
+
 	return {
 		runId,
 		branch,
 		status,
 		head: head.slice(0, 8),
-		gateStep: gate.step,
-		gateStatus: gate.status,
-		parkedMs: awaiting ? parseParkedDuration(awaiting) : null,
+		gateStep: resolved?.step ?? gate.step,
+		gateStatus: resolved?.status ?? gate.status,
+		parkedMs: awaiting.parkedMs,
 	};
 }
 

@@ -49,6 +49,18 @@
       "thresholdMinutes": 30,
       "maxThreads": 10
     },
+    "preparePr": {
+      "enabled": false,
+      "intervalMinutes": 1,
+      "oneWayMode": "shadow",
+      "otherMode": "shadow",
+      "repos": [
+        {
+          "name": "MemberHero",
+          "path": "/home/nbost/dev/MemberHero"
+        }
+      ]
+    },
     "checks": [
       {
         "name": "disk",
@@ -58,18 +70,6 @@
         ],
         "timeoutMs": 20000,
         "mode": "live"
-      },
-      {
-        "name": "prepare-pr",
-        "command": [
-          "bun",
-          "/path/to/chamberlain/src/prepare-pr.ts",
-          "status",
-          "--repo",
-          "MemberHero=/home/nbost/dev/MemberHero"
-        ],
-        "timeoutMs": 60000,
-        "mode": "shadow"
       }
     ]
   }

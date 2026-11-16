@@ -1,13 +1,14 @@
 /**
  * `chamberlain prepare-pr …` — poll no-mistakes prepare-pr runs and emit sweep findings JSON.
  *
- *   prepare-pr status [--repo Name=/path]… [--state-db path] [--settled threadId]…
+ *   prepare-pr status [--repo Name=/path]… [--state-db path] [--settled threadId]… [--kind one-way|other|all]
  *   prepare-pr link <threadId> <runId> [--repo Name]
  *   prepare-pr clear <threadId> <runId>
  *   prepare-pr links [--repo Name] [--all]
  *
- * `status` prints a JSON array of findings on stdout (sweep check contract) and exits 0.
- * Malformed axi output exits non-zero so the check is evaluation_error (fail closed).
+ * `status` prints a JSON array of findings on stdout (manual / debug). The daemon uses the built-in
+ * `sweep.preparePr` timer with split oneWayMode / otherMode — prefer that over a sweep.checks entry.
+ * Malformed axi output exits non-zero so evaluation fails closed.
  */
 import { homedir } from "node:os";
 import { connect } from "./adapters/t3/rpc.ts";
@@ -17,14 +18,14 @@ import { readSecret } from "./core/config/layout.ts";
 import { startup } from "./core/config/migrate.ts";
 import { readServers } from "./core/config/servers.ts";
 import { DEFAULT_NO_MISTAKES_STATE, DEFAULT_REPOS, type RepoTarget } from "./core/prepare-pr/discover.ts";
-import type { PreparePrLink } from "./core/prepare-pr/findings.ts";
+import type { PreparePrKindFilter, PreparePrLink } from "./core/prepare-pr/findings.ts";
 import { pollPreparePr } from "./core/prepare-pr/poll.ts";
 import { defaultStore } from "./core/store/default-store.ts";
 import { listRunningRunIdsFromStateDb, parkedSinceFromStateDb } from "./prepare-pr-nm-state.ts";
 
 const usage = () =>
 	[
-		`usage: ${selfCommand("prepare-pr")} status [--repo Name=/path]… [--state-db path] [--settled threadId]…`,
+		`usage: ${selfCommand("prepare-pr")} status [--repo Name=/path]… [--state-db path] [--settled threadId]… [--kind one-way|other|all]`,
 		`       ${selfCommand("prepare-pr")} link <threadId> <runId> [--repo Name]`,
 		`       ${selfCommand("prepare-pr")} clear <threadId> <runId>`,
 		`       ${selfCommand("prepare-pr")} links [--repo Name] [--all]`,
@@ -121,9 +122,17 @@ async function probeSettled(threadIds: readonly string[]): Promise<Set<string>> 
 	return settled;
 }
 
+function parseKind(argv: string[]): PreparePrKindFilter {
+	const k = arg(argv, "--kind");
+	if (k === undefined) return "all";
+	if (k === "one-way" || k === "other" || k === "all") return k;
+	throw Error(`prepare-pr: --kind must be one-way, other or all (got ${k})`);
+}
+
 async function cmdStatus(argv: string[]): Promise<void> {
 	const repos = parseRepos(argv);
 	const stateDb = (arg(argv, "--state-db") ?? DEFAULT_NO_MISTAKES_STATE).replace(/^~(?=\/)/, homedir());
+	const kinds = parseKind(argv);
 	const store = defaultStore();
 	try {
 		const open = store.preparePrLinks.listOpen();
@@ -143,6 +152,7 @@ async function cmdStatus(argv: string[]): Promise<void> {
 			repos,
 			links,
 			settledThreadIds: settled,
+			kinds,
 			listRunning: (workingPath) => listRunningRunIdsFromStateDb(stateDb, workingPath),
 			parkedSinceOf: (runIds) => parkedSinceFromStateDb(stateDb, runIds),
 		});

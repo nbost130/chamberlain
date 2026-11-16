@@ -20,6 +20,7 @@ import type { RecoverTiming } from "../ops/recover-classify.ts";
 import type { openRightsSent } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
 import type { createIdleParents } from "./engine-idle.ts";
+import type { createPreparePr } from "./engine-prepare-pr.ts";
 import { type deskLaneOf, type EngineDeps, type EngineTiming, TOKEN_ALARM_WINDOW_MS } from "./engine-support.ts";
 import type { createSweep } from "./engine-sweep.ts";
 import type { createUndelivered } from "./engine-undelivered.ts";
@@ -56,6 +57,7 @@ export abstract class CoreBase {
 	protected abstract readonly sweep: ReturnType<typeof createSweep>;
 	protected abstract readonly idleParents: ReturnType<typeof createIdleParents>;
 	protected abstract readonly undelivered: ReturnType<typeof createUndelivered>;
+	protected abstract readonly preparePr: ReturnType<typeof createPreparePr>;
 	protected abstract readonly heartbeat: () => void;
 	protected abstract readonly healthTick: (() => Promise<unknown>) | undefined;
 	protected abstract readonly usageTick: (() => Promise<unknown>) | undefined;

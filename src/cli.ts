@@ -68,7 +68,7 @@ const ABOUT: Record<CommandName, string> = {
 	"switch-steward": "alias: prepare a Steward switch (requires --live)",
 	steward: "steward prepare|switch|status: generation switch protocol",
 	"synthetic-wake": "queue one test wake for the Steward",
-	"prepare-pr": "poll no-mistakes prepare-pr runs: status|link|clear|links (sweep check)",
+	"prepare-pr": "poll no-mistakes prepare-pr runs: status|link|clear|links (daemon uses sweep.preparePr)",
 	mail: "optional email triage (off unless config.json has a mail section): status",
 };
 

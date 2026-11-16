@@ -26,7 +26,8 @@ gate:
   status: awaiting_approval
 `;
 
-const OVERVIEW = `other_branch_active_run:
+const OVERVIEW = `current_branch: main
+other_branch_active_run:
   id: "01FIXTUREONEWAY0000000001"
   branch: pilot/one-way
   status: running
@@ -76,7 +77,7 @@ describe("pollPreparePr with fixtures (no live MemberHero)", () => {
 					throw Error("no live");
 				},
 			}),
-		).rejects.toThrow(/missing run id|axi status/);
+		).rejects.toThrow(/missing run id|axi status|unrecognized/);
 	});
 
 	test("both fixture runs when overview lists neither but fixture map has them", async () => {
@@ -101,5 +102,82 @@ describe("pollPreparePr with fixtures (no live MemberHero)", () => {
 			"prepare-pr:01FIXTURELINT0000000000001",
 			"prepare-pr:01FIXTUREONEWAY0000000001",
 		]);
+	});
+
+	test("offline axi fails closed (does not clear)", async () => {
+		await expect(
+			pollPreparePr({
+				repos: [{ name: "MemberHero", path: "/tmp/x" }],
+				listRunning: () => [],
+				exec: async () => {
+					throw Error("axi offline");
+				},
+			}),
+		).rejects.toThrow(/axi offline/);
+	});
+
+	test("nonzero axi exit fails closed even with stdout", async () => {
+		await expect(
+			pollPreparePr({
+				repos: [{ name: "MemberHero", path: "/tmp/x" }],
+				listRunning: () => ["01FIXTUREONEWAY0000000001"],
+				exec: async (cmd) => {
+					if (cmd.includes("status")) return { code: 1, stdout: ONE_WAY_FIXTURE };
+					return { code: 0, stdout: "daemon: running\n" };
+				},
+			}),
+		).rejects.toThrow(/exited 1/);
+	});
+
+	test("open link run ids are statused even when discovery misses them", async () => {
+		const fixtures = new Map([
+			[
+				"MemberHero",
+				new Map([
+					["__overview__", "daemon: running\n"],
+					["01FIXTURELINT0000000000001", LINT_FIXTURE],
+				]),
+			],
+		]);
+		const findings = await pollPreparePr({
+			repos: [{ name: "MemberHero", path: "/tmp/x" }],
+			fixtures,
+			listRunning: () => [],
+			links: [
+				{
+					threadId: "thr",
+					runId: "01FIXTURELINT0000000000001",
+					repo: "MemberHero",
+					startedAt: 1,
+					clearedAt: null,
+				},
+			],
+			exec: async () => {
+				throw Error("no live");
+			},
+		});
+		expect(findings.map((f) => f.dedupKey)).toEqual(["prepare-pr:01FIXTURELINT0000000000001"]);
+	});
+
+	test("kinds one-way filters lint findings", async () => {
+		const fixtures = new Map([
+			[
+				"MemberHero",
+				new Map([
+					["__overview__", "daemon: running\n"],
+					["01FIXTUREONEWAY0000000001", ONE_WAY_FIXTURE],
+					["01FIXTURELINT0000000000001", LINT_FIXTURE],
+				]),
+			],
+		]);
+		const findings = await pollPreparePr({
+			repos: [{ name: "MemberHero", path: "/tmp/x" }],
+			fixtures,
+			kinds: "one-way",
+			exec: async () => {
+				throw Error("no live");
+			},
+		});
+		expect(findings.map((f) => f.dedupKey)).toEqual(["prepare-pr:01FIXTUREONEWAY0000000001"]);
 	});
 });

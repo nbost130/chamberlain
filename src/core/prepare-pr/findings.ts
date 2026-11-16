@@ -16,10 +16,24 @@ export type PreparePrLink = {
 
 export type ParkedFindingKind = "one-way-urgent" | "other-gate" | null;
 
+/** Which findings a source emits: one-way urgent only, other gates + mismatches, or all. */
+export type PreparePrKindFilter = "one-way" | "other" | "all";
+
 function resolveParkedMs(run: AxiParkedRun, nowMs: number, parkedSinceMs?: number | null): number | null {
 	if (run.parkedMs != null) return run.parkedMs;
 	if (parkedSinceMs != null && Number.isFinite(parkedSinceMs)) return Math.max(0, nowMs - parkedSinceMs);
 	return null;
+}
+
+/**
+ * Pure: awaiting_approval runs need a trustworthy age (AXI parked duration or DB awaiting_agent_since).
+ * Throws so the check is evaluation_error instead of silently clearing findings.
+ */
+function requireParkedAge(run: AxiParkedRun, nowMs: number, parkedSinceMs?: number | null): void {
+	if (run.gateStatus !== "awaiting_approval") return;
+	if (!run.gateStep) throw Error(`prepare-pr: run ${run.runId} awaiting_approval without gate step`);
+	if (resolveParkedMs(run, nowMs, parkedSinceMs) == null)
+		throw Error(`prepare-pr: run ${run.runId} awaiting_approval without a parked age`);
 }
 
 /** Pure: which wake class this parked run is, given thresholds and now. */
@@ -51,14 +65,21 @@ function runStillOpen(run: AxiParkedRun): boolean {
 	return run.gateStatus === "awaiting_approval" || run.status === "running" || run.status === "awaiting_approval";
 }
 
+function wantsParked(filter: PreparePrKindFilter, kind: Exclude<ParkedFindingKind, null>): boolean {
+	if (filter === "all") return true;
+	if (filter === "one-way") return kind === "one-way-urgent";
+	return kind === "other-gate";
+}
+
 function parkedFinding(o: {
 	repo: string;
 	run: AxiParkedRun;
 	nowMs: number;
 	since: number | null;
+	kinds: PreparePrKindFilter;
 }): Finding | undefined {
 	const kind = parkedKind(o.run, o.nowMs, o.since);
-	if (!kind) return undefined;
+	if (!kind || !wantsParked(o.kinds, kind)) return undefined;
 	const urgent = kind === "one-way-urgent";
 	return {
 		dedupKey: `prepare-pr:${o.run.runId}`,
@@ -84,20 +105,18 @@ function mismatchFinding(o: {
 	};
 }
 
-function parkedFindingsFor(
-	repo: string,
-	runs: readonly AxiParkedRun[],
-	nowMs: number,
-	parkedSinceByRun?: ReadonlyMap<string, number>,
-): Finding[] {
+function parkedFindingsFor(o: {
+	repo: string;
+	runs: readonly AxiParkedRun[];
+	nowMs: number;
+	kinds: PreparePrKindFilter;
+	parkedSinceByRun?: ReadonlyMap<string, number>;
+}): Finding[] {
 	const out: Finding[] = [];
-	for (const run of runs) {
-		const f = parkedFinding({
-			repo,
-			run,
-			nowMs,
-			since: parkedSinceByRun?.get(run.runId) ?? null,
-		});
+	for (const run of o.runs) {
+		const since = o.parkedSinceByRun?.get(run.runId) ?? null;
+		requireParkedAge(run, o.nowMs, since);
+		const f = parkedFinding({ repo: o.repo, run, nowMs: o.nowMs, since, kinds: o.kinds });
 		if (f) out.push(f);
 	}
 	return out;
@@ -132,7 +151,7 @@ function mismatchFindingsFor(o: {
 	return out;
 }
 
-/** Pure: findings for one repo's parked runs + optional settled mismatches. */
+/** Pure: findings for one repo's parked runs + optional settled mismatches (other/all only). */
 export function preparePrFindings(o: {
 	repo: string;
 	runs: readonly AxiParkedRun[];
@@ -140,10 +159,20 @@ export function preparePrFindings(o: {
 	parkedSinceByRun?: ReadonlyMap<string, number>;
 	links?: readonly PreparePrLink[];
 	settledThreadIds?: ReadonlySet<string>;
+	/** Default all (CLI). Built-in sources pass one-way or other. */
+	kinds?: PreparePrKindFilter;
 }): Finding[] {
-	const parked = parkedFindingsFor(o.repo, o.runs, o.nowMs, o.parkedSinceByRun);
+	const kinds = o.kinds ?? "all";
+	const parked = parkedFindingsFor({
+		repo: o.repo,
+		runs: o.runs,
+		nowMs: o.nowMs,
+		kinds,
+		...(o.parkedSinceByRun ? { parkedSinceByRun: o.parkedSinceByRun } : {}),
+	});
 	const already = new Set(parked.map((f) => f.dedupKey));
-	if (!o.settledThreadIds || !o.links?.length) return parked;
+	const wantMismatch = kinds === "all" || kinds === "other";
+	if (!wantMismatch || !o.settledThreadIds || !o.links?.length) return parked;
 	return [
 		...parked,
 		...mismatchFindingsFor({
