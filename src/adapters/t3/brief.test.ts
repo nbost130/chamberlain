@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { stewardBrief } from "../../core/brief.ts";
+import { stewardBrief } from "../../core/steward/brief.ts";
 import { t3Brief } from "./brief.ts";
 
 test("T3's notes give the hand-off its tools: peek, the t3_* tools and t3x", () => {

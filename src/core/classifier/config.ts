@@ -7,7 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { bool, isArgv, modeOf, num, type Obj, object, oneOf, probability, str } from "../config-fields.ts";
+import { bool, isArgv, modeOf, num, type Obj, object, oneOf, probability, str } from "../config/config-fields.ts";
 import { type Bank, DEFAULT_BANK, parseBank, type Thresholds } from "./bank.ts";
 import { JEV_DEFAULT_MODEL, PROVIDERS, type ProviderName } from "./providers.ts";
 import type { RedactConfig, SendConfig } from "./state.ts";

@@ -1,5 +1,5 @@
 /**
- * An in-memory adapter: a second implementation of the contract in src/core/adapter.ts, driven by the test. Core and
+ * An in-memory adapter: a second implementation of the contract in src/core/adapter/adapter.ts, driven by the test. Core and
  * daemon-level tests run against it, which is what proves the core does not depend on any backend. It is also the
  * smallest worked example of an adapter (docs/ADAPTERS.md).
  *
@@ -20,12 +20,12 @@ import {
 	type ThreadEvent,
 	type ThreadInput,
 	type WatchSink,
-} from "../core/adapter.ts";
-import type { Inspector, StewardProbe, Transcript } from "../core/adapter-inspect.ts";
-import type { AnswerOutcome, WaitingCard, WaitingRead } from "../core/adapter-waiting.ts";
-import type { WakeTransport } from "../core/deliver.ts";
-import type { Gate } from "../core/hold.ts";
-import type { Question } from "../core/questions.ts";
+} from "../core/adapter/adapter.ts";
+import type { Inspector, StewardProbe, Transcript } from "../core/adapter/adapter-inspect.ts";
+import type { AnswerOutcome, WaitingCard, WaitingRead } from "../core/adapter/adapter-waiting.ts";
+import type { Gate } from "../core/decide/hold.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
+import type { Question } from "../core/items/questions.ts";
 import { ALL_CAPABILITIES, type FakeAdapter, type FakeOptions, type FakeThread } from "./fake-adapter-types.ts";
 
 export type { FakeAdapter, FakeOptions };

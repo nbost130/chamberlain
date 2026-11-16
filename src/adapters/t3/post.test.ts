@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { Question } from "../../core/questions.ts";
+import type { Question } from "../../core/items/questions.ts";
 import { decisionsDownMessage, decisionsMessage, postCard, t3Post } from "./post.ts";
 
 const item = (id: string, over: Partial<Question> = {}): Question => ({

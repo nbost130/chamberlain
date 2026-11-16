@@ -1,4 +1,4 @@
-import type { Afk } from "../core/afk-held.ts";
+import type { Afk } from "../core/ops/afk-held.ts";
 
 export const a: Afk = {
 	enteredAt: "2026-11-01T12:45:00.000Z",

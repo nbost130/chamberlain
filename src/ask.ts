@@ -13,7 +13,7 @@
  * An approval (tag "Approval") or a secret (`secret: true` or tag "Secret") is ALWAYS urgent: `urgent: false` on one is
  * ignored, with a note on stderr, and the question is filed and posted as urgent.
  * Before it records anything, ask.ts looks the question up in what the principal already settled (answered questions,
- * rulings in force or retired, the Steward's decision log; src/core/settled.ts). A match is refused with exit 2 and one line
+ * rulings in force or retired, the Steward's decision log; src/core/items/settled.ts). A match is refused with exit 2 and one line
  * per match saying what it matched on: act on that answer instead. If it is truly a different question, add
  * `"notSettled": "<why>"`; the reason is stored on the question.
  * `proposedExpires` (an ISO date, or a date-time with a zone) makes the proposed ruling time-bound: if the principal saves it, it
@@ -31,15 +31,22 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { homeAdapter } from "./adapters/index.ts";
 import { IMAGE, parseAsk, VIDEO } from "./ask-parse.ts";
-import type { Adapter, PostResult } from "./core/adapter.ts";
-import { readViewKey } from "./core/capability.ts";
-import { CONF, STATE } from "./core/config.ts";
-import { defaultStore } from "./core/default-store.ts";
-import { cfg } from "./core/layout.ts";
-import { startup } from "./core/migrate.ts";
-import { askQuestion, type Evidence, evidenceRoot, isUrgent, newItemId, type Question } from "./core/questions.ts";
-import { findSettled, refusalLines } from "./core/settled.ts";
-import type { Store } from "./core/store.ts";
+import type { Adapter, PostResult } from "./core/adapter/adapter.ts";
+import { CONF, STATE } from "./core/config/config.ts";
+import { cfg } from "./core/config/layout.ts";
+import { startup } from "./core/config/migrate.ts";
+import {
+	askQuestion,
+	type Evidence,
+	evidenceRoot,
+	isUrgent,
+	newItemId,
+	type Question,
+} from "./core/items/questions.ts";
+import { findSettled, refusalLines } from "./core/items/settled.ts";
+import { readViewKey } from "./core/ops/capability.ts";
+import { defaultStore } from "./core/store/default-store.ts";
+import type { Store } from "./core/store/store.ts";
 
 export { newItemId };
 
@@ -144,7 +151,7 @@ export async function inlineView(): Promise<{ queueUrl: string | undefined; capa
 
 /**
  * Shows a question where the operator reads, through the adapter: the pinned view when the page answers and has a key, else a one-line
- * notice. The daemon uses it too, when a snoozed urgent question returns (src/core/snooze.ts).
+ * notice. The daemon uses it too, when a snoozed urgent question returns (src/core/items/snooze.ts).
  */
 export async function postQuestion(item: Question, adapter: Adapter): Promise<PostResult> {
 	return adapter.post(item, await inlineView());

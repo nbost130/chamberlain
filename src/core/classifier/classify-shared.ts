@@ -1,5 +1,5 @@
 /** What the classifier's modules share: the day, short text, and the key and decision a thread's classification is cached under. */
-import type { DispositionKey } from "../store-records.ts";
+import type { DispositionKey } from "../store/store-records.ts";
 import { combine, type Decision } from "./bank.ts";
 import type { Classified, ClassifyThread, Run } from "./classify.ts";
 

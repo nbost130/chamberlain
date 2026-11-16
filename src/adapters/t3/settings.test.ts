@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { resetSettings } from "../../core/config.ts";
+import { resetSettings } from "../../core/config/config.ts";
 import { t3BaseDir, t3StateDbPath } from "./settings.ts";
 
 const KEYS = ["CHAMBERLAIN_T3_DIR", "CHAMBERLAIN_T3_STATE_DB"];

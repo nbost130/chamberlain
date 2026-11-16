@@ -6,7 +6,7 @@ import { useCoreObsObsFixtures } from "../../testing/core-obs-obs-fixtures.ts";
 import { eventRows, memObs } from "../../testing/obs.ts";
 import { memStore } from "../../testing/store.ts";
 import { logFor, obsFor } from "../log.ts";
-import { openStore } from "../sqlite-store.ts";
+import { openStore } from "../store/sqlite-store.ts";
 import { makeLogger } from "./logger.ts";
 
 const { scratch } = useCoreObsObsFixtures();

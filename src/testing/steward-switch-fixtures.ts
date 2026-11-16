@@ -15,10 +15,10 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { writeConfigFile } from "../core/layout.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { publishSwitchRef, seedGen1, switchRefName } from "../core/steward-gens.ts";
-import type { Store } from "../core/store.ts";
+import { writeConfigFile } from "../core/config/layout.ts";
+import { publishSwitchRef, seedGen1, switchRefName } from "../core/steward/steward-gens.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import type { Store } from "../core/store/store.ts";
 import { memStore } from "./store.ts";
 
 export type FakeClock = { t: number; now: () => number; advance: (ms: number) => void };

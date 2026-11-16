@@ -8,8 +8,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { everything } from "../../testing/obs.ts";
 import { logFor, obsFor } from "../log.ts";
-import { openStore } from "../sqlite-store.ts";
-import { dbPath } from "../store.ts";
+import { openStore } from "../store/sqlite-store.ts";
+import { dbPath } from "../store/store.ts";
 import { OBS_MIGRATIONS, obsPath } from "./db.ts";
 
 const TOKEN = "ZQXLEGACYMARK9";

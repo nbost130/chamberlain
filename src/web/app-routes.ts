@@ -1,5 +1,5 @@
 /** The JSON API: the three reads, the card routes, the item actions and the ruling routes. */
-import type { WaitingCard } from "../core/adapter-waiting.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
 import {
 	CHALLENGE_TTL_MS,
 	consumeChallenge,
@@ -8,14 +8,14 @@ import {
 	SESSION_COOKIE,
 	sessionOf,
 } from "../core/challenge.ts";
-import { type KeyUsed, notNow, type QuestionState } from "../core/questions.ts";
-import { ranked, snoozed } from "../core/questions-wake.ts";
-import { readRulings } from "../core/rulings.ts";
-import { confirmRuling, editRuling, retireRuling } from "../core/rulings-change.ts";
-import { isExpired } from "../core/rulings-expiry.ts";
-import { citations, inForceNow } from "../core/rulings-read.ts";
-import { readHealth } from "../core/steward-health.ts";
-import { HEALTH_CONFIG } from "../core/steward-health-config.ts";
+import { type KeyUsed, notNow, type QuestionState } from "../core/items/questions.ts";
+import { ranked, snoozed } from "../core/items/questions-wake.ts";
+import { readRulings } from "../core/ops/rulings.ts";
+import { confirmRuling, editRuling, retireRuling } from "../core/ops/rulings-change.ts";
+import { isExpired } from "../core/ops/rulings-expiry.ts";
+import { citations, inForceNow } from "../core/ops/rulings-read.ts";
+import { readHealth } from "../core/steward/steward-health.ts";
+import { HEALTH_CONFIG } from "../core/steward/steward-health-config.ts";
 import { type AnswerIn, acceptAll, answer } from "./app-answer.ts";
 import { type Ctx, cardView, view } from "./app-ctx.ts";
 import { fail, json } from "./app-http.ts";

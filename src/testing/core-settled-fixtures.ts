@@ -1,8 +1,8 @@
-import type { SettledMatch } from "../core/config.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
-import { claimWake, pageClaim } from "../core/questions-claim.ts";
-import { findSettled } from "../core/settled.ts";
-import type { Store } from "../core/store.ts";
+import type { SettledMatch } from "../core/config/config.ts";
+import { askQuestion, type Question } from "../core/items/questions.ts";
+import { claimWake, pageClaim } from "../core/items/questions-claim.ts";
+import { findSettled } from "../core/items/settled.ts";
+import type { Store } from "../core/store/store.ts";
 
 export const DEFAULT: SettledMatch = {};
 

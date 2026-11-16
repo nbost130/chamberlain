@@ -1,4 +1,4 @@
-import type { BriefInput } from "../core/brief.ts";
+import type { BriefInput } from "../core/steward/brief.ts";
 
 export const base: BriefInput = {
 	mode: "test",

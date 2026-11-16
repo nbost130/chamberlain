@@ -7,12 +7,12 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { heldOpen } from "./core/afk-held.ts";
-import { getQuestion, questionStates } from "./core/questions.ts";
-import { claimWake, pageClaim } from "./core/questions-claim.ts";
-import { ranked } from "./core/questions-wake.ts";
-import { openStore } from "./core/sqlite-store.ts";
-import { dbPath, type Store } from "./core/store.ts";
+import { getQuestion, questionStates } from "./core/items/questions.ts";
+import { claimWake, pageClaim } from "./core/items/questions-claim.ts";
+import { ranked } from "./core/items/questions-wake.ts";
+import { heldOpen } from "./core/ops/afk-held.ts";
+import { openStore } from "./core/store/sqlite-store.ts";
+import { dbPath, type Store } from "./core/store/store.ts";
 
 type Dir = string;
 const scratch = (): Dir => {
@@ -44,7 +44,7 @@ const BASE = {
 	server: "main",
 };
 const ask = (dir: Dir, o: Record<string, unknown>) => run(dir, "./ask.ts", JSON.stringify({ ...BASE, ...o }));
-const afk = (dir: Dir, ...args: string[]) => run(dir, "./core/afk.ts", ...args);
+const afk = (dir: Dir, ...args: string[]) => run(dir, "./core/ops/afk.ts", ...args);
 const idOf = (r: { stdout: string }) => r.stdout.match(/\bQ-[a-z0-9]{4,16}\b/)![0];
 function withStore<T>(dir: Dir, fn: (s: Store) => T): T {
 	const s = openStore(dbPath(`${dir}/state`));

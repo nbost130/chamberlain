@@ -3,10 +3,10 @@
  * item's afk hold and queues the Steward's wake. A secret whose box has ended is the regression case that stayed open before.
  */
 import { describe, expect, test } from "bun:test";
-import { heldOpen } from "../core/afk-held.ts";
-import { closeCard, holdCard } from "../core/card-hold.ts";
-import { askQuestion, getQuestion, type Kind } from "../core/questions.ts";
-import { findSettled } from "../core/settled.ts";
+import { closeCard, holdCard } from "../core/items/card-hold.ts";
+import { askQuestion, getQuestion, type Kind } from "../core/items/questions.ts";
+import { findSettled } from "../core/items/settled.ts";
+import { heldOpen } from "../core/ops/afk-held.ts";
 import { useWebQueueActionsFixtures } from "../testing/web-queue-actions-fixtures.ts";
 
 const { T0, question, setup, hold, wakes } = useWebQueueActionsFixtures();

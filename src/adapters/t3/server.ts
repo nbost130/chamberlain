@@ -1,5 +1,5 @@
 /** A servers.json entry served by the T3 adapter: the core's entry plus the two keys T3 needs. */
-import type { ServerEntry } from "../../core/servers.ts";
+import type { ServerEntry } from "../../core/config/servers.ts";
 
 export type T3Server = ServerEntry & {
 	/** The T3 server's origin: "http://127.0.0.1:3773". */

@@ -206,7 +206,7 @@ removed and why.
 - **The daemon.** It watches agent threads through an adapter and makes no model calls. It wakes one agent thread, the
   Steward, when another thread needs input, a run fails, or a turn ends by handing a question back.
 - **Adapters.** The backend-agnostic core lives in `src/core/`, and each backend implements one contract
-  (`src/core/adapter.ts`). T3 Code is the first adapter. An in-memory fake runs the test suite, and `docs/ADAPTERS.md`
+  (`src/core/adapter/adapter.ts`). T3 Code is the first adapter. An in-memory fake runs the test suite, and `docs/ADAPTERS.md`
   explains how to write a new adapter, with a sketch for herdr.
 - **Delivery through a transactional outbox with one relay.**
   - Every producer only inserts outbox rows inside its own transaction, and only the daemon's relay sends them.

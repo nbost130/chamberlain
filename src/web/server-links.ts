@@ -1,6 +1,6 @@
-import { inlineScriptSrc, pageLink, readToken, readViewKey, rotateToken } from "../core/capability.ts";
-import { CONF } from "../core/config.ts";
-import { startup } from "../core/migrate.ts";
+import { CONF } from "../core/config/config.ts";
+import { startup } from "../core/config/migrate.ts";
+import { inlineScriptSrc, pageLink, readToken, readViewKey, rotateToken } from "../core/ops/capability.ts";
 import { acceptedHosts, hostPortOf, loadConfigOrExit } from "./server-config.ts";
 
 /**

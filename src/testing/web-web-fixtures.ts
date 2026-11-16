@@ -1,11 +1,11 @@
 import { afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WakeTransport } from "../core/deliver.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
-import { addInForce } from "../core/rulings.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath } from "../core/store.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
+import { askQuestion, type Question } from "../core/items/questions.ts";
+import { addInForce } from "../core/ops/rulings.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath } from "../core/store/store.ts";
 import { createApp } from "../web/app.ts";
 import { openCapability } from "./capability.ts";
 import { testRelay } from "./relay.ts";

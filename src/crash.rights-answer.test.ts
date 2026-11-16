@@ -2,9 +2,9 @@
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { finalSendMessage } from "./core/deliver.ts";
-import { getQuestion } from "./core/questions.ts";
-import { LEGACY_STAMP } from "./core/rights-sent.ts";
+import { finalSendMessage } from "./core/delivery/deliver.ts";
+import { getQuestion } from "./core/items/questions.ts";
+import { LEGACY_STAMP } from "./core/steward/rights-sent.ts";
 import {
 	accepted,
 	daemon,

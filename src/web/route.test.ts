@@ -5,11 +5,11 @@
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { appendHeld, heldOpen } from "../core/afk-held.ts";
-import { type Answer, getQuestion } from "../core/questions.ts";
-import { claimWake, pageClaim, readRelay, startRelay } from "../core/questions-claim.ts";
-import { answerRoute } from "../core/questions-wake.ts";
-import { dbPath } from "../core/store.ts";
+import { type Answer, getQuestion } from "../core/items/questions.ts";
+import { claimWake, pageClaim, readRelay, startRelay } from "../core/items/questions-claim.ts";
+import { answerRoute } from "../core/items/questions-wake.ts";
+import { appendHeld, heldOpen } from "../core/ops/afk-held.ts";
+import { dbPath } from "../core/store/store.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { useWebRouteFixtures } from "../testing/web-route-fixtures.ts";
 

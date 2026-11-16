@@ -1,9 +1,9 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingItem } from "../core/adapter-waiting.ts";
-import { heldOpen } from "../core/afk-held.ts";
-import { questionStates } from "../core/questions.ts";
-import { openStore } from "../core/sqlite-store.ts";
+import type { WaitingItem } from "../core/adapter/adapter-waiting.ts";
+import { questionStates } from "../core/items/questions.ts";
+import { heldOpen } from "../core/ops/afk-held.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
 import type { memStore } from "./store.ts";
 
 export const AT = { thread: "Deploy pipeline", server: "main", threadId: "th-1" };

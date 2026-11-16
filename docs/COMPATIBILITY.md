@@ -41,7 +41,7 @@ busy/queued state read and a "thread is waiting on input" event first among them
   unless the named run's status is `completed`, and left unconfirmed (retryable, including across a daemon restart) when
   a capable runs reader fails. A permanent rejection stays terminal across a restart. Distinct completed-run reports are
   not folded into each other while held. "Turn ended on a promise" and "turn ended handing a question back" are
-  recognised by phrase patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide.ts`](../src/core/decide.ts)
+  recognised by phrase patterns. Tune `CHAMBERLAIN_REPORT_QUIET_MS` and read [`src/core/decide/decide.ts`](../src/core/decide/decide.ts)
   before relying on either.
 - **`chamberlain debug t3x send` is lightly tested** on T3 0.1.x. Linux and macOS only; Windows is untested.
 - **Rolling back past migration 17.** A build that only knows migrations up to 16 (Chamberlain 0.5.0) refuses a database at

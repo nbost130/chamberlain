@@ -3,7 +3,7 @@
  * answered design question 1, plus whenever the Steward runs it. `times` may be empty: then only the Steward starts a run. The timer that
  * acts on this is B8 (#41); this file only says what the setting is, and checks it.
  */
-import { num, object, str } from "../../core/config-fields.ts";
+import { num, object, str } from "../../core/config/config-fields.ts";
 
 export type Schedule = {
 	/** "HH:MM", 24 hour, in `tz`. */

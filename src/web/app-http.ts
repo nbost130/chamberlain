@@ -1,5 +1,5 @@
 /** The page's response helpers, its security headers, and which requests an inline frame may make. */
-import { TOKEN_HEADER } from "../core/capability.ts";
+import { TOKEN_HEADER } from "../core/ops/capability.ts";
 
 /**
  * Is this Content-Type the JSON media type? The media type is the part before the first ";" and must be exactly `application/json`

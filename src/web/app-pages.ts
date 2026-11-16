@@ -1,5 +1,5 @@
 /** The pages: evidence, the static shell, the key and origin checks, links, and what a request is refused. */
-import { TOKEN_HEADER, TOKEN_PARAM } from "../core/capability.ts";
+import { TOKEN_HEADER, TOKEN_PARAM } from "../core/ops/capability.ts";
 import type { AppDeps, Ctx } from "./app-ctx.ts";
 import { fail, inlineCors, inlineVerdict, isJsonContentType, withSecurity } from "./app-http.ts";
 import { viewKeyReadable } from "./app-routes.ts";

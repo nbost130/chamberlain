@@ -1,6 +1,6 @@
 /** Reading a question from the command line's JSON: its options, routing, evidence and the checks on them. */
-import { alwaysUrgent, type Evidence, KINDS, type Option, type Question } from "./core/questions.ts";
-import { expiresProblem, isExpired } from "./core/rulings-expiry.ts";
+import { alwaysUrgent, type Evidence, KINDS, type Option, type Question } from "./core/items/questions.ts";
+import { expiresProblem, isExpired } from "./core/ops/rulings-expiry.ts";
 
 export const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 export const VIDEO = new Set([".mp4", ".webm", ".mov"]);

@@ -1,5 +1,5 @@
 /** `chamberlain triage …` / `bun src/triage.ts …`. */
-import { main as run } from "./core/alert-triage-cli.ts";
+import { main as run } from "./core/desk/alert-triage-cli.ts";
 
 export function main(argv: string[]): number {
 	return run(argv);

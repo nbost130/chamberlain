@@ -8,10 +8,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createEngine } from "../../core/engine.ts";
-import { createRelay } from "../../core/relay.ts";
-import { holdRelayLock } from "../../core/singleton.ts";
-import { openStore } from "../../core/sqlite-store.ts";
+import { createRelay } from "../../core/delivery/relay.ts";
+import { holdRelayLock } from "../../core/delivery/singleton.ts";
+import { createEngine } from "../../core/engine/engine.ts";
+import { openStore } from "../../core/store/sqlite-store.ts";
 import { noAlert } from "../../testing/alert.ts";
 import { createFakeAdapter } from "../../testing/fake-adapter.ts";
 import { testRelayLock } from "../../testing/lock.ts";

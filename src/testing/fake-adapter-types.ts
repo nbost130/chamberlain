@@ -1,10 +1,10 @@
 /** The fake adapter's types and its default capability list (see fake-adapter.ts). */
-import type { Adapter, OptionalCapability, PostOptions, ThreadEvent, ThreadInput } from "../core/adapter.ts";
-import type { LastAssistant, RunFailure, RunLook, StewardProbe, Transcript } from "../core/adapter-inspect.ts";
-import type { AnswerOutcome, WaitingCard, WaitingItem, WaitingRead } from "../core/adapter-waiting.ts";
-import type { InstructionRead } from "../core/history.ts";
-import type { Gate } from "../core/hold.ts";
-import type { Question } from "../core/questions.ts";
+import type { Adapter, OptionalCapability, PostOptions, ThreadEvent, ThreadInput } from "../core/adapter/adapter.ts";
+import type { LastAssistant, RunFailure, RunLook, StewardProbe, Transcript } from "../core/adapter/adapter-inspect.ts";
+import type { AnswerOutcome, WaitingCard, WaitingItem, WaitingRead } from "../core/adapter/adapter-waiting.ts";
+import type { Gate } from "../core/decide/hold.ts";
+import type { Question } from "../core/items/questions.ts";
+import type { InstructionRead } from "../core/ops/history.ts";
 
 export const ALL_CAPABILITIES: readonly OptionalCapability[] = [
 	"answer",

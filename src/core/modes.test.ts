@@ -17,13 +17,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../web/config.ts";
-import { readSettings, resetSettings } from "./config.ts";
-import { migrateStorage } from "./migrate.ts";
+import { readSettings, resetSettings } from "./config/config.ts";
+import { migrateStorage } from "./config/migrate.ts";
+import { readServers } from "./config/servers.ts";
+import { loadOperatingRules } from "./ops/rules.ts";
 import { assertPrivateDir, enforceMode, InsecureModeError, isPrivateFile, modeText, privateFile } from "./private.ts";
-import { loadOperatingRules } from "./rules.ts";
-import { readServers } from "./servers.ts";
-import { openStore } from "./sqlite-store.ts";
-import { readSweepConfig } from "./sweep.ts";
+import { openStore } from "./store/sqlite-store.ts";
+import { readSweepConfig } from "./sweep/sweep.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

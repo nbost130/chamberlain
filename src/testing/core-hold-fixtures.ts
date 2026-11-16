@@ -2,14 +2,14 @@ import { Database } from "bun:sqlite";
 import { afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WakeTransport } from "../core/deliver.ts";
-import { createOutbox } from "../core/deliver.ts";
-import type { Gate } from "../core/hold.ts";
-import { recordAnswerDelivered } from "../core/questions-wake.ts";
-import type { Relay } from "../core/relay.ts";
-import type { RelayDeps } from "../core/relay-ctx.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import type { Store } from "../core/store.ts";
+import type { Gate } from "../core/decide/hold.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
+import { createOutbox } from "../core/delivery/deliver.ts";
+import type { Relay } from "../core/delivery/relay.ts";
+import type { RelayDeps } from "../core/delivery/relay-ctx.ts";
+import { recordAnswerDelivered } from "../core/items/questions-wake.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import type { Store } from "../core/store/store.ts";
 import { testRelayLock } from "./lock.ts";
 
 /** Registers this suite's scratch cleanup for the test file that calls it, and returns its fixtures. */

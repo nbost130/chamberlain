@@ -9,7 +9,7 @@
  *
  * This file only says what a route is. Carrying one out is B7 (#40).
  */
-import { isArgv, object, required } from "../../core/config-fields.ts";
+import { isArgv, object, required } from "../../core/config/config-fields.ts";
 
 export type Route =
 	| { id: string; label: string; kind: "steward" }

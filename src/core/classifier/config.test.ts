@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseIdleParents } from "../idle-parents.ts";
-import { parseSweepConfig } from "../sweep.ts";
+import { parseIdleParents } from "../decide/idle-parents.ts";
+import { parseSweepConfig } from "../sweep/sweep.ts";
 import { DEFAULT_BANK } from "./bank.ts";
 import { CLASSIFIER_DEFAULTS, loadBank, parseClassifier } from "./config.ts";
 

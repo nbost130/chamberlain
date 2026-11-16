@@ -9,9 +9,9 @@ import {
 	timelines,
 	watch,
 } from "../testing/core-report-fixtures.ts";
-import { reportKey } from "./decide";
-import { failedRead } from "./history";
-import { REPORT_HOLD_MS, reportWait, settleReport } from "./report";
+import { reportKey } from "./decide/decide.ts";
+import { failedRead } from "./ops/history.ts";
+import { REPORT_HOLD_MS, reportWait, settleReport } from "./report.ts";
 
 describe("reportWait", () => {
 	test("a clean completion skips the quiet window; outstanding work still waits it out", () => {

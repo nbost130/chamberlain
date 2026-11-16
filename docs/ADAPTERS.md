@@ -2,7 +2,7 @@
 
 An adapter connects Chamberlain to one agent backend. T3 Code is the adapter that ships (`src/adapters/t3/`). This page
 says what an adapter must do, how to add one, and how to test it. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for where the
-adapter sits; the contract itself is `src/core/adapter.ts`, and it is short enough to read in one sitting.
+adapter sits; the contract itself is `src/core/adapter/adapter.ts`, and it is short enough to read in one sitting.
 
 ## Adding one
 
@@ -113,7 +113,7 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
   backend cannot find, and an answer whose overall shape you do not recognise. The core treats a result that breaks this
   contract as `ok: false`. An adapter that cannot tell a resolved card leaves `resolved` out; its card holds then close only by hand.
 - **Card holds read `waiting`, and close only on positive evidence.** While the operator is away, every `approval_request`,
-  `secret_request` or `link_request` that `waiting` reports is held behind a pointer question (src/core/card-hold.ts). Map
+  `secret_request` or `link_request` that `waiting` reports is held behind a pointer question (src/core/items/card-hold.ts). Map
   your backend's own kinds onto `WaitKind` there, give each card a stable `requestId` (the same one
   `ThreadState.pendingRequestId` carries), and keep `label` to a short name of what is asked: the core copies `type`,
   `requestId` and `label` and nothing else, so a value or a prompt belongs in `questions`, which the hold never reads. A card
@@ -164,10 +164,10 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 
 ## Testing an adapter
 
-- `conformance(adapter)` in `src/core/adapter.ts` returns what is wrong with a declaration: a capability declared but not
+- `conformance(adapter)` in `src/core/adapter/adapter.ts` returns what is wrong with a declaration: a capability declared but not
   implemented, implemented but not declared, or a required part missing. Assert it returns `[]`.
 - `src/testing/fake-adapter.ts` is a complete in-memory adapter and the smallest worked example; copy its shape. Drive
-  the engine (`createEngine`) with it as `src/core/engine.test.ts` does, to see what a backend like yours would
+  the engine (`createEngine`) with it as `src/core/engine/engine.test.ts` does, to see what a backend like yours would
   cause: a wake delivered, a report held while the Steward is busy and sent as one digest.
 - Keep the network and the clock injectable, so a test drives your real code against a stub server. The T3 adapter's
   tests (`src/adapters/t3/*.test.ts`) fake the socket, the history pages and the state database.

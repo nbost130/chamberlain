@@ -1,13 +1,13 @@
 /**
  * The one command: `chamberlain <subcommand> [args]`. Each subcommand is a tool that also runs on its own from a checkout
  * (`bun src/ask.ts ...`); this dispatcher is what the standalone binary (scripts/build.ts) runs, and `bun src/cli.ts <subcommand>` works too.
- * The tools and the source file each one lives in are listed once, in COMMANDS (src/core/config.ts). A subcommand is loaded only when it
+ * The tools and the source file each one lives in are listed once, in COMMANDS (src/core/config/config.ts). A subcommand is loaded only when it
  * runs, so `--version` and `help` start without opening anything.
  *
  * The diagnostic commands (DEBUG_COMMANDS) are run as `chamberlain debug <name>`; `chamberlain <name>` still works for them, unlisted.
  */
 import pkg from "../package.json" with { type: "json" };
-import { COMMANDS, type CommandName, DEBUG_COMMANDS, isDebugCommand } from "./core/config.ts";
+import { COMMANDS, type CommandName, DEBUG_COMMANDS, isDebugCommand } from "./core/config/config.ts";
 
 type Tool = { main: (argv: string[]) => unknown };
 
@@ -17,12 +17,12 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	web: () => import("./web/server.ts"),
 	ask: () => import("./ask.ts"),
 	decisions: () => import("./decisions.ts"),
-	afk: () => import("./core/afk.ts"),
-	decided: () => import("./core/decided.ts"),
-	ruling: () => import("./core/ruling.ts"),
-	butler: () => import("./core/butler.ts"),
-	migrate: () => import("./core/migrate.ts"),
-	config: () => import("./core/config-cmd.ts"),
+	afk: () => import("./core/ops/afk.ts"),
+	decided: () => import("./core/ops/decided.ts"),
+	ruling: () => import("./core/ops/ruling.ts"),
+	butler: () => import("./core/ops/butler.ts"),
+	migrate: () => import("./core/config/migrate.ts"),
+	config: () => import("./core/config/config-cmd.ts"),
 	brief: () => import("./brief.ts"),
 	wakes: () => import("./wakes.ts"),
 	triage: () => import("./triage.ts"),
@@ -33,7 +33,7 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	compat: () => import("./adapters/t3/compat.ts"),
 	"queue-waits": () => import("./adapters/t3/queue-waits.ts"),
 	"switch-steward": () => import("./adapters/t3/switch-steward.ts"),
-	steward: () => import("./core/steward-switch.ts"),
+	steward: () => import("./core/steward/steward-switch.ts"),
 	"synthetic-wake": () => import("./adapters/t3/synthetic-wake.ts"),
 	// An optional module, reached through the registry, which names it and no other file does (src/architecture.test.ts).
 	mail: async () => {

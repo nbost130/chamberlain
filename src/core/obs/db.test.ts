@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { MIGRATIONS } from "../migrations.ts";
+import { MIGRATIONS } from "../store/migrations.ts";
 import { OBS_MIGRATIONS, ObsTooNewError, openObsDb } from "./db.ts";
 
 const dirs: string[] = [];

@@ -40,7 +40,7 @@ All counters reset at the latest compaction. Verdicts:
   the T3 adapter has it). An adapter without it leaves the hand-off to you: one `only-you` question through `chamberlain ask`,
   at most once per session, recommending the `/steward-handoff` command, and nothing starts automatically.
 
-The limits are `HEALTH_CONFIG` in `src/core/steward-health.ts`. They are heuristics, not validated measurements: rereads
+The limits are `HEALTH_CONFIG` in `src/core/steward/steward-health.ts`. They are heuristics, not validated measurements: rereads
 are observable calls, not proof of confusion.
 
 ## The optional format signal
@@ -62,7 +62,7 @@ An optional metric, off until `stewardTokens` is on ([CONFIGURATION.md](CONFIGUR
 wake and per sweep, going forward and back through history, without a model call: every assistant row of a Claude Code transcript already
 carries the API's `usage` object.
 
-**How a transcript is read** (`src/core/steward-tokens.ts`). The transcript is split at each turn-starting prompt into segments:
+**How a transcript is read** (`src/core/steward/steward-tokens.ts`). The transcript is split at each turn-starting prompt into segments:
 
 | Kind | The prompt that starts it |
 | --- | --- |

@@ -1,5 +1,5 @@
-import type { RunFailure } from "../core/adapter-inspect.ts";
-import type { FailureKind } from "../core/recover-classify.ts";
+import type { RunFailure } from "../core/adapter/adapter-inspect.ts";
+import type { FailureKind } from "../core/ops/recover-classify.ts";
 import { NOW } from "./core-recover-fixtures.ts";
 
 /** The failures T3 recorded for real runs since 2026-10-25, one row each: what the table must say about them. */

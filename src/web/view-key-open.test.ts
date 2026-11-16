@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { newToken } from "../core/capability.ts";
+import { newToken } from "../core/ops/capability.ts";
 import { useWebViewKeyFixtures } from "../testing/web-view-key-fixtures.ts";
 import type { Linker } from "./thread-links.ts";
 import { viewKeyVerdict } from "./view-key.ts";

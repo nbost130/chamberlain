@@ -2,7 +2,7 @@
  * The layering rules, enforced by reading every import statement:
  *
  *   - src/core/ never imports from src/adapters/. Core is backend-agnostic; it talks to a backend only through the
- *     Adapter contract (src/core/adapter.ts). Tests in core count: a core test builds its backend with src/testing/.
+ *     Adapter contract (src/core/adapter/adapter.ts). Tests in core count: a core test builds its backend with src/testing/.
  *   - An adapter's folder imports only core and itself, never another adapter's folder. Only src/adapters/index.ts
  *     (the registry) names more than one.
  *   - The page's modules (src/web/) work through the contract too. Only its entry point, src/web/server.ts, wires the
@@ -13,7 +13,7 @@
  *
  * The same file holds the second rule: there is ONE item system. Tracking a thing, de-duplicating it and re-notifying about it
  * all go through the items table, whose notification columns only `ItemStore.observe` writes, and whose one decision is
- * `decideNotification` (src/core/notification.ts). The tests below fail if a second dedup or re-notification mechanism appears:
+ * `decideNotification` (src/core/items/notification.ts). The tests below fail if a second dedup or re-notification mechanism appears:
  * one of the old identifiers (a sticky or seedable flag, a seen list, a fired file, an in-memory notification clock, or the
  * names the mechanism had before docs/GLOSSARY.md renamed it), another module writing the notification columns, or another
  * module deciding that a notification is due. The scan walks every .ts file under src/ recursively, so a new entry point is scanned the

@@ -6,7 +6,7 @@ import type { ClassifyThread } from "../core/classifier/classify.ts";
 import { CLASSIFIER_DEFAULTS, type ClassifierConfig } from "../core/classifier/config.ts";
 import type { Provider, ProviderResult } from "../core/classifier/providers.ts";
 import type { SentState } from "../core/classifier/state.ts";
-import type { Store } from "../core/store.ts";
+import type { Store } from "../core/store/store.ts";
 
 export const NOW = Date.parse("2026-11-14T12:00:00Z");
 

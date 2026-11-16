@@ -8,8 +8,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "../core/adapter-waiting.ts";
-import { newToken, TOKEN_HEADER } from "../core/capability.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
+import { newToken, TOKEN_HEADER } from "../core/ops/capability.ts";
 import { memoryCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";

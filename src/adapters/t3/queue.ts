@@ -3,8 +3,8 @@
  * Steward is working through them shows here, and a card in its own thread stops everything behind it.
  */
 import { Database } from "bun:sqlite";
-import type { Gate } from "../../core/hold.ts";
-import { setting } from "../../core/layout.ts";
+import { setting } from "../../core/config/layout.ts";
+import type { Gate } from "../../core/decide/hold.ts";
 
 const STALL_MS = 20 * 60_000;
 /** The stall window in force: `stallMs` (CHAMBERLAIN_STALL_MS, else config.json), else the default above. */

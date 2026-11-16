@@ -4,11 +4,11 @@
  * (lock.ts), it refuses to run unless NODE_ENV or BUN_ENV is "test" (or CHAMBERLAIN_TEST_ONLY=1: src/core/test-env.ts), and
  * src/architecture.test.ts fails if production code imports anything from src/testing/.
  */
-import type { WakeTransport } from "../core/deliver.ts";
-import { recordAnswerDelivered } from "../core/questions-wake.ts";
-import { createRelay } from "../core/relay.ts";
-import type { RelayDeps } from "../core/relay-ctx.ts";
-import type { Store } from "../core/store.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
+import { createRelay } from "../core/delivery/relay.ts";
+import type { RelayDeps } from "../core/delivery/relay-ctx.ts";
+import { recordAnswerDelivered } from "../core/items/questions-wake.ts";
+import type { Store } from "../core/store/store.ts";
 import { requireTestEnv } from "../core/test-env.ts";
 import { testRelayLock } from "./lock.ts";
 

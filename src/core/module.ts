@@ -3,7 +3,7 @@
  * turns it on, keeps its own database file, and that core never imports. Chamberlain runs the same without it: a module that is off has
  * no timer, no tables, no wake kind and no page change.
  *
- * Core meets a module only through this type, as it meets a backend only through the adapter contract (src/core/adapter.ts). The one
+ * Core meets a module only through this type, as it meets a backend only through the adapter contract (src/core/adapter/adapter.ts). The one
  * registry that names the modules is src/modules/index.ts, and only the entry points (src/cli.ts, src/daemon.ts) import it;
  * src/architecture.test.ts reads every import and fails the build on a violation, so there is no shortcut to take by accident.
  * docs/ARCHITECTURE.md says how to add one.

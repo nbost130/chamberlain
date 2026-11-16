@@ -27,9 +27,9 @@ A butler is a short job, never a standing thread. Each one gets a short list, fi
    - a fresh `clientRequestId`
    - `message` set to the brief below, filled in
 
-5. **Record it.** `bun {{chamberlain}}/src/core/butler.ts start --thread <new thread id> --machine <name> --model <model> --scope "<scope>"`. It prints the butler id; put that id in the title or your notes. `bun {{chamberlain}}/src/core/butler.ts list` shows who is live. Check it before starting another one for the same scope.
+5. **Record it.** `bun {{chamberlain}}/src/core/ops/butler.ts start --thread <new thread id> --machine <name> --model <model> --scope "<scope>"`. It prints the butler id; put that id in the title or your notes. `bun {{chamberlain}}/src/core/ops/butler.ts list` shows who is live. Check it before starting another one for the same scope.
 
-6. **Stopping.** To stop one, `t3_thread_send` it the word `stop`, then `bun {{chamberlain}}/src/core/butler.ts stop <id> --reason "<why>"`. When a butler reports it has archived itself, record the stop the same way.
+6. **Stopping.** To stop one, `t3_thread_send` it the word `stop`, then `bun {{chamberlain}}/src/core/ops/butler.ts stop <id> --reason "<why>"`. When a butler reports it has archived itself, record the stop the same way.
 
 ## When a butler or a worker gets stuck
 

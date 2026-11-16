@@ -2,16 +2,16 @@
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { drainAlertDesk } from "../core/alert-desk.ts";
-import { DESK_RECEIVER, type DeskEvent } from "../core/alert-desk-config.ts";
-import { type CrashPoint, CURSOR_KEY } from "../core/alert-desk-cursor.ts";
-import { drainTriage } from "../core/alert-triage.ts";
-import { ALERT_TRIAGE, readTriageConfig, TRIAGE_WAKE_KIND } from "../core/alert-triage-config.ts";
-import { drainDeskPass } from "../core/alert-triage-engine.ts";
-import { asOb, listObligations } from "../core/alert-triage-obligation.ts";
-import { createOutbox } from "../core/deliver.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import type { Store } from "../core/store.ts";
+import { createOutbox } from "../core/delivery/deliver.ts";
+import { drainAlertDesk } from "../core/desk/alert-desk.ts";
+import { DESK_RECEIVER, type DeskEvent } from "../core/desk/alert-desk-config.ts";
+import { type CrashPoint, CURSOR_KEY } from "../core/desk/alert-desk-cursor.ts";
+import { drainTriage } from "../core/desk/alert-triage.ts";
+import { ALERT_TRIAGE, readTriageConfig, TRIAGE_WAKE_KIND } from "../core/desk/alert-triage-config.ts";
+import { drainDeskPass } from "../core/desk/alert-triage-engine.ts";
+import { asOb, listObligations } from "../core/desk/alert-triage-obligation.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import type { Store } from "../core/store/store.ts";
 
 /** config.json must be mode 0600 or layout refuses to read it. */
 function writeConf(path: string, doc: unknown): void {

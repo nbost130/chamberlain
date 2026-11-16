@@ -1,5 +1,5 @@
-import { type ItemSource, runSources } from "../core/source.ts";
-import { type SweepAction, sweepAction } from "../core/sweep.ts";
+import { type ItemSource, runSources } from "../core/items/source.ts";
+import { type SweepAction, sweepAction } from "../core/sweep/sweep.ts";
 import type { memStore } from "./store.ts";
 
 const SOON = 60_000;

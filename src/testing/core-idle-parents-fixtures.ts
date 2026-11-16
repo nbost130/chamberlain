@@ -1,7 +1,7 @@
-import { normalizeThread, type ThreadInput } from "../core/adapter.ts";
-import type { LastAssistant } from "../core/adapter-inspect.ts";
-import { IDLE_PARENTS_DEFAULTS } from "../core/idle-parents.ts";
-import { type IdleSelection, type IdleThread, type IdleThreadSource, messageHash } from "../core/idle-select.ts";
+import { normalizeThread, type ThreadInput } from "../core/adapter/adapter.ts";
+import type { LastAssistant } from "../core/adapter/adapter-inspect.ts";
+import { IDLE_PARENTS_DEFAULTS } from "../core/decide/idle-parents.ts";
+import { type IdleSelection, type IdleThread, type IdleThreadSource, messageHash } from "../core/decide/idle-select.ts";
 
 const MIN = 60_000;
 

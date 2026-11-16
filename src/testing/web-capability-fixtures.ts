@@ -1,8 +1,8 @@
 import { afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { newToken, TOKEN_HEADER } from "../core/capability.ts";
-import { askQuestion, type Question } from "../core/questions.ts";
+import { askQuestion, type Question } from "../core/items/questions.ts";
+import { newToken, TOKEN_HEADER } from "../core/ops/capability.ts";
 import { createApp } from "../web/app.ts";
 import { memoryCapability } from "./capability.ts";
 import { memStore } from "./store.ts";

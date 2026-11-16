@@ -1,8 +1,8 @@
 /** app-paths, continued: see app-paths.test.ts for the overview. */
 
 import { describe, expect, test } from "bun:test";
-import { appendHeld } from "../core/afk-held.ts";
-import type { Store } from "../core/store.ts";
+import { appendHeld } from "../core/ops/afk-held.ts";
+import type { Store } from "../core/store/store.ts";
 import { useWebAppPathsFixtures } from "../testing/web-app-paths-fixtures.ts";
 import type { SendToThread } from "./waiting.ts";
 

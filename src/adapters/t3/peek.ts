@@ -4,9 +4,9 @@
  *
  *   bun src/adapters/t3/peek.ts <server> <threadId> [messages=3] [chars=400]
  */
-import { CONF, principal } from "../../core/config.ts";
-import { readSecret } from "../../core/layout.ts";
-import { readServers } from "../../core/servers.ts";
+import { CONF, principal } from "../../core/config/config.ts";
+import { readSecret } from "../../core/config/layout.ts";
+import { readServers } from "../../core/config/servers.ts";
 import { connect } from "./rpc.ts";
 import { t3Server } from "./server.ts";
 

@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { HELD, heldOpen } from "../core/afk-held.ts";
-import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import { askQuestion, QUEUE, questionStates } from "../core/questions.ts";
-import { readRelay } from "../core/questions-claim.ts";
+import { reconcileItemHolds } from "../core/decide/hold-reconcile.ts";
+import { askQuestion, QUEUE, questionStates } from "../core/items/questions.ts";
+import { readRelay } from "../core/items/questions-claim.ts";
+import { HELD, heldOpen } from "../core/ops/afk-held.ts";
 import { useWebQueueActionsFixtures } from "../testing/web-queue-actions-fixtures.ts";
 
 const { T0, HOUR, iso, question, setup, world, hold, wakes } = useWebQueueActionsFixtures();

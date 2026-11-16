@@ -10,7 +10,7 @@
  *
  * `mirror` is the dual-write: the caller's own line, as the old `events` table has always held it, with the same `source_key` as the new row.
  */
-import type { LogEvent } from "../store.ts";
+import type { LogEvent } from "../store/store.ts";
 import { errClass, own } from "./fields.ts";
 import { type Call, keyOf, type Outcome, SOURCE_KEY, type Where } from "./obs-spec.ts";
 import { ObsStore } from "./obs-store.ts";

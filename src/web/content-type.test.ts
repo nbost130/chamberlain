@@ -3,8 +3,8 @@
  * `application/json`, so the guard is only as strict as the match: a prefix match let `application/jsonxxx` through.
  */
 import { describe, expect, test } from "bun:test";
-import { askQuestion } from "../core/questions.ts";
-import { readClaim } from "../core/questions-claim.ts";
+import { askQuestion } from "../core/items/questions.ts";
+import { readClaim } from "../core/items/questions-claim.ts";
 import { openCapability } from "../testing/capability.ts";
 import { memStore } from "../testing/store.ts";
 import { createApp } from "./app.ts";

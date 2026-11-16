@@ -2,7 +2,7 @@
  * Legacy alias: `chamberlain switch-steward <threadId> --live`.
  * Requires --live (M4). Prefer `chamberlain steward prepare` + `steward switch`.
  */
-import { main as stewardMain } from "../../core/steward-switch.ts";
+import { main as stewardMain } from "../../core/steward/steward-switch.ts";
 
 export function main(argv: string[] = process.argv.slice(2)) {
 	if (!argv.includes("--live")) {

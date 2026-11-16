@@ -1,7 +1,7 @@
 /** thread-links, continued: see thread-links.test.ts for the overview. */
 
 import { describe, expect, test } from "bun:test";
-import type { Question } from "../core/questions.ts";
+import type { Question } from "../core/items/questions.ts";
 import { useWebThreadLinksFixtures } from "../testing/web-thread-links-fixtures.ts";
 
 const { SERVERS, T1, T2, LAUNCHED, LAUNCHED_PATH, ORIGIN, page } = useWebThreadLinksFixtures();

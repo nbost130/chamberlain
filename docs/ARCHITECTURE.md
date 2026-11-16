@@ -14,14 +14,14 @@ flowchart TB
   subgraph entry["Entry points (src/)"]
     D["daemon.ts"]
     W["web/server.ts"]
-    T["ask.ts · brief.ts · steward-health.ts<br/>core/*.ts command-line tools"]
+    T["ask.ts · brief.ts · steward-health.ts<br/>core command-line tools"]
   end
   subgraph core["src/core: no backend inside"]
-    E["engine.ts<br/>watch → decide → hold → deliver"]
-    R["decide · hold · deliver · report · sweep"]
-    S["store · notification · source · questions (queue, one-wake claims)<br/>rulings · afk · butler · brief · rules · rights-sent · history · migrate"]
-    C{{"adapter.ts<br/>the contract"}}
-    DB[("sqlite-store.ts<br/>chamberlain.db")]
+    E["engine/<br/>watch → decide → hold → deliver"]
+    R["decide/ · delivery/ · sweep/"]
+    S["store/ · items/ · steward/ · desk/ · ops/ · config/"]
+    C{{"adapter/<br/>the contract"}}
+    DB[("store/sqlite-store.ts<br/>chamberlain.db")]
   end
   subgraph page["src/web"]
     A["app.ts (the API)"]
@@ -55,7 +55,18 @@ flowchart TB
 
 | Directory | What lives there | May import |
 | --- | --- | --- |
-| `src/core/` | Everything that is true whatever the backend (the Alert Desk's inbox drain, `alert-desk.ts`, is here: it decides through the item system and queues wakes for the `desk` receiver, which the one relay sends as a second receiver, through the same serial queue): the rules that decide a wake (`decide.ts`), the hold and digest logic (`hold.ts`), the outbox's producer side (`deliver.ts`) and its one message relay (`relay.ts`, held to one per state directory by `singleton.ts`, and to one per lock handle by `createRelay` itself; every receiver, the Steward and the Alert Desk, is a lane of it), the **`Store` interface** (`store.ts`) and its one SQLite implementation (`sqlite-store.ts`, `migrations.ts`), the item system (`alert.ts`, `source.ts`, `sweep.ts`), the decision queue and its one-wake claims (`questions.ts`), rulings, away mode, butlers, the hand-off (`brief.ts`), operating rules, history, the config files' schema version and its migration, and the engine (`engine.ts`) that ties them to an adapter. Core logic depends on the `Store` interface only; `sqlite-store.ts` is the one module that opens the database. | itself only |
+| `src/core/` | Backend-agnostic logic, split by concern into subfolders (plus a short list of shared utilities at the root, and the existing `classifier/`, `llm/`, `obs/` packages). Core depends on the `Store` interface only; `store/sqlite-store.ts` is the one module that opens the database. | itself only |
+| `src/core/adapter/` | The adapter contract and conformance helpers. | `src/core/` |
+| `src/core/engine/` | `engine.ts` and the watch → decide → hold → deliver orchestration split out of it. | `src/core/` |
+| `src/core/decide/` | Wake rules (`decide.ts`), hold/digest, idle parents, undelivered. | `src/core/` |
+| `src/core/delivery/` | Outbox producer (`deliver.ts`), the one message relay (`relay.ts`), singleton lock, wake-id helpers. | `src/core/` |
+| `src/core/store/` | `Store` interface, SQLite implementation, migrations, schema, database opener. | `src/core/` |
+| `src/core/items/` | Item system, notification decision, decision queue / claims, cards, snooze, settled. | `src/core/` |
+| `src/core/steward/` | Steward switch/prepare/health/tokens, brief, hand-off, rights-sent. | `src/core/` |
+| `src/core/desk/` | Alert Desk drain and alert triage (second wake receiver, not the Steward). | `src/core/` |
+| `src/core/config/` | `config.json` schema, layout, servers, migrate/move/revert/show. | `src/core/` |
+| `src/core/ops/` | Away mode, rulings, butlers, recover/judge, capability, maintain, retention, history, operating rules. | `src/core/` |
+| `src/core/sweep/` | Routine sweep checks plumbing. | `src/core/` |
 | `src/adapters/<name>/` | Every fact about one backend: its protocol, its tokens, its database, its wording. One folder per backend. | `src/core/` and its own folder |
 | `src/adapters/index.ts` | The registry: a name to a factory, one line per backend. The only file that names more than one adapter. | everything under `src/adapters/` |
 | `src/web/` | The decision-queue page: the JSON API (`app.ts`), the cards-across-servers layer (`waiting.ts`), the title keeper, the static files. Only `server.ts`, the entry point, touches the registry. | `src/core/` |
@@ -72,15 +83,15 @@ other than the entry point reaches into an adapter. The same file holds the modu
 A module is a feature an operator may leave out entirely, so it is kept where leaving it out is the default and costs nothing. It is a folder `src/modules/<name>/` that core never imports, one section of `config.json` that is off by default, its own database file, and one entry in the registry (`src/modules/index.ts`), which only `cli.ts` and `daemon.ts` import. The contract is `Module` in `src/core/module.ts`: a name (the folder, the config section and the command are one word), `enabled(section)`, `start(ctx)` for what runs in the daemon, and `main(argv)` for `chamberlain <name>`.
 
 - **Off means absent.** A module whose section is missing, or says `"provider": "none"`, is not in `activeModules`: no timer, no table, no wake kind, no file, no event. `chamberlain <name>` says it is off and exits 0.
-- **Its own database.** `mail.db` is opened by the same code as `chamberlain.db` (`src/core/database.ts`: private, WAL, its own numbered migrations, refused when newer) but is a separate file, so its tables exist only for an operator who turned it on, and an older daemon never refuses `chamberlain.db` over a module's change. The one link back is the decision queue, through core functions.
+- **Its own database.** `mail.db` is opened by the same code as `chamberlain.db` (`src/core/store/database.ts`: private, WAL, its own numbered migrations, refused when newer) but is a separate file, so its tables exist only for an operator who turned it on, and an older daemon never refuses `chamberlain.db` over a module's change. The one link back is the decision queue, through core functions.
 - **Enforced, not promised.** `src/architecture.test.ts` fails the build if `src/core/` imports `src/modules/`, if a module imports an adapter, another module or the registry, if a module names `bun:sqlite` instead of the shared opener, or if anything but `cli.ts`, `daemon.ts` and a test imports the registry. `src/modules/daemon.test.ts` starts the real daemon with the section absent and asserts no `mail.db`, no event and no child process.
-- **Adding one.** A folder under `src/modules/`, a `Module` in its `index.ts`, one line in the registry, its section name in `SECTIONS` (`src/core/layout.ts`) and a row in `COMMANDS` (`src/core/config.ts`) with the loader in `src/cli.ts`.
+- **Adding one.** A folder under `src/modules/`, a `Module` in its `index.ts`, one line in the registry, its section name in `SECTIONS` (`src/core/config/layout.ts`) and a row in `COMMANDS` (`src/core/config/config.ts`) with the loader in `src/cli.ts`.
 
 Model calls that read untrusted text go through one runner, `src/core/llm/cli.ts`: the `claude -p` argv with no tools, no settings (so no hook), no MCP servers, no commands and no session file, which the runner refuses to spawn without. The idle-thread classifier and the email module share it, so the rule is written once.
 
 ## The adapter contract
 
-The contract is `src/core/adapter.ts`. Four capabilities are required; the rest are optional, and an adapter lists the
+The contract is `src/core/adapter/adapter.ts`. Four capabilities are required; the rest are optional, and an adapter lists the
 optional ones it has in `capabilities`. The core and the page degrade cleanly when one is missing.
 
 | Capability | | What it is | Without it |
@@ -108,10 +119,10 @@ Thread states use one vocabulary whatever the backend says (`running`, `queued`,
 
 Delivery is a **transactional outbox** with **one message relay** (the daemon). Every producer (the engine, the sweep, the page's
 answers, the one-time importer and `synthetic-wake.ts`) only **inserts rows**, inside the same transaction as whatever made the wake
-necessary. Only the relay (`src/core/relay.ts`), in the daemon, calls a wake transport (the adapter's `wake`, and `compact` for the
+necessary. Only the relay (`src/core/delivery/relay.ts`), in the daemon, calls a wake transport (the adapter's `wake`, and `compact` for the
 compaction request, which has no row), and it cannot be built without the held one-relay lock: `createRelay` and `createEngine` take the
 handle `holdRelayLock` returns, and refuse anything else, including a handle for another database: the handle records the device and inode
-of the file it locked, and `createRelay` checks them against the file its store opened (`lockCovers`, `src/core/singleton.ts`). Every POST the relay makes, a wake or a compaction, goes through **one serial
+of the file it locked, and `createRelay` checks them against the file its store opened (`lockCovers`, `src/core/delivery/singleton.ts`). Every POST the relay makes, a wake or a compaction, goes through **one serial
 queue** inside the relay, so no two requests are ever in flight (a compaction waits behind the wake being sent, and is not
 retried: it has no row). That holds across **receivers** too: the Alert Desk's wakes (rows whose `receiver` column, migration 8, is `desk`) go
 to the desk's own webhook, but through the same relay and the same queue, never a second relay. Each row's receiver picks its transport; each
@@ -400,7 +411,7 @@ other, and they never lose each other's writes. Only the daemon sends wakes (its
 The database is opened in WAL mode with a busy timeout, foreign keys on and `synchronous = FULL`. A change is made in a
 transaction (`Store.tx`, `BEGIN IMMEDIATE`, nestable as savepoints): it takes the write lock when it starts, so two
 read-modify-write sequences never interleave, and it commits whole or not at all. Schema changes are the versioned SQL
-migrations in `src/core/migrations.ts`, recorded in the `migrations` table; a database newer than the code is refused at
+migrations in `src/core/store/migrations.ts`, recorded in the `migrations` table; a database newer than the code is refused at
 start with exit code 3, the way a config file from a newer build is.
 
 | Where | What | Written by |
@@ -420,7 +431,7 @@ start with exit code 3, the way a config file from a newer build is.
 | file, beside the database (module on only) | `mail.db`: the email triage module's own database, never created while the module is off | the module |
 | files, beside the database | `evidence/<item>/` (copied in by `ask.ts`, served by the page, listed by `evidence` rows) and `steward-brief.md` | `ask.ts`, `brief.ts` |
 
-Config files carry a `schemaVersion` (currently 2) and `src/core/migrate.ts` upgrades older ones at start. One migrator runs at a time,
+Config files carry a `schemaVersion` (currently 2) and `src/core/config/migrate.ts` upgrades older ones at start. One migrator runs at a time,
 by a `flock(2)` exclusive lock on the config directory itself, held for the whole rewrite and owned by the kernel: it is gone when the
 holder exits or dies, however it dies, and nothing is ever broken or cleaned up by age, so a slow migration is never entered twice and no
 process can release another's lock. A second migrator waits for the first (30 seconds by default), then skips with a message and changes
@@ -458,7 +469,7 @@ stateDiagram-v2
   resolved --> triggered: it recurs (a new occurrence: counters start over)
 ```
 
-**One function decides.** `decideNotification` (`src/core/notification.ts`) is the only code that says whether an item
+**One function decides.** `decideNotification` (`src/core/items/notification.ts`) is the only code that says whether an item
 notifies (again). It never does while the item is acknowledged, resolved or in mode `silenced`; it does the first time an
 item is seen; and then again once `next_notification_at` has passed, until the **repeat policy's maximum** is reached. A
 repeat policy is what a source asks for: the intervals between notifications (the last interval repeats) and the most
@@ -466,9 +477,9 @@ notifications to send. One notification is the default (`NOTIFY_ONCE`); `repeatE
 `repeatAtIntervals([10 min, 1 h], 5)` is a repeat interval that grows, with a maximum. Only `ItemStore.observe`, inside
 `sqlite-store.ts`, writes the notification columns.
 
-**Sources and the sweep.** A source (`src/core/source.ts`) is anything that can say what currently needs attention: a
+**Sources and the sweep.** A source (`src/core/items/source.ts`) is anything that can say what currently needs attention: a
 configured check, the runaway-thread counter, any future monitor of pull requests, runs or deploys. The sweep
-(`src/core/sweep.ts`) is a timer that runs sources: each finding is observed (created, refreshed, or reopened if it had
+(`src/core/sweep/sweep.ts`) is a timer that runs sources: each finding is observed (created, refreshed, or reopened if it had
 resolved); the finding a source stops reporting is resolved, so its return notifies as new; a source that cannot run is
 **in error, never clear** (Grafana's Error state): its findings keep their state, one `evaluation_error` item notifies on
 every run until it runs again, and the sweep becomes a full one. Items from sources in shadow mode are recorded as
@@ -479,7 +490,7 @@ would-be notifications in the `sweep` log event.
 (`relays`) and its evidence rows. A question is answered when its claim exists, and `resolved` when that wake is delivered (or the
 direct send is delivered); set aside with "not now" it is `acknowledged`, still answerable and ranked last.
 
-**Snooze, direction and dismiss** (`src/core/snooze.ts`, `src/core/questions.ts`, the routes in `src/web/app.ts`). Three more things can happen to
+**Snooze, direction and dismiss** (`src/core/items/snooze.ts`, `src/core/items/questions.ts`, the routes in `src/web/app.ts`). Three more things can happen to
 an open question, and none needs a new table or a schema change: they live in the item's JSON payload and in the claim's answer JSON, which older
 builds ignore.
 
@@ -517,12 +528,12 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
   item, an unknown one, or one already answered. ask.ts takes `"urgent": false` for a question that can wait: it is recorded,
   ranked below every urgent one (`ranked`, then grouped under NOT URGENT on the page), and nothing is posted where the operator
   reads, so it sends no notification. **An approval (tag `Approval`), a secret (`secret: true` or tag `Secret`) and a card
-  pointer (`cardRequest`) are always urgent** (`alwaysUrgent`, `src/core/questions.ts`): ask.ts ignores `urgent: false` on one with a
+  pointer (`cardRequest`) are always urgent** (`alwaysUrgent`, `src/core/items/questions.ts`): ask.ts ignores `urgent: false` on one with a
   note on stderr and posts it as urgent, `askQuestion` drops the field on every write, `questionStates` drops it on every read (a row
   an older build stored), and the page groups by the same rule, so no path can demote one.
 - **Holds close by their item field only** (`heldForItem`, `itemIdOf`, pass 1 of `hold-reconcile.ts`). An item ID written in a
   hold's text links it to nothing.
-- **Settled never twice** (`src/core/settled.ts`). Before ask.ts records a question and before `afk.ts hold` writes a hold, the
+- **Settled never twice** (`src/core/items/settled.ts`). Before ask.ts records a question and before `afk.ts hold` writes a hold, the
   subject is checked against three sources read from the Store: answered questions, rulings in force now (a proposal is not
   settled, and neither is a ruling that has expired, been superseded or been retired: its topic is open again), and the `decisions` log. Open questions never count. The rules, in order, and each match names the one it used:
   1. *Strong refs* name one thing, so one shared is a match: a commit SHA (7+ hex with a digit and a letter), a run ID given as a
@@ -538,7 +549,7 @@ schema changed (the new fields, `urgent`, `notSettled` and `cardRequest`, live i
   the project to Atlas") is a documented miss that costs one question, while a false match costs a `notSettled` override with a
   reason, stored on the record. A malformed record is skipped and counted in the output, never silently. The daemon's own alarms
   are filed with `notSettled: "raised by the daemon: a live system alarm"`, since a live alarm recurs by nature.
-- **Card holds** (`src/core/card-hold.ts`). While the operator is away, the engine holds an approval, secret or link card behind
+- **Card holds** (`src/core/items/card-hold.ts`). While the operator is away, the engine holds an approval, secret or link card behind
   a **pointer question** that it files in the same transaction as the notification record and the hold: one per card, keyed by
   **(server, request ID)** everywhere (filing, the `req:<server>:<id>` notification key, closing, reconciling), so two servers that use
   the same request ID never close or suppress each other's. The hold stores its card (`card`: server, thread ID, request ID) and the
@@ -583,7 +594,7 @@ refuses the second one:
 | A wake already sent for an event (the notification log) | `items`, source `notification-log` | `ItemStore.observe` and `decideNotification`; the daemon checks it in the transaction that queues the wake |
 | A sweep finding that already notified, its repeat progress | `items`, source `check:<name>` | `decideNotification` |
 | A question answered once, its one wake | `items` source `queue` and its `claims` row | the unique claim (first wins across processes) |
-| A card answered once (`card-answer`), as the operator saw it | `items` source `card-answer` and its `claims` row | the unique claim (`src/core/card-answers.ts`) |
+| A card answered once (`card-answer`), as the operator saw it | `items` source `card-answer` and its `claims` row | the unique claim (`src/core/items/card-answers.ts`) |
 | A wake written, sent or given up | `outbox` and `outbox_members` | the member's primary key: an id is bound to one row, ever |
 | Who sends wakes | the state directory (a `flock` on the directory that holds `chamberlain.db`) | the kernel: one open file description holds an exclusive `flock` on the state directory |
 | An approval confirmed | `confirmation_challenges` | single use, expiry, binding |
@@ -622,7 +633,7 @@ free, and no other state of its own.
 
 ## Rulings
 
-Rulings (`src/core/rulings.ts`, table `rulings`) are the principal's standing decisions. Four properties are kept in the store layer, so
+Rulings (`src/core/ops/rulings.ts`, table `rulings`) are the principal's standing decisions. Four properties are kept in the store layer, so
 every writer (the Steward's `ruling.ts`, the page, the one-time importer) gets them and none has to remember to check:
 
 - **Recording is idempotent.** `propose` and `addInForce` run their read, their duplicate check and their write in one `updateRulings`

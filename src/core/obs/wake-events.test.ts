@@ -3,9 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { testRelayLock } from "../../testing/lock.ts";
 import { eventRows, THREAD } from "../../testing/obs.ts";
 import { memStore } from "../../testing/store.ts";
-import { createOutbox } from "../deliver.ts";
+import { createOutbox } from "../delivery/deliver.ts";
+import { createRelay } from "../delivery/relay.ts";
 import { logFor, obsFor } from "../log.ts";
-import { createRelay } from "../relay.ts";
 import { corrOf } from "./fields.ts";
 
 function world() {

@@ -1,5 +1,5 @@
 import { afterEach } from "bun:test";
-import type { WaitingCard } from "../core/adapter-waiting.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
 import { createWaiting, type ServerAdapter } from "../web/waiting.ts";
 import type { FakeAdapter } from "./fake-adapter.ts";
 import { memStore } from "./store.ts";

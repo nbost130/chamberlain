@@ -1,8 +1,8 @@
 import { afterEach } from "bun:test";
 import { rmSync } from "node:fs";
-import { appendHeld, HELD } from "../core/afk-held.ts";
-import { type Question, questionStates } from "../core/questions.ts";
-import type { Store } from "../core/store.ts";
+import { type Question, questionStates } from "../core/items/questions.ts";
+import { appendHeld, HELD } from "../core/ops/afk-held.ts";
+import type { Store } from "../core/store/store.ts";
 
 /** Registers this suite's scratch cleanup for the test file that calls it, and returns its fixtures. */
 export function useCoreSnoozeFixtures() {

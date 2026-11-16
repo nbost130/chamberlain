@@ -1,7 +1,7 @@
 import { afterEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { WaitingCard } from "../core/adapter-waiting.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
 import { createApp } from "../web/app.ts";
 import { createWaiting } from "../web/waiting.ts";
 import { openCapability } from "./capability.ts";

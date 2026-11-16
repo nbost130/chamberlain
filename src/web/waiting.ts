@@ -5,14 +5,14 @@
  * is and how to answer it live in the adapter; a server whose adapter has neither capability is simply not mirrored,
  * and a card it can list but not answer is shown read-only.
  */
-import type { Adapter } from "../core/adapter.ts";
-import { has } from "../core/adapter-conformance.ts";
-import type { WaitingCard } from "../core/adapter-waiting.ts";
-import { releaseCardAnswer, reserveCardAnswer, settleCardAnswer } from "../core/card-answers.ts";
-import { dismissCard, isCardDismissed } from "../core/card-dismiss.ts";
-import type { KeyUsed } from "../core/questions.ts";
-import type { ServerEntry } from "../core/servers.ts";
-import type { Store } from "../core/store.ts";
+import type { Adapter } from "../core/adapter/adapter.ts";
+import { has } from "../core/adapter/adapter-conformance.ts";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
+import type { ServerEntry } from "../core/config/servers.ts";
+import { releaseCardAnswer, reserveCardAnswer, settleCardAnswer } from "../core/items/card-answers.ts";
+import { dismissCard, isCardDismissed } from "../core/items/card-dismiss.ts";
+import type { KeyUsed } from "../core/items/questions.ts";
+import type { Store } from "../core/store/store.ts";
 import { within } from "../core/within.ts";
 
 /** One configured server and the adapter that serves it. */
@@ -138,7 +138,7 @@ async function pollServer(d: WaitingDeps, st: WaitingState, skipThreads: string[
  *   - `ended`: it lists none, by a read of that server that succeeded and STARTED after the question was asked.
  *   - undefined: the reads cannot tell: no thread on the question, a server not mirrored, not yet read since the question was asked, or
  *     unreachable now; or the thread is one the mirror never lists (the Decisions thread). The card then says what it always said.
- * This only labels a card. It closes nothing: a card hold still closes only on its own terminal evidence (src/core/card-hold.ts).
+ * This only labels a card. It closes nothing: a card hold still closes only on its own terminal evidence (src/core/items/card-hold.ts).
  */
 function secretRequest(d: WaitingDeps, st: WaitingState, q: SecretAsk): "open" | "ended" | undefined {
 	if (!q.threadId) return undefined;
@@ -230,7 +230,7 @@ async function answerCard(
 		return { status: 403, body: { error: `answer it in its thread on ${card.server}` } };
 	// Reserve the answer now, before any await, in the database: two answers to one card arriving together, from this process or another,
 	// must not both pass. A send whose reply was lost (a timeout) may still land in the backend, so the same card as shown is never
-	// sent twice from here (src/core/card-answers.ts); the adapter's fixed command IDs also let it drop a repeat.
+	// sent twice from here (src/core/items/card-answers.ts); the adapter's fixed command IDs also let it drop a repeat.
 	if (!reserveCardAnswer(d.store, { cardId: card.id, sig: checked.sig, choice: checked.choice }))
 		return { status: 409, body: { error: "this answer was already sent; check its thread before answering again" } };
 	return sendReserved(d, st, pair.adapter, { card, choice: checked.choice, sig: checked.sig });

@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { openStore } from "./sqlite-store.ts";
+import { openStore } from "./store/sqlite-store.ts";
 
 const WORKER = new URL("../testing/store-worker.ts", import.meta.url).pathname;
 const dirs: string[] = [];

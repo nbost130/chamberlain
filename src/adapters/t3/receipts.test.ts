@@ -3,11 +3,11 @@
  * (userMessageId = message_id, role user, exact fence).
  */
 import { describe, expect, test } from "bun:test";
-import { commitSwitch } from "../../core/steward-commit.ts";
-import { isDischarged } from "../../core/steward-discharge.ts";
-import { evidencePass } from "../../core/steward-evidence.ts";
-import { prepareSwitch } from "../../core/steward-prepare.ts";
-import { transferPass } from "../../core/steward-transfer.ts";
+import { commitSwitch } from "../../core/steward/steward-commit.ts";
+import { isDischarged } from "../../core/steward/steward-discharge.ts";
+import { evidencePass } from "../../core/steward/steward-evidence.ts";
+import { prepareSwitch } from "../../core/steward/steward-prepare.ts";
+import { transferPass } from "../../core/steward/steward-transfer.ts";
 import { useStewardSwitchFixtures } from "../../testing/steward-switch-fixtures.ts";
 import { fakeT3 } from "../../testing/steward-switch-t3-fixtures.ts";
 import { findReceipt, lastFencedDeliveryId, renderFencedWake } from "./receipts.ts";

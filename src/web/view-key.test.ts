@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { askQuestion, getQuestion } from "../core/items/questions.ts";
+import { readClaim } from "../core/items/questions-claim.ts";
 import { obsFor } from "../core/log.ts";
-import { askQuestion, getQuestion } from "../core/questions.ts";
-import { readClaim } from "../core/questions-claim.ts";
-import { readRulings } from "../core/rulings.ts";
+import { readRulings } from "../core/ops/rulings.ts";
 import { dataOf } from "../testing/obs.ts";
 import type { S } from "../testing/web-view-key-fixtures.ts";
 import { useWebViewKeyFixtures } from "../testing/web-view-key-fixtures.ts";

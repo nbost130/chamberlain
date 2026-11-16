@@ -1,7 +1,7 @@
 /**
- * Test doubles for the wake transport (`WakeTransport` in src/core/deliver.ts), so core tests never need an adapter.
+ * Test doubles for the wake transport (`WakeTransport` in src/core/delivery/deliver.ts), so core tests never need an adapter.
  */
-import type { WakeTransport } from "../core/deliver.ts";
+import type { WakeTransport } from "../core/delivery/deliver.ts";
 
 /**
  * A webhook-shaped transport over a `fetch` function: POSTs `{deliveryId, message}` to the URL and counts a 2xx as

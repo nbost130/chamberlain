@@ -6,11 +6,11 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { drainAlertDesk } from "../src/core/alert-desk.ts";
-import { ALERT_DESK, DESK_RECEIVER } from "../src/core/alert-desk-config.ts";
-import { CURSOR_KEY, type Cursor } from "../src/core/alert-desk-cursor.ts";
-import { createOutbox } from "../src/core/deliver.ts";
-import { openStore } from "../src/core/sqlite-store.ts";
+import { createOutbox } from "../src/core/delivery/deliver.ts";
+import { drainAlertDesk } from "../src/core/desk/alert-desk.ts";
+import { ALERT_DESK, DESK_RECEIVER } from "../src/core/desk/alert-desk-config.ts";
+import { CURSOR_KEY, type Cursor } from "../src/core/desk/alert-desk-cursor.ts";
+import { openStore } from "../src/core/store/sqlite-store.ts";
 
 /** Day starts at local 00:00 Etc/GMT+5 (= 05:00 UTC). Morning hour 7 = 12:00 UTC. */
 const T0 = Date.parse("2026-11-13T12:30:00Z"); // local 07:30, after morning hour

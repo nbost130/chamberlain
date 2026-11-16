@@ -1,5 +1,5 @@
 /** The telemetry writer, second layer: turning a call into a row, storing it, mirroring it to the old table, and flushing the counters. */
-import type { LogEvent } from "../store.ts";
+import type { LogEvent } from "../store/store.ts";
 import type { ObsDb } from "./db.ts";
 import { ObsBase } from "./obs-base.ts";
 import { BUFFER, type Call, COUNT, type Counters, FLUSH_MS, type Outcome, RETRY_MS, type Row } from "./obs-spec.ts";

@@ -15,7 +15,7 @@ import {
 	thread,
 } from "../../testing/core-classifier-classify-fixtures.ts";
 import { memStore } from "../../testing/store.ts";
-import type { Store } from "../store.ts";
+import type { Store } from "../store/store.ts";
 import { DEFAULT_BANK } from "./bank.ts";
 import { bankVersion, buildProvider, classifyIdle } from "./classify.ts";
 import { USAGE_KEY } from "./classify-budget.ts";

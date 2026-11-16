@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { segmentTranscript } from "../core/steward-segments.ts";
+import { segmentTranscript } from "../core/steward/steward-segments.ts";
 
 // A synthetic transcript: every kind of turn-starting prompt, the rows that are not prompts, a request written as two rows, a sidechain,
 // a synthetic reply, a compaction and a repeated delivery id. Its thread text carries markers that must never reach a report.

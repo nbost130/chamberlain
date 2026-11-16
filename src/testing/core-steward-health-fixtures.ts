@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
-import { createOutbox } from "../core/deliver.ts";
-import { type Health, handoffDeliveryId, handoffWakeMessage, measure as measureWith } from "../core/steward-health.ts";
-import { healthTicker } from "../core/steward-health-ticker.ts";
+import { createOutbox } from "../core/delivery/deliver.ts";
+import {
+	type Health,
+	handoffDeliveryId,
+	handoffWakeMessage,
+	measure as measureWith,
+} from "../core/steward/steward-health.ts";
+import { healthTicker } from "../core/steward/steward-health-ticker.ts";
 import type { memStore } from "./store.ts";
 
 // The format signal reads a prompt hook that grades each reply; this is its pattern, as an operator would configure it.

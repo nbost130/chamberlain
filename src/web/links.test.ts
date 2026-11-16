@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { ensureToken, ensureViewKey, TOKEN_FILE, VIEW_KEY_FILE } from "../core/capability.ts";
+import { ensureToken, ensureViewKey, TOKEN_FILE, VIEW_KEY_FILE } from "../core/ops/capability.ts";
 import { acceptedHosts } from "./server-config.ts";
 import { linkLines, linkTargets, pageBases } from "./server-links.ts";
 
@@ -137,7 +137,7 @@ describe("chamberlain ask puts the view key, never the page's key, in the view i
 		const stub = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("//inline") });
 		try {
 			const w = world({ host: "127.0.0.1", port: stub.port });
-			const { ensureToken } = await import("../core/capability.ts");
+			const { ensureToken } = await import("../core/ops/capability.ts");
 			const token = ensureToken(w.conf);
 			const view = ensureViewKey(w.conf);
 			const sent = `${w.root}/sent`;

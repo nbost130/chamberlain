@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { idleKey, principalWroteWithin, stewardInstruction, type TurnItem } from "../../core/decide";
+import { idleKey, principalWroteWithin, stewardInstruction, type TurnItem } from "../../core/decide/decide.ts";
 import {
 	HISTORY_PAGES_MAX,
 	hideNewerLive,
@@ -7,7 +7,7 @@ import {
 	lastCompletedText,
 	readInstruction,
 	readWhenConnected,
-} from "./history";
+} from "./history.ts";
 
 const noise = (n: number): TurnItem[] =>
 	Array.from({ length: n }, (_, i) => ({ type: "assistant_message", id: `a${i}`, text: "working" }));

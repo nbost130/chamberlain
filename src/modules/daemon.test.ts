@@ -9,8 +9,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath, type Store } from "../core/store.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath, type Store } from "../core/store/store.ts";
 import { mailDbPath } from "./mail/db.ts";
 
 const DAEMON = new URL("../daemon.ts", import.meta.url).pathname;

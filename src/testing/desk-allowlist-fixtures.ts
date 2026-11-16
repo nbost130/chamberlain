@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { deskAskCommand } from "../core/alert-desk-prompt.ts";
+import { deskAskCommand } from "../core/desk/alert-desk-prompt.ts";
 import { parseShapes } from "../core/desk-shapes.ts";
 import { checkCommand } from "../desk-allowlist.ts";
 

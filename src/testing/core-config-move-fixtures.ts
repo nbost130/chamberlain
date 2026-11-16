@@ -1,13 +1,13 @@
 import { afterEach } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { readConfig } from "../core/alert-desk-config.ts";
-import { migrateLayout } from "../core/config-migrate.ts";
-import { cfg, readNamed, setting, thread } from "../core/layout.ts";
-import { resetLayout } from "../core/layout-legacy.ts";
-import { THREADS } from "../core/layout-schema.ts";
-import { readServers } from "../core/servers.ts";
-import { readSweepConfig } from "../core/sweep.ts";
+import { migrateLayout } from "../core/config/config-migrate.ts";
+import { cfg, readNamed, setting, thread } from "../core/config/layout.ts";
+import { resetLayout } from "../core/config/layout-legacy.ts";
+import { THREADS } from "../core/config/layout-schema.ts";
+import { readServers } from "../core/config/servers.ts";
+import { readConfig } from "../core/desk/alert-desk-config.ts";
+import { readSweepConfig } from "../core/sweep/sweep.ts";
 import { loadConfig } from "../web/config.ts";
 import { legacyFiles, writeLegacyConf } from "./legacy-conf.ts";
 

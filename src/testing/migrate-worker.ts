@@ -1,11 +1,11 @@
 /**
- * A process that runs the config migration, for the lock tests (src/core/migrate-lock.test.ts). A slow migration is injected through the
+ * A process that runs the config migration, for the lock tests (src/core/config/migrate-lock.test.ts). A slow migration is injected through the
  * migration's own `whileLocked` seam, which runs once the lock is held.
  * Usage: bun migrate-worker.ts <conf> <state> <journal> <hold-ms> <wait-ms>
  * Appends "<pid> enter <ms>" when it holds the lock and "<pid> exit <ms>" after the hold, and prints the migration report as one JSON line.
  */
 import { appendFileSync } from "node:fs";
-import { migrateStorage } from "../core/migrate.ts";
+import { migrateStorage } from "../core/config/migrate.ts";
 
 const [conf, state, journal, holdMs, waitMs] = [
 	process.argv[2]!,

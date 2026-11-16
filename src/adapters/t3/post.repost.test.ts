@@ -5,7 +5,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import type { Question } from "../../core/questions.ts";
+import type { Question } from "../../core/items/questions.ts";
 import { decisionsMessage, repostView, viewRepostMessage } from "./post.ts";
 
 const VIEW = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";

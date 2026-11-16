@@ -37,7 +37,7 @@ in `src/core/crash.ts`, used by `crash.test.ts`) and `CHAMBERLAIN_TEST_ONLY=1` (
 ## Running from a checkout
 
 Run each tool as `bun src/<file>`, where the binary runs `chamberlain <name>` (`chamberlain help` lists them; the table is `COMMANDS` in
-`src/core/config.ts`):
+`src/core/config/config.ts`):
 
 ```sh
 bun src/daemon.ts                        # chamberlain daemon
@@ -65,7 +65,7 @@ Run the smoke test the way the tests run: with a scratch `HOME`, `CHAMBERLAIN_CO
 Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) first. In short:
 
 - **`src/core/`** is backend-agnostic and must not import from `src/adapters/`. It meets a backend only through the
-  adapter contract, `src/core/adapter.ts`. `src/architecture.test.ts` reads every import (type-only ones too) and fails the
+  adapter contract, `src/core/adapter/adapter.ts`. `src/architecture.test.ts` reads every import (type-only ones too) and fails the
   build on a violation, so there is no way to take a shortcut by accident.
 - **`src/adapters/<name>/`** holds everything about one backend. It imports `src/core/` and its own folder, never another
   adapter. A new backend is one new folder and one line in `src/adapters/index.ts`; see
@@ -87,9 +87,9 @@ reads them to open the release pull request and write `CHANGELOG.md`, so write t
 ## Rules of the house
 
 - **Schema versions.** Any file Chamberlain keeps carries a `schemaVersion`. If you change a stored shape, bump
-  `SCHEMA_VERSION` in `src/core/schema.ts`, add a step to `STEPS` in `src/core/migrate.ts` that upgrades the previous version, and
-  add a test in `src/core/migrate.test.ts` (the 1 -> 2 step, which gave `servers.json` entries an `adapter`, is the model). Never read a newer version leniently.
-- **Database migrations.** Add a migration to `MIGRATIONS` in `src/core/migrations.ts`; never edit one that has been released. One that is
+  `SCHEMA_VERSION` in `src/core/store/schema.ts`, add a step to `STEPS` in `src/core/config/migrate.ts` that upgrades the previous version, and
+  add a test in `src/core/config/migrate.test.ts` (the 1 -> 2 step, which gave `servers.json` entries an `adapter`, is the model). Never read a newer version leniently.
+- **Database migrations.** Add a migration to `MIGRATIONS` in `src/core/store/migrations.ts`; never edit one that has been released. One that is
   edited in place while its branch is open (10 and 11 were) leaves any development database that ran its earlier draft at that version for
   good, so that database must be rebuilt: delete `chamberlain.db` and its `-wal` and `-shm` files, then start again. Do not open a database a newer draft made with an older draft build: the version matches, so nothing refuses it.
 - **Names.** A name for a table, column, state, mode, config key, log event or feature is the industry term when one exists for the same concept (check the sources in [docs/GLOSSARY.md](docs/GLOSSARY.md)), and every new name gets a glossary entry in the same change: its definition, the standard term it follows or why it is Chamberlain's own, and a source link.

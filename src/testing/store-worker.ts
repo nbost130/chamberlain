@@ -7,7 +7,7 @@
  * Modes: "writes" does n read-modify-write counter updates, n event appends, n held-wake additions and n answered-item
  * claims of its own; "claims" races every worker for the same n items and prints the ones it won.
  */
-import { openStore } from "../core/sqlite-store.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
 
 const [path, id, startAt, mode, count] = process.argv.slice(2);
 const n = Number(count);

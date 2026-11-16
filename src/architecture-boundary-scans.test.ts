@@ -68,7 +68,7 @@ export function violations(file: string, code: string): string[] {
  *   - nothing outside src/modules/ imports a module's own files: the only way in is the registry, src/modules/index.ts, and only the entry
  *     points (src/cli.ts, src/daemon.ts) may import that. A test outside core/ may too, to drive it. Core, an adapter or the page never does.
  *   - a module imports src/core/ and its own folder: never an adapter, never another module, and never the registry that makes it.
- *   - a module opens its database through the shared opener (src/core/database.ts), never by naming bun:sqlite itself, so its file is private,
+ *   - a module opens its database through the shared opener (src/core/store/database.ts), never by naming bun:sqlite itself, so its file is private,
  *     migrated and refused-when-newer exactly as `chamberlain.db` is.
  */
 export const REGISTRY = "modules/index.ts";
@@ -97,7 +97,7 @@ export function moduleViolations(file: string, code: string): string[] {
 			bad.push(`${file} imports the registry: a module is made by it, never the reverse`);
 	}
 	if (mine && !file.endsWith(".test.ts") && specifiers(code).includes("bun:sqlite"))
-		bad.push(`${file} imports bun:sqlite: a module opens its database through src/core/database.ts`);
+		bad.push(`${file} imports bun:sqlite: a module opens its database through src/core/store/database.ts`);
 	return bad;
 }
 

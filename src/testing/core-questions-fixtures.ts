@@ -1,6 +1,6 @@
-import { type Answer, askQuestion, notNow, type Question } from "../core/questions.ts";
-import { claimWake, pageClaim } from "../core/questions-claim.ts";
-import type { Store } from "../core/store.ts";
+import { type Answer, askQuestion, notNow, type Question } from "../core/items/questions.ts";
+import { claimWake, pageClaim } from "../core/items/questions-claim.ts";
+import type { Store } from "../core/store/store.ts";
 import { memStore } from "./store.ts";
 
 export const item = (id: string, over: Partial<Question> = {}): Question => ({

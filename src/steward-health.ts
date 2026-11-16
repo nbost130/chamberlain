@@ -9,14 +9,14 @@
  */
 
 import { homeAdapter } from "./adapters/index.ts";
-import { has } from "./core/adapter-conformance.ts";
-import { CONF, compactTokens, STATE } from "./core/config.ts";
-import { defaultStore } from "./core/default-store.ts";
-import { setting } from "./core/layout.ts";
-import { liveHealth } from "./core/steward-health.ts";
-import { HEALTH_CONFIG } from "./core/steward-health-config.ts";
-import { usageReport } from "./core/steward-report.ts";
-import { backfill, findStewardTranscripts, parseBackfillArgs, transcriptDir } from "./core/steward-tokens.ts";
+import { has } from "./core/adapter/adapter-conformance.ts";
+import { CONF, compactTokens, STATE } from "./core/config/config.ts";
+import { setting } from "./core/config/layout.ts";
+import { liveHealth } from "./core/steward/steward-health.ts";
+import { HEALTH_CONFIG } from "./core/steward/steward-health-config.ts";
+import { usageReport } from "./core/steward/steward-report.ts";
+import { backfill, findStewardTranscripts, parseBackfillArgs, transcriptDir } from "./core/steward/steward-tokens.ts";
+import { defaultStore } from "./core/store/default-store.ts";
 
 const OFF =
 	'Steward token metering is off. Turn it on with "stewardTokens": true in config.json (or CHAMBERLAIN_STEWARD_TOKENS=1); see docs/CONFIGURATION.md.';

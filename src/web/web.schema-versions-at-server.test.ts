@@ -4,10 +4,10 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { getQuestion, questionStates } from "../core/questions.ts";
-import { propose, readRulings } from "../core/rulings.ts";
-import { openStore } from "../core/sqlite-store.ts";
-import { dbPath } from "../core/store.ts";
+import { getQuestion, questionStates } from "../core/items/questions.ts";
+import { propose, readRulings } from "../core/ops/rulings.ts";
+import { openStore } from "../core/store/sqlite-store.ts";
+import { dbPath } from "../core/store/store.ts";
 import { fetchWake } from "../testing/wake.ts";
 import { useWebWebFixtures } from "../testing/web-web-fixtures.ts";
 
@@ -115,7 +115,7 @@ describe("rulings from the page", () => {
 	});
 	test("confirm, edit, only this once and retire on the rulings page", async () => {
 		const s = setup();
-		const { propose } = await import("../core/rulings.ts");
+		const { propose } = await import("../core/ops/rulings.ts");
 		const p = propose(s.store, { words: "Approve (Recommended)", decides: "gates" });
 		expect((await s.post(`/api/rulings/${p.id}/edit`, { decides: "gates like this" })).status).toBe(200);
 		expect(readRulings(s.store).find((x) => x.id === p.id)!.status).toBe("proposed");

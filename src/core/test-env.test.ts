@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { testRelayLock } from "../testing/lock.ts";
 import { testRelay } from "../testing/relay.ts";
 import { memStore } from "../testing/store.ts";
-import { holdTestRelayLock } from "./singleton.ts";
+import { holdTestRelayLock } from "./delivery/singleton.ts";
 import { inTestEnv, requireTestEnv, TEST_ONLY_FLAG } from "./test-env.ts";
 
 const dirs: string[] = [];
@@ -82,7 +82,7 @@ describe("the test-only helpers need a test environment", () => {
 		const smuggled = `
 			const where = ${helper("relay.ts")}.replace("relay.ts", "") + "re" + "lay.ts";
 			const { testRelay } = await import(where);
-			const { openStore } = await import(${JSON.stringify(new URL("./sqlite-store.ts", import.meta.url).pathname)});
+			const { openStore } = await import(${JSON.stringify(new URL("./store/sqlite-store.ts", import.meta.url).pathname)});
 			const store = openStore(":memory:");
 			try { testRelay(store, { ready: () => true, send: async () => ({ ok: true }) }); console.log("RELAY BUILT"); } catch (e) { console.log("refused: " + e.message.slice(0, 60)); }
 		`;

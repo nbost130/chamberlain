@@ -1,13 +1,13 @@
 /** Answering one queue item (or a batch of them): the checks, the claim, the ruling it saves and the reply. */
 
 import { crashPoint } from "../core/crash.ts";
+import type { Answer, KeyUsed, QuestionState } from "../core/items/questions.ts";
+import { type Claim, claimWake, enqueueClaim, pageClaim, wokenBy } from "../core/items/questions-claim.ts";
+import { answerDeliveryId, batchable } from "../core/items/questions-wake.ts";
+import { clearSnooze } from "../core/items/snooze.ts";
 import { ledgerEvents } from "../core/obs/ledger.ts";
-import type { Answer, KeyUsed, QuestionState } from "../core/questions.ts";
-import { type Claim, claimWake, enqueueClaim, pageClaim, wokenBy } from "../core/questions-claim.ts";
-import { answerDeliveryId, batchable } from "../core/questions-wake.ts";
-import { recordInForce, stageRulings } from "../core/rulings.ts";
-import { expiresProblem, isExpired } from "../core/rulings-expiry.ts";
-import { clearSnooze } from "../core/snooze.ts";
+import { recordInForce, stageRulings } from "../core/ops/rulings.ts";
+import { expiresProblem, isExpired } from "../core/ops/rulings-expiry.ts";
 import type { Ctx } from "./app-ctx.ts";
 import { INLINE_ANSWER_FIELDS } from "./app-http.ts";
 import { follow } from "./app-relay.ts";

@@ -1,11 +1,11 @@
 /** queue-actions, continued: see queue-actions.test.ts for the overview. */
 
 import { describe, expect, test } from "bun:test";
-import { HELD, heldOpen } from "../core/afk-held.ts";
-import { newToken } from "../core/capability.ts";
-import { reconcileItemHolds } from "../core/hold-reconcile.ts";
-import { askQuestion, QUEUE } from "../core/questions.ts";
-import { findSettled } from "../core/settled.ts";
+import { reconcileItemHolds } from "../core/decide/hold-reconcile.ts";
+import { askQuestion, QUEUE } from "../core/items/questions.ts";
+import { findSettled } from "../core/items/settled.ts";
+import { HELD, heldOpen } from "../core/ops/afk-held.ts";
+import { newToken } from "../core/ops/capability.ts";
 import type { Setup } from "../testing/web-queue-actions-fixtures.ts";
 import { useWebQueueActionsFixtures } from "../testing/web-queue-actions-fixtures.ts";
 import { inlineVerdict } from "./app-http.ts";
