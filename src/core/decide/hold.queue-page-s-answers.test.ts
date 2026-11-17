@@ -155,6 +155,52 @@ describe("the queue page's answers", () => {
 		expect(x.held()).toEqual(["t:A:1"]);
 	});
 
+	test("an overdue answer goes ahead of a transfer backlog, once: it never makes every poll send another transfer batch", async () => {
+		const x = world();
+		x.w.gate = "busy";
+		const store = x.store();
+		for (let i = 0; i < 12; i++)
+			store.wakes.hold({ deliveryId: `transfer:${i}:g3`, message: `old ${i}`, queuedAt: x.w.t, kind: "transfer" });
+		x.advance(MIN);
+		x.deliver("answer", "answer:item:Q-1", { kind: "answer" });
+		const relay = x.relay();
+		await relay.pass();
+		x.advance(3 * MIN);
+		for (let i = 0; i < 5; i++) {
+			await relay.pass();
+			x.advance(1000);
+		}
+		expect(x.w.accepted.map((w) => w.deliveryId)).toEqual(["answer:item:Q-1"]);
+		expect(x.held().filter((id) => id.startsWith("transfer:"))).toHaveLength(12);
+	});
+
+	test("at the ceiling the class holding the oldest wake goes first: a transfer backlog cannot starve older turn ends", async () => {
+		const x = world();
+		x.w.gate = "busy";
+		const relay = x.relay();
+		await relay.pass();
+		x.deliver("[chamberlain] turn_ended: thread A", "t:A:1", TE("A"));
+		x.advance(MIN);
+		for (let i = 0; i < 6; i++)
+			x.store().wakes.hold({ deliveryId: `transfer:${i}:g3`, message: `old ${i}`, queuedAt: x.w.t, kind: "transfer" });
+		// The relay looks once a minute, as the daemon's does. The busy stretch starts at its first look with something held, and reaches the
+		// ceiling 20 minutes later.
+		const minutes = async (n: number) => {
+			for (let i = 0; i < n; i++) {
+				x.advance(MIN);
+				await relay.pass();
+			}
+		};
+		await minutes(20);
+		expect(x.w.accepted).toHaveLength(0);
+		await minutes(1);
+		expect(x.w.accepted.map((w) => w.deliveryId)).toEqual(["t:A:1"]);
+		// The next ceiling: only transfers are left, and they go.
+		await minutes(20);
+		expect(x.w.accepted).toHaveLength(2);
+		expect(x.w.accepted[1]!.message).toContain("old 0");
+	});
+
 	test("held notes and answers about one thread are never folded into the latest", () => {
 		const held: HeldItem[] = [
 			{ deliveryId: "answer:item:Q-1", message: "one", queuedAt: 1, kind: "answer", thread: "T" },
