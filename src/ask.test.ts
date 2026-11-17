@@ -142,14 +142,47 @@ describe("parseAsk: the options", () => {
 		refuses({ options: "A,B" }, "ask: give at least two options");
 		expect(mk({ options: Array.from({ length: 9 }, (_, i) => `o${i}`) }).options).toHaveLength(9);
 		refuses({ options: Array.from({ length: 10 }, (_, i) => `o${i}`) }, "ask: at most nine options (keys 1-9)");
-		const secret = mk({ secret: true, options: [] });
-		expect([secret.options, secret.secret]).toEqual([[], true]);
-		refuses({ secret: true, options: Array.from({ length: 10 }, (_, i) => `o${i}`) }, "at most nine options");
+		const secret = mk({ secret: true, options: [], threadId: "th" });
+		expect([secret.options, secret.secret, secret.threadId]).toEqual([[], true, "th"]);
 		refuses(
-			{ secret: true, threadId: "th", options: [{ label: "A", route: "thread", relay: "go" }] },
-			"ask: a secret is never answered on the page",
+			{ secret: true, threadId: "th", options: Array.from({ length: 10 }, (_, i) => `o${i}`) },
+			"at most nine options",
 		);
 		expect(mk({ secret: "yes", options: ["A", "B"] })).not.toHaveProperty("secret");
+	});
+	test("a secret with options is refused; file a non-secret choice first", () => {
+		refuses(
+			{ secret: true, threadId: "th", options: ["open intake", "defer"] },
+			"ask: a secret question cannot have options; file a non-secret choice question first, then a secret request in its thread",
+		);
+		refuses(
+			{ tag: "Secret", threadId: "th", options: ["A", "B"] },
+			"ask: a secret question cannot have options; file a non-secret choice question first, then a secret request in its thread",
+		);
+		refuses(
+			{ secret: true, threadId: "th", options: [{ label: "A", route: "thread", relay: "go" }, "B"] },
+			"cannot have options",
+		);
+	});
+	test("a secret without a threadId is refused", () => {
+		refuses(
+			{ secret: true, options: [] },
+			"ask: a secret question needs a threadId; a secret is entered in its own thread",
+		);
+		refuses(
+			{ tag: "Secret", options: [] },
+			"ask: a secret question needs a threadId; a secret is entered in its own thread",
+		);
+		refuses({ secret: true, options: [], threadId: "  " }, "needs a threadId");
+	});
+	test("a valid secret (no options, with threadId) is accepted; a non-secret with options still is", () => {
+		const secret = mk({ secret: true, options: [], threadId: "th-secret" });
+		expect(secret).toMatchObject({ secret: true, options: [], threadId: "th-secret" });
+		const byTag = mk({ tag: "Secret", options: [], threadId: "th-2" });
+		expect(byTag).toMatchObject({ secret: true, tag: "Secret", options: [], threadId: "th-2" });
+		const choice = mk({ options: ["open intake", "defer"] });
+		expect(choice.options.map((o) => o.label)).toEqual(["open intake", "defer"]);
+		expect(choice).not.toHaveProperty("secret");
 	});
 	test("recommended is an option index from 0, or absent", () => {
 		expect(mk({ recommended: 0 }).recommended).toBe(0);
@@ -200,7 +233,12 @@ describe("parseAsk: urgency", () => {
 	test("urgent: false on an approval or a secret is dropped, with a line saying which, and warns once", () => {
 		const heard: string[] = [];
 		const keep = (o: Record<string, unknown>) => parseAsk({ ...base, ...o }, ID, NOW, (l) => heard.push(l));
-		for (const o of [{ tag: "Approval" }, { tag: "approval" }, { tag: "Secret" }, { secret: true, options: [] }])
+		for (const o of [
+			{ tag: "Approval" },
+			{ tag: "approval" },
+			{ tag: "Secret", options: [], threadId: "th" },
+			{ secret: true, options: [], threadId: "th" },
+		])
 			expect(keep({ ...o, urgent: false })).not.toHaveProperty("urgent");
 		expect(heard).toEqual([
 			'ask: "urgent": false ignored: an approval is always urgent, so it is filed and posted as urgent',

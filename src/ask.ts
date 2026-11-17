@@ -29,6 +29,8 @@
  * Steward no turn at all. Mark the odd option that needs oversight `"route": "steward"`.
  * Lines of `context` that start with "- " render as bullets on the queue page and the Decisions view; write a few short ones.
  * Prints the item ID. A secret item posts no card: its value is entered in its own thread, never on a card or the page.
+ * A secret (`secret: true` or tag "Secret") with options, or without a `threadId`, is refused before anything is recorded:
+ * file a non-secret choice question first, then a secret request in that thread.
  */
 import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
