@@ -178,6 +178,10 @@ export const makeWakes = (c: Db): Store["wakes"] => ({
 	compose: (now, compose, lane) => composeHeld(c, now, compose, lane),
 	rows: (status, lane) => outboxRows(c, status, lane),
 	find: (id) => findWake(c, id),
+	byId: (id) => {
+		const r = c.one("SELECT * FROM outbox WHERE id = ?", id);
+		return r ? toOutboxRow(c, r) : undefined;
+	},
 	isDelivered: (id) =>
 		(findWake(c, id)?.status ??
 			(c.one("SELECT outcome FROM wake_tombstones WHERE delivery_id = ?", id)?.outcome as string | undefined)) ===
@@ -214,15 +218,19 @@ const COUNTING_RECEIPT_SQL = `(
 		SELECT 1 FROM steward_receipts r
 		JOIN steward_deliveries d ON d.outbox_id = r.outbox_id
 		LEFT JOIN steward_transfers t ON t.from_gen = d.gen
-		WHERE r.outbox_id = $oid AND (t.from_gen IS NULL OR r.id <= t.receipt_hw)
+		WHERE r.outbox_id = $oid
+			AND (t.from_gen IS NULL OR r.id <= t.receipt_hw OR (r.kind = 't3-run' AND r.recorded_at <= t.opened_at - 60000))
 	)
 )`;
 
 function pruneWakes(c: Db, before: number): number {
 	// Steward-lane delivered rows prune only when ledgered and counting-discharged (or unrecoverable).
 	// Unledgered Steward rows never prune. Desk/cancelled prune as before.
-	return c.run(
-		`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
+	// A pruned row's receipt goes with it: SQLite reuses the highest row number once that row is deleted, and a new wake under the old number
+	// must never inherit its receipt. (A discharged root that is gone already counts as discharged: steward-discharge.ts.)
+	return c.tx(() => {
+		const n = c.run(
+			`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
 			 AND id NOT IN (SELECT m.outbox_id FROM outbox_members m JOIN claims c ON c.delivery_id = m.delivery_id JOIN items i ON i.id = c.item_id WHERE i.state != 'resolved')
 			 AND (
 			   receiver IS NOT NULL
@@ -240,8 +248,11 @@ function pruneWakes(c: Db, before: number): number {
 			     )
 			   )
 			 )`,
-		before,
-	).changes;
+			before,
+		).changes;
+		c.run("DELETE FROM steward_receipts WHERE outbox_id NOT IN (SELECT id FROM outbox)");
+		return n;
+	});
 }
 
 // ---- confirmation challenges --------------------------------------------------------------------

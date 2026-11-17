@@ -163,8 +163,54 @@ function holdMissingItems(store: Store, t: StewardTransfer, now: number): number
 	return n;
 }
 
-/** One transfer pass: create missing items for every open transfer, then try seal/close. */
-export function transferPass(store: Store, now = Date.now()): { held: number; sealed: number; closed: number } {
+/** Whether a held or composed transfer item replays a root that is discharged now. */
+function replaysDischarged(store: Store, deliveryId: string): boolean {
+	const item = store.steward.transferItem(deliveryId);
+	return item !== undefined && isDischarged(store, item.rootOutboxId);
+}
+
+/**
+ * Transfer items whose root is discharged now (its receipt was found after the item was made) are given up, so a wake the retired Steward
+ * handled before the switch is never replayed to the new one:
+ * - held items are composed into one row and cancelled in a single transaction, so each keeps a permanent tombstone;
+ * - a composed transfer row not yet attempted, every member of which replays a discharged root, is cancelled. The relay attempts only a
+ *   pending row, so a cancel that lands first means no POST; one that loses the race to an attempt already begun changes nothing.
+ */
+function dropDischargedTransfers(store: Store, now = Date.now()): string[] {
+	const gone = store.wakes
+		.held(null)
+		.filter((h) => h.kind === "transfer" && replaysDischarged(store, h.deliveryId))
+		.map((h) => h.deliveryId);
+	const rows = store.wakes
+		.rows("pending", null)
+		.filter((r) => r.attempts === 0 && r.members.length > 0)
+		.filter((r) => r.members.every((m) => m.kind === "transfer" && replaysDischarged(store, m.deliveryId)));
+	if (!gone.length && !rows.length) return [];
+	store.tx(() => {
+		for (const r of rows) store.wakes.cancel(r.deliveryId, now);
+		if (!gone.length) return;
+		const row = store.wakes.compose(
+			now,
+			() => ({
+				deliveryId: `transfer-discharged:${now}:${gone.length}`,
+				message: `Transfer items given up: the retired Steward handled their wakes before the switch (${gone.join(", ")}).`,
+				folded: 0,
+				members: gone,
+				kind: "transfer",
+			}),
+			null,
+		);
+		if (row) store.wakes.cancel(row.deliveryId, now);
+	});
+	return [...gone, ...rows.flatMap((r) => r.members.map((m) => m.deliveryId))];
+}
+
+/** One transfer pass: drop held items already discharged, create missing items for every open transfer, then try seal/close. */
+export function transferPass(
+	store: Store,
+	now = Date.now(),
+): { held: number; sealed: number; closed: number; dropped: number } {
+	const dropped = dropDischargedTransfers(store, now).length;
 	let held = 0;
 	let sealed = 0;
 	let closed = 0;
@@ -175,5 +221,5 @@ export function transferPass(store: Store, now = Date.now()): { held: number; se
 		const after = store.steward.transfer(t.fromGen);
 		if (after && tryClose(store, after, now)) closed++;
 	}
-	return { held, sealed, closed };
+	return { held, sealed, closed, dropped };
 }

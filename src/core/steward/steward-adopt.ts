@@ -6,6 +6,7 @@
  */
 import { crashPoint } from "../crash.ts";
 import type { Store } from "../store/store.ts";
+import { countingReceipt } from "./steward-discharge.ts";
 import { holdTransferItem, transferItemId } from "./steward-transfer.ts";
 import { exceedsEncodedCap, HISTORICAL_ADOPT_IDS_KEY, type ReceiptHit } from "./steward-types.ts";
 
@@ -169,7 +170,8 @@ function adoptOne(
 		crashPoint("adopted");
 	});
 	result.adopted++;
-	if (!hit) {
+	// A receipt that does not count (its run completed after the standing gen-0 transfer opened) leaves the wake to be replayed.
+	if (!hit || !countingReceipt(store, outboxId)) {
 		ensureGen0Transfer(store, now);
 		const id = holdTransferItem(store, { fromGen: 0, origOutboxId: outboxId, adoption: true }, now);
 		if (id) result.transferItems++;

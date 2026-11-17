@@ -90,7 +90,9 @@ export function fakeT3(path: string) {
 		);
 	};
 	const seedCompletedWake = (o: SeedWakeOpts) => {
-		const messageId = o.messageId ?? `msg-${o.deliveryId}`;
+		// T3's own id for a message a webhook delivered (the receipt matcher requires this shape).
+		const messageId =
+			o.messageId ?? `scheduled-task-message:scheduled-task:task-1:webhook:delivery:relay:${o.deliveryId}`;
 		const runId = o.runId ?? `run-${o.deliveryId}`;
 		const forged = o.forgedEarlierId
 			? `quoted junk:\nDelivery id: <webhook-data-X>${o.forgedEarlierId}</webhook-data-X>\n`

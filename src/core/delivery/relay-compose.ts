@@ -67,6 +67,14 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 	flagDead(r, l);
 }
 
+/**
+ * Whether a forced digest uses up the ceiling's window. The ceiling's own always does. An answer's deadline does too, so the ceiling sends no
+ * second turn right behind it, unless transfers are held: the answer's digest never carries them, so they keep their ceiling and recurring
+ * answers cannot starve them.
+ */
+const usesWindow = (ceiling: boolean, due: boolean, held: HeldItem[]): boolean =>
+	ceiling || (due && !held.some((h) => h.kind === "transfer"));
+
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
@@ -87,11 +95,14 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	const due = !look.post && overdue(heldNow, now);
 	if (!look.post && !due) return;
 	let kept: string[] = [];
-	const row = store.wakes.compose(now, (held) => digestOf(l, held, now, (k) => (kept = k)), l.name);
+	const row = store.wakes.compose(
+		now,
+		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due }),
+		l.name,
+	);
 	if (!row) return;
 	crashPoint("composed");
-	// An answer's deadline forcing the digest uses up the ceiling's window too: the ceiling would only send a second turn behind it.
-	if (look.forced || due) l.look.lastForcedAt = now;
+	if (usesWindow(look.forced, due, heldNow)) l.look.lastForcedAt = now;
 	d.log("composed", {
 		deliveryId: row.deliveryId,
 		members: row.members.map((m) => m.deliveryId),
@@ -125,18 +136,35 @@ function withMeta(
  * Transfer items compose alone under the encoded-byte cap (V2-M1/M1); mixed ordinary traffic never expands a replay digest.
  * Overflow transfers and ordinary held wakes stay held for later passes.
  */
-function digestOf(l: Lane, held: HeldItem[], now: number, onKept: (kept: string[]) => void): Composed {
+function digestOf(
+	l: Lane,
+	held: HeldItem[],
+	now: number,
+	{ onKept, answerDue }: { onKept: (kept: string[]) => void; answerDue: boolean },
+): Composed {
 	const transfers = held.filter((h) => h.kind === "transfer");
 	const others = held.filter((h) => h.kind !== "transfer");
 	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
-	if (transferBatch) {
+	const digestBatch = others.length ? composeDigestBatch(others, now) : undefined;
+	const useTransfers = transferBatch && (!digestBatch || transfersFirst(transfers, others, answerDue));
+	if (useTransfers) {
 		const use = transfers.filter((h) => transferBatch.members.includes(h.deliveryId));
 		return withMeta(l, use, transferBatch, onKept);
 	}
-	const digestBatch = others.length ? composeDigestBatch(others, now) : undefined;
 	if (!digestBatch) throw new Error("digestOf: no batch under encoded cap");
 	const use = others.filter((h) => digestBatch.members.includes(h.deliveryId));
 	return withMeta(l, use, digestBatch, onKept);
+}
+
+/**
+ * Pure: whether a transfer batch goes ahead of the ordinary held wakes. Never when an answer's deadline forced the digest: that answer must be
+ * in it, or every poll would force another batch while it stays held and overdue. Otherwise the class holding the oldest wake goes first, so a
+ * long transfer backlog after a Steward switch cannot starve turn ends and sweeps for hours, and new turn ends cannot starve the transfers.
+ */
+function transfersFirst(transfers: HeldItem[], others: HeldItem[], answerDue: boolean): boolean {
+	if (answerDue) return false;
+	const oldest = (xs: HeldItem[]) => Math.min(...xs.map((h) => h.queuedAt));
+	return oldest(transfers) <= oldest(others);
 }
 
 /**

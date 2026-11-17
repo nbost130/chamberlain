@@ -94,6 +94,8 @@ export interface WakeStore {
 	rows(status?: OutboxStatus | "all", lane?: Lane): OutboxRow[];
 	/** The row an id belongs to: as its own delivery id or as a member. */
 	find(deliveryId: string): OutboxRow | undefined;
+	/** The row with this row number, or undefined (never written, or deleted by retention). */
+	byId(id: number): OutboxRow | undefined;
 	/** Is this id bound to a delivered row? */
 	isDelivered(deliveryId: string): boolean;
 	/** Is this id held or bound to a row of any status? */
