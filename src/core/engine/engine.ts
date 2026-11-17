@@ -35,6 +35,7 @@ import {
 import { createSweep } from "./engine-sweep.ts";
 import type { createUndelivered } from "./engine-undelivered.ts";
 import { Watcher } from "./engine-watcher.ts";
+import { failureFreshness } from "./failure-freshness.ts";
 
 export class Core extends CoreWork {
 	readonly conf: string;
@@ -129,6 +130,10 @@ export class Core extends CoreWork {
 			...this.d.relay,
 			...(deskLane ? { receivers: { [DESK_RECEIVER]: { wake: deskLane.wake, gate: () => deskLane.isBusy() } } } : {}),
 			rightsNow: (o) => this.rightsNow(o),
+			validateWake: async (row) =>
+				row.kind === "failed" && row.thread
+					? failureFreshness(this.watcherOf(row.thread)?.adapter.inspect, row.thread)
+					: "send",
 			onDelivered: (id) => recordAnswerDelivered(this.store, id),
 		});
 	}

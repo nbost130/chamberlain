@@ -6,14 +6,28 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ensureToken, ensureViewKey, TOKEN_FILE, VIEW_KEY_FILE } from "../core/ops/capability.ts";
+import { modelServer } from "../testing/model-server.ts";
 import { acceptedHosts } from "./server-config.ts";
 import { linkLines, linkTargets, pageBases } from "./server-links.ts";
 
 const REPO = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
 const dirs: string[] = [];
+const modelServers: ReturnType<typeof modelServer>[] = [];
 afterEach(() => {
+	for (const s of modelServers.splice(0)) s.close();
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
+function configuredWorld(web: Record<string, unknown>) {
+	const w = world(web);
+	const s = modelServer();
+	modelServers.push(s);
+	mkdirSync(`${w.conf}/secrets`, { mode: 0o700 });
+	writeFileSync(`${w.conf}/secrets/test-token`, "test-only", { mode: 0o600 });
+	writeFileSync(`${w.conf}/config.json`, JSON.stringify({ ...s.config, web: { ...s.config.web, ...web } }), {
+		mode: 0o600,
+	});
+	return { ...w, rpc: s };
+}
 function world(web: Record<string, unknown>) {
 	const root = mkdtempSync(`${tmpdir()}/chamberlain-links-`);
 	dirs.push(root);
@@ -136,12 +150,10 @@ describe("chamberlain ask puts the view key, never the page's key, in the view i
 	test("the Decisions-thread message holds the inline script address with k=<view key>; nothing the command prints holds either key", async () => {
 		const stub = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("//inline") });
 		try {
-			const w = world({ host: "127.0.0.1", port: stub.port });
+			const w = configuredWorld({ host: "127.0.0.1", port: stub.port });
 			const { ensureToken } = await import("../core/ops/capability.ts");
 			const token = ensureToken(w.conf);
 			const view = ensureViewKey(w.conf);
-			const sent = `${w.root}/sent`;
-			writeFileSync(`${w.root}/t3`, `#!/bin/sh\necho "$@" > ${sent}.args\ncat > ${sent}\n`, { mode: 0o700 });
 			const q = JSON.stringify({
 				kind: "product",
 				title: "Which one?",
@@ -153,16 +165,15 @@ describe("chamberlain ask puts the view key, never the page's key, in the view i
 			const r = await runAsync(["src/ask.ts", q], {
 				CHAMBERLAIN_CONF: w.conf,
 				CHAMBERLAIN_STATE: w.state,
-				T3CODE_CLI_PATH: `${w.root}/t3`,
 			});
 			expect(r.code, r.err).toBe(0);
-			const message = readFileSync(sent, "utf8");
+			const message = w.rpc.sent();
 			expect(message).toContain(`inline.js?view=decisions&amp;item=`);
 			expect(message).toContain(`&amp;k=${view}"></script>`);
 			// the page's key is never in a post, raw or URL-encoded: not in the message, nor in the arguments, nor in anything printed
 			expect(message).not.toContain(token);
 			expect(message).not.toContain(encodeURIComponent(token));
-			expect(readFileSync(`${sent}.args`, "utf8")).not.toContain(token);
+			expect(JSON.stringify(w.rpc.requests)).not.toContain(token);
 			expect(r.out + r.err).not.toContain(token);
 			expect(r.out + r.err).not.toContain(view);
 		} finally {
@@ -173,10 +184,8 @@ describe("chamberlain ask puts the view key, never the page's key, in the view i
 	test("with no view key the operator gets the one-line notice, never a view whose link cannot work, even when the page has its own key", async () => {
 		const stub = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("//inline") });
 		try {
-			const w = world({ host: "127.0.0.1", port: stub.port });
+			const w = configuredWorld({ host: "127.0.0.1", port: stub.port });
 			const token = ensureToken(w.conf); // the page's key exists; it must NOT stand in for the missing view key
-			const sent = `${w.root}/sent`;
-			writeFileSync(`${w.root}/t3`, `#!/bin/sh\ncat > ${sent}\n`, { mode: 0o700 });
 			const q = JSON.stringify({
 				kind: "product",
 				title: "Which one?",
@@ -188,11 +197,10 @@ describe("chamberlain ask puts the view key, never the page's key, in the view i
 			const r = await runAsync(["src/ask.ts", q], {
 				CHAMBERLAIN_CONF: w.conf,
 				CHAMBERLAIN_STATE: w.state,
-				T3CODE_CLI_PATH: `${w.root}/t3`,
 			});
 			expect(r.code, r.err).toBe(0);
-			expect(readFileSync(sent, "utf8")).not.toContain("inline.js");
-			expect(readFileSync(sent, "utf8")).not.toContain(token);
+			expect(w.rpc.sent()).not.toContain("inline.js");
+			expect(w.rpc.sent()).not.toContain(token);
 			expect(r.err).toContain("no view key");
 		} finally {
 			stub.stop(true);

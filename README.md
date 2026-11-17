@@ -61,7 +61,9 @@ chmod 600 ~/.config/chamberlain/secrets/read-token
 $EDITOR ~/.config/chamberlain/decision-rights.md
 ```
 
-**3. Run the daemon, and send one test wake.**
+**3. Configure each pinned thread's model.** In the same `config.json`, select its provider instance, model and supported options under `models.steward`, `models.decisions` and, if used, `models.desk`. Selection needs an existing operate-token grant for the configured server, separate from the watcher's read-only token. Follow [model configuration](docs/MODELS.md) for the schema and capability limits. On an upgraded installation, `chamberlain models import <server>` preserves the threads' existing selections; upgrade every process sharing the configuration before importing.
+
+**4. Run the daemon, and send one test wake.**
 
 ```sh
 chamberlain daemon                     # with Homebrew: brew services start chamberlain

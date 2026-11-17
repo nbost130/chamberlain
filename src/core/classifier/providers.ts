@@ -5,9 +5,8 @@
  *   rules  regular expressions per question (`looksLikeAsk`, `looksLikeStall`, each question's `rules`). Nothing leaves the machine.
  *   jev    TypeSafe's Jev over plain HTTP: one request per thread, one Noul head per question. Plain `fetch`, not the 0.7.0 SDK, which
  *          under Bun with concurrent requests threw `TypeError: Body already used` on nearly every call (the requests were billed).
- *   haiku  the `claude` CLI on the operator's own login, `--model haiku`, every question in one call. ANTHROPIC_API_KEY is removed
- *          from its environment so it runs on the operator's plan, not `--bare` (bare mode requires an API key). The thread state
- *          goes on stdin, never in argv, where any local user could read it.
+ *   model  the central isolated-reader selection, implemented in model-provider.ts. No model is selected here.
+ * The legacy Haiku helper below is retained for compatibility tests only; runtime rejects that selector until migration.
  *
  * Every answer is validated: present for every question, a finite number in [0, 1]. A malformed answer throws, and the caller makes the
  * thread `unknown`; a missing answer is never read as no. Errors never carry response bodies or model output, which may echo the
@@ -28,7 +27,7 @@ import {
 import { type Bank, DATA_PREAMBLE } from "./bank.ts";
 import type { SentState } from "./state.ts";
 
-export const PROVIDERS = ["none", "rules", "jev", "haiku"] as const;
+export const PROVIDERS = ["none", "rules", "jev", "haiku", "model"] as const;
 export type ProviderName = (typeof PROVIDERS)[number];
 export type ProviderResult = {
 	answers: Record<string, number>;
@@ -105,7 +104,6 @@ export function rulesProvider(): Provider {
 // ---- jev ---------------------------------------------------------------------------------------
 
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
-export const JEV_DEFAULT_MODEL = "jev-1.14.0";
 /** Input price, USD per million tokens (TypeSafe models page, Jev 1.14). Output is free. Used for any pinned Jev model. */
 const JEV_USD_PER_MTOK = 0.042;
 
@@ -221,7 +219,7 @@ export { MODEL_ID };
 export type HaikuOptions = { command: string; model: string; timeoutMs: number; run?: CliRunner };
 
 /** Pure: the system prompt: the bank, every question with its yes and no, and the one reply shape. */
-const haikuSystem = (bank: Bank): string =>
+export const haikuSystem = (bank: Bank): string =>
 	"You label one message from an AI agent's chat thread. Answer each question independently with your probability (0 to 1) that the answer is yes.\n\n" +
 	bank.map((q) => `- ${q.id}: ${DATA_PREAMBLE} ${q.ask}\n  YES: ${q.yes}\n  NO: ${q.no}`).join("\n") +
 	"\n\nReply with only a JSON object mapping each question id to a number, nothing else.";
@@ -241,7 +239,7 @@ function haikuObject(result: unknown): unknown {
 }
 
 /** The probability the model gave each question, checked; a refusal carries the call's usage. */
-function haikuAnswers(j: CliReply, bank: Bank, usage: Usage): Record<string, number> {
+export function haikuAnswers(j: CliReply, bank: Bank, usage: Usage): Record<string, number> {
 	const parsed = haikuObject(j.result);
 	if (parsed === undefined) throw new ProviderError("the model's reply holds no JSON object of answers", usage);
 	try {

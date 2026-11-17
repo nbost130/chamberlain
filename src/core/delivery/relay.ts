@@ -26,13 +26,14 @@
  * accepted POST whose delivered commit fails is never POSTed again by this process: the commit is retried on every pass. Only a process
  * that exits before that commit leaves the row pending, and the restart sends it again under the same id, counted like any other attempt.
  */
+import { readNamed } from "../config/layout.ts";
 import { crashPoint } from "../crash.ts";
 import { HOLD_CEILING_MS } from "../decide/hold.ts";
 import { redactUrls } from "../redact.ts";
 import { invalidateRights } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
-import { finalSendMessage, maxAttemptsFromEnv, type WakeResult } from "./deliver.ts";
+import { finalSendMessage, maxAttemptsFromEnv, type WakeResult, type WakeTransport } from "./deliver.ts";
 import { audit } from "./relay-audit.ts";
 import { serially } from "./relay-compose.ts";
 import {
@@ -161,11 +162,28 @@ function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
 	return serially(r, async () => {
 		if (!d.lock.held()) throw new Error("the relay no longer holds the one-relay lock: nothing is sent");
 		if (!d.compact) throw new Error("this adapter has no compaction target");
+		const prepared = await prepareCompact(r, d.compact);
+		if (!prepared.ok) return prepared;
 		const epoch = invalidateRights(store);
 		d.log("rights-invalidated", { reason: "compaction", deliveryId, epoch });
 		crashPoint("compact-invalidated");
-		return sanitizeResult(await d.compact.send(deliveryId, ""));
+		return sanitizeResult(
+			await d.compact.send(deliveryId, "", prepared.target ? { target: prepared.target } : undefined),
+		);
 	});
+}
+
+async function prepareCompact(r: Ctx, transport: WakeTransport): Promise<WakeResult & { target?: string }> {
+	const { d, store } = r;
+	const gen = store.steward.current();
+	const target = d.conf && gen?.compactRef ? readNamed(d.conf, gen.compactRef) : undefined;
+	if (d.conf && gen && !target) return { ok: false, error: "generation compaction target unavailable" };
+	if (transport.prepare && !(await transport.prepare(gen?.thread)))
+		return { ok: false, error: "model selection unavailable" };
+	if (!d.lock.held()) throw new Error("the relay lock was released during model preparation: nothing is sent");
+	if (store.steward.current()?.gen !== gen?.gen)
+		return { ok: false, error: "Steward changed during model preparation" };
+	return { ok: true, ...(target ? { target } : {}) };
 }
 
 /** The relay as `createRelay` returns it. */

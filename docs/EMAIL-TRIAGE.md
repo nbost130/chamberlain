@@ -14,8 +14,8 @@ measured shadow fortnight and the Steward's confirmation (sections 5 and 8).
 | --- | --- | --- | --- |
 | Fetch headers | code, through the provider (`gog`) | no model | no |
 | Header and sender rules | code: triage rules in force, built-in header facts | no model | yes, only a rule Nathan confirmed, only in `live` mode |
-| Driver | Haiku, no tools, reads headers and sanitized text | small, bounded per run | no: it only labels |
-| Escalation | Sonnet, then Opus, on stated triggers only | bounded per run, Opus off by default | no: it only labels |
+| Driver | `models.mailDriver`, no tools, reads headers and sanitized text | small, bounded per run | no: it only labels |
+| Escalation | `models.mailEscalate`, then `models.mailTop`, on stated triggers only | bounded per run, top tier off by default | no: it only labels |
 | Outcome | code maps the label to one of three outcomes | none | auto-clean only through a rule, Nathan's tap, or the unattended-archive mode once it has been switched on (off by default, section 8) |
 | Cards | the decision queue, through the same core function `ask.ts` uses | none | the answer, carried out by code |
 | Report | a file plus one line; the Steward is woken only when something needs it | none | no |
@@ -40,8 +40,9 @@ would be created for every operator, on or off, and an older daemon would refuse
 problem, which `obs.db` avoids the same way). The one place the module touches `chamberlain.db` is the decision queue, through core
 functions, and that link is reconciled by key (section 5), never by a shared transaction.
 
-Model calls go through one shared runner, factored out of `src/core/classifier/providers.ts` into `src/core/llm/cli.ts` (B1): the same
-`claude -p` argv the classifier uses, with the model as a parameter. The classifier and the module then hold one copy of the no-tools rule.
+Model selections belong in top-level `models.mailDriver`, `models.mailEscalate` and `models.mailTop`; see [MODELS.md](MODELS.md).
+The shared isolated reader supports explicit Claude CLI and chat-completions HTTP contracts. Neither a provider nor a model is selected by default.
+The processing pipeline below remains a design; B1 currently validates configuration and opens storage only.
 
 ```json
 "mail": {
@@ -52,7 +53,6 @@ Model calls go through one shared runner, factored out of `src/core/classifier/p
   "scope": { "query": "in:inbox", "lookbackDays": 7, "maxMessagesPerRun": 200 },
   "schedule": { "times": ["07:30", "16:30"], "days": "mon-fri", "tz": "America/New_York", "maxRunsPerDay": 4 },
   "labels": { "prefix": "Chamberlain" },
-  "models": { "command": "claude", "driver": "haiku", "escalate": "sonnet", "top": "opus" },
   "budget": { "driverCallsPerRun": 10, "escalateCallsPerRun": 8, "newsletterCallsPerRun": 3, "topCallsPerRun": 0, "inputTokensPerDay": 600000 },
   "important": { "senders": ["@school.example"], "words": ["invoice", "due", "contract", "tax", "court", "overdue"] },
   "newsletters": [ { "name": "Unsupervised Learning", "match": { "listId": "<the newsletter's List-Id>" }, "maxHighlights": 5 } ],
@@ -130,7 +130,7 @@ A provider without labels (`can.labels: false`) still archives and marks read; l
 
 ## 4. The pipeline, cheapest first
 
-**Decision: code decides every message it can, Haiku drives the rest, and a higher tier runs only on a named trigger.** This is
+**Decision: code decides every message it can, the configured driver handles the rest, and escalation runs only on a named trigger.** This is
 Chamberlain's own rule (R98: code first, then a cheaper model, a higher tier only where judgement is needed), and in the research
 literature it is an *LLM cascade* ([FrugalGPT, Chen, Zaharia and Zou, 2023](https://arxiv.org/abs/2305.05176)).
 
@@ -145,22 +145,22 @@ literature it is an *LLM cascade* ([FrugalGPT, Chen, Zaharia and Zou, 2023](http
    - everything else goes to the driver, with the header facts attached: list mail (`List-Id`, [RFC 2919](https://www.rfc-editor.org/rfc/rfc2919);
      `List-Unsubscribe`, [RFC 2369](https://www.rfc-editor.org/rfc/rfc2369)), bulk (`Precedence: bulk`), machine-sent (`Auto-Submitted`,
      [RFC 3834](https://www.rfc-editor.org/rfc/rfc3834)) and the provider's category.
-3. **Driver (Haiku).** Up to 10 messages per call: headers, facts and at most 1,500 characters of sanitized text each. It answers, per
+3. **Driver (`models.mailDriver`).** Up to 10 messages per call: headers, facts and at most 1,500 characters of sanitized text each. It answers, per
    message slot, `{label: clean | newsletter | deeper | ask | keep, confidence, why (at most 200 characters), facts: {due?, amount?, waitingOn?}}`.
-4. **Escalation (Sonnet), only when** the driver said `deeper` (at any confidence: digging deeper *is* the escalation); or `ask` with
+4. **Escalation (`models.mailEscalate`), only when** the driver said `deeper` (at any confidence: digging deeper *is* the escalation); or `ask` with
    confidence under 0.7; or a flagged message was labelled `clean` (a disagreement with code is never settled by the cheaper model, and a
-   flagged message goes to an ask card whatever Sonnet says); or the driver's answer for a slot failed validation twice. With the escalation
-   budget spent, a `deeper` message becomes an ask card carrying the driver's `why` and a note that it was not read in full. Sonnet reads
+   flagged message goes to an ask card whatever the escalation model says); or the driver's answer for a slot failed validation twice. With the escalation
+   budget spent, a `deeper` message becomes an ask card carrying the driver's `why` and a note that it was not read in full. The escalation model reads
    the whole thread (`read(as: "thread")`), sanitized, up to 12,000 characters, and answers in the same shape plus a summary of at most 400 characters.
-5. **Top tier (Opus), only when** Sonnet says `ask` with confidence under 0.6 about an `important` sender. Off by default
+5. **Top tier (`models.mailTop`), only when** the escalation model says `ask` with confidence under 0.6 about an `important` sender. Off by default
    (`topCallsPerRun: 0`); at most one call a run when on.
-6. **Outcome (code).** `clean` → the cleanup batch (an action on its own only in the unattended-archive mode, which is off by default; section 5); `deeper` → Sonnet's summary becomes an ask card or a note in the report;
+6. **Outcome (code).** `clean` → the cleanup batch (an action on its own only in the unattended-archive mode, which is off by default; section 5); `deeper` → the escalation summary becomes an ask card or a note in the report;
    `ask` → an ask card; `newsletter` from an unknown sender → a one-tap "Digest this sender?" card; `keep` → left alone.
 
-**Budgets.** Every limit is an acceptance test. The driver and escalation calls go through the `claude` CLI on the operator's own
-subscription login. There is **no pay-per-token lane**: the runner passes the CLI an environment built from an allowlist (`HOME`, `PATH`,
-`LANG`, `TMPDIR`, `CLAUDE_CONFIG_DIR`), so `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
-`CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX` never reach it, and `--setting-sources ""` keeps an `apiKeyHelper` out.
+**Budgets.** Every limit is an acceptance test for the planned pipeline. Each role uses its explicit central reader selection;
+missing selections or failed calls never choose another provider. The shared reader contract preserves tool isolation for both
+CLI and HTTP adapters. HTTP billing is an explicit operator choice; the Claude CLI adapter removes API-key authentication variables.
+The pipeline remains unimplemented, so the estimates below are design budgets, not evidence of live mailbox processing.
 
 | Per run (estimates until B9 measures them) | Calls | Input tokens | Output tokens |
 | --- | --- | --- | --- |
@@ -168,7 +168,7 @@ subscription login. There is **no pay-per-token lane**: the runner passes the CL
 | Escalation, one thread a call | at most 8 | about 36k | about 4k |
 | Newsletters, one issue a call | at most 3 | about 21k | about 5k |
 | Top tier | 0 (1 when on) | 0 (about 15k) | 0 (about 1k) |
-| **Ceiling** | **21** (22 with Opus on) | **about 157k** (172k) | **about 24k** (25k) |
+| **Ceiling** | **21** (22 with top tier on) | **about 157k** (172k) | **about 24k** (25k) |
 | Typical: 50 new messages, 60% settled by rules, one newsletter | 3 | about 30k | about 5k |
 
 The ceiling is under a third of one Steward wake (about 540k tokens, mostly cache reads, per OBSERVABILITY.md section 8). Per day the
@@ -264,7 +264,7 @@ by code and never written by the model.** The word *digest* already means a comp
 1. *Match.* A configured newsletter's sender or `List-Id` matches. (Example: the weekly Unsupervised Learning issue.)
 2. *Read.* `read(as: "newsletter")`: the text, at most 30,000 characters, with each link replaced by `[L1]`…`[Ln]`. The link table stays
    in the run's memory; the model never sees a URL.
-3. *Extract (Haiku, one call).* Up to 25 candidate items: `{title (≤90 chars), gist (≤200 chars), link: "L7" | null, topics: [≤3 words]}`.
+3. *Extract (`models.mailDriver`, one call).* Up to 25 candidate items: `{title (≤90 chars), gist (≤200 chars), link: "L7" | null, topics: [≤3 words]}`.
    A link reference that is not in the table is dropped. A candidate with no link is kept, linked to the issue itself.
 4. *Pick (code).* Each candidate scores by overlap of its topics with `interests`, plus what Nathan saved from this newsletter before
    (topics of saved highlights up, of skipped issues down, from `mail_highlights`). The top `maxHighlights` go on the card.
@@ -330,7 +330,7 @@ sampled share of batches is still shown to Nathan, and falling approval switches
 
 | Guarantee | How it is enforced (not by a prompt) | Test |
 | --- | --- | --- |
-| The reading model cannot act | Every call is `claude -p --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands --no-session-persistence --system-prompt <fixed> --output-format json`, mail on stdin, never in argv. The argv is built in one function. | Snapshot test of the argv; a test that the runner refuses any argv missing `--tools ""`. |
+| The reading model cannot act | Each configured adapter implements the shared isolated-reader contract: fixed no-tools argv for CLI, no tools and refusal of tool requests for HTTP. Text travels on stdin or in the HTTP body. | Reader integration tests for CLI flag refusal and HTTP tool-call refusal; mailbox pipeline integration remains future work. |
 | Instructions in mail gain no authority | The reply is parsed against a closed schema: `label` an enum, `confidence` in [0, 1], `why` and `summary` length-capped, `facts` typed, slots matched to the message ids code sent. Anything else makes that message `ask`, with headers only. The model chooses no message id, label name, folder, recipient or URL; a `clean` label only adds the message to the cleanup card (or, in the unattended mode and for an unflagged message, to the archive batch); card text is rendered as text, with any URL in it shown unlinked. | Fuzz test: malformed replies (extra fields, wrong slots, long text, tool-call shapes) become `ask`. Injection test: *valid* replies a hostile mail could produce (`clean` for a flagged message, a summary holding an instruction or a URL, a link reference not in the table) are run through every consumer (outcome mapping, cards, page, rule proposal, routes). With the unattended mode off, before any tap they change nothing but card text; with it on, a `clean` label for an unflagged message archives it, recorded and undoable, and a flagged one still changes nothing. After a route tap they reach the route's target only as the capped title and gist, as plain text, with the one URL taken from the code's link table. |
 | Never sends, replies or forwards | `MailProvider` has no such method; gog runs with `--gmail-no-send` and an exact allowlist that names no send command. Two layers, either enough. | B2 runs the real `gog` with the module's flags and an empty `--home` (no credentials, so nothing can reach a mailbox), and asserts that `send`, `reply`, `forward` and `drafts` fail with gog's command-policy refusal (its own message, matched exactly), while an allowed command with the same flags gets past the policy and fails only at authentication. The control proves the refusal is the allowlist, not a missing login. |
 | Never deletes | No delete or trash method; `trash`, `batch delete` and `labels delete` are outside gog's allowlist; `label()` refuses `TRASH`, `SPAM` and every other system label, except removing `INBOX` or `UNREAD` and, for undo only, adding them back; added labels must otherwise start with `labels.prefix/`. | Unit tests on `label()`; B2's refusal test includes `trash` and `batch delete`. |
@@ -339,7 +339,7 @@ sampled share of batches is still shown to Nathan, and falling approval switches
 | Tracking links are never opened by the module | The module has no HTTP client: an architecture test fails if any file under `src/modules/mail/` calls `fetch(`, imports `node:http`, `node:https`, `node:net` or `undici`, or starts a process other than the provider and a configured `command` route (the model CLI is spawned by `src/core/llm/cli.ts`, which is core) (the operator's own program, run only on a route tap or under a confirmed routing rule; section 6). The scan reads source names: it refuses `node:child_process`, `node:cluster`, the package `bun` (its `$`, `spawn` and `spawnSync` exports), `bun:ffi`, execa, cross-spawn, zx, shelljs and node-pty, and any use of the `Bun` global outside `Bun.file`, `write`, `sleep`, `sleepSync`, `hash`, `nanoseconds` and `env`; a name built at run time is outside it, so the real daemon test also counts every child the kernel saw, of any name and lifetime. Triage text comes from `--sanitize-content` (URLs removed); newsletter links are swapped for references before the model sees them. No mail HTML is rendered anywhere, so no tracking pixel loads; the page's CSP is already `img-src 'self'`. | The architecture test; a test that model input contains no `http` substring. |
 | Only metadata and bounded derived text are kept | Mail-derived text is written to exactly three places: `mail.db`'s capped columns (`CHECK(length(...) <= n)`), the card's question in `chamberlain.db`, and a route's target on a route tap. Each labelled example (`mail_examples`, section 5) is in the first place: its note is capped. Bodies live in memory for one call and are written to no file, log, event or report; events carry numbers and enums only. A length cap bounds what is kept, it does not prove provenance: a mail shorter than 400 characters can be kept whole as its own summary, and this is accepted. | A schema test that no `mail.db` column is named or sized for a body; a run with a planted body sentence and a model reply that echoes it, then a search of the state directory, `mail.db`, `chamberlain.db` and the route targets: the sentence appears only within the capped fields, never beyond the cap. |
 | No credential is held | The provider is the mail tool (gog keeps its own keyring); `mail` config has no key, token or password field and `parseMail` rejects unknown keys; the provider child's environment is an allowlist without `GOG_ACCESS_TOKEN`, and its stderr is never stored (section 3). | Config tests; a test that a planted `GOG_ACCESS_TOKEN` reaches neither the child nor any log. |
-| No pay-per-token lane | The model CLI's environment is an allowlist (section 4). | A test that plants each excluded variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`) and asserts none reaches the child. |
+| No implicit billing switch | Provider, model and adapter are explicit central settings. CLI authentication cannot silently become API-key billing; HTTP requests use only the selected endpoint and credential. | Reader credential, redirect and CLI authentication tests; mailbox budget integration remains future work. |
 
 **What is kept, and for how long.**
 

@@ -224,7 +224,7 @@ export class T3Link {
 		},
 		/** The projection read again, for the moment before a ping: the newest run, whether any run is going, whether any card is open. */
 		look: async (threadId) => {
-			if (!this.rpc) return undefined;
+			if (!this.rpc) throw Error("T3 thread state unavailable while disconnected");
 			const p = await this.projection(threadId);
 			return lookOf(p.runs ?? [], p.turnItems ?? []);
 		},

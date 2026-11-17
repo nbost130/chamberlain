@@ -1,5 +1,6 @@
 /** The config document's schema: the files and directories, the scalar and section keys, and the checks a config.json must pass. */
 
+import { parseModels } from "../llm/selection.ts";
 import { configDir } from "../state-dir.ts";
 import { SchemaTooNewError } from "../store/schema.ts";
 import { parseSettledMatch } from "./settings-parse.ts";
@@ -61,6 +62,7 @@ export const SECTIONS = [
 	"operatingRules",
 	"judge",
 	"mail",
+	"models",
 ] as const;
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
@@ -155,5 +157,6 @@ export function parseConfigDoc(raw: unknown): Record<string, unknown> {
 	checkSchemaVersion(raw.schemaVersion);
 	for (const k of Object.keys(raw)) checkKey(raw, k);
 	checkThreads(raw.threads);
+	parseModels(raw.models);
 	return raw;
 }

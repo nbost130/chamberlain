@@ -2,14 +2,14 @@
  * `sweep.idleParents.classifier` in config.json: the idle-thread classifier's settings. Off by default (`provider: "none"`): without
  * this section Chamberlain behaves exactly as it does without the feature and makes no model call. Unknown keys throw, as elsewhere.
  *
- * Text leaves the machine only with two switches: a provider that sends it (`jev`, `haiku`) AND `allowTextToLeaveMachine: true`. Either
+ * Text leaves the machine only with two switches: a provider that sends it (`jev`, `model`) AND `allowTextToLeaveMachine: true`. Either
  * provider without the second switch is refused here, at config load, never at the first call.
  */
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { bool, isArgv, modeOf, num, type Obj, object, oneOf, probability, str } from "../config/config-fields.ts";
 import { type Bank, DEFAULT_BANK, parseBank, type Thresholds } from "./bank.ts";
-import { JEV_DEFAULT_MODEL, PROVIDERS, type ProviderName } from "./providers.ts";
+import { PROVIDERS, type ProviderName } from "./providers.ts";
 import type { RedactConfig, SendConfig } from "./state.ts";
 
 type ClassifierMode = "shadow" | "live";
@@ -43,12 +43,12 @@ export const CLASSIFIER_DEFAULTS: ClassifierConfig = {
 	armedGraceMinutes: 360,
 	autoNudge: false,
 	autoSettle: false,
-	jev: { model: JEV_DEFAULT_MODEL, keyFile: "typesafe.key", timeoutMs: 10_000 },
-	haiku: { command: "claude", model: "haiku", timeoutMs: 60_000 },
+	jev: { model: "", keyFile: "typesafe.key", timeoutMs: 10_000 },
+	haiku: { command: "", model: "", timeoutMs: 60_000 },
 };
 
 /** Providers that send the redacted state off the machine. */
-export const SENDS_TEXT: readonly ProviderName[] = ["jev", "haiku"];
+export const SENDS_TEXT: readonly ProviderName[] = ["jev", "haiku", "model"];
 const W = "sweep.idleParents.classifier";
 
 const KEYS = [

@@ -6,6 +6,7 @@ import { askQuestion, type Question } from "../core/items/questions.ts";
 import { ensureToken } from "../core/ops/capability.ts";
 import { openStore } from "../core/store/sqlite-store.ts";
 import { dbPath, type Store } from "../core/store/store.ts";
+import { modelServer } from "./model-server.ts";
 
 export const SRC = new URL("..", import.meta.url).pathname;
 export const TIMEOUT = 30_000;
@@ -21,6 +22,7 @@ export const setWakeReceiptProbe = (fn: typeof wakeReceiptProbe) => {
 const dirs: string[] = [];
 const procs: { kill: (s?: number) => void }[] = [];
 const stores: Store[] = [];
+const modelServers: ReturnType<typeof modelServer>[] = [];
 
 const item = (id: string): Question => ({
 	id,
@@ -85,6 +87,17 @@ export async function world(id: string) {
 	secret(`${conf}/read-token`, "not-a-token");
 	const port = await freePort();
 	secret(`${conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port }));
+	const models = modelServer();
+	modelServers.push(models);
+	secret(`${conf}/test-token`, "test-only");
+	secret(
+		`${conf}/config.json`,
+		JSON.stringify({
+			...models.config,
+			threads: { steward: "crash-steward-thread" },
+			web: { ...models.config.web, host: "127.0.0.1", port },
+		}),
+	);
 	// The page's capability token, made before the page starts (it would make one itself): every request to the page must hold it.
 	const key = ensureToken(conf);
 	// The test's own connection: the same file the children use, read and written alongside them (WAL).
@@ -186,6 +199,7 @@ export function registerCrashHooks() {
 	});
 	afterAll(() => hook.stop(true));
 	afterEach(() => {
+		for (const s of modelServers.splice(0)) s.close();
 		for (const p of procs.splice(0)) {
 			try {
 				p.kill(9);

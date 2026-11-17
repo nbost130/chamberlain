@@ -13,6 +13,7 @@ import {
 import { NON_SECRET_HOME, oldFileState, readJournal, reappearedFiles, SECRET_FILE } from "./layout-legacy.ts";
 import { readConfigFile } from "./layout-read.ts";
 import { SECRETS_DIR } from "./layout-schema.ts";
+import { migrateModels } from "./model-migrate.ts";
 
 /** Files that stay files: prose the operator edits, and systemd's environment file. */
 const STAYS = [
@@ -219,6 +220,7 @@ export function planMigration(conf: string): Plan {
 	foldLegacyKeys(ctx);
 	foldThreadIds(ctx);
 	foldDaemonEnv(ctx);
+	migrateModels(plan);
 	for (const name of secretNames(conf, doc)) planSecret(ctx, name);
 	planRenames(ctx);
 	planMigratedList(ctx);

@@ -55,7 +55,7 @@ describe("mail: off by default", () => {
 			scope: { query: "in:inbox", lookbackDays: 7, maxMessagesPerRun: 200 },
 			schedule: { times: ["07:30", "16:30"], days: "mon-fri", tz: "local", maxRunsPerDay: 4 },
 			labels: { prefix: "Chamberlain" },
-			models: { command: "claude", driver: "haiku", escalate: "sonnet", top: "opus" },
+			models: { command: "", driver: "none", escalate: "none", top: "none" },
 			budget: {
 				driverCallsPerRun: 10,
 				escalateCallsPerRun: 8,
@@ -78,6 +78,7 @@ describe("mail: the design's example", () => {
 		const c = parseMail(EXAMPLE);
 		expect(c).toEqual({
 			...MAIL_DEFAULTS,
+			models: EXAMPLE.models,
 			provider: "gog",
 			allowMailToLeaveMachine: true,
 			gog: { command: "gog", account: "me@example.com", timeoutMs: 60000, env: [] },
@@ -109,9 +110,15 @@ describe("mail: the design's example", () => {
 
 describe("mail: text leaves the machine only with two switches", () => {
 	test("a provider with a reading model is refused unless allowMailToLeaveMachine is true", () => {
-		expect(() => parseMail({ provider: "gog" })).toThrow('set "allowMailToLeaveMachine": true');
-		expect(() => parseMail({ provider: "gog", allowMailToLeaveMachine: false })).toThrow("reads mail text");
-		expect(() => parseMail({ provider: "command", command: { argv: ["x"] } })).toThrow("allowMailToLeaveMachine");
+		expect(() => parseMail({ provider: "gog", models: { driver: "explicit-model" } })).toThrow(
+			'set "allowMailToLeaveMachine": true',
+		);
+		expect(() =>
+			parseMail({ provider: "gog", models: { driver: "explicit-model" }, allowMailToLeaveMachine: false }),
+		).toThrow("reads mail text");
+		expect(() =>
+			parseMail({ provider: "command", models: { driver: "explicit-model" }, command: { argv: ["x"] } }),
+		).toThrow("allowMailToLeaveMachine");
 		expect(parseMail({ provider: "gog", allowMailToLeaveMachine: true }).provider).toBe("gog");
 	});
 	test("rules only (driver none) sends nothing, so it needs no switch", () => {

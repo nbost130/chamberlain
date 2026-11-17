@@ -266,7 +266,7 @@ export function inlineScriptSrc(base: string, viewKey: string, item?: string): s
 
 /** Pure: `s` with every occurrence of `token` replaced, for a message that may have come to hold one. */
 export const withoutToken = (s: string, token: string | undefined): string =>
-	token ? s.split(token).join("[token]").split(encodeURIComponent(token)).join("[token]") : s;
+	token ? spellings(token).reduce((out, form) => out.split(form).join("[token]"), s) : s;
 
 /** Every spelling of `token` a text could hold: raw, URL-encoded, and every character as `%XX` (either case of the hex digits). */
 const spellings = (token: string): string[] => {

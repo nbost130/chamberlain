@@ -47,7 +47,7 @@ describe("the registry", () => {
 		const a = dirs();
 		configure(a.conf, { mail: { provider: "gog", allowMailToLeaveMachine: true, colour: "blue" } });
 		expect(() => activeModules(a.conf)).toThrow('mail: unknown key "colour"');
-		configure(a.conf, { mail: { provider: "gog" } });
+		configure(a.conf, { mail: { provider: "gog", models: { driver: "explicit-model" } } });
 		expect(() => activeModules(a.conf)).toThrow("allowMailToLeaveMachine");
 	});
 

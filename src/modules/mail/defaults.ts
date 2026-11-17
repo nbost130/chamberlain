@@ -53,7 +53,7 @@ export const MAIL_DEFAULTS: MailConfig = {
 	scope: { query: "in:inbox", lookbackDays: 7, maxMessagesPerRun: 200 },
 	schedule: { times: ["07:30", "16:30"], days: "mon-fri", tz: "local", maxRunsPerDay: 4 },
 	labels: { prefix: "Chamberlain" },
-	models: { command: "claude", driver: "haiku", escalate: "sonnet", top: "opus" },
+	models: { command: "", driver: "none", escalate: "none", top: "none" },
 	budget: {
 		driverCallsPerRun: 10,
 		escalateCallsPerRun: 8,

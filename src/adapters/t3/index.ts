@@ -1,7 +1,7 @@
 /**
  * The T3 Code adapter: everything Chamberlain knows about T3 lives in this folder. It watches T3's shell stream with a
  * read-only token, wakes the Steward through a webhook bound to its thread, reads whether the Steward is busy from T3's
- * state database (read-only), posts questions to the Decisions thread with the T3 CLI, and, where the page has been
+ * state database (read-only), posts questions to the configured Decisions model with T3 RPC, and, where the page has been
  * granted an operate token, answers cards and renames the Decisions thread through T3's own commands.
  */
 import type {
@@ -16,7 +16,8 @@ import type { ServerEntry } from "../../core/config/servers.ts";
 import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { t3Linker } from "./links.ts";
-import { postCard } from "./post.ts";
+import { modelWake } from "./model-wake.ts";
+import { t3Post } from "./post.ts";
 import { queueGate, readStewardQueue } from "./queue.ts";
 import { t3Server } from "./server.ts";
 import { t3StateDbPath } from "./settings.ts";
@@ -65,8 +66,16 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const link = new T3Link(env, srv);
 	const linker = t3Linker(srv);
 	const waiting = createT3Waiting({ server: srv, conf: env.conf, log: env.log, linker });
-	const wake = webhookWake(() => env.readPrivate("wake-url"));
-	const compactWake = webhookWake(() => env.readPrivate("compact-url"));
+	const wake = modelWake(
+		webhookWake(() => env.readPrivate("wake-url")),
+		env.conf,
+		"steward",
+	);
+	const compactWake = modelWake(
+		webhookWake(() => env.readPrivate("compact-url")),
+		env.conf,
+		"steward",
+	);
 	const isBusy = (): Gate => threadGate(env.steward());
 	return {
 		id: "t3",
@@ -74,7 +83,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		watch: (sink, signal) => link.watch(sink, signal),
 		wake,
 		isBusy,
-		post: async (item, opts) => postCard(item, env.conf, opts.queueUrl, opts.capability),
+		post: t3Post(env.conf),
 		answer: waiting.answer,
 		listWaiting: waiting.listWaiting,
 		// The rename needs the operate token the page grants (web.json) and the Decisions thread's id; without either it reports why.
@@ -96,7 +105,11 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 			"Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",
 		// The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained.
 		alertDesk: {
-			wake: webhookWake(() => env.readPrivate("desk-wake-url")),
+			wake: modelWake(
+				webhookWake(() => env.readPrivate("desk-wake-url")),
+				env.conf,
+				"desk",
+			),
 			isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
 		},
 		threadLinks: (threadId) => linker.links(threadId),

@@ -6,11 +6,13 @@ import type { Module } from "../../core/module.ts";
 import { main } from "./cli.ts";
 import { mailEnabled } from "./config.ts";
 import { openMailDb } from "./db.ts";
+import { mailConfig } from "./model-config.ts";
 
 export const mail: Module = {
 	name: "mail",
 	enabled: mailEnabled,
 	start: (ctx) => {
+		mailConfig(ctx.conf);
 		// The file is made here, on the first start with the module on, and never before.
 		const db = openMailDb(ctx.state);
 		ctx.log("mail.start", { schema: db.one("SELECT MAX(version) AS v FROM migrations")?.v });

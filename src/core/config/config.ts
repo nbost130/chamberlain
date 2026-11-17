@@ -48,6 +48,7 @@ export const COMMANDS = {
 	butler: "src/core/ops/butler.ts",
 	migrate: "src/core/config/migrate.ts",
 	config: "src/core/config/config-cmd.ts",
+	models: "src/models.ts",
 	brief: "src/brief.ts",
 	wakes: "src/wakes.ts",
 	triage: "src/triage.ts",

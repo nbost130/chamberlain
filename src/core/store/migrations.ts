@@ -10,7 +10,7 @@
  */
 export type Migration = { version: number; name: string; sql: string };
 
-export const MIGRATIONS: readonly Migration[] = [
+const BASE_MIGRATIONS: readonly Migration[] = [
 	{
 		version: 1,
 		name: "initial schema",
@@ -626,6 +626,21 @@ CREATE INDEX prepare_pr_links_open ON prepare_pr_links (repo) WHERE cleared_at I
 	},
 ];
 
+// Rebuild with the original schema and all its constraints, changing only the provider enumeration.
+const dispositionsSchema = BASE_MIGRATIONS.find((m) => m.version === 13)?.sql;
+if (!dispositionsSchema) throw Error("missing disposition schema");
+export const MIGRATIONS: readonly Migration[] = [
+	...BASE_MIGRATIONS,
+	{
+		version: 19,
+		name: "provider-neutral classifier",
+		sql: `ALTER TABLE thread_dispositions RENAME TO old_thread_dispositions;
+DROP INDEX thread_dispositions_by_time;
+${dispositionsSchema.replace("('rules', 'jev', 'haiku')", "('rules', 'jev', 'haiku', 'model')")}
+INSERT INTO thread_dispositions SELECT * FROM old_thread_dispositions;
+DROP TABLE old_thread_dispositions;`,
+	},
+];
 const lastMigration = MIGRATIONS.at(-1);
 if (!lastMigration) throw Error("MIGRATIONS lists no migration");
 export const LATEST_MIGRATION = lastMigration.version;

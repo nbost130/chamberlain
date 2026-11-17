@@ -164,7 +164,7 @@ export const EVENTS = {
 	// ---- the idle-thread classifier and the Alert Desk ---------------------------------------------------
 	"classifier-error": failure(),
 	classifier: e("info", {
-		provider: f(T.enm("rules", "jev", "haiku", "none")),
+		provider: f(T.enm("rules", "jev", "haiku", "model", "none")),
 		mode: f(T.enm("shadow", "live")),
 		calls: int(),
 		cached: int(),

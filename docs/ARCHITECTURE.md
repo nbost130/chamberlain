@@ -87,7 +87,7 @@ A module is a feature an operator may leave out entirely, so it is kept where le
 - **Enforced, not promised.** `src/architecture.test.ts` fails the build if `src/core/` imports `src/modules/`, if a module imports an adapter, another module or the registry, if a module names `bun:sqlite` instead of the shared opener, or if anything but `cli.ts`, `daemon.ts` and a test imports the registry. `src/modules/daemon.test.ts` starts the real daemon with the section absent and asserts no `mail.db`, no event and no child process.
 - **Adding one.** A folder under `src/modules/`, a `Module` in its `index.ts`, one line in the registry, its section name in `SECTIONS` (`src/core/config/layout.ts`) and a row in `COMMANDS` (`src/core/config/config.ts`) with the loader in `src/cli.ts`.
 
-Model calls that read untrusted text go through one runner, `src/core/llm/cli.ts`: the `claude -p` argv with no tools, no settings (so no hook), no MCP servers, no commands and no session file, which the runner refuses to spawn without. The idle-thread classifier and the email module share it, so the rule is written once.
+Configured isolated readers use `src/core/llm/reader.ts`, selected through `models` in the central configuration. Its HTTP adapter sends no tools and refuses tool requests, redirects and incomplete replies. Its explicit Claude CLI adapter uses `src/core/llm/cli.ts`, which refuses anything except the fixed no-tools, no-settings, no-MCP and no-session argv. The classifier uses this contract; mail reserves the same contract for its future pipeline. No provider or model is selected by default. See [the complete inventory](MODELS.md).
 
 ## The adapter contract
 

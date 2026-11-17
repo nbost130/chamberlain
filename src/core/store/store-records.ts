@@ -12,7 +12,7 @@ export type DispositionKey = { server: string; threadId: string; messageHash: st
  */
 export type Disposition = DispositionKey & {
 	classifiedAt: number;
-	provider: "rules" | "jev" | "haiku";
+	provider: "rules" | "jev" | "haiku" | "model";
 	model: string | null;
 	mode: "shadow" | "live";
 	action: DispositionAction;

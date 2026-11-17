@@ -96,7 +96,7 @@ A user bank is a JSON array of `{id, ask, yes, no, fires: "escalate"|"nudge"|"se
 | `none` (default) | No classification. Today's behaviour. | nothing |
 | `rules` | Regular expressions per question (`looksLikeAsk`, `looksLikeStall`, and each question's `rules`). | nothing |
 | `jev` | TypeSafe's Jev: one HTTP request per thread, one Noul head per question. | the redacted state below |
-| `haiku` | The `claude` CLI, `--model haiku`, on the operator's own Claude Code login, one call per thread with every question. | the redacted state below |
+| `model` | The explicit isolated reader selected by `models.classifier`, one call per thread with every question. | the redacted state below |
 
 Each provider is one function: `(state, bank) -> {answers: {id: probability}, model, inputTokens?, costUsd?, latencyMs}`.
 
@@ -105,14 +105,13 @@ Implementation notes the evaluation turned up:
 - **Jev: call the HTTP API with `fetch`, not the 0.7.0 SDK.** Under Bun with concurrent requests the SDK threw
   `TypeError: Body already used` on nearly every call, though the requests reached the API and were billed. Plain `fetch`
   to `POST /v1/systemone` had no failures.
-- **Pin the model** (`jev-1.14.0`) and record the response's `model` field; re-run the evaluation before moving the pin.
+- **Choose the model explicitly in central configuration** and record the response's `model` field; re-run the evaluation before changing the selection. The measurements below retain the historical model names actually evaluated.
 - **Cut tails on code points.** A `slice(-1500)` that splits an emoji leaves a lone surrogate, and Jev answers HTTP 400
   "Request contains invalid Unicode text". Use `.toWellFormed()` after the cut.
 - **Validate every head**: present, a finite number in [0, 1]. A malformed answer is `unknown`, never an action.
-- **Haiku through the CLI:** `claude -p --model haiku --setting-sources "" --tools "" --strict-mcp-config
-  --disable-slash-commands --no-session-persistence --system-prompt <bank> --output-format json`, with `ANTHROPIC_API_KEY`
-  removed from the environment so it runs on the operator's plan. Not `--bare`: bare mode requires an API key. About 1k
-  tokens of overhead per call; parse the first JSON object in `result`.
+- **Isolated readers:** the shared reader uses the explicit model, adapter and supported effort from `models.classifier`.
+  The CLI contract forbids tools, settings, MCP servers and persistent sessions; the HTTP contract refuses tool calls,
+  incomplete replies and redirects. See [model configuration](../MODELS.md) for credentials and billing boundaries.
 
 ## Configuration
 
@@ -134,15 +133,14 @@ Under `sweep.idleParents.classifier` in `config.json`. Unknown keys throw, as el
         "armedGraceMinutes": 360,
         "autoNudge": false,
         "autoSettle": false,
-        "jev": { "model": "jev-1.14.0", "keyFile": "typesafe.key", "timeoutMs": 10000 },
-        "haiku": { "command": "claude", "model": "haiku", "timeoutMs": 60000 }
+        "jev": { "model": "your-explicit-jev-model", "keyFile": "typesafe.key", "timeoutMs": 10000 }
       }
     }
   }
 }
 ```
 
-- `provider`: `none` | `rules` | `jev` | `haiku`. Default `none`.
+- `provider`: `none` | `rules` | `jev` | `model`. Default `none`. Legacy `haiku` is migration input only and is refused at runtime; use `chamberlain config migrate` to move explicit legacy selections.
 - `mode`: `shadow` (classify and record, report exactly as today) or `live` (report only escalate, nudge and unknown).
   A provider turned on starts in `shadow` unless `mode` says otherwise. This is the item system's existing shadow idea, applied
   to the classifier.
@@ -219,15 +217,14 @@ thread without the Steward and are therefore off by default and separate switche
 ## Privacy
 
 - **Off by default.** `provider: "none"` sends nothing anywhere. `rules` sends nothing anywhere.
-- **Opt-in twice for text leaving the machine.** `jev` and `haiku` are refused at config load unless
+- **Opt-in twice for text leaving the machine.** `jev` and `model` are refused at config load unless
   `allowTextToLeaveMachine` is `true`.
 - **What leaves, exactly:** the thread title (unless `send.title` is false), the last `lastChars` characters of the last
   assistant message, and the last `previousChars` characters of the message before it, labelled only `human`, `agent` or
   `none`; all after redaction. Never thread ids, server names, file contents, tool output or the rest of the transcript.
   The question bank goes with it.
 - **Where it goes:** `jev` to TypeSafe's API (TypeSafe states it does not train on requests; zero retention is offered only on
-  enterprise plans, so assume retention). `haiku` to Anthropic through the operator's own Claude Code login, under that plan's
-  terms.
+  enterprise plans, so assume retention). `model` uses the explicitly configured endpoint or CLI under that provider's terms.
 - **Redaction hook.** Built-in rules replace emails, common API-key and token shapes, JWTs, phone numbers and home-directory
   user names. `redact.command`, if set, is run with the state as JSON on stdin and must print the state as JSON on stdout
   within 5 seconds. If it fails, times out or prints something else, nothing is sent and the thread is `unknown` (reported as
