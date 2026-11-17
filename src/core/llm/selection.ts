@@ -1,16 +1,10 @@
 /** Explicit model selections in config.json. No model, provider or billing defaults. */
 import { object, required } from "../config/config-fields.ts";
 
-const MODEL_ROLES = [
-	"steward",
-	"decisions",
-	"desk",
-	"butler",
-	"classifier",
-	"mailDriver",
-	"mailEscalate",
-	"mailTop",
-] as const;
+export const LAUNCH_ROLES = ["steward", "decisions", "desk", "butler", "worker"] as const;
+export type LaunchRole = (typeof LAUNCH_ROLES)[number];
+export const isLaunchRole = (role: string): role is LaunchRole => LAUNCH_ROLES.some((r) => r === role);
+const MODEL_ROLES = [...LAUNCH_ROLES, "classifier", "mailDriver", "mailEscalate", "mailTop"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 type Options = Record<string, string | boolean>;
 export type ThreadModel = { adapter: "t3"; server: string; instanceId: string; model: string; options: Options };
@@ -119,7 +113,7 @@ export function parseModels(raw: unknown): ModelSelections {
 			"timeoutMs",
 			"accountingUsdPerCall",
 		]);
-		const pinned = ["steward", "decisions", "desk", "butler"].includes(role);
+		const pinned = isLaunchRole(role);
 		if (pinned) {
 			object(o, where, ["adapter", "server", "instanceId", "model", "options"]);
 			if (o.adapter !== "t3") throw Error(`${where}: pinned threads require the t3 adapter`);

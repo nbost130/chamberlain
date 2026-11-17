@@ -43,8 +43,7 @@ The macOS binaries are not notarized. If Gatekeeper stops one that a browser dow
 
 ## Your first wake
 
-**1. Start the Steward.** Make the two directories private, print the Steward's first message, and send it as the first message of a new
-thread in T3. The Steward then creates its own wake webhook, tells Chamberlain where it is, and makes itself the thread that gets woken.
+**1. Configure and start the Steward.** Make the two directories private. Configure the server, its existing operate-token grant and `models.steward` in `config.json` using [model configuration](docs/MODELS.md). Run `chamberlain models selection steward`; use its `launch.environmentId` and exact `launch.modelSelection`, including all options, with T3's existing launch tool and a project on that environment. A failed preflight or unavailable destination stops setup, with no alternate machine or model. Use the first message printed below for that launch. The Steward then creates its wake webhook and registers itself.
 
 ```sh
 umask 077 && mkdir -p ~/.config/chamberlain ~/.local/state/chamberlain

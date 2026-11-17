@@ -1,19 +1,17 @@
 /** Initial launches use central selections too, while T3's tool retains its own launch/permission contract. */
-import { cfg } from "../../core/config/layout.ts";
-import { parseModels } from "../../core/llm/selection.ts";
-import { modelConnection, validateThreadModel } from "./model.ts";
+import type { LaunchRole } from "../../core/llm/selection.ts";
+import { configuredThreadModel, modelConnection, validateThreadModel } from "./model.ts";
 import { readModelCatalog } from "./model-catalog.ts";
 import { openWithin } from "./ping.ts";
 import { connect } from "./rpc.ts";
 
-export async function launchSelection(conf: string, role: "steward" | "butler") {
-	const c = parseModels(cfg(conf, "models"))[role];
-	if (c?.adapter !== "t3") throw Error(`models.${role}: configure a T3 provider and model before launching`);
+export async function launchSelection(conf: string, role: LaunchRole) {
+	const c = configuredThreadModel(conf, role);
 	const { origin, token } = modelConnection(conf, c.server);
 	const rpc = await openWithin(connect, origin, token, 15_000);
 	try {
 		const catalog = await readModelCatalog(rpc);
-		validateThreadModel(c, catalog);
+		validateThreadModel(c, catalog, role === "desk");
 		const environmentId = catalog.environment?.environmentId;
 		if (typeof environmentId !== "string" || !environmentId.trim())
 			throw Error("configured server identity unavailable; nothing launched");

@@ -75,6 +75,10 @@ No new keys written into the live config before the pinned daemon supports them.
 
 ## Status
 
+The expanded setup audit also found initial Steward, Decisions and Desk instructions, plus sweep worker launches, bypassing central selection. All now use the same role-aware launch preflight; workers require explicit models.worker, Desk enforces the same unsupported-driver/gatherer refusals before launch, and its setup installs the hook before the first model turn. Decisions no longer requires Claude's ToolSearch. Steward handoff uses the expanded brief-start output. Final checks and fresh source review are being repeated for this complete setup coverage.
+
+The committed-head Review.ts gate has a separate false positive: its redactor replaces a valid SECRET_SHAPES.find expression with a placeholder, which the reviewer treats as source syntax. The real D12 test passes (12 tests, 148 assertions) and full type checking passes. Publication remains blocked by that gate; no self-waiver or weakening of redaction is authorized.
+
 Fresh review of f9a8f99 found two missed shipped launch paths: Steward handoff inherited the project's default, and Butler chose a model and machine ad hoc. Both are in scope. The launch templates must consume validated central selections before their first turn, and Butler must require its own explicit models.butler selection. The audit includes hidden command templates; no upstream T3 changes are authorized. Publication remains held for these fixes and a fresh review.
 
 The shipped templates now consume the read-only `models selection` preflight, which returns the authenticated server identity and centrally configured model/options. The existing T3 launch tool retains its permission contract. Handoff retains its current tasks on preflight failure; Butler requires an explicit selection and no longer escalates models/effort or changes machines automatically. Integration tests exercise both roles, switching providers, missing credentials, invalid options, quota, unavailable server identity, and the real CLI output. Copied templates must be updated during release/cutover.

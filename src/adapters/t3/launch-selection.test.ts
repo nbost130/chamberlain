@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { LAUNCH_ROLES } from "../../core/llm/selection.ts";
 import { modelServer } from "../../testing/model-server.ts";
 import { launchSelection } from "./launch-selection.ts";
 
@@ -13,8 +14,8 @@ function setup() {
 	return s;
 }
 
-test("handoff and Butler launch arguments bind the configured provider, effort and authenticated environment", async () => {
-	for (const role of ["steward", "butler"] as const) {
+test("all initial launch roles bind the configured provider, effort and authenticated environment", async () => {
+	for (const role of LAUNCH_ROLES) {
 		const s = setup();
 		for (const provider of ["other-provider", "replacement-provider"]) {
 			s.state.instanceId = provider;
@@ -41,6 +42,19 @@ test("handoff and Butler launch arguments bind the configured provider, effort a
 		}
 		expect(s.requests.every((r) => r.tag === "subscribeServerConfig")).toBe(true);
 	}
+});
+
+test("initial Desk launch preserves the same tool isolation refusals as later wakes", async () => {
+	const s = setup();
+	s.state.driver = "other-driver";
+	await expect(launchSelection(s.conf, "desk")).rejects.toThrow();
+	expect(s.sent()).toBe("");
+	expect(s.selection().instanceId).toBe("old");
+	s.state.driver = "claudeAgent";
+	writeFileSync(`${s.conf}/config.json`, JSON.stringify({ ...s.config, alertDesk: { gatherer: "reader" } }));
+	s.requests.length = 0;
+	await expect(launchSelection(s.conf, "desk")).rejects.toThrow("gatherer");
+	expect(s.requests).toHaveLength(0);
 });
 
 test("launch preflight refuses missing credentials, unsupported options, quota and unknown destinations without falling back", async () => {
@@ -95,4 +109,20 @@ test("every shipped thread-launch template requires central preflight and exact 
 		expect(text).not.toContain("Raise its effort");
 		expect(text).toContain("no alternate machine or model");
 	}
+	for (const [path, role] of [
+		["README.md", "steward"],
+		["docs/decisions-thread-setup.md", "decisions"],
+		["docs/alert-desk.md", "desk"],
+		["docs/steward-sweep-prompt.md", "worker"],
+	]) {
+		const text = await Bun.file(new URL(`../../../${path}`, import.meta.url)).text();
+		expect(text).toContain(`models selection ${role}`);
+		expect(text).toContain("launch.environmentId");
+		expect(text).toContain("launch.modelSelection");
+		expect(text).toContain("no alternate machine or model");
+		expect(text).not.toContain("ToolSearch");
+	}
+	const handoff = await Bun.file(new URL("../../../.claude/commands/steward-handoff.md", import.meta.url)).text();
+	expect(handoff).toContain("src/brief.ts start");
+	expect(handoff).not.toContain("exact contents of `docs/steward-start.md`");
 });

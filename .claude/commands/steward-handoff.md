@@ -21,7 +21,7 @@ Hand the Steward role to a fresh thread. The operator runs this, or asks you to.
    - `environmentId` and `modelSelection` copied exactly from `launch`, including every option
    - `projectId` verified on that environment
    - one fresh `clientRequestId`, reused if this same launch needs reconciliation
-   - `message` set to the exact contents of `docs/steward-start.md`
+   - `message` set to the exact output of `bun {{chamberlain}}/src/brief.ts start`, which expands the startup template for this installation
 
 3. **Wait for it:** `t3_thread_wait` on the new thread, up to 5 minutes.
 

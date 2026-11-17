@@ -2,7 +2,7 @@
 import { cfg, readSecret, thread } from "../../core/config/layout.ts";
 import type { ThreadKey } from "../../core/config/layout-schema.ts";
 import { readServers } from "../../core/config/servers.ts";
-import { parseModels, type ThreadModel } from "../../core/llm/selection.ts";
+import { type LaunchRole, parseModels, type ThreadModel } from "../../core/llm/selection.ts";
 import { withoutToken } from "../../core/ops/capability.ts";
 import { within } from "../../core/within.ts";
 import { type Catalog, readModelCatalog } from "./model-catalog.ts";
@@ -18,12 +18,14 @@ type Projection = {
 };
 type Client = Pick<Rpc, "request" | "call">;
 
-export function validateThreadModel(c: ThreadModel, catalog: Catalog): void {
+export function validateThreadModel(c: ThreadModel, catalog: Catalog, desk = false): void {
 	const provider = catalog.providers.find((p) => p.instanceId === c.instanceId);
 	if (!provider?.enabled || !provider.installed || provider.availability === "unavailable")
 		throw Error("configured provider is unavailable");
 	if (provider.auth?.status === "unauthenticated" || provider.status === "error")
 		throw Error("configured provider needs authentication or repair");
+	if (desk && provider.driver !== "claudeAgent")
+		throw Error("Alert Desk requires an adapter enforcing its tool allowlist; this provider is unsupported");
 	if (
 		provider.usageLimits?.windows.some(
 			(w) => w.usedPercent >= 100 && (!w.resetsAt || Date.parse(w.resetsAt) > Date.now()),
@@ -52,9 +54,7 @@ function matches(p: Projection, c: ThreadModel): boolean {
 async function applyThreadModel(rpc: Client, threadId: string, c: ThreadModel, desk = false): Promise<void> {
 	const request = (method: string, params: unknown) => within(rpc.request(method, params), 15_000, "model selection");
 	const catalog = await readModelCatalog(rpc);
-	validateThreadModel(c, catalog);
-	if (desk && catalog.providers.find((p) => p.instanceId === c.instanceId)?.driver !== "claudeAgent")
-		throw Error("Alert Desk requires an adapter enforcing its tool allowlist; this provider is unsupported");
+	validateThreadModel(c, catalog, desk);
 	const read = async () => (await request("orchestration.getThreadProjection", { threadId })) as Projection;
 	const before = await read();
 	if (matches(before, c)) return;
@@ -90,11 +90,16 @@ export function modelConnection(
 	return { origin: server.origin, token, operateTokenFile: file };
 }
 
-export async function configureThread(conf: string, role: ThreadKey, targetThread?: string, targetUrl?: string) {
+export function configuredThreadModel(conf: string, role: LaunchRole): ThreadModel {
 	if (role === "desk" && (cfg(conf, "alertDesk") as { gatherer?: unknown } | undefined)?.gatherer)
 		throw Error("Alert Desk gatherer has no centrally configured execution adapter; selection is unsupported");
 	const c = parseModels(cfg(conf, "models"))[role];
 	if (c?.adapter !== "t3") throw Error(`models.${role}: configure a T3 provider and model`);
+	return c;
+}
+
+export async function configureThread(conf: string, role: ThreadKey, targetThread?: string, targetUrl?: string) {
+	const c = configuredThreadModel(conf, role);
 	const id = targetThread ?? thread(conf, role);
 	if (!id) throw Error(`threads.${role}: no thread configured`);
 	const { origin, token, operateTokenFile } = modelConnection(conf, c.server);

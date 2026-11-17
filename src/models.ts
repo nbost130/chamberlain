@@ -10,7 +10,7 @@ import { importThreadModels, migrateLayout } from "./core/config/config-migrate.
 import { thread } from "./core/config/layout.ts";
 import { readConfigFile } from "./core/config/layout-read.ts";
 import { THREADS, type ThreadKey } from "./core/config/layout-schema.ts";
-import { parseModels, type ThreadModel } from "./core/llm/selection.ts";
+import { isLaunchRole, LAUNCH_ROLES, parseModels, type ThreadModel } from "./core/llm/selection.ts";
 import { within } from "./core/within.ts";
 
 export async function adoptThreadModels(conf: string, server: string, dryRun = false): Promise<string[]> {
@@ -59,12 +59,12 @@ export async function adoptThreadModels(conf: string, server: string, dryRun = f
 
 export async function main(argv = process.argv.slice(2)) {
 	const [action, server, ...extra] = argv;
-	if (action === "selection" && (server === "steward" || server === "butler") && extra.length === 0) {
+	if (action === "selection" && server && isLaunchRole(server) && extra.length === 0) {
 		console.log(JSON.stringify(await launchSelection(CONF, server)));
 		return;
 	}
 	if (action !== "import" || !server || extra.some((v) => v !== "--dry-run"))
-		throw Error("usage: models import <configured-server> [--dry-run] | models selection <steward|butler>");
+		throw Error(`usage: models import <configured-server> [--dry-run] | models selection <${LAUNCH_ROLES.join("|")}>`);
 	const dryRun = extra.includes("--dry-run");
 	console.log(
 		`${dryRun ? "Would import" : "Imported"} existing thread selections into config.json: ${(await adoptThreadModels(CONF, server, dryRun)).join(", ") || "none (explicit choices preserved)"}`,
