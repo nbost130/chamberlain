@@ -178,6 +178,10 @@ export const makeWakes = (c: Db): Store["wakes"] => ({
 	compose: (now, compose, lane) => composeHeld(c, now, compose, lane),
 	rows: (status, lane) => outboxRows(c, status, lane),
 	find: (id) => findWake(c, id),
+	byId: (id) => {
+		const r = c.one("SELECT * FROM outbox WHERE id = ?", id);
+		return r ? toOutboxRow(c, r) : undefined;
+	},
 	isDelivered: (id) =>
 		(findWake(c, id)?.status ??
 			(c.one("SELECT outcome FROM wake_tombstones WHERE delivery_id = ?", id)?.outcome as string | undefined)) ===
@@ -215,7 +219,7 @@ const COUNTING_RECEIPT_SQL = `(
 		JOIN steward_deliveries d ON d.outbox_id = r.outbox_id
 		LEFT JOIN steward_transfers t ON t.from_gen = d.gen
 		WHERE r.outbox_id = $oid
-			AND (t.from_gen IS NULL OR r.id <= t.receipt_hw OR (r.kind = 't3-run' AND r.recorded_at <= t.opened_at))
+			AND (t.from_gen IS NULL OR r.id <= t.receipt_hw OR (r.kind = 't3-run' AND r.recorded_at <= t.opened_at - 60000))
 	)
 )`;
 

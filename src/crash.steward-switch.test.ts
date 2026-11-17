@@ -224,14 +224,23 @@ describe("Steward switch SIGKILL / reopen (C2/C3/C4/R5)", () => {
 			const nowIso = new Date().toISOString();
 			db.run(
 				`INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, role, payload_json) VALUES (?, ?, ?, ?)`,
-				["m-rcpt", "crash-steward-thread", "user", JSON.stringify({ text, scheduledTaskId: "task-1" })],
+				[
+					"scheduled-task-message:scheduled-task:task-1:webhook:delivery:relay:rcpt",
+					"crash-steward-thread",
+					"user",
+					JSON.stringify({ text, scheduledTaskId: "task-1" }),
+				],
 			);
 			db.run(
 				`INSERT INTO orchestration_v2_projection_runs (thread_id, ordinal, status, requested_at, payload_json, run_id) VALUES (?, 0, 'completed', ?, ?, 'run-rcpt')`,
 				[
 					"crash-steward-thread",
 					nowIso,
-					JSON.stringify({ id: "run-rcpt", userMessageId: "m-rcpt", completedAt: nowIso }),
+					JSON.stringify({
+						id: "run-rcpt",
+						userMessageId: "scheduled-task-message:scheduled-task:task-1:webhook:delivery:relay:rcpt",
+						completedAt: nowIso,
+					}),
 				],
 			);
 			db.close();

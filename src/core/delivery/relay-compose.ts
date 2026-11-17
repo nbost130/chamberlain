@@ -67,6 +67,14 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 	flagDead(r, l);
 }
 
+/**
+ * Whether a forced digest uses up the ceiling's window. The ceiling's own always does. An answer's deadline does too, so the ceiling sends no
+ * second turn right behind it, unless transfers are held: the answer's digest never carries them, so they keep their ceiling and recurring
+ * answers cannot starve them.
+ */
+const usesWindow = (ceiling: boolean, due: boolean, held: HeldItem[]): boolean =>
+	ceiling || (due && !held.some((h) => h.kind === "transfer"));
+
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
@@ -94,8 +102,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	);
 	if (!row) return;
 	crashPoint("composed");
-	// An answer's deadline forcing the digest uses up the ceiling's window too: the ceiling would only send a second turn behind it.
-	if (look.forced || due) l.look.lastForcedAt = now;
+	if (usesWindow(look.forced, due, heldNow)) l.look.lastForcedAt = now;
 	d.log("composed", {
 		deliveryId: row.deliveryId,
 		members: row.members.map((m) => m.deliveryId),
