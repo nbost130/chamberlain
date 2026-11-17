@@ -87,10 +87,12 @@ describe("(a) everything that waits on the operator goes through the queue first
 			const q = withStore(d, (s) => [...questionStates(s).values()].find((x) => x.title === o.title));
 			expect(q).toBeDefined();
 			expect(q!.urgent).toBeUndefined();
-			// A secret is never posted. An approval goes on to its post: with no backend configured here that post fails (exit 1),
-			// where a question that may wait would have stopped before it and exited 0.
-			if ("secret" in o) expect([r.status, r.stdout]).toEqual([0, expect.stringContaining("(secret:")]);
-			else expect(r.status).toBe(1);
+			// A secret (flag or tag "Secret") is never posted. An approval goes on to its post: with no backend configured
+			// here that post fails (exit 1), where a question that may wait would have stopped before it and exited 0.
+			if (what === "a secret") {
+				expect([r.status, r.stdout]).toEqual([0, expect.stringContaining("(secret:")]);
+				expect(q!.secret).toBe(true);
+			} else expect(r.status).toBe(1);
 		}
 		// An ordinary question keeps its demotion.
 		expect(ask(d, { urgent: false, title: "Pick a colour for the docs badge" }).stdout).toContain(

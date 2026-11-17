@@ -69,10 +69,11 @@ function parseOptions(o: Raw, secret: boolean): Option[] {
 
 /**
  * A secret that cannot be completed is refused before anything is recorded: options are never shown or answered on a
- * secret, and a secret is entered only in the thread named by `threadId`.
+ * secret, and a secret is entered only in the thread named by `threadId`. `secret` is the one classification used for
+ * validation and the filed item (`secret: true` or the tag "Secret").
  */
-function checkSecretAsk(o: Raw, options: Option[], secret: boolean, tag: string | undefined): void {
-	if (!isSecretAsk(secret, tag)) return;
+function checkSecretAsk(o: Raw, options: Option[], secret: boolean): void {
+	if (!secret) return;
 	if (options.length > 0)
 		throw Error(
 			"ask: a secret question cannot have options; file a non-secret choice question first, then a secret request in its thread",
@@ -151,15 +152,16 @@ export function parseAsk(
 	if (!o || typeof o !== "object") throw Error("ask: expected a JSON object");
 	const kind = reqText(o, "kind") as Question["kind"];
 	if (!KINDS.includes(kind)) throw Error(`ask: kind must be one of ${KINDS.join(", ")}`);
-	const secret = o.secret === true;
 	const tag = optText(o, "tag");
-	const options = parseOptions(o, isSecretAsk(secret, tag));
+	// One classification for validation and the filed item: `secret: true` or the tag "Secret".
+	const secret = isSecretAsk(o.secret === true, tag);
+	const options = parseOptions(o, secret);
 	const recommended = parseRecommended(o, options.length);
 	const evidence = (Array.isArray(o.evidence) ? o.evidence : []).map(parseEvidenceItem);
 	const proposedRuling = optText(o, "proposedRuling");
 	const proposedExpires = optText(o, "proposedExpires");
 	checkProposedExpiry(proposedRuling, proposedExpires);
-	checkSecretAsk(o, options, secret, tag);
+	checkSecretAsk(o, options, secret);
 	checkThreadRouting(o, options, secret);
 	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
 	const notSettled = optText(o, "notSettled");

@@ -179,8 +179,7 @@ describe("parseAsk: the options", () => {
 		const secret = mk({ secret: true, options: [], threadId: "th-secret" });
 		expect(secret).toMatchObject({ secret: true, options: [], threadId: "th-secret" });
 		const byTag = mk({ tag: "Secret", options: [], threadId: "th-2" });
-		expect(byTag).toMatchObject({ tag: "Secret", options: [], threadId: "th-2" });
-		expect(byTag).not.toHaveProperty("secret");
+		expect(byTag).toMatchObject({ secret: true, tag: "Secret", options: [], threadId: "th-2" });
 		const choice = mk({ options: ["open intake", "defer"] });
 		expect(choice.options.map((o) => o.label)).toEqual(["open intake", "defer"]);
 		expect(choice).not.toHaveProperty("secret");
