@@ -164,6 +164,8 @@ export const rows = (w: World, sql: string) => {
 	}
 };
 export const outbox = (w: World) => rows(w, "SELECT delivery_id, status, attempts FROM outbox ORDER BY id");
+/** The held wakes on disk, oldest first: an answer waits here until the relay composes it (hold.ts). */
+export const heldOnDisk = (w: World) => rows(w, "SELECT delivery_id, kind FROM held_wakes ORDER BY queued_at");
 
 export const daemonArgs = [`${SRC}daemon.ts`];
 /** A real daemon (the relay) on the world, run until its startup pass is done and `until` holds, then stopped. */

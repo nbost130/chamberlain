@@ -102,7 +102,7 @@ function claimSettled(d: ItemActionDeps, i: QuestionState, answer: Answer): Repl
 	const lost = d.store.tx(() => {
 		const r = claimWake(d.store, claim);
 		if (!r.won) return r.claim;
-		enqueueClaim(d.store, claim);
+		enqueueClaim(d.store, claim, claim.message, d.clock());
 		clearSnooze(d.store, i.id);
 		crashPoint("before-commit");
 		return undefined;

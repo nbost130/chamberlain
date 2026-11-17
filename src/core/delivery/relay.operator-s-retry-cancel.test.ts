@@ -14,7 +14,7 @@ import { runWakesCli } from "./wakes-cli.ts";
 const { scratch, rig } = useCoreRelayFixtures(createRelay);
 
 describe("the operator's retry and cancel", () => {
-	test("cancelling a digest (by a member's id) keeps a tombstone with its members, and none of them is ever queued or held again", async () => {
+	test("cancelling a digest by its own id keeps a tombstone with its members, names them, and none of them is ever queued or held again; a member's id alone is refused", async () => {
 		const r = rig();
 		r.sweep("a");
 		r.sweep("b");
@@ -22,7 +22,14 @@ describe("the operator's retry and cancel", () => {
 			throw Error("unknown");
 		};
 		await r.relay().pass();
-		expect(runWakesCli(r.store, ["cancel", "a"], () => {})).toBe(0);
+		const digest = r.store.wakes.find("a")!.deliveryId;
+		const out: string[] = [];
+		expect(runWakesCli(r.store, ["cancel", "a"], (l) => out.push(l))).toBe(1);
+		expect(out.join("\n")).toContain(`one of 2 wakes in digest ${digest} (a, b)`);
+		expect(r.store.wakes.find("a")!.status).toBe("pending");
+		out.length = 0;
+		expect(runWakesCli(r.store, [`cancel`, digest], (l) => out.push(l))).toBe(0);
+		expect(out.join("\n")).toContain("every wake it carried is given up with it: a, b");
 		const row = r.store.wakes.find("a")!;
 		expect(row).toMatchObject({ status: "cancelled", kind: "digest" });
 		expect(row.members.map((m) => m.deliveryId)).toEqual(["a", "b"]);
@@ -43,7 +50,7 @@ describe("the operator's retry and cancel", () => {
 			throw Error("unknown");
 		};
 		await r.relay().pass();
-		expect(runWakesCli(r.store, ["cancel", "a"], () => {})).toBe(0);
+		expect(runWakesCli(r.store, ["cancel", r.store.wakes.find("a")!.deliveryId], () => {})).toBe(0);
 		expect(r.store.wakes.prune(Date.now() + 1000)).toBe(1); // retention deletes the row, and the cascade deletes its member bindings
 		expect(r.store.wakes.rows("all")).toEqual([]);
 		expect(r.store.wakes.find("a")).toBeUndefined();

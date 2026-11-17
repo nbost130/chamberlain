@@ -16,15 +16,39 @@ export type { HeldItem, HoldClock, WakeMeta };
 /** What the Steward's thread is doing. Unknown (an unreadable source) holds like busy: the ceiling still lets a wake out. */
 export type Gate = "idle" | "busy" | "unknown";
 /**
- * The only wakes that may wait for their thread to go idle: a thread finishing a turn, the routine sweep, and the Alert Desk's alerts (which
- * wait on the desk's own gate, never held behind the Steward). Everything
- * else (a question or approval, a failure, a decision-queue answer, any kind not named here) goes out at once.
+ * The only wakes that may wait for their thread to go idle: a thread finishing a turn, the routine sweep, the Alert Desk's alerts (which
+ * wait on the desk's own gate, never held behind the Steward), a decision-queue answer, and a thread's note (note.ts). Everything else (a
+ * question or approval, a failure, any kind not named here) goes out at once: a thread waiting on the Steward is blocked until it does.
  */
-const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk"]);
+const HOLDABLE_KINDS: ReadonlySet<string> = new Set(["turn_ended", "sweep", "alert_desk", "answer", "note"]);
 export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta && HOLDABLE_KINDS.has(meta.kind));
+/**
+ * Kinds that are never folded: each answer settles its own item and each note is its own report, so a later one about the same thread
+ * never replaces an earlier one. (Folding six answers about one thread into the latest would drop five of the principal's choices.)
+ */
+const NEVER_FOLDED: ReadonlySet<string> = new Set(["answer", "note"]);
 
 /** A Steward busy this long gets the digest anyway, and never more than one such digest per window. */
 export const HOLD_CEILING_MS = 20 * 60_000;
+/**
+ * Kinds with a shorter ceiling of their own, counted from when the item was held: the principal is waiting on an answer, so a busy Steward
+ * gets the held answers (and whatever is held beside them) this long after the oldest one, not after the full ceiling.
+ */
+const ITEM_CEILING_MS: Readonly<Record<string, number>> = { answer: 3 * 60_000 };
+/** A held item stamped further than this in the future was stamped by a clock that has since gone back: it is treated as overdue. */
+const CLOCK_SKEW_MS = 60_000;
+/**
+ * Pure: does a held item of a kind with its own ceiling (an answer) have to go now, busy Steward or not? An item from the future (the page's
+ * clock ahead of the relay's, or the clock set back since) goes too, so no clock correction can hold an answer past its ceiling.
+ */
+export const overdue = (held: readonly HeldItem[], now: number): boolean =>
+	held.some((h) => {
+		const ceiling = h.kind ? ITEM_CEILING_MS[h.kind] : undefined;
+		const age = now - h.queuedAt;
+		return ceiling !== undefined && (age >= ceiling || age < -CLOCK_SKEW_MS);
+	});
+/** Pure: whether a held item has a ceiling of its own, so it is admitted to a size-capped digest ahead of the rest. */
+export const hasOwnCeiling = (h: HeldItem): boolean => h.kind !== undefined && ITEM_CEILING_MS[h.kind] !== undefined;
 /** T3 takes a moment to show a wake it just accepted as a queued turn. Until it does, a fresh post counts as busy. */
 const POST_GRACE_MS = 30_000;
 /** The relay looks at least once a minute. A gap longer than this means the stretch was not watched. */
@@ -56,7 +80,7 @@ export function composeWake(
 	 * another run's report: each completed run keeps its own final. Timestamp-only ended keys still fold as before.
 	 */
 	const key = (i: HeldItem) => {
-		if (!i.kind || !i.thread) return undefined;
+		if (!i.kind || !i.thread || NEVER_FOLDED.has(i.kind)) return undefined;
 		if (i.kind === "turn_ended") {
 			const run = /:ended:([^:]+)/.exec(i.deliveryId)?.[1];
 			if (run && !/^\d{12,}$/.test(run)) return `${i.kind}\u0000${i.thread}\u0000${run}`;

@@ -117,7 +117,8 @@ export async function follow(ctx: Ctx, c: Claim) {
 	try {
 		const direct = c.relay ? await relayToThread(ctx, c, c.relay) : undefined;
 		if (direct?.delivered) recordAnswerDelivered(d.store, c.deliveryId);
-		else if (enqueueClaim(d.store, c, direct?.message)) d.log("wake-queued", { id: c.item, deliveryId: c.deliveryId });
+		else if (enqueueClaim(d.store, c, direct?.message, ctx.clock()))
+			d.log("wake-queued", { id: c.item, deliveryId: c.deliveryId });
 	} finally {
 		sending.delete(c.deliveryId);
 	}

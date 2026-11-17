@@ -31,7 +31,7 @@ export const EVENTS = {
 	"wake.held": e("info", { kind: KIND }, "deliver-held"),
 	"wake.composed": e(
 		"info",
-		{ members: corrs("members"), kept: corrs("kept"), folded: int(), forced: f(T.enm("ceiling")) },
+		{ members: corrs("members"), kept: corrs("kept"), folded: int(), forced: f(T.enm("ceiling", "answer")) },
 		"composed",
 	),
 	"wake.delivered": e(

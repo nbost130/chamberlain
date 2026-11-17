@@ -40,6 +40,7 @@ describe("list", () => {
 			"pending (the daemon's relay is sending them): 1",
 			"  pend1  0/3 attempts  created 2026-01-02T03:04:05.000Z  last tried -",
 			"held for the Steward to go idle: 1",
+			"  held1  held 2026-01-02T03:04:05.000Z",
 			"cancelled (kept as tombstones, so nothing queues them again): 1",
 		]);
 	});

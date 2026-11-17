@@ -117,7 +117,7 @@ function claimAnswer(ctx: Ctx, i: QuestionState, base: Answer, decides: string |
 		// Answering a snoozed item (from another surface, or one that returned meanwhile) ends its snooze.
 		if (i.snooze) clearSnooze(d.store, i.id);
 		// A thread-routed answer's wake is only its fallback: it is written if the direct send fails (follow).
-		if (!c.relay) enqueueClaim(d.store, c);
+		if (!c.relay) enqueueClaim(d.store, c, c.message, ctx.clock());
 		made.claim = c;
 		crashPoint("before-commit");
 	});

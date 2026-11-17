@@ -3,7 +3,7 @@
  * and it becomes a row in the SAME transaction as whatever made it necessary (the notification decision, the sweep's findings, the
  * page's claim and answer). Nothing here sends: only the relay (relay.ts), which runs in the daemon alone, POSTs wakes.
  *
- * A wake that can wait (HOLDABLE_KINDS in hold.ts: a turn end, the sweep) is held instead, and the relay composes what is held into one
+ * A wake that can wait (HOLDABLE_KINDS in hold.ts: a turn end, the sweep, an answer, a note) is held instead, and the relay composes what is held into one
  * row when the Steward is idle. Every other wake is a pending row at once.
  */
 

@@ -23,6 +23,7 @@ const WAKE_KINDS = [
 	"idle-parents",
 	"fresh",
 	"alert_desk",
+	"note",
 ] as const;
 /** The delivery id line deliver.ts appends as a wake's last line. */
 const DELIVERY_ID = /delivery id: (\S+) \(the same id again is a repeat/;

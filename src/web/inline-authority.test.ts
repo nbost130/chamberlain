@@ -114,7 +114,9 @@ function setup() {
 	const frame = (method: string, path: string, body?: unknown) => send(method, path, { origin: "null", body });
 	const page = (method: string, path: string, body?: unknown) => send(method, path, { body });
 	/** The wakes the page wrote: the relay sends exactly these. */
-	const delivered = () => store.wakes.rows("all").map((r) => ({ id: r.deliveryId, message: r.message }));
+	// Every wake the page wrote: an answer's is held until the Steward is idle (hold.ts), and no relay runs here.
+	const delivered = () =>
+		[...store.wakes.rows("all"), ...store.wakes.held()].map((r) => ({ id: r.deliveryId, message: r.message }));
 	return { store, app, frame, page, delivered, cardAnswers };
 }
 

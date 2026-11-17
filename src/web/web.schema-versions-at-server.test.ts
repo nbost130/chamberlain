@@ -198,7 +198,9 @@ describe("rulings from the page", () => {
 		await s.app.idle();
 		expect(b.ruling).toBe(a.ruling);
 		expect(readRulings(s.store).filter((x) => x.decides === "Lead with a photo")).toHaveLength(1);
-		expect(s.posts.map((p) => p.message).filter((m) => m.includes(`saved as ${a.ruling}`))).toHaveLength(2);
+		// Both answers reach the Steward, alone or in one digest, or still held for its next idle moment (hold.ts).
+		const written = [...s.posts.map((p) => p.message), ...s.store.wakes.held().map((h) => h.message)].join("\n");
+		expect(written.split(`saved as ${a.ruling}`)).toHaveLength(3);
 	});
 	test("saving a ruling the Steward already proposed in the same words puts that proposal in force, not a second ruling", async () => {
 		const s = setup();

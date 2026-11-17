@@ -191,12 +191,15 @@ sequenceDiagram
    page lists them.
 4. **Writing it.** `deliver.ts` (`createOutbox().commit`) writes the wake in the **same transaction** as the notification
    decision that made it necessary (which keys were notified, or the sweep's findings and clock): a crash leaves both or neither. A
-   wake that may wait (a turn end, the sweep) becomes a **held item** (`held_wakes`); any other becomes a **pending row** at once. An id
+   wake that may wait (a turn end, the sweep, a decision-queue answer, a thread's note) becomes a **held item** (`held_wakes`); any
+   other (a question or approval, a failure) becomes a **pending row** at once. An id
    the outbox already knows, in any state, writes nothing: a delivered or cancelled wake is never enqueued again.
 5. **Holding.** While `isBusy()` says the Steward is working (or `unknown`), held items wait. When the relay finds it idle, or it has
-   been busy for the whole ceiling (20 minutes, once per ceiling), the relay **composes** everything held into ONE row in one
+   been busy for the whole ceiling (20 minutes, once per ceiling), or a held answer has waited three minutes (the principal is waiting on
+   it, so an answer never waits the full ceiling), the relay **composes** everything held into ONE row in one
    transaction (`WakeStore.compose`): the row's delivery id, text and member list are frozen, every held item is bound to it (a member
-   belongs to one row, ever), and the held items leave the held store. Several `turn_ended` items about one thread are folded into the
+   belongs to one row, ever), and the held items leave the held store. Answers and notes are never folded: each settles its own item or
+   carries its own report. Several `turn_ended` items about one thread are folded into the
    latest at this moment, and the row records how many (`folded`); the folded ones are members too. **A member that resolves after its
    digest was composed does not change it**: the digest still sends the text frozen at composition.
 6. **Sending it.** `relay.ts`, oldest row first: if the row has used `maxAttempts` attempts it becomes `dead_letter`; otherwise
@@ -233,8 +236,9 @@ sequenceDiagram
    blocks for that kind), and keeps a full stamp only from an item whose text it carries (a folded item's block is not sent).
 7. **An answer coming back.** The operator answers an item on the page. In **one transaction** the page inserts the claim on the item's
    one wake (`claims`, unique per item, so the first claim wins across processes), records the answer, saves any ruling the operator
-   ticked **and writes the wake's pending row**. The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the
-   relay picks it up on its next poll (every second by default; later if it is busy with an earlier row, see "Pickup latency") while the daemon runs. If the option was routed straight to a thread and the adapter has
+   ticked **and holds the wake** (kind `answer`). The response says the answer is recorded and the wake is queued (`"wake": "queued"`); the
+   relay sends it alone on its next poll if the Steward is idle, and otherwise in the digest it composes when the Steward goes idle or three
+   minutes after the oldest held answer, so eight answers in four minutes cost the Steward one or two turns, not eight. If the option was routed straight to a thread and the adapter has
    `send`, the page sends the thread its one message instead (once, enforced by a `relays` row), and writes the Steward's fallback wake
    only if that send fails.
 
