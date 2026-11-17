@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { modelServer } from "../../testing/model-server.ts";
 import { configuredPing, configureThread } from "./model.ts";
 import { modelWake } from "./model-wake.ts";
@@ -123,4 +124,19 @@ test("wake preflight failure sends nothing and recovers after an operator select
 	expect(await wake.prepare!(undefined, url)).toBe(true);
 	await wake.send("id", "message");
 	expect(calls).toBe(1);
+});
+
+test("a desk run by a gatherer has no model to select: its wake preflight passes without a call, the Steward's still selects", async () => {
+	const s = setup();
+	const config = s.config as Record<string, unknown>;
+	config.alertDesk = { gatherer: { command: ["gather"] } };
+	writeFileSync(`${s.conf}/config.json`, JSON.stringify(config), { mode: 0o600 });
+	const transport = { ready: () => true, send: async () => ({ ok: true }) };
+	const desk = modelWake({ ...transport }, s.conf, "desk");
+	expect(await desk.prepare!("desk-id", "https://relay.example.test/hooks/desk")).toBe(true);
+	expect(s.requests).toHaveLength(0);
+	await expect(configureThread(s.conf, "desk")).rejects.toThrow("gatherer");
+	const steward = modelWake({ ...transport }, s.conf, "steward");
+	await steward.prepare!("steward-id", `${s.config.servers[0]!.origin}/wake`);
+	expect(s.requests.length).toBeGreaterThan(0);
 });

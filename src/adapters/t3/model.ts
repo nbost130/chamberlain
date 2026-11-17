@@ -90,8 +90,12 @@ export function modelConnection(
 	return { origin: server.origin, token, operateTokenFile: file };
 }
 
+/** Whether a gatherer runs the Alert Desk: then Chamberlain selects no model for the desk thread. */
+export const deskHasGatherer = (conf: string): boolean =>
+	Boolean((cfg(conf, "alertDesk") as { gatherer?: unknown } | undefined)?.gatherer);
+
 export function configuredThreadModel(conf: string, role: LaunchRole): ThreadModel {
-	if (role === "desk" && (cfg(conf, "alertDesk") as { gatherer?: unknown } | undefined)?.gatherer)
+	if (role === "desk" && deskHasGatherer(conf))
 		throw Error("Alert Desk gatherer has no centrally configured execution adapter; selection is unsupported");
 	const c = parseModels(cfg(conf, "models"))[role];
 	if (c?.adapter !== "t3") throw Error(`models.${role}: configure a T3 provider and model`);

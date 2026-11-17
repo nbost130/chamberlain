@@ -19,6 +19,7 @@ wake.dead-letter.receiver: known(receiver) <- receiver
 wake.dead-letter-reported.attempts: int
 wake.stale.age_ms: ms <- ageMs
 wake.not-ready.receiver: known(receiver) <- receiver
+wake.preflight-failed.receiver: known(receiver) <- receiver
 wake.no-receiver.receiver: known(receiver) <- receiver
 wake.receiver-unconfigured.receiver: known(receiver) <- receiver
 wake.receiver-unconfigured.rows: int

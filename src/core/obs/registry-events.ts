@@ -44,6 +44,7 @@ export const EVENTS = {
 	"wake.dead-letter-reported": e("error", { attempts: int() }, "deliver-dead-letter-reported"),
 	"wake.stale": e("warn", { age_ms: ms("ageMs") }, "deliver-stale"),
 	"wake.not-ready": e("info", { receiver: RCV }, "deliver-not-ready"),
+	"wake.preflight-failed": e("warn", { receiver: RCV }, "deliver-preflight-failed"),
 	"wake.no-receiver": e("warn", { receiver: RCV }, "deliver-no-receiver"),
 	"wake.receiver-unconfigured": e("warn", { receiver: RCV, rows: int(), held: int() }, "deliver-receiver-unconfigured"),
 	"wake.already-queued": e("info", {}, "deliver-already-queued"),

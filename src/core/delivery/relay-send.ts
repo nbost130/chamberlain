@@ -71,6 +71,12 @@ async function prepared(
 		/* A preflight has sent no message; retain the row. */
 	}
 	r.notBefore.set(row.id, r.clock() + r.pause(1));
+	// Said once per row: a preflight that keeps failing holds the row for good, and silence hid that for a whole receiver once.
+	const key = `preflight:${row.id}`;
+	if (!r.reported.has(key)) {
+		r.reported.add(key);
+		r.d.log("deliver-preflight-failed", { deliveryId: row.deliveryId, ...(l.name ? { receiver: l.name } : {}) });
+	}
 	return false;
 }
 
