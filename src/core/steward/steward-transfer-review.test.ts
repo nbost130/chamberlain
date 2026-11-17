@@ -61,4 +61,15 @@ describe("replays of wakes found handled after the switch", () => {
 		const id = deliverAndLedger(s, { deliveryId: "R", message: "payload", at: 1_000, gen: 1 });
 		expect(isDischarged(s, id)).toBe(false);
 	});
+	test("pruning a row deletes its receipt, so a row that later reuses its number starts with none", () => {
+		const w = confWorld();
+		const s = memStoreSeeded(w.conf, 1_000);
+		const id = deliverAndLedger(s, { deliveryId: "OLD", message: "payload", at: 1_000, gen: 1 });
+		handled(s, id, 1_100);
+		expect(s.wakes.prune(Date.now() + 1)).toBeGreaterThan(0);
+		expect(s.wakes.byId(id)).toBeUndefined();
+		expect(s.steward.receiptFor(id)).toBeUndefined();
+		const again = deliverAndLedger(s, { deliveryId: "NEW", message: "payload", at: 2_000, gen: 1 });
+		expect(s.steward.receiptFor(again)).toBeUndefined();
+	});
 });

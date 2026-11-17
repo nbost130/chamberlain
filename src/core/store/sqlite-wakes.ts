@@ -226,8 +226,11 @@ const COUNTING_RECEIPT_SQL = `(
 function pruneWakes(c: Db, before: number): number {
 	// Steward-lane delivered rows prune only when ledgered and counting-discharged (or unrecoverable).
 	// Unledgered Steward rows never prune. Desk/cancelled prune as before.
-	return c.run(
-		`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
+	// A pruned row's receipt goes with it: SQLite reuses the highest row number once that row is deleted, and a new wake under the old number
+	// must never inherit its receipt. (A discharged root that is gone already counts as discharged: steward-discharge.ts.)
+	return c.tx(() => {
+		const n = c.run(
+			`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
 			 AND id NOT IN (SELECT m.outbox_id FROM outbox_members m JOIN claims c ON c.delivery_id = m.delivery_id JOIN items i ON i.id = c.item_id WHERE i.state != 'resolved')
 			 AND (
 			   receiver IS NOT NULL
@@ -245,8 +248,11 @@ function pruneWakes(c: Db, before: number): number {
 			     )
 			   )
 			 )`,
-		before,
-	).changes;
+			before,
+		).changes;
+		c.run("DELETE FROM steward_receipts WHERE outbox_id NOT IN (SELECT id FROM outbox)");
+		return n;
+	});
 }
 
 // ---- confirmation challenges --------------------------------------------------------------------

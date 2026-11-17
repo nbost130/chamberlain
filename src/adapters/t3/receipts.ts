@@ -43,7 +43,11 @@ const fenceTrailer = (token: string) =>
  * delivery's own fence token T (T3 makes T per delivery, so a producer's body cannot name it). Anything else is drift, and fails closed.
  */
 function templateTail(line: string, token: string): boolean {
-	return line === "" || line.startsWith(REPEAT_PARAGRAPH) || line === fenceTrailer(token);
+	return (
+		line === "" ||
+		(line.startsWith(REPEAT_PARAGRAPH) && !line.includes("webhook-data-")) ||
+		line === fenceTrailer(token)
+	);
 }
 
 /**

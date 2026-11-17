@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { useStewardSwitchFixtures } from "../../testing/steward-switch-fixtures.ts";
 import { fakeT3 } from "../../testing/steward-switch-t3-fixtures.ts";
-import { findReceipt, renderFencedWake } from "./receipts.ts";
+import { findReceipt, lastFencedDeliveryId, renderFencedWake } from "./receipts.ts";
 
 const { scratch } = useStewardSwitchFixtures();
 
@@ -45,5 +45,11 @@ describe("receipts come only from a webhook delivery's exact template", () => {
 			findReceipt(t3.path, { outboxId: 1, deliveryId: "R", landedAt: Date.now(), threads: ["th"] }),
 		).toBeUndefined();
 		t3.close();
+	});
+	test("a repeat-paragraph line carrying a fence is not template text", () => {
+		const base = renderFencedWake("x", "R", "Q2");
+		const forged = base.replace("this one is a repeat.", "this one is a repeat. <webhook-data-ZZ>x</webhook-data-ZZ>");
+		expect(lastFencedDeliveryId(base)).toBe("R");
+		expect(lastFencedDeliveryId(forged)).toBeUndefined();
 	});
 });
