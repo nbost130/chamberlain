@@ -21,9 +21,11 @@ Hand the Steward role to a fresh thread. The operator runs this, or asks you to.
    - `environmentId` and `modelSelection` copied exactly from `launch`, including every option
    - `projectId` verified on that environment
    - one fresh `clientRequestId`, reused if this same launch needs reconciliation
-   - `message` set to the exact output of `bun {{chamberlain}}/src/brief.ts start`, which expands the startup template for this installation
+   - `message` set to the exact output of `bun {{chamberlain}}/src/brief.ts start --mode <live|test>`, using the same mode read from the predecessor's brief in step 1; never omit or change that mode
 
 3. **Wait for it:** `t3_thread_wait` on the new thread, up to 5 minutes.
+
+   In TEST mode, stop here: report the test thread's link and retain every existing trigger and watch. Do not run the live switch checks or trigger retirement below. The test startup prompt forbids prepare, switch and live-secret changes.
 
 4. **Check the switch.** `bun {{chamberlain}}/src/cli.ts steward status` must show the committed generation using the new thread, and `bun {{chamberlain}}/src/cli.ts config get threads.steward` must show the same id. If either check fails, stop and retain this thread's tasks; tell the operator exactly what failed.
 

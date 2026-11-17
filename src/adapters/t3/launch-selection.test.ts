@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { LAUNCH_ROLES } from "../../core/llm/selection.ts";
+import { renderStartPrompt } from "../../core/sweep/sweep.ts";
 import { modelServer } from "../../testing/model-server.ts";
 import { launchSelection } from "./launch-selection.ts";
 
@@ -123,6 +124,21 @@ test("every shipped thread-launch template requires central preflight and exact 
 		expect(text).not.toContain("ToolSearch");
 	}
 	const handoff = await Bun.file(new URL("../../../.claude/commands/steward-handoff.md", import.meta.url)).text();
-	expect(handoff).toContain("src/brief.ts start");
+	expect(handoff).toContain("src/brief.ts start --mode <live|test>");
+	expect(handoff).toContain("In TEST mode, stop here");
+	expect(handoff).toContain("retain every existing trigger and watch");
 	expect(handoff).not.toContain("exact contents of `docs/steward-start.md`");
+});
+
+test("handoff startup rendering preserves test isolation and expands live commands", async () => {
+	const template = await Bun.file(new URL("../../../docs/steward-start.md", import.meta.url)).text();
+	const opts = { conf: "/isolated/conf", compiled: false, repo: "/isolated/repo" };
+	const probe = renderStartPrompt(template, { ...opts, mode: "test" });
+	expect(probe).toContain("Do not run prepare or switch");
+	expect(probe).toContain("Do not touch live secrets");
+	expect(probe).toContain("--mode test");
+	expect(probe).not.toContain("--live");
+	const live = renderStartPrompt(template, { ...opts, mode: "live" });
+	expect(live).toContain("--mode live");
+	expect(live).not.toContain("{{");
 });
