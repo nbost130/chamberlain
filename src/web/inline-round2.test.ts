@@ -1,6 +1,6 @@
 /**
  * Round 2 of the inline view (Nathan, 2026-11-15): a builder's question card answered in place, and the page's other snooze times beside the one-tap
- * Snooze. Run against the in-memory DOM (src/testing/inline-dom.ts); what the server lets the view key do with a card is view-key-cards.test.ts.
+ * Snooze. A card's options are a choice list with one answer button under it, as a question's are (Nathan, 2026-11-17). Run against the in-memory DOM (src/testing/inline-dom.ts); what the server lets the view key do with a card is view-key-cards.test.ts.
  */
 import { describe, expect, test } from "bun:test";
 import { type El, run, settle } from "../testing/inline-dom.ts";
@@ -15,6 +15,15 @@ const tap = async (dq: El, text: string) => {
 	await settle();
 };
 const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
+/** A snooze choice's button, by its own label (its row also shows when it returns). */
+const preset = (dq: El, label: string) => dq.all((e) => e.tag === "button" && e.firstChild.textContent === label)[0];
+const tapPreset = async (dq: El, label: string) => {
+	for (const fn of preset(dq, label)!.listeners.click ?? []) await fn();
+	await settle();
+};
+const has = (e: El, cls: string) => e.className.split(" ").includes(cls);
+const opt = (dq: El, label: string) =>
+	dq.all((e) => has(e, "dq-opt") && e.all((x) => x.className === "dq-l")[0]?.textContent === label)[0]!;
 
 const qcard = (over: Record<string, unknown> = {}) => ({
 	id: "C-0123456789ab",
@@ -34,7 +43,7 @@ const qcard = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("a builder's question card is answered in place", () => {
-	test("its options are the row's buttons, beside the thread link; one tap posts the choice and the fingerprint, and the card says it is answered", async () => {
+	test("its options are a choice list with the recommended one chosen; the answer button posts the choice and the fingerprint, and the card says it is answered", async () => {
 		const calls: Call[] = [];
 		let cards = [qcard()];
 		const dq = run(() => ({ items: [], cards }), {
@@ -47,20 +56,16 @@ describe("a builder's question card is answered in place", () => {
 		});
 		await settle();
 		const row = dq.all((e) => e.className.split(" ").includes("dq-actions"))[0]!;
-		expect(row.children.map((b) => b.textContent)).toEqual([
-			"One table",
-			"People + memberships",
-			"Dismiss",
-			"Open the thread",
-		]);
-		expect(row.children[1]!.className).toContain("rec");
+		expect(row.children.map((b) => b.textContent)).toEqual(["Dismiss", "Open the thread"]);
+		expect(opt(dq, "People + memberships").className).toContain("sel");
+		expect(opt(dq, "One table").textContent).toBe("One tablesimplest");
 		await tap(dq, "People + memberships");
 		expect(posts(calls)).toEqual([
 			{ method: "POST", path: "/api/cards/C-0123456789ab/answer", body: { choice: 1, sig: "sig-1" } },
 		]);
 		expect(dq.textContent).toContain("Answered: People + memberships. It goes to its thread.");
 		// the answered card stays, saying so, with only its thread link; the queue was read again
-		expect(dq.all((e) => e.tag === "button" && e.textContent === "One table")).toEqual([]);
+		expect(dq.all((e) => has(e, "dq-opt") || has(e, "dq-confirm"))).toEqual([]);
 		expect(calls.filter((c) => c.path === "/api/queue").length).toBeGreaterThan(1);
 	});
 	test("a card that changed since it was shown (409) says so, keeps its buttons, and the view reads the queue again", async () => {
@@ -72,9 +77,11 @@ describe("a builder's question card is answered in place", () => {
 		});
 		await settle();
 		const before = calls.filter((c) => c.path === "/api/queue").length;
+		for (const fn of opt(dq, "One table").listeners.click ?? []) await fn();
 		await tap(dq, "One table");
 		expect(dq.textContent).toContain("the card changed since you saw it");
 		expect(button(dq, "One table")?.disabled).toBe(false);
+		expect(opt(dq, "One table").disabled).toBe(false);
 		expect(calls.filter((c) => c.path === "/api/queue").length).toBeGreaterThan(before);
 	});
 	test("an approval, a goal, a secret and a link card get no answer buttons: Dismiss and the thread link only", async () => {
@@ -126,23 +133,28 @@ describe("the other snooze times, beside the one-tap Snooze", () => {
 		await settle();
 		const more = button(dq, "▾")!;
 		expect([more.attrs["aria-label"], more.attrs["aria-expanded"]]).toEqual(["More snooze times", "false"]);
-		expect(button(dq, "Tomorrow morning")).toBeUndefined();
+		expect(preset(dq, "Tomorrow morning")).toBeUndefined();
 		await tap(dq, "▾");
 		expect(more.attrs["aria-expanded"]).toBe("true");
-		const offered = dq.all((e) => e.className === "dq-snz")[0]!.children.map((b) => b.textContent || b.type);
-		expect(offered.filter((t) => t !== "Later today")).toEqual([
-			"Tomorrow morning",
-			"Next week",
-			"datetime-local",
-			"Set",
+		const list = dq.all((e) => e.className === "dq-snz")[0]!.children;
+		expect(list[0]!.textContent).toBe("SNOOZE UNTIL");
+		const offered = list.slice(1, -1).map((b) => b.firstChild.textContent);
+		expect(offered.filter((t) => t !== "Later today")).toEqual(["Tomorrow morning", "Next week"]);
+		// each choice says when it returns; the time of your own is a filled-in input and Set, on one line
+		for (const b of list.slice(1, -1)) expect(b.all((e) => e.className === "dq-when")[0]!.textContent).not.toBe("");
+		const own = list.at(-1)!;
+		expect([own.className, own.children.map((e) => (e.tag === "input" ? e.type : e.textContent))]).toEqual([
+			"dq-snz-own",
+			["datetime-local", "Set"],
 		]);
+		expect(Date.parse(own.children[0]!.value)).toBeGreaterThan(Date.now());
 		expect(posts(calls)).toEqual([]);
 	});
 	test("Tomorrow morning is one tap: one snooze POST for 09:00 tomorrow, in this device's time zone", async () => {
 		const { dq, calls } = view();
 		await settle();
 		await tap(dq, "▾");
-		await tap(dq, "Tomorrow morning");
+		await tapPreset(dq, "Tomorrow morning");
 		const want = new Date();
 		want.setDate(want.getDate() + 1);
 		want.setHours(9, 0, 0, 0);
@@ -154,7 +166,7 @@ describe("the other snooze times, beside the one-tap Snooze", () => {
 		const { dq, calls } = view();
 		await settle();
 		await tap(dq, "▾");
-		await tap(dq, "Next week");
+		await tapPreset(dq, "Next week");
 		const at = new Date(posts(calls)[0]!.body.until);
 		expect([at.getDay(), at.getHours(), at.getMinutes()]).toEqual([1, 9, 0]);
 		expect(at.getTime()).toBeGreaterThan(Date.now());
@@ -166,6 +178,7 @@ describe("the other snooze times, beside the one-tap Snooze", () => {
 		await settle();
 		await tap(dq, "▾");
 		const input = dq.all((e) => e.tag === "input")[0]!;
+		input.value = "";
 		await tap(dq, "Set");
 		expect(dq.textContent).toContain("Pick a time in the future.");
 		input.value = "2001-01-01T09:00";

@@ -2,8 +2,8 @@
 // showing the queue costs it almost nothing; questions come live from /api/queue. Theme comes from T3's CSS variables.
 // This view holds only the VIEW key, and the SERVER enforces what that may do (src/web/view-key.ts): it may GET /api/queue, /api/recent and
 // /api/rulings, GET the evidence files a question it reads lists, and POST an item's answer (a choice, never a note), snooze, un-snooze, direction and
-// dismiss, and nothing else. The pill buttons along each card's bottom edge, and on each row of the Snoozed tab, do those in place: one tap is one
-// request, no confirmation, no page change. It never answers a card or an approval (those are answered on the card itself, in its thread, which its
+// dismiss, and nothing else. Everything acts in place, with no page change. A question's options are a choice list with one answer button under it
+// (pick, then answer: Nathan, 2026-11-17); every other button along a card's bottom edge, and on each row of the Snoozed tab, is one tap, one request. It never answers a card or an approval (those are answered on the card itself, in its thread, which its
 // link opens), never saves a ruling and never reads one item on its own. No link it shows is a dead end (src/web/inline-links.test.ts). Everything the full page SHOWS of a question, this view shows too (the parity test,
 // src/web/inline-parity.test.ts, fails when the page shows a field this view does not).
 (() => {
@@ -51,10 +51,15 @@
 .dq-ev{display:flex;flex-wrap:wrap;gap:8px}.dq-ev figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%}.dq-ev img{display:block;max-height:220px;max-width:100%;object-fit:contain;border-radius:var(--radius);border:1px solid var(--border)}.dq-ev video{display:block;width:100%;max-height:320px;border-radius:var(--radius);border:1px solid var(--border)}.dq-ev figure.wide{flex:1 1 100%}.dq-ev figcaption{font-size:12px;color:var(--muted-foreground)}
 .dq-links{display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 100%}.dq-links a{color:var(--primary);overflow-wrap:anywhere}.dq-rule{font-size:13px;line-height:1.45;border-left:2px solid var(--warning);padding-left:10px}.dq-test{font-family:var(--font-mono);font-size:11px;color:var(--warning);border:1px dashed var(--warning);border-radius:var(--radius);padding:6px 10px}
 .dq-copts{display:flex;flex-direction:column;gap:4px;margin:0;padding-left:18px;font-size:13px}
-.dq-opt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);min-height:48px;cursor:pointer}
+.dq-opts{display:flex;flex-direction:column;gap:8px}
+.dq-opt{font:inherit;color:var(--foreground);text-align:left;width:100%;display:flex;gap:12px;align-items:flex-start;padding:12px 13px;border:1px solid var(--border);border-radius:var(--radius);background:none;cursor:pointer}
+.dq-opt:hover:not(:disabled){background:color-mix(in srgb,var(--foreground) 5%,transparent)}.dq-opt:focus-visible{outline:2px solid var(--primary);outline-offset:2px}.dq-opt:disabled{opacity:.6;cursor:default}
 .dq-opt.sel{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,transparent)}
-.dq-opt input{margin-top:3px;accent-color:var(--primary);width:18px;height:18px}
-.dq-l{font-weight:600;font-size:14px}.dq-d{font-size:12px;color:var(--muted-foreground)}.dq-rec{font-family:var(--font-mono);font-size:10px;color:var(--primary);margin-left:6px}
+.dq-radio{flex:none;width:18px;height:18px;margin-top:1px;border-radius:50%;border:2px solid color-mix(in srgb,var(--foreground) 40%,transparent)}
+.dq-opt.sel .dq-radio{border-color:var(--primary);background:radial-gradient(circle,var(--primary) 0 4px,transparent 4.5px)}
+.dq-opt-t{display:flex;flex-direction:column;gap:3px;min-width:0}.dq-opt .dq-l{overflow-wrap:anywhere}.dq-opt .dq-d{font-size:12.5px;line-height:1.4}
+.dq-tag{align-self:flex-start;font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--primary);border:1px solid color-mix(in srgb,var(--primary) 45%,transparent);border-radius:999px;padding:1px 7px}
+.dq-l{font-weight:600;font-size:14px}.dq-d{font-size:12px;color:var(--muted-foreground)}
 .dq textarea{width:100%;font:inherit;font-size:14px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:var(--radius);padding:10px;resize:vertical;min-height:44px}
 .dq-tabs{display:flex;flex-wrap:nowrap;gap:4px;overflow-x:auto}.dq-tab{font:inherit;font-size:12px;font-weight:600;background:none;border:1px solid var(--border);color:var(--muted-foreground);border-radius:999px;padding:6px 10px;min-height:34px;white-space:nowrap;flex:0 0 auto;cursor:pointer}.dq-tab-n{margin-left:4px;font-family:var(--font-mono);font-size:11px;font-weight:500}
 .dq-tab.on{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-focus{outline:2px solid var(--primary);outline-offset:2px}
@@ -63,13 +68,18 @@
 .dq-pill,.dq-btn,.dq-reload,.dq-go{font:inherit;font-size:13px;font-weight:500;line-height:1.2;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 18px;border-radius:999px;border:1px solid color-mix(in srgb,var(--foreground) 35%,transparent);background:color-mix(in srgb,var(--foreground) 6%,transparent);color:var(--foreground);text-decoration:none;cursor:pointer}
 .dq-pill:hover,.dq-btn:hover:not(:disabled),.dq-reload:hover{background:color-mix(in srgb,var(--foreground) 13%,transparent)}.dq-pill:focus-visible,.dq-btn:focus-visible,.dq-reload:focus-visible,.dq-go:focus-visible,.dq-tab:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .dq-btn.rec,.dq-pill.rec,.dq-go{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.dq-btn.rec:hover:not(:disabled),.dq-go:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 88%,var(--foreground))}
-.dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
+.dq-go{font-size:15px;font-weight:600;min-height:48px;padding:12px 22px}.dq-confirm{width:100%;text-align:center;overflow-wrap:anywhere}.dq-confirm.dq-none{background:none;border-color:var(--border);color:var(--muted-foreground)}.dq-btn:disabled,.dq-go:disabled{opacity:.5;cursor:default}.dq-card>.dq-pill{align-self:flex-start}
 .dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn{display:inline-block;height:34px;min-height:0;line-height:32px;padding:0 14px;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;min-width:0;text-align:center;vertical-align:middle}
-.dq-actions>.dq-btn.dq-main{font-size:13px;font-weight:600;padding:0 16px}
-.dq-actions>.dq-more{padding:0 10px}
-.dq-snz{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.dq-snz input{height:34px;font:inherit;font-size:12px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:999px;padding:0 10px;color-scheme:dark light}
-@media(pointer:coarse){.dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn,.dq-snz input{height:40px;line-height:38px}}
-.dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--border);margin-top:2px;padding-top:12px}
+.dq-actions>.dq-sec:not(.rec):not(.dq-snooze):not(.dq-more){border-color:transparent;background:none;color:var(--muted-foreground);padding:0 8px}.dq-actions>.dq-sec:not(.rec):hover:not(:disabled){background:color-mix(in srgb,var(--foreground) 8%,transparent);color:var(--foreground)}
+.dq-actions>.dq-snooze,.dq-actions>.dq-more{border-color:var(--border);background:none}.dq-actions>.dq-snooze{border-radius:999px 0 0 999px;padding:0 10px 0 12px}
+.dq-actions>.dq-more{padding:0 9px;margin-left:-5px;border-radius:0 999px 999px 0}
+.dq-actions>a.dq-sec:last-child{margin-left:auto}
+.dq-snz{display:flex;flex-direction:column;gap:6px}.dq-snz>.dq-btn{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;border-radius:var(--radius);text-align:left}
+.dq-when{color:var(--muted-foreground);font-variant-numeric:tabular-nums}
+.dq-snz-own{display:flex;align-items:center;gap:8px}.dq-snz-own input{flex:1 1 auto;min-width:0;height:34px;font:inherit;font-size:12px;background:var(--background);color:var(--foreground);border:1px solid var(--border);border-radius:var(--radius);padding:0 10px;color-scheme:dark light}
+.dq-snz-own>.dq-btn{flex:none;height:34px;min-height:0;padding:0 14px;font-size:12px}
+@media(pointer:coarse){.dq-actions>.dq-btn,.dq-actions>.dq-pill,.dq-snz>.dq-btn,.dq-snz-own>.dq-btn,.dq-snz-own input{height:40px;line-height:38px}}
+.dq-actions{display:flex;flex-wrap:wrap;align-items:center;gap:4px;border-top:1px solid var(--border);margin-top:2px;padding-top:12px}
 .dq-dir{display:flex;flex-direction:column;gap:8px}
 .dq-msg{font-size:13px}.dq-expired{color:var(--warning);font-weight:600}.dq-ok{color:var(--success)}.dq-bad{color:var(--destructive)}.dq-empty{color:var(--muted-foreground);font-size:14px;padding:12px 0}.dq-away{color:var(--muted-foreground)}`;
 	const healthCss = `.dq-health{padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;--health-tone:var(--success)}
@@ -292,15 +302,47 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			{ label: "Next week", at: at((8 - now.getDay()) % 7 || 7, 9) },
 		];
 	}
-	// A label longer than this may not fit its one-line button at phone width, so the card also prints it in full.
-	const LONG_LABEL = 32;
 	const btn = (text, cls, onTap) => { const b = el("button", `dq-btn${cls ? ` ${cls}` : ""}`, text); b.type = "button"; b.addEventListener("click", onTap); return b; };
 
-	// The buttons on a card, which act in place: one row across the card (dq-actions), wrapping only when the width runs out. The answer options come first
-	// (class dq-main), only slightly bigger than the rest, the recommended one filled; then the actions every card has (class dq-sec): Snooze, Dismiss,
-	// Direction, then the thread link. One tap is one request: no confirmation, no second button, no page change. Direction needs a note, so it opens a field in the same card and Send is the one tap
-	// after it. Every kind gets Dismiss (Nathan, 2026-11-15 #68). A secret and a card pointer are answered in their own thread: they get Snooze, Dismiss and
-	// the thread link, and never Direction. The card then says what happened (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
+	// A question's options, as one choice list (Nathan, 2026-11-17: "Pick, then confirm"). Each option is a row with its label and its detail in full, so
+	// nothing is cut short and nothing is said twice; the recommended one is tagged and starts chosen. Picking a row sends nothing. The one filled button
+	// under the list names the chosen option, and its tap is the one request (`answer(i, option)`). With no recommendation nothing starts chosen, and the
+	// button asks for a pick. `taps` are what a send in flight disables; `remove` takes the list and its button off the card once it is answered.
+	function picker(options, rec, answer, tell) {
+		const group = el("div", "dq-opts"); group.setAttribute("role", "radiogroup"); group.setAttribute("aria-label", "Options");
+		const go = el("button", "dq-go dq-confirm"); go.type = "button";
+		let chosen = Number.isInteger(rec) && options[rec] ? rec : -1;
+		const rows = options.map((o, i) => {
+			const r = el("button", "dq-opt"); r.type = "button"; r.setAttribute("role", "radio");
+			const t = el("span", "dq-opt-t");
+			if (i === rec) t.append(el("span", "dq-tag", "Recommended"));
+			t.append(el("span", "dq-l", o.label));
+			if (o.detail) t.append(el("span", "dq-d", o.detail));
+			r.append(el("span", "dq-radio"), t);
+			r.addEventListener("click", () => { chosen = i; paint(); });
+			group.append(r);
+			return r;
+		});
+		function paint() {
+			rows.forEach((r, i) => { r.classList.toggle("sel", i === chosen); r.setAttribute("aria-checked", String(i === chosen)); });
+			go.textContent = chosen < 0 ? "Pick an option" : options[chosen].label;
+			go.classList.toggle("dq-none", chosen < 0);
+			go.setAttribute("aria-label", chosen < 0 ? "Pick an option first" : `Answer: ${options[chosen].label}`);
+		}
+		go.addEventListener("click", () => (chosen < 0 ? tell("dq-bad", "Pick an option first.") : answer(chosen, options[chosen])));
+		paint();
+		return { nodes: [group, go], taps: [...rows, go], remove: () => { group.remove(); go.remove(); } };
+	}
+	// When a snooze choice returns, as its row shows it: the time today, else the day and time.
+	const snoozeWhen = (d) => d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+	// A datetime-local input's own value format, in this device's time zone: a custom time starts filled in, never a blank box.
+	const localInput = (d) => { const p = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+	// What a card offers. A question's options come first, as the choice list and its answer button (picker). Then one quiet row (dq-actions) of the
+	// actions every card has (class dq-sec): Snooze, which is one tap for an hour, with ▾ joined to it for the other times; Dismiss; Direction; then the
+	// thread link. Each of those is one tap, one request, no page change. Direction needs a note, so it opens a field in the same card and Send is the one
+	// tap after it. Every kind gets Dismiss (Nathan, 2026-11-15 #68). A secret and a card pointer are answered in their own thread: they get Snooze, Dismiss
+	// and the thread link, and never Direction. The card then says what happened (answered, snoozed, dismissed), or the error shows on it and the buttons come back.
 	function panel(it, c, settles) {
 		const msg = el("div", "dq-msg");
 		const row = el("div", "dq-actions");
@@ -316,7 +358,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		const tell = (cls, text) => { msg.className = `dq-msg ${cls}`.trim(); msg.textContent = text; };
 		function done(text, extra, action) {
 			// A snoozed card stays on screen saying so, but is replaced by a live one if the question comes back (see waiting()).
-			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove(); more.remove();
+			c.dataset.answered = action === "snooze" ? "snoozed" : "1"; dir.remove(); more.remove(); pick?.remove();
 			const own = threadLink(it);
 			row.replaceChildren(...(own ? [own] : []), ...extra);
 			tell("dq-ok", text);
@@ -335,29 +377,28 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		}
 		const answered = (o) => (r) => `Answered: ${r.choice || o.label}. ${r.to === "thread" ? "Sent to its thread." : "Recorded; the wake to the Steward is queued."}`;
 		const acts = [];
-		if (settles) {
-			(it.options || []).forEach((o, i) => {
-				const b = btn(o.label, i === it.recommended ? "dq-main rec" : "dq-main", () => send("answer", { choice: i }, answered(o)));
-				if (i === it.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
-				taps.push(b); acts.push(b);
-			});
-		}
+		const pick = settles && it.options?.length ? picker(it.options, it.recommended, (i, o) => send("answer", { choice: i }, answered(o)), tell) : null;
+		if (pick) taps.push(...pick.taps);
 		const act = (b) => { taps.push(b); acts.push(b); };
 		const snoozed = (r) => `Snoozed. It returns ${returnsAt(r.until)}.`;
-		act(btn("Snooze", "dq-sec", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, snoozed)));
+		const snoozeBtn = btn("Snooze 1h", "dq-sec dq-snooze", () => send("snooze", { until: new Date(Date.now() + SNOOZE_TAP_MS).toISOString() }, snoozed));
+		snoozeBtn.setAttribute("aria-label", "Snooze for 1 hour");
+		act(snoozeBtn);
 		const moreBtn = btn("▾", "dq-sec dq-more", () => {
 			const open = more.style.display === "none";
 			more.style.display = open ? "" : "none"; moreBtn.setAttribute("aria-expanded", String(open));
 			if (!open) return;
 			const custom = el("input"); custom.type = "datetime-local"; custom.setAttribute("aria-label", "Snooze until a time of your own");
+			custom.value = localInput(new Date(Date.now() + 2 * 3600000));
 			const set = btn("Set", "dq-sec", () => {
 				const at = new Date(custom.value);
 				if (!custom.value || Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) { tell("dq-bad", "Pick a time in the future."); return; }
 				send("snooze", { until: at.toISOString() }, snoozed);
 			});
-			const choices = snoozeChoices(new Date()).map((ch) => btn(ch.label, "dq-sec", () => send("snooze", { until: ch.at.toISOString() }, snoozed)));
+			const choices = snoozeChoices(new Date()).map((ch) => { const b = btn(ch.label, "dq-sec", () => send("snooze", { until: ch.at.toISOString() }, snoozed)); b.append(el("span", "dq-when", snoozeWhen(ch.at))); return b; });
 			for (const b of [...choices, set]) taps.push(b);
-			more.replaceChildren(...choices, custom, set);
+			const own = el("div", "dq-snz-own"); own.append(custom, set);
+			more.replaceChildren(el("div", "dq-meta", "SNOOZE UNTIL"), ...choices, own);
 		});
 		moreBtn.setAttribute("aria-label", "More snooze times"); moreBtn.setAttribute("aria-expanded", "false"); moreBtn.setAttribute("title", "More snooze times");
 		act(moreBtn);
@@ -372,7 +413,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		});
 		const own = threadLink(it);
 		row.append(...acts, ...(own ? [own] : []));
-		return settles ? [dir, msg, row, more] : [msg, row, more];
+		return settles ? [...(pick ? pick.nodes : []), msg, row, more, dir] : [msg, row, more];
 	}
 
 	// How long ago a question was asked, worded as the full page words it (app.js agoLong).
@@ -441,8 +482,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		return b;
 	}
 
-	// A question card from another thread, answered in place: its options are the buttons, then Dismiss, then the thread link, in the same one row as a question's.
-	// One tap sends the choice and the card's fingerprint (`sig`) as this view saw it; the server re-reads the card in its thread and refuses one that
+	// A question card from another thread, answered in place, as a question is: its options are the choice list and its answer button, then a row with
+	// Dismiss and the thread link. The answer button sends the choice and the card's fingerprint (`sig`) as this view saw it; the server re-reads the card in its thread and refuses one that
 	// changed (409), and then the view reads the queue again so the live card replaces this one.
 	function cardPanel(m, c) {
 		const msg = el("div", "dq-msg");
@@ -452,14 +493,14 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		const taps = [];
 		let sending = false;
 		const lock = (on) => { sending = on; for (const b of taps) b.disabled = on; };
-		m.options.forEach((o, i) => {
-			const b = btn(o.label, i === m.recommended ? "dq-main rec" : "dq-main", async () => {
+		const pick = picker(m.options, m.recommended, async (i, o) => {
 				if (sending) return;
 				lock(true); tell("", "Sending…");
 				try {
 					const r = await post(`/api/cards/${encodeURIComponent(m.id)}/answer`, { choice: i, sig: m.sig });
 					if (r.ok) {
 						c.dataset.answered = "1";
+						pick.remove();
 						row.replaceChildren(...(own ? [own] : []));
 						tell("dq-ok", `Answered: ${r.b.choice || o.label}. It goes to its thread.`);
 						remaining = Math.max(0, remaining - 1);
@@ -471,14 +512,11 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 					if (r.status === 409) refresh();
 				} catch (e) { tell("dq-bad", `Could not send: ${e?.message ?? e}`); }
 				lock(false);
-			});
-			if (i === m.recommended) { b.setAttribute("aria-label", `${o.label} (recommended)`); b.setAttribute("title", "Recommended"); } else if (o.detail) b.setAttribute("title", o.detail);
-			taps.push(b); row.append(b);
-		});
+		}, tell);
+		taps.push(...pick.taps);
 		row.append(mirrorDismiss(m, c, { row, tell, taps, lock, busy: () => sending }));
 		if (own) row.append(own);
-		const lines = m.options.filter((o) => o.detail || String(o.label).length > LONG_LABEL).map((o) => el("div", "dq-d", o.detail ? `${o.label}: ${o.detail}` : o.label));
-		return [...lines, msg, row];
+		return [...pick.nodes, msg, row];
 	}
 
 	function card(it) {
@@ -530,9 +568,6 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			c.append(msg, row);
 			return c;
 		}
-		// What each option means, as the card showed it before the options became buttons: the buttons carry the labels, this carries the detail.
-		// A long label is cut short on its button (every button is one line, so the row stays one height), so its full text is here too.
-		for (const o of it.options || []) if (o.detail || String(o.label).length > LONG_LABEL) c.append(el("div", "dq-d", o.detail ? `${o.label}: ${o.detail}` : o.label));
 		// The ruling the question proposes, as the full page shows it beside the answer. It is saved only there (the view key never saves a ruling).
 		if (it.proposedRuling) c.append(el("div", "dq-rule", `Proposed ruling: “${it.proposedRuling}”. Save it as a ruling on the full queue page.`));
 		c.append(...panel(it, c, true));
