@@ -4,6 +4,7 @@ import { type RightsSent, rightsUnreadable } from "../decide/decide.ts";
 import { alarms } from "../messages.ts";
 import { readRulings } from "../ops/rulings.ts";
 import { renderInForce } from "../ops/rulings-read.ts";
+import { withLedgerPathNotes } from "../steward/ledger-paths.ts";
 import { epochOf, fullStamp, rightsFirstMessage, rightsFor, rightsHash } from "../steward/rights-sent.ts";
 import { CoreBase } from "./engine-core.ts";
 
@@ -46,7 +47,7 @@ export abstract class CoreRights extends CoreBase {
 	/** The decision rights and the in-force rulings, as one text, or undefined when either cannot be read. */
 	protected rightsRules(): string | undefined {
 		const [rights, rulings] = [this.privateFile("decision-rights.md"), this.stewardRulings()];
-		return rights && rulings ? `${rights}\n${rulings}` : undefined;
+		return rights && rulings ? `${withLedgerPathNotes(rights)}\n${rulings}` : undefined;
 	}
 
 	/** The Steward's current session, when the adapter can say (`transcriptPath`). Undefined when it cannot, or the read fails. */
