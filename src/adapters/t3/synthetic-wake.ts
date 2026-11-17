@@ -17,6 +17,7 @@ import { logFor } from "../../core/log.ts";
 import { awayModeLine, threadHappened, threadWakeHead } from "../../core/messages.ts";
 import { readAfk } from "../../core/ops/afk-held.ts";
 import { rulingsText } from "../../core/ops/rulings-read.ts";
+import { withLedgerPathNotes } from "../../core/steward/ledger-paths.ts";
 import { defaultStore } from "../../core/store/default-store.ts";
 import { t3ServerLine } from "./index.ts";
 
@@ -32,7 +33,7 @@ export function main(argv: string[] = process.argv.slice(2)) {
 	const store = defaultStore();
 	const afk = readAfk(store);
 	const rights = [
-		readFileSync(`${CONF}/decision-rights.md`, "utf8").trim(),
+		withLedgerPathNotes(readFileSync(`${CONF}/decision-rights.md`, "utf8").trim()),
 		rulingsText(store).trim(),
 		afk ? awayModeLine(afk) : "",
 	]

@@ -18,6 +18,7 @@ import { type CommandName, Principal, principal, principalPoss, STATE, selfComma
 import { awayModeLine } from "../messages.ts";
 import type { Afk } from "../ops/afk-held.ts";
 import { authorityProblem } from "../private.ts";
+import { withLedgerPathNotes } from "./ledger-paths.ts";
 
 type Environment = { name: string; environmentId?: string; mayBeOffline?: boolean };
 export type BriefInput = {
@@ -263,7 +264,7 @@ function genericBrief(i: BriefInput): string {
 		`## You are permanent
 
 You are one long-lived thread, and ${who} talks to you here. When your context grows too large it is compacted into a summary, in this same thread. A summary loses detail, so anything that must survive goes in the ledgers the moment it happens: decisions, holds and rulings. Every wake repeats your rights and rulings, and this hand-off stays at \`${state}/steward-brief.md\` if you need it again.`,
-		`## Decision rights (${poss} standing rules, verbatim)\n\n${i.rights.trim() || "None written. Hold anything you are unsure of and ask."}`,
+		`## Decision rights (${poss} standing rules, verbatim)\n\n${withLedgerPathNotes(i.rights.trim()) || "None written. Hold anything you are unsure of and ask."}`,
 		`## Standing rulings in force (cite each by its ID; decides only)\n\n${i.rulings.trim() || "None recorded."}`,
 		i.operatingRules.trim()
 			? `## Operating rules (copied in by the hand-off builder; the source file stays canonical)\n\n${i.operatingRules.trim()}`
