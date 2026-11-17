@@ -1,6 +1,6 @@
 ---
 phase: climbing
-progress: 7/9
+progress: 8/9
 ---
 
 # Provider-independent model selection
@@ -31,7 +31,7 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 - [x] ISC-3: Configured selection and failure behavior pass regression tests. Falsifier: an integration test fails.
 - [x] ISC-4: Repository checks pass. Falsifier: `bun run checks` exits nonzero.
 - [x] ISC-5: Non-Claude Decisions renders and relays a test answer. Falsifier: missing render or persisted answer evidence.
-- [ ] ISC-6: Independent review passes. Falsifier: unresolved reviewer finding.
+- [x] ISC-6: Independent review passes. Falsifier: unresolved reviewer finding.
 - [x] ISC-7: A recovered thread does not cause stale provider-failure wake cascades. Falsifier: replaying Claude failure, Grok recovery, then delayed Claude failure produces a new failure wake or retries obsolete work.
 - [x] ISC-8: The final source and setup audit contains no active hard-coded model binding. Falsifier: a supported execution or setup path bypasses the documented central selection.
 - [ ] ISC-9: The reviewed change ships through the normal release path, with compatible processes installed before live model configuration. Falsifier: a live process rejects the migrated schema or the deployed revision differs from the reviewed release.
@@ -74,6 +74,8 @@ No new keys written into the live config before the pinned daemon supports them.
 - The CLI-sender architecture assertion is approved to require zero CLI senders; its single RPC sender assertion is unchanged.
 
 ## Status
+
+Frozen HEAD 03eb805 passed all 3486 tests, all repository checks, binary smoke, real Grok render/answer relay, and fresh Sol source review (62 independent safety tests). Publication then stopped at the public-content gate because pre-existing hostile-test fixtures contained credential-shaped synthetic strings. Those fixtures must generate obvious dummy credentials at runtime while preserving every redaction assertion; the scanner remains unchanged. Final checks and Sol review also cover that fixture-only release repair.
 
 Release review found that model preparation and webhook delivery could address different servers or threads. Publication is held until Chamberlain verifies the actual pinned URL against the selected server's existing scheduled-task contract, refuses mismatches without spending attempts, and passes fresh checks and review. No upstream change is needed.
 
