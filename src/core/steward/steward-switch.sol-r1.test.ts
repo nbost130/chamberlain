@@ -28,7 +28,8 @@ describe("B2/B3: counting-receipt predicate (discharge, transfer, retention)", (
 		const s = memStoreSeeded(w.conf);
 		const id = deliverAndLedger(s, { deliveryId: "R", message: "payload", at: 1, gen: 1 });
 		switchToG2(s, w.conf);
-		s.steward.insertReceipt({ outboxId: id, kind: "t3-run", runId: "late", thread: "old", recordedAt: 3 });
+		const late = s.steward.transfer(1)!.openedAt + 1; // the retired Steward's run completed after the switch
+		s.steward.insertReceipt({ outboxId: id, kind: "t3-run", runId: "late", thread: "old", recordedAt: late });
 		expect(countingReceipt(s, id)).toBe(false);
 		expect(isDischarged(s, id)).toBe(false);
 		s.wakes.prune(100);
@@ -47,7 +48,8 @@ describe("B2/B3: counting-receipt predicate (discharge, transfer, retention)", (
 		s.wakes.finish(row.id, "delivered", 2);
 		s.steward.insertLedger({ outboxId: row.id, gen: 2, origin: "live" });
 		switchToG2(s, w.conf); // g3 — retires g2
-		s.steward.insertReceipt({ outboxId: row.id, kind: "t3-run", runId: "late", thread: "g2", recordedAt: 4 });
+		const late = s.steward.transfer(2)!.openedAt + 1;
+		s.steward.insertReceipt({ outboxId: row.id, kind: "t3-run", runId: "late", thread: "g2", recordedAt: late });
 		expect(countingReceipt(s, row.id)).toBe(false);
 		expect(isDischarged(s, id)).toBe(false);
 	});

@@ -214,7 +214,8 @@ const COUNTING_RECEIPT_SQL = `(
 		SELECT 1 FROM steward_receipts r
 		JOIN steward_deliveries d ON d.outbox_id = r.outbox_id
 		LEFT JOIN steward_transfers t ON t.from_gen = d.gen
-		WHERE r.outbox_id = $oid AND (t.from_gen IS NULL OR r.id <= t.receipt_hw)
+		WHERE r.outbox_id = $oid
+			AND (t.from_gen IS NULL OR r.id <= t.receipt_hw OR (r.kind = 't3-run' AND r.recorded_at <= t.opened_at))
 	)
 )`;
 

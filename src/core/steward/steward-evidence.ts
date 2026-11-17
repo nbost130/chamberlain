@@ -35,20 +35,23 @@ function recordHit(store: Store, row: OutboxRow, hit: ReceiptHit, now: number): 
 	});
 }
 
-/** Record receipts found for undischarged Steward delivered rows of the current (or given) generation. */
+/**
+ * Record receipts found for undischarged Steward delivered rows (of the given generation, or all). Each row is looked for in the thread of
+ * the generation it was delivered to, so a wake the retired Steward handled just before a switch is still found after it. A row from before
+ * the generations (gen 0) is looked for in the current (or given) generation's thread, as before.
+ */
 export function evidencePass(store: Store, find: EvidenceFinder, o: { now?: number; gen?: number } = {}): number {
 	const now = o.now ?? Date.now();
-	const gen = o.gen ?? store.steward.maxGen();
-	const current = store.steward.gen(gen);
-	const threads = current ? [current.thread] : undefined;
+	const fallback = store.steward.gen(o.gen ?? store.steward.maxGen());
 	let n = 0;
 	for (const row of store.wakes.rows("delivered", null)) {
 		if (!shouldScan(store, row, o.gen)) continue;
+		const own = store.steward.gen(store.steward.ledger(row.id)?.gen ?? 0) ?? fallback;
 		const hit = find({
 			outboxId: row.id,
 			deliveryId: row.deliveryId,
 			landedAt: row.finishedAt ?? row.createdAt,
-			...(threads ? { threads } : {}),
+			...(own ? { threads: [own.thread] } : {}),
 		});
 		if (!hit) continue;
 		recordHit(store, row, hit, now);

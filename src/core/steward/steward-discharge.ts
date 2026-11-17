@@ -8,8 +8,12 @@ import type { TransferItem } from "./steward-types.ts";
 
 /**
  * True when `outboxId` has a receipt that still counts for its own ledger generation.
- * A receipt on generation F counts only when `receipt.id ≤ transfer(F).receipt_hw` (or F has no transfer yet).
+ * A receipt on generation F counts when F has no transfer yet, when `receipt.id ≤ transfer(F).receipt_hw` (recorded before the switch), or
+ * when it is a T3 run receipt whose run completed at or before the transfer opened: that Steward handled the wake before it was retired,
+ * however late the daemon found the proof. A run that completed after the switch (a retired Steward still working) never counts, so the
+ * new Steward still gets the wake.
  * Unledgered rows never count as discharged via their own receipt (retention must not erase them).
+ * The same predicate is COUNTING_RECEIPT_SQL in sqlite-wakes.ts (retention).
  */
 export function countingReceipt(store: Store, outboxId: number): boolean {
 	const r = store.steward.receiptFor(outboxId);
@@ -17,7 +21,7 @@ export function countingReceipt(store: Store, outboxId: number): boolean {
 	const led = store.steward.ledger(outboxId);
 	if (!led) return false;
 	const t = store.steward.transfer(led.gen);
-	return t === undefined || r.id <= t.receiptHw;
+	return t === undefined || r.id <= t.receiptHw || (r.kind === "t3-run" && r.recordedAt <= t.openedAt);
 }
 
 /** Transfer items whose root or orig is this outbox id (open and closed transfers). */

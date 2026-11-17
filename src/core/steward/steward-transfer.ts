@@ -163,8 +163,44 @@ function holdMissingItems(store: Store, t: StewardTransfer, now: number): number
 	return n;
 }
 
-/** One transfer pass: create missing items for every open transfer, then try seal/close. */
-export function transferPass(store: Store, now = Date.now()): { held: number; sealed: number; closed: number } {
+/**
+ * Held transfer items whose root is discharged now (its receipt was found after the item was held) are given up: composed into one row and
+ * cancelled in a single transaction, so each keeps a permanent tombstone and nothing holds or sends it again. A wake the retired Steward
+ * handled before the switch is never replayed to the new one.
+ */
+function dropDischargedTransfers(store: Store, now = Date.now()): string[] {
+	const gone = store.wakes
+		.held(null)
+		.filter((h) => h.kind === "transfer")
+		.filter((h) => {
+			const item = store.steward.transferItem(h.deliveryId);
+			return item !== undefined && isDischarged(store, item.rootOutboxId);
+		})
+		.map((h) => h.deliveryId);
+	if (!gone.length) return [];
+	store.tx(() => {
+		const row = store.wakes.compose(
+			now,
+			() => ({
+				deliveryId: `transfer-discharged:${now}:${gone.length}`,
+				message: `Transfer items given up: the retired Steward handled their wakes before the switch (${gone.join(", ")}).`,
+				folded: 0,
+				members: gone,
+				kind: "transfer",
+			}),
+			null,
+		);
+		if (row) store.wakes.cancel(row.deliveryId, now);
+	});
+	return gone;
+}
+
+/** One transfer pass: drop held items already discharged, create missing items for every open transfer, then try seal/close. */
+export function transferPass(
+	store: Store,
+	now = Date.now(),
+): { held: number; sealed: number; closed: number; dropped: number } {
+	const dropped = dropDischargedTransfers(store, now).length;
 	let held = 0;
 	let sealed = 0;
 	let closed = 0;
@@ -175,5 +211,5 @@ export function transferPass(store: Store, now = Date.now()): { held: number; se
 		const after = store.steward.transfer(t.fromGen);
 		if (after && tryClose(store, after, now)) closed++;
 	}
-	return { held, sealed, closed };
+	return { held, sealed, closed, dropped };
 }
