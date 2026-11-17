@@ -1,13 +1,11 @@
 /**
  * The one way Chamberlain puts a message into a T3 thread. Every sender goes through this module: the decision-queue post
- * (the Decisions thread, over the T3 CLI), the page's direct send and goal acceptance, `t3x send`, and the daemon's own
+ * (the Decisions thread), the page's direct send and goal acceptance, `t3x send`, and the daemon's own
  * stalled-thread retry (src/core/ops/recover.ts). A second send path is a second place to get an identity, a seed or a timeout
  * wrong, so there is none: src/adapters/t3/ping.test.ts fails when another file builds a `message.dispatch` command.
  *
- * Two transports, one result shape:
- *   - `createRpcPing`: T3's `message.dispatch` over a server's RPC with its operate token. Steers a run that is going,
+ * `createRpcPing`: T3's `message.dispatch` over a server's RPC with its operate token. Steers a run that is going,
  *     or starts one. `seed` fixes the command and message IDs, so T3 drops a repeat of the same send.
- *   - `pingViaCli`: `t3 thread send <thread> -` on this machine, which needs no operate token (the Decisions thread).
  *
  * Who a message is signed as is a property of the send, named once here:
  *   steward   agent / mcp     the Steward's own relay. The thread's report-back wakes the Steward.
@@ -19,12 +17,10 @@
  *   operator  user / server   the principal's own accepted proposal (a /goal).
  */
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
 import { readSecret } from "../../core/config/layout.ts";
 import { within as deadline } from "../../core/within.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
-import { t3BaseDir } from "./settings.ts";
 
 export type Identity = "steward" | "daemon" | "operator";
 export const IDENTITIES: Record<Identity, { createdBy: "agent" | "user"; creationSource: "mcp" | "server" }> = {
@@ -71,6 +67,7 @@ export const readToken = (conf: string, file: string | null | undefined): string
 };
 
 export type MessageOptions = {
+	modelSelection?: { instanceId: string; model: string; options: { id: string; value: string | boolean }[] };
 	threadId: string;
 	text: string;
 	/** Fixes the command and message IDs. Without one they are random: a send that must be safe to repeat gives a seed. */
@@ -91,6 +88,7 @@ export function messageCommand(o: MessageOptions): Record<string, unknown> {
 		messageId: o.seed ? stableId(`msg\0${o.seed}`) : crypto.randomUUID(),
 		text: o.text,
 		attachments: [],
+		...(o.modelSelection ? { modelSelection: o.modelSelection } : {}),
 		createdBy: who.createdBy,
 		creationSource: who.creationSource,
 		// The daemon's own message never steers: queue mode is the only mode it can be built with, whatever else is passed.
@@ -105,7 +103,9 @@ export function messageCommand(o: MessageOptions): Record<string, unknown> {
 
 /** The id of the run now going on a thread, from its projection's runs, or undefined. */
 export const activeRunOf = (runs: { id?: string; status?: string }[] | undefined): string | undefined =>
-	[...(runs ?? [])].reverse().find((r) => ["running", "waiting", "starting"].includes(String(r.status)))?.id;
+	[...(runs ?? [])]
+		.reverse()
+		.find((r) => ["queued", "preparing", "running", "waiting", "starting"].includes(String(r.status)))?.id;
 
 /**
  * Pure: why a daemon ping must not go into this thread, from a projection read right now, or undefined when it may. The daemon only
@@ -128,6 +128,9 @@ export function daemonPingRefusal(proj: {
 }
 
 export type RpcPingDeps = {
+	modelSelection?: MessageOptions["modelSelection"];
+	/** Message capabilities that must be removed before diagnostics are truncated. */
+	scrubError?: (message: string) => string;
 	server: Pick<T3Server, "name" | "origin" | "operateTokenFile" | "tokenFile">;
 	conf: string;
 	connect?: (origin: string, token: string) => Promise<Pick<Rpc, "request"> & { ws: { close(): void } }>;
@@ -136,7 +139,12 @@ export type RpcPingDeps = {
 };
 
 /** Opens a connection with a deadline. One that arrives after it is closed at once, so no socket or timer lingers. */
-export function openWithin(conn: NonNullable<RpcPingDeps["connect"]>, origin: string, token: string, ms: number) {
+export function openWithin<T extends Pick<Rpc, "request"> & { ws: { close(): void } }>(
+	conn: (origin: string, token: string) => Promise<T>,
+	origin: string,
+	token: string,
+	ms: number,
+) {
 	let late = false;
 	const p = conn(origin, token);
 	p.then(
@@ -183,7 +191,14 @@ export function createRpcPing(
 				await within(
 					rpc.request(
 						"orchestration.dispatchCommand",
-						messageCommand({ threadId, text, seed, identity, activeRunId: activeRunOf(proj.runs) }),
+						messageCommand({
+							threadId,
+							text,
+							seed,
+							identity,
+							activeRunId: activeRunOf(proj.runs),
+							modelSelection: d.modelSelection,
+						}),
 					),
 					ms,
 					"send",
@@ -193,44 +208,7 @@ export function createRpcPing(
 				rpc.ws.close();
 			}
 		} catch (e) {
-			return { ok: false, detail: sendFailure(e, dispatched, [token]) };
+			return { ok: false, detail: sendFailure(d.scrubError ? d.scrubError(String(e)) : e, dispatched, [token]) };
 		}
-	};
-}
-
-/** The T3 CLI: T3CODE_CLI_PATH, then <t3 base dir>/bin/t3, then the newest installed runtime. */
-function t3Cli(): string {
-	if (process.env.T3CODE_CLI_PATH) return process.env.T3CODE_CLI_PATH;
-	const base = t3BaseDir();
-	if (existsSync(`${base}/bin/t3`)) return `${base}/bin/t3`;
-	const root = `${base}/runtime/versions`;
-	const vs = existsSync(root)
-		? readdirSync(root)
-				.filter((v) => existsSync(`${root}/${v}/t3`))
-				.sort((a, b) => Bun.semver.order(a, b))
-		: [];
-	if (!vs.length) throw Error("ask: no T3 CLI found (set T3CODE_CLI_PATH)");
-	return `${root}/${vs.at(-1)}/t3`;
-}
-
-/** Sends one message to a thread with the T3 CLI on this machine. The text goes on stdin, never into a command line. */
-export function pingViaCli(
-	threadId: string,
-	text: string,
-	cli: () => string = t3Cli,
-	/** Applied to the CLI's whole output BEFORE it is cut to 300 characters: a cut inside a secret would leave part of it standing. */
-	scrub: (output: string) => string = (s) => s,
-): PingResult {
-	const r = Bun.spawnSync([cli(), "thread", "send", threadId, "-"], {
-		stdin: Buffer.from(text),
-		stdout: "pipe",
-		stderr: "pipe",
-		timeout: 60_000,
-	});
-	return {
-		ok: r.exitCode === 0,
-		detail: scrub(r.stdout.toString() + r.stderr.toString())
-			.trim()
-			.slice(0, 300),
 	};
 }

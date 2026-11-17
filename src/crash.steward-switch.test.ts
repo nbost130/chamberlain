@@ -41,6 +41,7 @@ async function preparedSwitch(w: Awaited<ReturnType<typeof world>>) {
 	const prep = prepareSwitch(w.store, w.conf, { toThread: "thread-g2", live: true });
 	if (!prep.ok) throw new Error(prep.error);
 	const wake = `${wakeUrlOf(w)}\n`;
+	w.bindWake(wake.trim(), "thread-g2");
 	publishSwitchRef(w.conf, prep.id, "wake", wake);
 	publishSwitchRef(w.conf, prep.id, "compact", wake.replace("/wake", "/compact"));
 	return prep.id;

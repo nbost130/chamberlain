@@ -158,7 +158,7 @@ recover-scheduled.kind: enum(stream_closed|rate_limit|capacity|provider_turn_fai
 recover-scheduled.in_ms: ms <- inMs
 judge-failed.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 classifier-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
-classifier.provider: enum(rules|jev|haiku|none)
+classifier.provider: enum(rules|jev|haiku|model|none)
 classifier.mode: enum(shadow|live)
 classifier.calls: int
 classifier.cached: int

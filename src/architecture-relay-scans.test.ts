@@ -14,6 +14,7 @@ import { SRC, specifiers, stripComments } from "./architecture-boundary-scans.te
 export const RELAY = "core/delivery/relay.ts";
 /** Files that call `.send(` and are not a wake, with the reason. Anything else that calls `.send(` is a violation. */
 const SEND_IS_NOT_A_WAKE: Record<string, string> = {
+	"testing/model-server.ts": "test server WebSocket response frames; it never dispatches a wake",
 	"testing/adapters-t3-waiting-fixtures.ts":
 		"the rig split out of waiting.test.ts: a fake adapter whose optional `send` capability is passed through, a message into a worker thread, not a wake",
 	"testing/web-app-paths-fixtures.ts":
@@ -37,6 +38,7 @@ const SEND_IS_NOT_A_WAKE: Record<string, string> = {
 };
 /** The only files that may POST over HTTP, with the reason. */
 const MAY_POST: Record<string, string> = {
+	"core/llm/reader.ts": "explicit no-tools inference HTTP request; no wake transport access",
 	"testing/web-confirmation-fixtures.ts":
 		"the page's test rig, split out of confirmation.test.ts: it POSTs to the page under test as an in-process request, never a wake",
 	"testing/web-capability-fixtures.ts":

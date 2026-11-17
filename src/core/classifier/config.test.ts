@@ -27,8 +27,8 @@ describe("sweep.idleParents.classifier", () => {
 			armedGraceMinutes: 360,
 			autoNudge: false,
 			autoSettle: false,
-			jev: { model: "jev-1.14.0", keyFile: "typesafe.key", timeoutMs: 10_000 },
-			haiku: { command: "claude", model: "haiku", timeoutMs: 60_000 },
+			jev: { model: "", keyFile: "typesafe.key", timeoutMs: 10_000 },
+			haiku: { command: "", model: "", timeoutMs: 60_000 },
 		}));
 	test("the design's example parses as written", () => {
 		const c = parseClassifier({
@@ -46,7 +46,13 @@ describe("sweep.idleParents.classifier", () => {
 			jev: { model: "jev-1.14.0", keyFile: "typesafe.key", timeoutMs: 10000 },
 			haiku: { command: "claude", model: "haiku", timeoutMs: 60000 },
 		});
-		expect(c).toEqual({ ...CLASSIFIER_DEFAULTS, provider: "jev", allowTextToLeaveMachine: true });
+		expect(c).toEqual({
+			...CLASSIFIER_DEFAULTS,
+			provider: "jev",
+			allowTextToLeaveMachine: true,
+			jev: { model: "jev-1.14.0", keyFile: "typesafe.key", timeoutMs: 10000 },
+			haiku: { command: "claude", model: "haiku", timeoutMs: 60000 },
+		});
 	});
 	test("jev and haiku are refused at load unless text is allowed to leave the machine; rules and none never need it", () => {
 		for (const provider of ["jev", "haiku"] as const) {

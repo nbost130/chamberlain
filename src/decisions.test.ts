@@ -1,28 +1,23 @@
 /** `chamberlain decisions repost`: it posts the view only when the page answers and has a view key, and says plainly when it does not. */
-import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
 import { repost } from "./decisions.ts";
+import { modelServer } from "./testing/model-server.ts";
 
 describe("decisions repost", () => {
-	const before = process.env.T3CODE_CLI_PATH;
-	afterAll(() => {
-		if (before === undefined) delete process.env.T3CODE_CLI_PATH;
-		else process.env.T3CODE_CLI_PATH = before;
+	const servers: ReturnType<typeof modelServer>[] = [];
+	afterEach(() => {
+		for (const s of servers.splice(0)) s.close();
 	});
 	function setup() {
-		const conf = mkdtempSync(`${tmpdir()}/chamberlain-decisions-`);
-		writeFileSync(`${conf}/decisions-thread`, "decisions-id", { mode: 0o600 });
-		const log = `${conf}/argv`;
-		writeFileSync(`${conf}/t3`, `#!/bin/sh\necho "$@" >> ${log}\ncat >> ${log}\n`, { mode: 0o700 });
-		process.env.T3CODE_CLI_PATH = `${conf}/t3`;
-		return { conf, sent: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+		const s = modelServer();
+		servers.push(s);
+		return s;
 	}
 	test("page up with a view key: the view is posted to the Decisions thread, with its height and the view key", async () => {
-		const { conf, sent } = setup();
+		const { conf, sent, requests } = setup();
 		const r = await repost(conf, async () => ({ queueUrl: "http://q.test", capability: "VIEWKEY123" }));
 		expect(r).toEqual({ ok: true, line: "the Decisions view was posted again" });
-		expect(sent()).toContain("thread send decisions-id -");
+		expect(requests.find((r) => r.payload.type === "message.dispatch")?.payload.threadId).toBe("decisions-id");
 		expect(sent()).toContain('<div id="dq" style="min-height:700px"></div>');
 		expect(sent()).toContain("inline.js?view=decisions&amp;k=VIEWKEY123");
 	});
@@ -40,9 +35,11 @@ describe("decisions repost", () => {
 		expect(sent()).toBe("");
 	});
 	test("a failing send is reported, not swallowed", async () => {
-		const { conf } = setup();
-		writeFileSync(`${conf}/t3`, "#!/bin/sh\necho no thread >&2\nexit 3\n", { mode: 0o700 });
+		const { conf, state } = setup();
+		state.failSend = true;
 		const r = await repost(conf, async () => ({ queueUrl: "http://q.test", capability: "VIEWKEY123" }));
-		expect(r).toEqual({ ok: false, line: "the post failed: no thread" });
+		expect(r.ok).toBe(false);
+		expect(r.line).toContain("the post failed:");
+		expect(r.line).toContain("send failed");
 	});
 });

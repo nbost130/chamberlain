@@ -10,7 +10,8 @@ import { CONF, PrincipalPoss } from "../../core/config/config.ts";
 import { thread as configThread } from "../../core/config/layout.ts";
 import { cardTag, type Question } from "../../core/items/questions.ts";
 import { holdsToken, inlineScriptSrc, TOKEN_FILE, withoutToken } from "../../core/ops/capability.ts";
-import { type PingResult, pingViaCli } from "./ping.ts";
+import { configuredPing } from "./model.ts";
+import type { PingResult } from "./ping.ts";
 
 /**
  * Pure: the shell the Decisions thread renders: the tabbed view (Waiting, Rulings, Recent), opened on this item. The script address carries the
@@ -22,7 +23,7 @@ const dashShell = (base: string, id: string | undefined, viewKey: string) =>
 
 /** The lines that make the Decisions thread render the shell and nothing else: the one render instruction both the question post and a re-post use. */
 const renderLines = (shell: string, reply: string): string[] => [
-	`Call html_render (load it first with ToolSearch "select:mcp__t3-code__html_render" if it is not loaded) with title "Decisions", height 720, and exactly this html, unchanged: ${shell}`,
+	`Call html_render (discover it with your harness's tool catalog if it is not loaded) with title "Decisions", height 720, and exactly this html, unchanged: ${shell}`,
 	`Then reply with exactly: ${reply}`,
 	"If html_render fails, reply with exactly: Render failed. Never show a question card here.",
 ];
@@ -70,30 +71,17 @@ export function decisionsDownMessage(i: Question): string {
  * Posts the question to the pinned Decisions thread, never a card: the live view when the queue server is up (base
  * given), else a one-line notice. The older Questions thread (cards) is no longer used for new questions. The queue item is already recorded, so a failed post leaves the question on the page.
  */
-export function postCard(i: Question, conf = CONF, base?: string, viewKey?: string): PostResult {
+export async function postCard(i: Question, conf = CONF, base?: string, viewKey?: string): Promise<PostResult> {
 	// A view needs the page's address AND the view key: with either missing the operator gets the one-line notice, never a link that cannot work.
 	const view = base !== undefined && viewKey !== undefined;
 	const text = view ? decisionsMessage(i, base, viewKey) : decisionsDownMessage(i);
-	const r = sendToDecisions(conf, text, viewKey);
+	const r = await postConfigured(conf, text, viewKey);
 	return { ok: r.ok, detail: r.detail, where: view ? "view" : "notice" };
 }
 
 /** Posts the pinned view again, with no question: `chamberlain decisions repost`. The same door as a question's post, so the same guard on the page's key. */
-export const repostView = (conf: string, base: string, viewKey: string): PingResult =>
-	sendToDecisions(conf, viewRepostMessage(base, viewKey), viewKey);
-
-/**
- * The one door every Decisions post goes through: whatever built the text, it never leaves holding the page's key, in any spelling holdsToken
- * knows, and what the CLI says back is scrubbed of both keys before it is read.
- */
-function sendToDecisions(conf: string, text: string, viewKey: string | undefined): PingResult {
-	const thread = configThread(conf, "decisions");
-	if (!thread) throw Error("ask: the Decisions thread is not set (threads.decisions in config.json)");
-	const pageKey = readPageKey(conf);
-	if (holdsToken(text, pageKey))
-		throw Error("ask: refusing to post the page's key into the Decisions thread (a post carries the view key only)");
-	return pingViaCli(thread, text, undefined, (out) => withoutToken(withoutToken(out, viewKey), pageKey));
-}
+export const repostView = (conf: string, base: string, viewKey: string): Promise<PingResult> =>
+	postConfigured(conf, viewRepostMessage(base, viewKey), viewKey);
 
 /**
  * The page's key for the post's last check, read from the file whatever its mode: a token file the page distrusts (not 0600) still HOLDS a key
@@ -107,8 +95,23 @@ const readPageKey = (conf: string): string | undefined => {
 	}
 };
 
-/** The adapter's `post`: the Decisions thread message, sent with the T3 CLI. */
+/** The adapter's `post`: the Decisions thread message, sent through its centrally configured T3 selection. */
 export const t3Post =
 	(conf: string): Adapter["post"] =>
-	async (item: Question, opts: PostOptions) =>
-		postCard(item, conf, opts.queueUrl, opts.capability);
+	async (item: Question, opts: PostOptions) => {
+		const view = opts.queueUrl !== undefined && opts.capability !== undefined;
+		const text = view
+			? decisionsMessage(item, opts.queueUrl as string, opts.capability as string)
+			: decisionsDownMessage(item);
+		const r = await postConfigured(conf, text, opts.capability);
+		return { ...r, where: view ? "view" : "notice" };
+	};
+
+export async function postConfigured(conf: string, text: string, viewKey?: string): Promise<PingResult> {
+	if (!configThread(conf, "decisions"))
+		return { ok: false, detail: "ask: the Decisions thread is not set (threads.decisions in config.json)" };
+	const pageKey = readPageKey(conf);
+	if (holdsToken(text, pageKey)) throw Error("ask: refusing to post the page's key into the Decisions thread");
+	const r = await configuredPing(conf, "decisions", text, [viewKey, pageKey]);
+	return { ...r, detail: withoutToken(withoutToken(r.detail, viewKey), pageKey) };
+}

@@ -25,11 +25,21 @@ export type CliRunner = (
 /** What a call cost, when the CLI said. A failed call that was billed still reports it, so a budget counts it. */
 export type Usage = { inputTokens?: number; costUsd?: number };
 
+/** Only structured numeric usage survives a failed process; its output never becomes an error message. */
+export class CliError extends Error {
+	constructor(
+		message: string,
+		readonly usage: Usage,
+	) {
+		super(message);
+	}
+}
+
 /** A model id as a CLI may report it: a short token of letters, digits and `._:/-`. Anything else is refused, never stored. */
 export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 
 /** Pure: the argv. No settings, tools, MCP servers, slash commands or session file: a bare one-shot reader. */
-export const claudeArgv = (o: { command: string; model: string; system: string }): string[] => [
+export const claudeArgv = (o: { command: string; model: string; system: string; effort?: string }): string[] => [
 	o.command,
 	"-p",
 	"--model",
@@ -45,6 +55,7 @@ export const claudeArgv = (o: { command: string; model: string; system: string }
 	o.system,
 	"--output-format",
 	"json",
+	...(o.effort ? ["--effort", o.effort] : []),
 ];
 
 /** The value after a flag in an argv, or undefined when the flag is missing or last. */
@@ -62,6 +73,7 @@ export function assertNoTools(argv: string[]): void {
 		command: argv[0] ?? "",
 		model: flagValue(argv, "--model") ?? "",
 		system: flagValue(argv, "--system-prompt") ?? "",
+		...(argv.includes("--effort") ? { effort: flagValue(argv, "--effort") } : {}),
 	});
 	if (argv.length !== own.length || argv.some((a, i) => a !== own[i]))
 		throw Error("the model argv must be exactly the one claudeArgv builds: no repeated or extra flag");
@@ -74,6 +86,7 @@ export const spawnCli: CliRunner = async (argv, o) => {
 };
 
 export type ClaudeCall = {
+	effort?: string;
 	command: string;
 	model: string;
 	system: string;
@@ -95,10 +108,19 @@ export async function runClaude(c: ClaudeCall): Promise<string> {
 		throw Error(`${c.command} could not be run`);
 	}
 	if (r.code !== 0)
-		throw Error(
+		throw new CliError(
 			r.code === null ? `${c.command} did not finish within ${c.timeoutMs} ms` : `${c.command} exited ${r.code}`,
+			failedUsage(r.stdout),
 		);
 	return r.stdout;
+}
+
+function failedUsage(stdout: string): Usage {
+	try {
+		return replyUsage(parseReply("configured CLI", stdout));
+	} catch {
+		return {};
+	}
 }
 
 export type CliReply = {

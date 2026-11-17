@@ -12,6 +12,7 @@ import type { Handling } from "../ops/recover-state.ts";
 import { type ReportOutcome, settleReport } from "../report.ts";
 import { clip, type Draft, type Fire, settledNote, waitNoteFor } from "./engine-support.ts";
 import { WatcherReads } from "./engine-watcher-reads.ts";
+import { failureFreshness } from "./failure-freshness.ts";
 
 export class WatcherDrafts extends WatcherReads {
 	/** Decides a key now, for this fire and for any other that asks; the notification itself is written by the commit below. */
@@ -210,6 +211,7 @@ export class WatcherDrafts extends WatcherReads {
 
 	protected async draftFailed(live: ThreadState, draft: Draft): Promise<boolean> {
 		if (live.status !== "failed") return false;
+		if ((await failureFreshness(this.adapter.inspect, live.id)) !== "send") return false;
 		const h = await this.recover(live);
 		if (h.stop) return false;
 		if (h.note) draft.waitNote = h.note;

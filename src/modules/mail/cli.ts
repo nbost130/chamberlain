@@ -4,9 +4,8 @@
  * of `mail.db`. It reads and changes no mailbox. The verbs the later pieces add (`run`, `pause`, `undo`, `rules`, `measure`) are issues #35 to #42.
  */
 import { CONF, STATE } from "../../core/config/config.ts";
-import { cfg } from "../../core/config/layout.ts";
-import { parseMail } from "./config.ts";
 import { openMailDb } from "./db.ts";
+import { mailConfig } from "./model-config.ts";
 
 export const OFF = "mail triage is off (config.json `mail.provider`)";
 
@@ -14,7 +13,7 @@ const USAGE = "usage: chamberlain mail [status]";
 
 /** Runs `chamberlain mail ...`. */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-	const c = parseMail(cfg(CONF, "mail"));
+	const c = mailConfig(CONF);
 	if (c.provider === "none") {
 		console.log(OFF);
 		return;

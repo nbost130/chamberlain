@@ -2,10 +2,10 @@
  * Re-posting the pinned Decisions view (`chamberlain decisions repost`) and the height every Decisions shell carries: one shell, one send door,
  * the view key only, so a re-post is never a hand-written html that lost its minimum height.
  */
-import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import type { Question } from "../../core/items/questions.ts";
+import { modelServer } from "../../testing/model-server.ts";
 import { decisionsMessage, repostView, viewRepostMessage } from "./post.ts";
 
 const VIEW = "k-test-0123456789abcdefghijklmnopqrstuvwxyz";
@@ -39,41 +39,44 @@ describe("every Decisions shell carries the minimum height", () => {
 });
 
 describe("repostView sends through the Decisions thread's door", () => {
-	const before = process.env.T3CODE_CLI_PATH;
-	afterAll(() => {
-		if (before === undefined) delete process.env.T3CODE_CLI_PATH;
-		else process.env.T3CODE_CLI_PATH = before;
+	const servers: ReturnType<typeof modelServer>[] = [];
+	afterEach(() => {
+		for (const s of servers.splice(0)) s.close();
 	});
-	/** A config directory whose secrets/web-token holds PAGE, with a fake T3 CLI that records everything it is sent. */
+	/** A centrally configured RPC endpoint and a page key that must never be posted. */
 	function keyed(withThread = true) {
-		const conf = mkdtempSync(`${tmpdir()}/chamberlain-repost-`);
-		if (withThread) writeFileSync(`${conf}/decisions-thread`, "decisions-id", { mode: 0o600 });
-		mkdirSync(`${conf}/secrets`, { mode: 0o700 });
+		const s = modelServer();
+		servers.push(s);
+		const { conf } = s;
+		if (!withThread) writeFileSync(`${conf}/config.json`, JSON.stringify({ ...s.config, threads: {} }));
 		writeFileSync(`${conf}/secrets/web-token`, `${PAGE}\n`, { mode: 0o600 });
-		const log = `${conf}/argv`;
-		writeFileSync(`${conf}/t3`, `#!/bin/sh\necho "$@" >> ${log}\ncat >> ${log}\n`, { mode: 0o700 });
-		process.env.T3CODE_CLI_PATH = `${conf}/t3`;
-		return { conf, sent: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+		return s;
 	}
-	test("it sends the shell, with its height, to the Decisions thread, and holds the view key and not the page's key", () => {
+	test("it sends the shell, with its height, to the Decisions thread, and holds the view key and not the page's key", async () => {
 		const k = keyed();
-		expect(repostView(k.conf, "http://q.test", VIEW).ok).toBe(true);
-		expect(k.sent()).toContain("thread send decisions-id -");
+		expect((await repostView(k.conf, "http://q.test", VIEW)).ok).toBe(true);
+		expect(k.requests.at(-1)?.payload.threadId).toBe("decisions-id");
 		expect(k.sent()).toContain(SHELL_ROOT);
 		expect(k.sent()).toContain(`&amp;k=${VIEW}"></script>`);
 		for (const form of [PAGE, encodeURIComponent(PAGE)]) expect(k.sent()).not.toContain(form);
 	});
-	test("with the page's key handed in as the view key the re-post is refused and nothing is sent", () => {
+	test("with the page's key handed in as the view key the re-post is refused and nothing is sent", async () => {
 		const k = keyed();
-		expect(() => repostView(k.conf, "http://q.test", PAGE)).toThrow("refusing to post the page's key");
+		await expect(repostView(k.conf, "http://q.test", PAGE)).rejects.toThrow("refusing to post the page's key");
 		expect(k.sent()).toBe("");
 	});
-	test("a key the CLI echoes back is not returned, and with no Decisions thread it fails loudly", () => {
+	test("a key the provider echoes back is not returned, and with no Decisions thread it fails loudly", async () => {
 		const k = keyed();
-		writeFileSync(`${k.conf}/t3`, `#!/bin/sh\necho "sent: ${VIEW}"\ncat > /dev/null\n`, { mode: 0o700 });
-		const r = repostView(k.conf, "http://q.test", VIEW);
+		k.state.failSend = true;
+		k.state.error = `refused: ${VIEW}`;
+		const r = await repostView(k.conf, "http://q.test", VIEW);
+		expect(r.ok).toBe(false);
 		expect(r.detail).not.toContain(VIEW);
 		expect(r.detail).toContain("[token]");
-		expect(() => repostView(keyed(false).conf, "http://q.test", VIEW)).toThrow("Decisions thread is not set");
+		const missing = keyed(false);
+		const result = await repostView(missing.conf, "http://q.test", VIEW);
+		expect(result.ok).toBe(false);
+		expect(result.detail).toContain("Decisions thread is not set");
+		expect(missing.sent()).toBe("");
 	});
 });

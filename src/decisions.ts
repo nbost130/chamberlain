@@ -4,12 +4,13 @@
  *   chamberlain decisions repost       (from a checkout: bun src/decisions.ts repost)
  *
  * `repost` posts the live Decisions view into the Decisions thread again, with no new question: the way to bring the view back after a thread
- * was cleaned up or its render was lost. It goes through the same code as every question's post (src/adapters/t3/post.ts: one shell, one
- * `pingViaCli`, one guard), so nobody writes the html of a re-post by hand and a re-post is never a shell that lost its height. The post
+ * was cleaned up or its render was lost. It goes through the same code as every question's post (src/adapters/t3/post.ts: one shell,
+ * one configured RPC sender, one guard), so nobody writes the html of a re-post by hand and a re-post is never a shell that lost its height. The post
  * carries the VIEW key and never the page's key, and is refused if it would hold the page's key in any spelling. With the page down or no
  * view key it posts nothing and says why: a re-post must render, so there is no one-line-notice fallback here.
  */
-import { repostView } from "./adapters/t3/post.ts";
+
+import { postConfigured, viewRepostMessage } from "./adapters/t3/post.ts";
 import { inlineView } from "./ask.ts";
 import { CONF } from "./core/config/config.ts";
 import { startup } from "./core/config/migrate.ts";
@@ -25,7 +26,7 @@ export async function repost(conf = CONF, view = inlineView): Promise<Reposted> 
 			ok: false,
 			line: "nothing posted: the queue page is not answering or has no view key (start it: chamberlain web)",
 		};
-	const r = repostView(conf, queueUrl, capability);
+	const r = await postConfigured(conf, viewRepostMessage(queueUrl, capability), capability);
 	return { ok: r.ok, line: r.ok ? "the Decisions view was posted again" : `the post failed: ${r.detail}` };
 }
 

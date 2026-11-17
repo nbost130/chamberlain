@@ -88,6 +88,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `threads` | `steward`, `decisions` and `desk`: the thread ids. `steward` is the Steward's thread (for another adapter, whatever id it uses for the Steward): the daemon never wakes the Steward about itself, and uses it for the busy gate, stall alarm and compaction. `decisions` is the pinned Decisions thread: `chamberlain ask` posts there and refuses to run without it. `desk` is the Alert Desk's thread, for its busy gate. `chamberlain switch-steward` writes `steward`. |
 | `settledMatch` | How `chamberlain ask` and `chamberlain afk hold` decide a question is already settled ([ARCHITECTURE.md, "Queue first, hold second"](ARCHITECTURE.md#queue-first-hold-second-settled-never-twice)): `{"titleOverlap": true, "ignoreWords": []}`. `titleOverlap: false` matches on exact refs only; `ignoreWords` lists words (a project or product name) that head many unrelated questions and so say nothing about the topic. |
 | `servers` | The T3 servers to watch. See below. |
+| `models` | Explicit provider/model/effort selections for pinned threads and isolated readers. No defaults or silent fallback. See [Model configuration and inventory](MODELS.md). |
 | `web` | The page's bind address and options. See below. |
 | `sweep` | Your own routine checks. See below. |
 | `alertDesk` | The Alert Desk's settings: its windows and cap, the morning hour, and the commands and gatherer agent it may use. See [alert-desk.md](alert-desk.md). |
@@ -364,8 +365,7 @@ without the classifier: run it that way first, and compare the dispositions with
         "redact": { "builtin": true, "command": null },
         "budget": { "maxPerRun": 20, "maxCallsPerDay": 500, "maxUsdPerDay": 0.25 },
         "armedGraceMinutes": 360,
-        "jev": { "model": "jev-1.14.0", "keyFile": "typesafe.key", "timeoutMs": 10000 },
-        "haiku": { "command": "claude", "model": "haiku", "timeoutMs": 60000 }
+        "jev": { "model": "your-explicit-jev-model", "keyFile": "typesafe.key", "timeoutMs": 10000 }
       }
     }
   }
@@ -374,17 +374,17 @@ without the classifier: run it that way first, and compare the dispositions with
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `provider` | `none` | `none` (off), `rules` (regular expressions, nothing leaves the machine), `jev` (TypeSafe's Jev, the recommended one: one HTTP request per thread, every question a head in it), or `haiku` (the `claude` CLI with `--model haiku`, on your own Claude Code login). |
+| `provider` | `none` | `none` (off), `rules` (local regular expressions), `jev` (TypeSafe's probability-head API), or `model` (the explicit isolated reader in `models.classifier`). Legacy `haiku` must be migrated. |
 | `mode` | `shadow` | `shadow`: classify and record, report as without the classifier. `live`: report only escalate, nudge and unknown, tagged. |
-| `allowTextToLeaveMachine` | `false` | Must be `true` for `jev` or `haiku`, which send thread text off the machine; either without it is refused at load. |
+| `allowTextToLeaveMachine` | `false` | Must be `true` for `jev` or `model`, which send thread text off the machine; either without it is refused at load. |
 | `questions` | `default` | `default` (the evaluated bank, `src/core/classifier/questions.default.json`) or the path of a bank file, relative to this directory. |
 | `thresholds` | `{ "default": 0.5 }` | The probability at or over which a question counts as yes: `default`, and per question id. A threshold for an id the bank does not have is refused. |
 | `send` | `1500`, `400`, `true` | `lastChars` of the last message, `previousChars` of the user message before it, and whether the thread title (at most 200 characters) goes. Every cut is made well-formed Unicode. |
 | `redact` | `true`, `null` | `builtin`: replace emails, API-key and token shapes, JWTs, phone numbers and home-directory user names, found in the whole message so a long token that starts before the cut is still caught. `command`: `["program", "arg", …]`, given the state as JSON on stdin; it must print the same shape within 5 seconds, or nothing is sent and the thread is `unknown`. |
-| `budget` | `20`, `500`, `0.25` | `maxPerRun`: the most classifications one run makes (the rest are `unknown` this run, classified on a later one). `maxCallsPerDay` and `maxUsdPerDay`: for `jev` and `haiku`, every attempt in the UTC day counts, a retry of a failed call included, and so does the cost a failed but billed call reports (counted in the database as each call is made, and never less than the disposition table's own sum); when either is spent, unclassified threads are `unknown` until the next UTC day. Up to three calls already under way can finish past the dollar ceiling. |
+| `budget` | `20`, `500`, `0.25` | `maxPerRun`: the most classifications one run makes (the rest are `unknown` this run, classified on a later one). `maxCallsPerDay` and `maxUsdPerDay`: for `jev` and `model`, every attempt in the UTC day counts, a retry of a failed call included, and so does the cost a failed but billed call reports (counted in the database as each call is made, and never less than the disposition table's own sum); when either is spent, unclassified threads are `unknown` until the next UTC day. Up to three calls already under way can finish past the dollar ceiling. |
 | `armedGraceMinutes` | `360` | How long a thread's claim that a watch or timer will wake it is believed. An idle parent has no running background task, so a claim older than this has lost its wait. |
 | `jev` | see above | `model` (pinned; the model the API reports is recorded, and a reported id that is not a short token is refused, so no echoed text is stored), `keyFile` (a file name in `secrets/`, mode 0600, read by the daemon at each call and never logged), `timeoutMs`. |
-| `haiku` | see above | `command`, `model`, `timeoutMs`. `ANTHROPIC_API_KEY` is removed from its environment, so it runs on your plan; the thread text goes on stdin. |
+| `haiku` | none | Legacy migration input only: explicit `command`, `model`, `timeoutMs` move into `models.classifier`. The retired runtime provider is rejected until migrated. |
 
 `autoNudge` and `autoSettle` are designed (acting on a thread without the Steward) but not in this build: only `false` is accepted.
 Anything else the section does not know is refused, and a refusal puts the sweep section in error, so the check runs with the
@@ -408,7 +408,7 @@ built so far is the seam (issue #34): the section is parsed and checked, `chambe
 `mail.db` is made. **It reads and changes no mailbox yet**; the provider, the pipeline, the cards and the schedule are issues #35 to #42.
 A key it does not know is refused at start, naming it, and there is no key for a credential: the mail tool (`gog`, a mail client) keeps
 its own login and Chamberlain never sees it. Mail text leaves the machine only with two switches: a provider other than `"none"` with a
-reading model (`models.driver` anything but `"none"`) **and** `allowMailToLeaveMachine: true`; without the second the section is refused.
+reading model (a configured `models.mailDriver`, `models.mailEscalate` or `models.mailTop`) **and** `allowMailToLeaveMachine: true`; without the second startup is refused.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -420,7 +420,7 @@ reading model (`models.driver` anything but `"none"`) **and** `allowMailToLeaveM
 | `scope` | `{query: "in:inbox", lookbackDays: 7, maxMessagesPerRun: 200}` | Which mail a run looks at. |
 | `schedule` | `{times: ["07:30", "16:30"], days: "mon-fri", tz: "local", maxRunsPerDay: 4}` | When a run starts: 24-hour `HH:MM` times (an empty list: only the Steward starts one), `"daily"` or days such as `"mon-fri"` or `"mon,wed,fri"`, `"local"` or an IANA zone. |
 | `labels` | `{prefix: "Chamberlain"}` | Every label the module adds is `<prefix>/<name>`; the prefix is a plain name with no `/`. |
-| `models` | `{command: "claude", driver: "haiku", escalate: "sonnet", top: "opus"}` | The model tiers, by the CLI's own model names. `driver: "none"` is rules only: no model is called and no text leaves. |
+| `models` | none | Legacy input only: migrate explicit settings with `chamberlain config migrate`. Live selections belong in top-level `models.mailDriver`, `models.mailEscalate` and `models.mailTop`; absent means no model. |
 | `budget` | `{driverCallsPerRun: 10, escalateCallsPerRun: 8, newsletterCallsPerRun: 3, topCallsPerRun: 0, inputTokensPerDay: 600000}` | Per-run and per-day caps; `topCallsPerRun` is 0 or 1. |
 | `important` | `{senders: [], words: ["invoice", "due", "contract", "tax", "court", "overdue"]}` | Senders (an address or `@domain`) and subject words whose mail is never cleaned without a tap. |
 | `newsletters` | `[]` | `[{"name": ..., "match": {"listId": ...} or {"sender": ...}, "maxHighlights": 1 to 5}]`. |
@@ -496,7 +496,6 @@ that are not config keys:
 | `CHAMBERLAIN_LOG` | unset | `debug`: also store `debug` rows in `obs.db` (otherwise a `debug` call is dropped). |
 | `CHAMBERLAIN_HOST` | the hostname | The `host` column of every row this process writes: lowercase letters, digits and dashes, 32 at most. |
 | `CHAMBERLAIN_ALARM_KEY` | set by Chamberlain | Not for you to set. It is in the environment of your `alertCmd` when Chamberlain runs it: the alarm's stable key (for example `steward-stalled`), so a command that pages someone can de-duplicate on it. |
-| `T3CODE_CLI_PATH` | auto | The `t3` binary `chamberlain ask` uses; otherwise `<t3Dir>/bin/t3`, then the newest installed runtime. |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where to find the Steward's Claude Code transcripts for health measurement. |
 | `ALERT_DESK_INBOX` | `~/.cache/alert-desk/inbox.jsonl` | The Alert Desk's inbox file. See [alert-desk.md](alert-desk.md). |
 | `DESK_ASK_PATH` | unset | The Alert Desk files a decision with `bun $DESK_ASK_PATH`; unset, with this build's own `chamberlain ask`. The hook and the standing prompt must see the same value. See [alert-desk.md](alert-desk.md). |

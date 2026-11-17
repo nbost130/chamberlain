@@ -121,10 +121,8 @@ describe("there is one send path", () => {
 			"adapters/t3/ping.ts",
 		]);
 	});
-	test("only ping.ts spawns the T3 CLI to send a message", () => {
-		expect(files.filter(([, c]) => /["'`]thread["'`]\s*,\s*["'`]send["'`]/.test(c)).map(([f]) => f)).toEqual([
-			"adapters/t3/ping.ts",
-		]);
+	test("no code spawns the T3 CLI to send a message", () => {
+		expect(files.filter(([, c]) => /["'`]thread["'`]\s*,\s*["'`]send["'`]/.test(c)).map(([f]) => f)).toEqual([]);
 	});
 });
 

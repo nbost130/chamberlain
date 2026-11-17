@@ -8,6 +8,8 @@ the hold-and-digest path folds a burst of families into one wake and a busy desk
 `docs/alert-desk-prompt.md`, a template: `chamberlain brief desk` prints it filled in from your config (`principalName`, the Steward's
 own server in `servers.json`, this checkout, and the morning sources below).
 
+Configure `models.desk` in the existing `config.json`. Only providers whose adapter enforces the existing Claude Agent hook are supported; other drivers and configured external gatherers are refused, with queued work retained. See [model configuration](MODELS.md). A model choice never installs or bypasses the hook.
+
 ```
 alert sources ──> ~/.cache/alert-desk/inbox.jsonl ──> drainAlertDesk (items decide) ──> outbox (receiver desk) ──> the relay (desk lane) ──> desk thread
  (any process,       one JSON line,                    window, 24 h repeat, cap          held while the desk is busy
@@ -96,15 +98,12 @@ switch them off; no restart is needed).
 Two things changed on purpose, and a desk that relied on either needs one line of config to behave as before:
 
 - **The morning hour is read in the machine's own time zone** unless `timezone` is set. To keep a zone, set it: `"timezone": "<an IANA zone>"`.
-- **No gatherer agent and no extra command shapes are built in.** The desk starts no agent, and only runs journalctl, systemctl, docker and
-  read-only `gh` and `git`, until you name them. To keep a wrapper tool or a gatherer agent you used before, add `"gatherer": "<agent name>"`
-  and a `commandShapes` entry for each command (the fields are below); a wrapper whose shape matches `gh` or `git` takes the same shape under its own name.
+- **No extra command shapes are built in.** Add a `commandShapes` entry for each allowed wrapper command (the fields are below). External gatherers are unsupported: keeping an old `gatherer` setting deliberately holds Desk execution until the operator removes it or a supported Chamberlain adapter exists.
 
 ## Switching it on
 
-1. Create the desk thread with the output of `chamberlain brief desk` as its first message, install the allowlist hook in its project, bind a
-   webhook scheduled task to it, and save its URL as `secrets/desk-wake-url` (0600) and its thread id as `threads.desk` in `config.json`.
-2. Add an `alertDesk` section to `config.json` (below) if you want a time zone, morning sources, extra command shapes or a gatherer agent.
+1. Configure `models.desk` and its server's existing operate-token grant in `config.json`, then run `chamberlain models selection desk`. Resolve the project on the returned `launch.environmentId` and install the allowlist hook there **before the first model turn**. Launch with that exact environment and `launch.modelSelection`, including every option, using the output of `chamberlain brief desk` as the first message. Failed preflight, an unavailable destination or a missing hook stops setup with work pending, with no alternate machine or model. Reuse the launch request id when reconciling an ambiguous result. After confirmation, bind a webhook scheduled task to the thread and save its URL as `secrets/desk-wake-url` (0600) and its thread id as `threads.desk` in `config.json`.
+2. Add an `alertDesk` section to `config.json` (below) if you want a time zone, morning sources or extra command shapes. Do not configure an external gatherer; its model and isolation contract is unsupported.
 3. `touch ~/.config/alert-desk/enabled` to switch the writers on.
 
 The alert-desk tables arrived with database migration 8, which an older build cannot open (a database from a newer build is refused);
@@ -112,12 +111,11 @@ back the database up first if you may go back ([CONFIGURATION.md](CONFIGURATION.
 
 ## Config
 
-The `alertDesk` section of `$CHAMBERLAIN_CONF/config.json` (all keys optional) and the environment. (It was the file `alert-desk.json`, which is still read until you delete it; [config-migration.md](config-migration.md).)
+The `alertDesk` section of `$CHAMBERLAIN_CONF/config.json` (all keys optional) and the environment. Legacy files move through [config migration](config-migration.md); they are not a second live settings source.
 
 ```json
 { "windowMinutes": 15, "repeatHours": 24, "dailyCap": 30, "morningHour": 7, "timezone": "Europe/London", "maxAgeHours": 6, "enabled": true, "startAt": "end",
   "morningCommands": ["bun /opt/monitor/report.ts list --limit <N> --json"], "morningNotes": "Skip the monitor's own heartbeat events.",
-  "gatherer": "evidence-reader",
   "commandShapes": { "opsctl": { "bare": true, "subcommands": { "health": { "positional": "word", "max": 1 }, "journal": { "flags": { "--limit": "digits" }, "positional": "word", "min": 1, "max": 1 } } } } }
 ```
 
@@ -147,9 +145,7 @@ flag given twice, in any spelling, is refused, and so is any flag or argument th
 `pr checks`) and `git` (`status`, `log`, `diff`), written in this same format (`src/core/desk-shapes.ts`); `journalctl`, `systemctl` and `docker` are code,
 and none of the five can be redefined. A malformed shape is left out whole, with a warning.
 
-**`gatherer`** is the name of an agent the desk may start to read evidence (the Agent tool, `subagent_type: <name>`, with only a prompt, a description and
-`run_in_background`; any other field is refused, so it cannot be widened into a checkout, another model or a remote run). The standing prompt names it, and
-the gatherer is under the same hook as the desk. Unset, the desk reads the evidence itself and the Agent tool is refused.
+**`gatherer`** is a preserved legacy setting for an external agent. Configuring it now refuses both initial launch preflight and later wakes, because that definition's model is outside central configuration. Unset, the desk reads evidence itself and the Agent tool is refused. The hook's legacy gatherer matcher remains for compatibility tests, not permission to execute an unsupported model path.
 
 `commandShapes` and `gatherer` widen what the desk may run, so, like `morningCommands`, they are read only when `config.json` is owned by you and no
 group or other user can write it.

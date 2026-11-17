@@ -20,6 +20,11 @@ import { current, findPrerequisite, prerequisiteBlocked, queuePrerequisite } fro
 export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false): Promise<OutboxRow[]> {
 	const { store } = r;
 	if (!r.d.lock.held()) return [];
+	const snap = l.desk ? undefined : readSnap(r);
+	const target = snap ? snap.wakeUrl : l.wake.target?.();
+	if (!(await prepared(r, l, row, { threadId: snap?.thread, target }))) return [];
+	if (!r.d.lock.held()) return [];
+	if (!l.desk && !sameGen(snap, readSnap(r))) return [];
 	if (row.attempts >= r.max) {
 		deadLetter(r, l, row, row.attempts);
 		return [];
@@ -30,7 +35,6 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 		return [];
 	}
 	// Sample once before any awaited rights work so CAS and POST share the same generation.
-	const snap = l.desk ? undefined : readSnap(r);
 	const { before, go } = await sendPrerequisites({ r, l, row, prerequisite, snap });
 	if (!go) return before;
 	// Generation moved during rights: do not POST under a stale rights decision; next pass rechecks.
@@ -43,9 +47,31 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	});
 	if (n === undefined) return before;
 	crashPoint("attempt-counted");
-	const result = await r.post(l, row, snap?.wakeUrl);
+	const result = await r.post(l, row, target);
 	const posted: Posted = { l, row, n, res: result, before };
 	return result.ok ? accepted(r, posted) : refused(r, posted);
+}
+
+async function prepared(
+	r: Ctx,
+	l: Lane,
+	row: OutboxRow,
+	destination: { threadId?: string; target?: string },
+): Promise<boolean> {
+	const state = await r.d.validateWake?.(row);
+	if (state === "cancel") {
+		r.store.wakes.cancel(row.deliveryId, r.clock());
+		return false;
+	}
+	if (state === "wait") return false;
+	if (!l.wake.prepare) return true;
+	try {
+		if (await l.wake.prepare(destination.threadId, destination.target)) return true;
+	} catch {
+		/* A preflight has sent no message; retain the row. */
+	}
+	r.notBefore.set(row.id, r.clock() + r.pause(1));
+	return false;
 }
 
 /** Dead-letter an oversized pending row without POSTing; raise the bound alarm once. */

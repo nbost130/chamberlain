@@ -179,7 +179,7 @@ describe("D enclosure and redaction", () => {
 	});
 
 	test("D12 timestamp comment cannot smuggle a credential", () => {
-		const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+		const token = SECRET_SHAPES.find(({ kind }) => kind === "gh")!.raw;
 		const r = triageRig({ desk: { morningHour: 23, startAt: "beginning" } });
 		const ts = `Fri Nov 13 2026 10:00:00 GMT-0500 (${token})`;
 		writeFileSync(

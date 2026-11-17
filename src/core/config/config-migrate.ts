@@ -29,6 +29,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { FlockBusyError, holdFlock, RelayLockUnavailableError } from "../flock.ts";
+import type { ThreadModel } from "../llm/selection.ts";
 import { isObject } from "./config-fold.ts";
 import { movedBeforeCrash, type Plan, planMigration } from "./config-plan.ts";
 import { ensureSecretsDir, syncDir, writeConfigFile, writeFileDurable } from "./layout.ts";
@@ -199,6 +200,27 @@ export function setThread(conf: string, member: ThreadKey, id: string): void {
 	});
 }
 
+/** Import existing T3 selections once, through the same locked configuration migration writer. Explicit settings win. */
+export function importThreadModels(
+	conf: string,
+	selections: Partial<Record<ThreadKey, { threadId: string; model: ThreadModel }>>,
+): string[] {
+	const imported: string[] = [];
+	updateConfig(conf, (doc) => {
+		if (doc.models === null) return;
+		const models = isObject(doc.models) ? { ...doc.models } : {};
+		const threads = isObject(doc.threads) ? doc.threads : {};
+		for (const [role, entry] of Object.entries(selections)) {
+			if (Object.hasOwn(models, role)) continue;
+			if (threads[role] !== entry.threadId) throw Error(`threads.${role} changed during model import`);
+			models[role] = entry.model;
+			imported.push(role);
+		}
+		doc.models = models;
+	});
+	return imported;
+}
+
 /**
  * What the daemon and the page do at every start. A config directory with old files and no config.json is migrated, with one `config-migrated`
  * line; a migration a crash cut short (config.json written, files not yet renamed) is finished. Old files a migration moved and something wrote
@@ -212,7 +234,7 @@ export function startupLayout(conf: string, log: (event: string, data?: Record<s
 	try {
 		const probe = planMigration(conf);
 		const todo = first ? probe.added.length + probe.secrets.filter((s) => s.action === "move").length : 0;
-		if (todo || probe.renames.length || existsSync(`${conf}/${JOURNAL}`)) {
+		if (todo || probe.renames.length || probe.added.length || existsSync(`${conf}/${JOURNAL}`)) {
 			const result = migrateLayout(conf);
 			if (result.skipped) log("config-migrate-failed", { why: result.skipped });
 			else if (result.changed)

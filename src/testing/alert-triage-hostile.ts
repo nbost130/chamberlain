@@ -1,3 +1,5 @@
+// Generated dummy values exercise credential redaction without storing credential-shaped literals.
+const tokens = { github: `ghp_${"a".repeat(36)}`, slack: `xoxb-${"a".repeat(21)}`, aws: `AKIA${"0".repeat(16)}` };
 /** Hostile corpus for alert-triage tests. Every string carries the marker ZQX. */
 export const ZQX = "ZQX";
 
@@ -24,9 +26,9 @@ const secrets = [
 	`Bearer abcdefghijklmnop${ZQX}`,
 	`eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature${ZQX}`,
 	`sk-abcdefghijklmnopqrstuvwxyz012345${ZQX}`,
-	`ghp_abcdefghijklmnopqrstuvwxyz0123456789${ZQX}`,
-	`xoxb-1234567890-abcdefghij${ZQX}`,
-	`AKIAIOSFODNN7EXAMPLE${ZQX}`,
+	`${tokens.github}${ZQX}`,
+	`${tokens.slack}${ZQX}`,
+	`${tokens.aws}${ZQX}`,
 	`https://hooks.slack.com/services/T00/B00/Xxx${ZQX}`,
 	`https://discord.com/api/webhooks/1/abc${ZQX}`,
 	`https://u:p@host.example/${ZQX}`,
@@ -51,9 +53,9 @@ export const SECRET_SHAPES: { raw: string; kind: string }[] = [
 	{ raw: "Bearer abcdefghijklmnop", kind: "bearer" },
 	{ raw: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature", kind: "jwt" },
 	{ raw: "sk-abcdefghijklmnopqrstuvwxyz012345", kind: "sk" },
-	{ raw: "ghp_abcdefghijklmnopqrstuvwxyz0123456789", kind: "gh" },
-	{ raw: "xoxb-1234567890-abcdefghij", kind: "slack-token" },
-	{ raw: "AKIAIOSFODNN7EXAMPLE", kind: "akia" },
+	{ raw: tokens.github, kind: "gh" },
+	{ raw: tokens.slack, kind: "slack-token" },
+	{ raw: tokens.aws, kind: "akia" },
 	{ raw: "https://hooks.slack.com/services/T00/B00/Xxx", kind: "slack-hook" },
 	{ raw: "https://discord.com/api/webhooks/1/abc", kind: "discord-hook" },
 	{ raw: "https://u:p@host.example/", kind: "url-userinfo" },

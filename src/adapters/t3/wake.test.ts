@@ -8,6 +8,25 @@ import { postWebhook } from "./wake.ts";
 const answer = (status: number) => (async () => new Response(null, { status })) as unknown as typeof fetch;
 
 describe("postWebhook", () => {
+	test("redirects cannot move a verified wake to another destination", async () => {
+		let received = 0;
+		const other = Bun.serve({
+			port: 0,
+			hostname: "127.0.0.1",
+			fetch: () => {
+				received++;
+				return new Response(null, { status: 202 });
+			},
+		});
+		const source = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.redirect(other.url, 307) });
+		try {
+			expect((await postWebhook(source.url.href, "id", "private test content")).ok).toBe(false);
+			expect(received).toBe(0);
+		} finally {
+			source.stop(true);
+			other.stop(true);
+		}
+	});
 	test("a 2xx is accepted", async () => {
 		expect(await postWebhook("http://h/x", "id", "m", answer(202))).toEqual({ ok: true, status: 202 });
 	});

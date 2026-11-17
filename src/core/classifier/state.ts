@@ -1,7 +1,7 @@
 /**
  * What one idle thread sends to a classifier provider, and the redaction it passes through first.
  *
- * Exactly this leaves the machine, and only for the `jev` and `haiku` providers: the thread title (unless `send.title` is false), the
+ * Exactly this leaves the machine, and only for the `jev` and `model` providers: the thread title (unless `send.title` is false), the
  * last `lastChars` characters of the last assistant message, and the last `previousChars` of the user message before it, labelled only
  * `human`, `agent` or `none`. Never thread ids, server names, file contents, tool output or the rest of the transcript.
  *

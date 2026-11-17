@@ -64,8 +64,8 @@ describe("classifyIdle", () => {
 	test("buildProvider: the config names the provider; the Jev key is read from the config directory's secrets at the call", async () => {
 		const conf = mkdtempSync(join(tmpdir(), "conf-"));
 		expect(buildProvider(cfg({ provider: "rules" }), conf).name).toBe("rules");
-		expect(buildProvider(cfg({ provider: "haiku" }), conf)).toMatchObject({ name: "haiku", model: "haiku" });
-		const jev = buildProvider(cfg(), conf);
+		expect(() => buildProvider(cfg({ provider: "haiku" }), conf)).toThrow("config migrate");
+		const jev = buildProvider(cfg({ jev: { model: "jev-1.14.0", keyFile: "typesafe.key", timeoutMs: 10000 } }), conf);
 		expect(jev).toMatchObject({ name: "jev", model: "jev-1.14.0" });
 		// No key file: the call fails before any request, and says where the key belongs.
 		await expect(
@@ -78,7 +78,7 @@ describe("classifyIdle", () => {
 		const secret = ["tsk", "live", "0123456789"].join("_");
 		writeFileSync(join(conf, "secrets", "typesafe.key"), secret, { mode: 0o644 });
 		chmodSync(join(conf, "secrets", "typesafe.key"), 0o644);
-		const err = await buildProvider(cfg(), conf)
+		const err = await jev
 			.classify({ previous_message: { from: "none", text: "" }, last_message: "x" }, DEFAULT_BANK)
 			.then(
 				() => "",

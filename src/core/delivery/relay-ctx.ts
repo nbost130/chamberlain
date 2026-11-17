@@ -37,6 +37,8 @@ export type RelayDeps = {
 	compact?: WakeTransport;
 	/** The Steward's thread, read fresh: held wakes are composed when it is idle (or at the ceiling). */
 	gate: () => Gate;
+	/** Fresh source-state check for queued failures. A recovered source cancels its obsolete wake. */
+	validateWake?: (row: OutboxRow) => Promise<"send" | "wait" | "cancel">;
 	log: (event: string, data?: Record<string, unknown>) => void;
 	alarm: (key: string, title: string, summary: string) => void;
 	/**

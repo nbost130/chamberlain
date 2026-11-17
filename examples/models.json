@@ -1,0 +1,18 @@
+{
+  "models": {
+    "decisions": {
+      "adapter": "t3",
+      "server": "your-server",
+      "instanceId": "your-provider-instance",
+      "model": "your-model",
+      "options": {}
+    },
+    "classifier": {
+      "adapter": "openai-chat",
+      "endpoint": "https://inference.example/v1/chat/completions",
+      "keyFile": "inference.key",
+      "model": "your-classifier-model",
+      "accountingUsdPerCall": 0.01
+    }
+  }
+}

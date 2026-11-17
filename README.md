@@ -43,8 +43,7 @@ The macOS binaries are not notarized. If Gatekeeper stops one that a browser dow
 
 ## Your first wake
 
-**1. Start the Steward.** Make the two directories private, print the Steward's first message, and send it as the first message of a new
-thread in T3. The Steward then creates its own wake webhook, tells Chamberlain where it is, and makes itself the thread that gets woken.
+**1. Configure and start the Steward.** Make the two directories private. Configure the server, its existing operate-token grant and `models.steward` in `config.json` using [model configuration](docs/MODELS.md). Run `chamberlain models selection steward`; use its `launch.environmentId` and exact `launch.modelSelection`, including all options, with T3's existing launch tool and a project on that environment. A failed preflight or unavailable destination stops setup, with no alternate machine or model. Use the first message printed below for that launch. The Steward then creates its wake webhook and registers itself.
 
 ```sh
 umask 077 && mkdir -p ~/.config/chamberlain ~/.local/state/chamberlain
@@ -61,7 +60,9 @@ chmod 600 ~/.config/chamberlain/secrets/read-token
 $EDITOR ~/.config/chamberlain/decision-rights.md
 ```
 
-**3. Run the daemon, and send one test wake.**
+**3. Configure each pinned thread's model.** In the same `config.json`, select its provider instance, model and supported options under `models.steward`, `models.decisions` and, if used, `models.desk`. Selection needs an existing operate-token grant for the configured server, separate from the watcher's read-only token. Follow [model configuration](docs/MODELS.md) for the schema and capability limits. On an upgraded installation, `chamberlain models import <server>` preserves the threads' existing selections; upgrade every process sharing the configuration before importing.
+
+**4. Run the daemon, and send one test wake.**
 
 ```sh
 chamberlain daemon                     # with Homebrew: brew services start chamberlain
