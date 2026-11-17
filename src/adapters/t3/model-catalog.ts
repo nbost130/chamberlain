@@ -4,6 +4,7 @@ import { firstValue } from "./rpc-first.ts";
 
 type Descriptor = { id: string; type: string; options?: { id: string }[] };
 export type Catalog = {
+	environment?: { environmentId?: string };
 	providers: {
 		instanceId: string;
 		driver?: string;

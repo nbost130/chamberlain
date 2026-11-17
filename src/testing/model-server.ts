@@ -13,6 +13,7 @@ export function modelServer() {
 	let selection: any = { instanceId: "old", model: "old", options: [] };
 	const state = {
 		driver: "claudeAgent",
+		instanceId: "other-provider",
 		busy: false,
 		failSend: false,
 		error: "send failed",
@@ -23,6 +24,7 @@ export function modelServer() {
 		legacyCatalogHangs: false,
 		malformedCatalog: false,
 		emptyCatalog: false,
+		environmentId: crypto.randomUUID() as string | undefined,
 	};
 	const server = Bun.serve({
 		hostname: "127.0.0.1",
@@ -53,9 +55,10 @@ export function modelServer() {
 				if (r.tag === "server.getConfig" && state.legacyCatalogHangs) return;
 				if (r.tag === "server.getConfig" || r.tag === "subscribeServerConfig")
 					value = {
+						environment: { environmentId: state.environmentId },
 						providers: [
 							{
-								instanceId: "other-provider",
+								instanceId: state.instanceId,
 								driver: state.driver,
 								enabled: !state.unavailable,
 								installed: true,

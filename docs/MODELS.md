@@ -2,9 +2,9 @@
 
 `config.json` is the only live settings document. The `models` section selects the execution adapter, provider, model and options for pinned threads and isolated readers. There is no default model and no automatic provider fallback. Edit this document to switch; selections are read for each operation. An omitted or null role is unconfigured, not permission to use Claude.
 
-## Pinned threads
+## T3 threads and launches
 
-`models.steward`, `models.decisions` and `models.desk` have this shape. Values below are placeholders to replace with entries from your T3 server's provider catalog:
+`models.steward`, `models.decisions`, `models.desk` and `models.butler` have this shape. Values below are placeholders to replace with entries from your T3 server's provider catalog:
 
 ```json
 {
@@ -23,6 +23,8 @@
 Use only option IDs and values that the selected model advertises; omit unsupported options. Providers must be enabled, installed, available and authenticated where required. A reported exhausted usage window blocks preparation until reset or an explicit configuration change. The existing `web.decisionsServer` or `web.answerTokens` operate-token grant authorizes selection on the named server; credentials remain in `secrets/`. Missing credentials never cause a CLI fallback.
 
 Model preparation and import read T3's authenticated configuration-stream snapshot. They do not wait for the full configuration endpoint's unrelated remote-network discovery or keep a second catalog on disk. Missing or malformed snapshots refuse execution.
+
+Shipped Steward handoff and Butler commands run `chamberlain models selection steward|butler` before launching. This read-only preflight returns `launch.environmentId` from the authenticated configured server and the exact `launch.modelSelection`, including options. The commands pass these fields unchanged to T3's existing launch tool, preserving its permission contract, and resolve the project on that environment. A failed preflight or unavailable destination retains the current work without launching. Butler requires an explicit `models.butler`; it has no inherited model, machine fallback or automatic effort escalation. The existing import migrates pinned threads only; it does not invent a Butler selection. Replace previously copied command templates when upgrading.
 
 Before sending, Chamberlain confirms the thread's selection through T3. A busy thread cannot change provider. Decisions also binds the validated selection to the dispatch command. Steward, compaction and Alert Desk retain their existing bound webhook transport and single outbox relay. Chamberlain verifies the exact destination against the selected server's authenticated scheduled-task snapshot: an enabled, unblocked webhook bound to that same thread, using the server's own endpoint or its advertised relay URL. Unknown, mismatched, signed or unbound tasks hold work without spending an attempt. The relay pins that verified URL across preparation and sending; HTTP redirects are refused. T3 uses the bound thread's current model. Configuring a model does not retarget a webhook or grant additional tools.
 
@@ -51,6 +53,8 @@ Mail currently exposes configuration, status and storage only; its processing pi
 | --- | --- | --- | --- |
 | Decisions (`src/decisions.ts`, `adapters/t3/post.ts`) | `models.decisions`, `threads.decisions`, existing web grant | T3 RPC via `model.ts` and `ping.ts` | Catalog selection/options, operate token, `html_render` tool supplied by T3; view capability only, never page key |
 | Steward and compaction (`adapters/t3/index.ts`) | `models.steward`, committed Steward generation (config thread is its mirror), existing wake/compact URLs | T3 selection preparation + existing webhook relay | Selection, rights and destination share one generation; a concurrent switch holds the send without consuming an attempt |
+| Steward handoff launch (`.claude/commands/steward-handoff.md`) | `models.steward` | `models selection steward` preflight + T3 launch tool | Initial turn uses the validated selection and authenticated environment, never the project default; existing triggers remain until switch confirmation |
+| Butler launch (`.claude/commands/steward-butler.md`) | `models.butler` | `models selection butler` preflight + T3 launch tool | Explicit model/options/server, no automatic escalation or machine fallback; ledger records only confirmed launches |
 | Alert Desk (`adapters/t3/index.ts`, `core/desk/`) | `models.desk`, `threads.desk`, `alertDesk` and desk webhook | Same preparation and relay; currently requires `claudeAgent` driver | Other drivers are unsupported because the tool allowlist uses a Claude hook; no silent fallback |
 | Desk gatherer (`core/desk/alert-desk-prompt.ts`, `desk-hook.ts`) | Legacy `alertDesk.gatherer` names an external agent definition | Unsupported by the central selection adapter | Preparation refuses configured gatherers; portable isolation and central selection remain unfinished |
 | Generic classifier (`core/classifier/model-provider.ts`) | `models.classifier`, `sweep.idleParents.classifier` policy | `core/llm/reader.ts` | No tools; redacted bounded state; consent and budgets; failure is unknown |
@@ -62,7 +66,7 @@ Mail currently exposes configuration, status and storage only; its processing pi
 | Provider health (`adapters/t3/steward.ts`, `transcript.ts`) | Configured Steward thread; `stewardTokens` opts into transcript measurement | T3 projection for general health; Claude transcript parser for optional token detail | Non-Claude transcript detail is unavailable, never falsely healthy; operational delivery does not require that detail |
 | Process infrastructure (`core/llm/spawn.ts`, `daemon.ts`) | Selected reader or existing daemon config | Argument-array subprocesses | No hidden model selection; test subprocesses are fixtures |
 
-Audit command: `rg -n 'claude|codex|model|provider|inference|Bun.spawn' src docs examples`. Claude mentions in the isolated CLI implementation, transcript parser, migration, examples and historical tests describe explicit contracts; they do not select a default provider.
+Audit commands: `rg -n 'claude|codex|model|provider|inference|Bun.spawn' src docs examples` and `rg -n --hidden 'model|provider|launch|delegate' .claude`. Hidden agent command templates are execution paths too. Claude mentions in the isolated CLI implementation, transcript parser, migration, examples and historical tests describe explicit contracts; they do not select a default provider.
 
 The remaining provider/model literals have explicit purposes: adapter and protocol identifiers select supported contracts; migration and database enums preserve historical records; tests use synthetic or explicitly configured models; historical classifier measurements name the models actually measured. The legacy `haikuProvider` helper is exercised by compatibility tests only: runtime configuration rejects `haiku` and routes configured readers through `models.classifier`. Butler records store an operator-supplied model as metadata and never execute it. Neither constitutes a live selection path.
 

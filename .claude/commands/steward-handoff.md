@@ -15,16 +15,17 @@ Hand the Steward role to a fresh thread. The operator runs this, or asks you to.
 
    Put notes in the brief, not orders. Never copy a webhook URL into it.
 
-2. **Start the new thread.** Call `t3_thread_launch` with:
+2. **Start the new thread with the configured selection.** Run `bun {{chamberlain}}/src/models.ts selection steward`. Its JSON contains `server` and `launch`. A failed command stops the handoff: retain the current thread and its triggers. Use the returned `launch.environmentId` for T3 calls; resolve this project's ID on that exact environment. An unavailable environment or project stops the handoff, with no alternate machine or model. Call `t3_thread_launch` with:
    - `title: "Steward"`
    - `workspaceStrategy: {type: "root"}`
-   - no `projectId` and no model, so it inherits this project's model
-   - a fresh `clientRequestId`
+   - `environmentId` and `modelSelection` copied exactly from `launch`, including every option
+   - `projectId` verified on that environment
+   - one fresh `clientRequestId`, reused if this same launch needs reconciliation
    - `message` set to the exact contents of `docs/steward-start.md`
 
 3. **Wait for it:** `t3_thread_wait` on the new thread, up to 5 minutes.
 
-4. **Check the switch.** `~/.config/chamberlain/steward-thread` must hold the new thread id, and `~/.config/chamberlain/wake-url.steward` must no longer exist. If either check fails, stop. Keep this thread's tasks, tell the operator exactly what failed, and remind them that `wake-url.prev` holds the old wake link.
+4. **Check the switch.** `bun {{chamberlain}}/src/cli.ts steward status` must show the committed generation using the new thread, and `bun {{chamberlain}}/src/cli.ts config get threads.steward` must show the same id. If either check fails, stop and retain this thread's tasks; tell the operator exactly what failed.
 
 5. **Retire this thread's triggers.** Run `list_scheduled_tasks`. Delete every task whose `boundThreadId` is this thread and whose title is `Chamberlain: Steward wake` or `Chamberlain: Steward compact`. Also delete one-shot reminders bound to this thread that have already run. A reminder that has not run yet is never deleted: name it in step 6 so the new Steward can recreate it.
 

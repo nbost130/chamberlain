@@ -1,7 +1,16 @@
 /** Explicit model selections in config.json. No model, provider or billing defaults. */
 import { object, required } from "../config/config-fields.ts";
 
-const MODEL_ROLES = ["steward", "decisions", "desk", "classifier", "mailDriver", "mailEscalate", "mailTop"] as const;
+const MODEL_ROLES = [
+	"steward",
+	"decisions",
+	"desk",
+	"butler",
+	"classifier",
+	"mailDriver",
+	"mailEscalate",
+	"mailTop",
+] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 type Options = Record<string, string | boolean>;
 export type ThreadModel = { adapter: "t3"; server: string; instanceId: string; model: string; options: Options };
@@ -110,7 +119,7 @@ export function parseModels(raw: unknown): ModelSelections {
 			"timeoutMs",
 			"accountingUsdPerCall",
 		]);
-		const pinned = ["steward", "decisions", "desk"].includes(role);
+		const pinned = ["steward", "decisions", "desk", "butler"].includes(role);
 		if (pinned) {
 			object(o, where, ["adapter", "server", "instanceId", "model", "options"]);
 			if (o.adapter !== "t3") throw Error(`${where}: pinned threads require the t3 adapter`);

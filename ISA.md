@@ -1,6 +1,6 @@
 ---
 phase: climbing
-progress: 8/9
+progress: 7/9
 ---
 
 # Provider-independent model selection
@@ -26,12 +26,12 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 
 ## Criteria
 
-- [x] ISC-1: Every model-dependent surface is inventoried. Falsifier: an unlisted call site in the source audit.
+- [x] ISC-1: Every model-dependent surface, including shipped agent launch templates, is inventoried. Falsifier: an unlisted call site in source or hidden setup templates.
 - [x] ISC-2: Central configuration owns all supported model selections; unsupported Desk combinations are refused. Falsifier: a runtime provider/model default, an unsupported Desk send, or a webhook destination not verified against the selected server and thread.
 - [x] ISC-3: Configured selection and failure behavior pass regression tests. Falsifier: an integration test fails.
 - [x] ISC-4: Repository checks pass. Falsifier: `bun run checks` exits nonzero.
 - [x] ISC-5: Non-Claude Decisions renders and relays a test answer. Falsifier: missing render or persisted answer evidence.
-- [x] ISC-6: Independent review passes. Falsifier: unresolved reviewer finding.
+- [ ] ISC-6: Independent review passes. Falsifier: unresolved reviewer finding.
 - [x] ISC-7: A recovered thread does not cause stale provider-failure wake cascades. Falsifier: replaying Claude failure, Grok recovery, then delayed Claude failure produces a new failure wake or retries obsolete work.
 - [x] ISC-8: The final source and setup audit contains no active hard-coded model binding. Falsifier: a supported execution or setup path bypasses the documented central selection.
 - [ ] ISC-9: The reviewed change ships through the normal release path, with compatible processes installed before live model configuration. Falsifier: a live process rejects the migrated schema or the deployed revision differs from the reviewed release.
@@ -74,6 +74,10 @@ No new keys written into the live config before the pinned daemon supports them.
 - The CLI-sender architecture assertion is approved to require zero CLI senders; its single RPC sender assertion is unchanged.
 
 ## Status
+
+Fresh review of f9a8f99 found two missed shipped launch paths: Steward handoff inherited the project's default, and Butler chose a model and machine ad hoc. Both are in scope. The launch templates must consume validated central selections before their first turn, and Butler must require its own explicit models.butler selection. The audit includes hidden command templates; no upstream T3 changes are authorized. Publication remains held for these fixes and a fresh review.
+
+The shipped templates now consume the read-only `models selection` preflight, which returns the authenticated server identity and centrally configured model/options. The existing T3 launch tool retains its permission contract. Handoff retains its current tasks on preflight failure; Butler requires an explicit selection and no longer escalates models/effort or changes machines automatically. Integration tests exercise both roles, switching providers, missing credentials, invalid options, quota, unavailable server identity, and the real CLI output. Copied templates must be updated during release/cutover.
 
 Frozen HEAD 03eb805 passed all 3486 tests, all repository checks, binary smoke, real Grok render/answer relay, and fresh Sol source review (62 independent safety tests). Publication then stopped at the public-content gate because pre-existing hostile-test fixtures contained credential-shaped synthetic strings. Those fixtures must generate obvious dummy credentials at runtime while preserving every redaction assertion; the scanner remains unchanged. Final checks and Sol review also cover that fixture-only release repair.
 

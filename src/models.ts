@@ -1,4 +1,6 @@
 /** One-time adoption of the pinned threads' existing selections; config.json owns them thereafter. */
+
+import { launchSelection } from "./adapters/t3/launch-selection.ts";
 import { modelConnection, validateThreadModel } from "./adapters/t3/model.ts";
 import { readModelCatalog } from "./adapters/t3/model-catalog.ts";
 import { openWithin } from "./adapters/t3/ping.ts";
@@ -57,8 +59,12 @@ export async function adoptThreadModels(conf: string, server: string, dryRun = f
 
 export async function main(argv = process.argv.slice(2)) {
 	const [action, server, ...extra] = argv;
+	if (action === "selection" && (server === "steward" || server === "butler") && extra.length === 0) {
+		console.log(JSON.stringify(await launchSelection(CONF, server)));
+		return;
+	}
 	if (action !== "import" || !server || extra.some((v) => v !== "--dry-run"))
-		throw Error("usage: bun src/models.ts import <configured-server> [--dry-run]");
+		throw Error("usage: models import <configured-server> [--dry-run] | models selection <steward|butler>");
 	const dryRun = extra.includes("--dry-run");
 	console.log(
 		`${dryRun ? "Would import" : "Imported"} existing thread selections into config.json: ${(await adoptThreadModels(CONF, server, dryRun)).join(", ") || "none (explicit choices preserved)"}`,

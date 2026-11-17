@@ -50,7 +50,7 @@ const ABOUT: Record<CommandName, string> = {
 	web: "serve the decision-queue page (--test: fixture data, loopback only); web link: print its links with the key; web rotate-token: new key, old links stop",
 	ask: "put one question on the decision queue ('<json>' or - for stdin)",
 	decisions: "decisions repost: post the pinned Decisions view again in its thread (the view key only; no question)",
-	models: "models import <server>: preserve pinned threads' existing model selections in config.json",
+	models: "models import <server> [--dry-run] | selection <steward|butler>: central model selections",
 	afk: "away mode and the held ledger: enter|status|hold|held|note|close|close-card|brief|exit",
 	decided: "log a self-answer, or list the last ones",
 	ruling: "propose a ruling, record one stated in chat, or list them",
