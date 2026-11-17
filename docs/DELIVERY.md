@@ -15,13 +15,32 @@ whose delivery id it has already handled as a repeat and do nothing more.
   the same id.
 - A row that used its attempts is kept as a **dead letter** and reported, never sent without end and never dropped for its age; you
   decide what happens to it (below).
-- While the Steward is busy, wakes wait in a held store and go out as one **digest** when it is idle again (or after a 20-minute
-  ceiling), each member keeping its own id. A holdable `turn_ended` is queued slim (one-line outcome, server, threadId, rights
+- While the Steward is busy, turn ends, sweeps, decision-queue answers and threads' notes wait in a held store and go out as one
+  **digest** when it is idle again (or after a 20-minute ceiling; three minutes for an answer), each member keeping its own id. Answers
+  and notes are never folded. A question, an approval or a failure is never held: the thread behind it is blocked until the Steward acts. A holdable `turn_ended` is queued slim (one-line outcome, server, threadId, rights
   pointer — no full rights block and no Last-message fence); Steward peeks the thread for detail. A rights gap still gets one
   rights-first prerequisite at send time, not a full block copied into every held item.
 
 The windows that remain, exactly, are in [ARCHITECTURE.md](ARCHITECTURE.md#delivery-guarantees-and-the-windows-that-remain). The crash
 tests start the real daemon and page as child processes and kill them at each step.
+
+## Reports from other threads: `chamberlain note`
+
+A thread that reports to the Steward with a message straight into the Steward's thread (`t3_thread_send`) queues a turn of its own,
+however busy the Steward is. `chamberlain note` sends the same report through the outbox instead:
+
+```sh
+chamberlain note --from "<your thread's title>" --thread <your thread id> [--server <name>] '<the report>'
+chamberlain note --from "<your thread's title>" --thread <your thread id> - < report.txt
+```
+
+The note is held (kind `note`): an idle Steward gets it at once, a busy one gets it in its next digest, each note its own item and never
+folded into another. Its delivery id is made from the sender and the text, so the same note sent twice is one wake. Run it on the Steward's
+machine, where the daemon reads the database; from another machine, over ssh. It refuses (exit 3) when no daemon has beaten in that
+state directory in the last five minutes, because a note written where no daemon reads would never go: send it with `t3_thread_send` then.
+A note is at most 8000 characters and must fit the relay's 24,000-byte bound once UTF-8 encoded, with room for a Steward switch's transfer
+header; put longer detail in a file and send its path. `--from` is one line of at most 120 characters, and `--thread` and `--server` are
+single tokens: they sit outside the report's fence, so anything else is refused.
 
 ## Dead letters
 
@@ -42,5 +61,7 @@ five minutes therefore dead-letters the wakes written meanwhile; with no wake UR
 
 `retry` works only on a dead letter, so it can never add a send beside one in progress. `cancel` works on a pending row or a dead letter
 and keeps it as a **tombstone**: the row and the ids it carries stay, so nothing queues them again, and it is not recorded as delivered. A
-decision-queue answer whose wake you cancel stays recorded as answered; tell the Steward in chat. Any id a row carries works, a digest
-member's included.
+decision-queue answer whose wake you cancel stays recorded as answered; tell the Steward in chat. `retry` takes any id a row carries, a
+digest member's included. `cancel` takes a digest only by its own id: a digest is one row, so cancelling it gives up every answer, note and
+turn end in it, and a member's id alone is refused with the digest's id and members named. A held wake (`list` names each one) has no row
+yet, so there is nothing to cancel until it is composed.

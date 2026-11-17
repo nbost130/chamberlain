@@ -68,9 +68,13 @@ export const startRelay = (store: Store, itemId: string): boolean => store.claim
 export const finishRelay = (store: Store, itemId: string, outcome: "delivered" | "failed", detail?: string) =>
 	store.claims.finishRelay(QUEUE, itemId, { outcome, detail });
 
-/** Writes a claim's wake (or the message given, a fallback) as an outbox row. False when the outbox already knows its id. */
+/**
+ * Writes a claim's wake (or the message given, a fallback) into the outbox as a held `answer` (hold.ts): it goes at once to an idle Steward,
+ * and while the Steward is busy it waits and rides the next digest with the other answers, never as a turn of its own. False when the outbox
+ * already knows its id.
+ */
 export const enqueueClaim = (store: Store, c: Claim, message = c.message, now = Date.now()): boolean =>
-	store.wakes.enqueue({ deliveryId: c.deliveryId, message, queuedAt: now });
+	store.wakes.hold({ deliveryId: c.deliveryId, message, queuedAt: now, kind: "answer" });
 
 /**
  * The claims a process owns are its wakes, whatever happened to the process that made them. Run at startup and on every heartbeat:

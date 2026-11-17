@@ -19,6 +19,7 @@ import {
 	accepted,
 	daemon,
 	diedAt,
+	heldOnDisk,
 	outbox,
 	registerCrashHooks,
 	rows,
@@ -129,7 +130,7 @@ describe("page path: the real queue server dies answering a real request, and th
 	);
 
 	test(
-		"after the commit: the claim, the answer and the pending row are one commit, and the relay sends the one wake",
+		"after the commit: the claim, the answer and the held wake are one commit, and the relay sends the one wake",
 		async () => {
 			const { w, r } = await crash("committed");
 			expect(r).toBe("connection lost");
@@ -139,7 +140,8 @@ describe("page path: the real queue server dies answering a real request, and th
 				answer: { label: "Photo first", note: "go with the photo" },
 			});
 			expect(getQuestion(w.store, ID)).toMatchObject({ status: "answered", delivered: false });
-			expect(outbox(w)).toEqual([{ delivery_id: DELIVERY, status: "pending", attempts: 0 }]);
+			expect(outbox(w)).toEqual([]);
+			expect(heldOnDisk(w)).toEqual([{ delivery_id: DELIVERY, kind: "answer" }]);
 			expect(accepted).toHaveLength(0);
 			await daemon(w, () => accepted.length > 0);
 			wakes(ID, DELIVERY);

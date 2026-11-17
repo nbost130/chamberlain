@@ -25,28 +25,48 @@ function reqText(o: Raw, k: string): string {
 /** `{}` unless `cond`, so an optional field is left off an item rather than set to undefined. */
 const when = <T extends object>(cond: unknown, fields: T): Partial<T> => (cond ? fields : {});
 
-/** Option `n`'s thread routing (its `route: "thread"` and the `relay` text the thread gets), or undefined for a steward option; a malformed one is refused. */
-function parseRouting(opt: Raw | undefined, n: number): { route: "thread"; relay: string } | undefined {
-	const route = opt?.route;
-	if (route !== undefined && route !== null && route !== "thread" && route !== "steward")
+/** The relay text an option gets when the item-wide `route: "thread"` sends it to the thread and it names no relay of its own. */
+export const DEFAULT_RELAY = "Carry on with this choice.";
+
+/** The item-wide route every option without its own takes: "thread", or undefined for the default, the Steward. */
+function parseItemRoute(o: Raw): "thread" | undefined {
+	const r = o.route;
+	if (r === undefined || r === null || r === "steward") return undefined;
+	if (r !== "thread") throw Error('ask: "route" must be "thread" or "steward"');
+	return r;
+}
+
+/**
+ * Option `n`'s thread routing (its `route: "thread"` and the `relay` text the thread gets), or undefined for a steward option; a malformed
+ * one is refused. An option with no route of its own takes the item's (`fallback`), and then its relay text defaults to DEFAULT_RELAY.
+ */
+function parseRouting(
+	opt: Raw | undefined,
+	n: number,
+	fallback?: "thread",
+): { route: "thread"; relay: string } | undefined {
+	const own = opt?.route ?? undefined;
+	if (own !== undefined && own !== "thread" && own !== "steward")
 		throw Error(`ask: option ${n} route must be "thread" or "steward"`);
 	const rawRelay = opt?.relay;
 	if (rawRelay !== undefined && rawRelay !== null && typeof rawRelay !== "string")
 		throw Error(`ask: option ${n} relay must be a string`);
 	const relay = typeof rawRelay === "string" ? rawRelay.trim() : "";
-	if (route === "thread" && !relay)
+	// No route of its own: the item's, with the default relay text when it gives none.
+	if (own === undefined && fallback) return { route: fallback, relay: relay || DEFAULT_RELAY };
+	if (own === "thread" && !relay)
 		throw Error(`ask: option ${n} routes to the thread, so it needs relay text: the exact instruction the thread gets`);
 	// relay text only ever applies to a thread-routed option, so a steward option keeps none.
-	return route === "thread" ? { route, relay } : undefined;
+	return own === "thread" ? { route: own, relay } : undefined;
 }
 
 /** Option number `i + 1`: a label, or an object with a label, an optional detail and an optional route. */
-function parseOption(x: unknown, i: number): Option {
+function parseOption(x: unknown, i: number, fallback?: "thread"): Option {
 	const opt = typeof x === "object" && x !== null ? (x as Raw) : undefined;
 	const label = typeof x === "string" ? x : opt?.label;
 	if (typeof label !== "string" || !label.trim()) throw Error(`ask: option ${i + 1} needs a label`);
 	const detail = typeof opt?.detail === "string" ? opt.detail.trim() : undefined;
-	const routing = parseRouting(opt, i + 1);
+	const routing = parseRouting(opt, i + 1, fallback);
 	return {
 		label: label.trim().replace(/\s*\(Recommended\)\s*$/i, ""),
 		...when(detail, { detail }),
@@ -56,7 +76,8 @@ function parseOption(x: unknown, i: number): Option {
 
 /** The options, two to nine of them (none are needed for a secret). */
 function parseOptions(o: Raw, secret: boolean): Option[] {
-	const options = (Array.isArray(o.options) ? o.options : []).map(parseOption);
+	const fallback = parseItemRoute(o);
+	const options = (Array.isArray(o.options) ? o.options : []).map((x, i) => parseOption(x, i, fallback));
 	if (!secret && options.length < 2) throw Error("ask: give at least two options");
 	if (options.length > 9) throw Error("ask: at most nine options (keys 1-9)");
 	return options;
@@ -97,8 +118,9 @@ function checkProposedExpiry(proposedRuling: string | undefined, proposedExpires
 	if (isExpired({ expires: proposedExpires })) throw Error("ask: proposedExpires is already past");
 }
 
-/** An option routed to the thread needs the item's threadId, and a secret never routes to a thread. */
-function checkThreadRouting(o: Raw, options: Option[], secret: boolean): void {
+/** An option routed to the thread needs the item's threadId, and a secret (`secret: true`, or a tag naming a secret) never routes to a thread. */
+function checkThreadRouting(o: Raw, options: Option[], flagged: boolean): void {
+	const secret = flagged || /secret/i.test(optText(o, "tag") ?? "");
 	const toThread = options.some((x) => x.route === "thread");
 	if (toThread && !optText(o, "threadId")) throw Error("ask: an option routed to the thread needs the item's threadId");
 	if (secret && toThread)

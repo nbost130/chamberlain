@@ -92,7 +92,7 @@ for (const [label, origin] of [
 					expect(s.logs.filter((l) => l.event === "snoozed")).toMatchObject([{ key: "view" }]);
 				} else {
 					expect(readClaim(s.store, "Q-abcd")?.answer).toMatchObject({ by: "page", key: "view" });
-					expect(s.store.wakes.rows("all")).toHaveLength(1);
+					expect(s.store.wakes.rows("all").length + s.store.wakes.held().length).toBe(1);
 					const event = action === "answer" ? "answered" : action === "direction" ? "directed" : "dismissed";
 					expect(s.logs.filter((l) => l.event === event)).toMatchObject([{ key: "view" }]);
 				}

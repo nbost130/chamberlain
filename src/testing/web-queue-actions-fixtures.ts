@@ -113,8 +113,9 @@ export function useWebQueueActionsFixtures() {
 	const hold = (store: Store, id: string) =>
 		appendHeld(store, { thread: "Billing thread", what: `waits on ${id}`, item: id }, new Date(T0 - HOUR));
 
+	/** Every wake the page wrote: outbox rows, then held items (an answer's wake is held until the Steward is idle, hold.ts). */
 	const wakes = (s: { store: Store }) =>
-		s.store.wakes.rows("all").map((r) => ({ id: r.deliveryId, message: r.message }));
+		[...s.store.wakes.rows("all"), ...s.store.wakes.held()].map((r) => ({ id: r.deliveryId, message: r.message }));
 
 	return { ORIGIN, T0, HOUR, iso, question, ROUTES, bodyFor, setup, world, hold, wakes };
 }

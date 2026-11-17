@@ -41,6 +41,7 @@ export const COMMANDS = {
 	daemon: "src/daemon.ts",
 	web: "src/web/server.ts",
 	ask: "src/ask.ts",
+	note: "src/note.ts",
 	decisions: "src/decisions.ts",
 	afk: "src/core/ops/afk.ts",
 	decided: "src/core/ops/decided.ts",

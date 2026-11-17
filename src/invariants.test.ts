@@ -174,10 +174,11 @@ function pageApp(dir: string) {
 	});
 }
 /** The wakes written to the outbox: the relay sends each row, and nothing else. */
-const rowsOf = (dir: string) =>
-	connect(dir)
-		.wakes.rows("all")
-		.map((r) => r.deliveryId);
+/** Every wake written: outbox rows, then held items (an answer's wake is held until the Steward is idle, hold.ts). */
+const rowsOf = (dir: string) => {
+	const s = connect(dir);
+	return [...s.wakes.rows("all"), ...s.wakes.held()].map((r) => r.deliveryId);
+};
 const answerReq = (app: ReturnType<typeof createApp>, choice: number) =>
 	app.fetch(
 		new Request("http://127.0.0.1:3790/api/items/Q-abcd1/answer", {

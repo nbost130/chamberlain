@@ -7,7 +7,7 @@ import { useStewardSwitchFixtures } from "../../testing/steward-switch-fixtures.
 import { createRelay } from "../delivery/relay.ts";
 import { encodedSendBytes, TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import { composeWake } from "./hold.ts";
-import { composeDigestBatch } from "./hold-digest-batch.ts";
+import { composeDigestBatch, TRANSFER_WRAP_RESERVE_BYTES } from "./hold-digest-batch.ts";
 
 const { confWorld, memStoreSeeded } = useStewardSwitchFixtures();
 
@@ -111,5 +111,30 @@ describe("held digest byte cap at compose", () => {
 		expect(s.wakes.find(id)?.status).toBe("dead_letter");
 		expect(alarms.some((a) => a.includes("digest-oversized"))).toBe(true);
 		expect(alarms.some((a) => a.includes("transfer-oversized"))).toBe(false);
+	});
+});
+
+describe("digest budget for answers", () => {
+	const item = (id: string, kind: string, bytes: number, queuedAt: number) => ({
+		deliveryId: id,
+		message: "x".repeat(bytes),
+		queuedAt,
+		kind,
+	});
+
+	test("a digest of several wakes leaves room for a transfer header; a lone wake may use the full cap", () => {
+		const half = Math.floor((TRANSFER_DIGEST_MAX_BYTES - TRANSFER_WRAP_RESERVE_BYTES) / 2);
+		const two = [item("a", "answer", half, 1), item("b", "answer", half, 2)];
+		// Together they would fit the full cap, but not the cap less the transfer reserve: only the first goes.
+		expect(composeDigestBatch(two, 10)!.members).toEqual(["a"]);
+		const big = item("c", "turn_ended", TRANSFER_DIGEST_MAX_BYTES - 1024, 1);
+		expect(composeDigestBatch([big], 10)!.members).toEqual(["c"]);
+	});
+
+	test("answers are admitted before older wakes, so the answer whose deadline forced the digest is in it", () => {
+		const old = item("old", "turn_ended", TRANSFER_DIGEST_MAX_BYTES - TRANSFER_WRAP_RESERVE_BYTES - 1500, 1);
+		const answer = item("ans", "answer", 2000, 5);
+		const batch = composeDigestBatch([old, answer], 10)!;
+		expect(batch.members).toEqual(["ans"]);
 	});
 });

@@ -125,7 +125,8 @@ function deliveredLog(l: Lane, row: OutboxRow, n: number, res: WakeResult): Reco
 		deliveryId: row.deliveryId,
 		...(res.status !== undefined ? { http: res.status } : {}),
 		attempt: n,
-		queuedAt: row.createdAt,
+		// A lone held wake keeps the time it was held, not the time it was composed, so its wait counts in queue-waits.
+		queuedAt: digest ? row.createdAt : (only?.queuedAt ?? row.createdAt),
 		...(row.kind ? { kind: row.kind } : {}),
 		...(row.thread ? { thread: row.thread } : {}),
 		...(l.name ? { receiver: l.name } : {}),

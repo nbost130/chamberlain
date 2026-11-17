@@ -39,7 +39,8 @@ Fill in the angle brackets and send it as the message.
 >
 > **Your job:** <scope>
 > **Your list:** <PRs or items, each with its repo and URL>
-> **Steward thread:** <thread id> on environment <environment id>. Send everything to it with `t3_thread_send`, mode `queue`.
+> **Steward thread:** <thread id> on environment <environment id>, Chamberlain on <the Steward's machine>.
+> **How you send.** Send everything as a note: `bun {{chamberlain}}/src/note.ts --from "Butler: <scope in four words>" --thread <your thread id> '<text>'`, run on <the Steward's machine> (from any other machine, `ssh <the Steward's machine> '<that command>'`). A note waits while the Steward works and reaches it in its next digest, so it never queues a turn of its own behind the Steward. Only if the command exits non-zero, send the same text with `t3_thread_send`, mode `queue`.
 >
 > **What you do.** Watch each PR on your list with `watch_pull_request` from your own thread. When one is ready, collect what the job asks for, for example the head SHA and the check state. Keep it exact; copy the tool's words.
 >

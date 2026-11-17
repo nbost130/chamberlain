@@ -1,6 +1,6 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "../crash.ts";
-import { type composeWake, observe } from "../decide/hold.ts";
+import { type composeWake, observe, overdue } from "../decide/hold.ts";
 import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
 import { alarms } from "../messages.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "../steward/rights-sent.ts";
@@ -83,18 +83,21 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	if (transfers.length && !others.length && !composeTransferBatch(transfers, now)) return;
 	if (others.length && !transfers.length && !composeDigestBatch(others, now)) return;
 	const look = observe(l.look, l.gate(), now, r.ceiling);
-	if (!look.post) return;
+	// A held answer past its own short ceiling goes now, with everything held beside it, however busy the receiver is.
+	const due = !look.post && overdue(heldNow, now);
+	if (!look.post && !due) return;
 	let kept: string[] = [];
 	const row = store.wakes.compose(now, (held) => digestOf(l, held, now, (k) => (kept = k)), l.name);
 	if (!row) return;
 	crashPoint("composed");
-	if (look.forced) l.look.lastForcedAt = now;
+	// An answer's deadline forcing the digest uses up the ceiling's window too: the ceiling would only send a second turn behind it.
+	if (look.forced || due) l.look.lastForcedAt = now;
 	d.log("composed", {
 		deliveryId: row.deliveryId,
 		members: row.members.map((m) => m.deliveryId),
 		kept,
 		folded: row.folded,
-		...(look.forced ? { forced: "ceiling" } : {}),
+		...(look.forced ? { forced: "ceiling" } : due ? { forced: "answer" } : {}),
 	});
 }
 

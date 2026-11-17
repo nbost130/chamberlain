@@ -34,6 +34,7 @@ describe("the queue page's answers", () => {
 			log: () => {},
 			hosts: [HOST],
 			staticDir: x.root,
+			now: () => x.w.t,
 		});
 		const answer = async (id: string, choice: number) => {
 			const r = await app.fetch(
@@ -49,44 +50,121 @@ describe("the queue page's answers", () => {
 		return { answer, recover: () => app.recover() };
 	}
 
-	test("an answer is a pending row the moment it is recorded, sent alone while the Steward is busy; the held turn ends wait and fold", async () => {
+	test("an answer to an idle Steward goes at once, alone, under its own id", async () => {
 		const x = world();
 		askQuestion(x.store(), item("Q-abcd"));
-		askQuestion(x.store(), item("Q-efgh"));
-		x.w.gate = "busy";
 		const web = page(x),
 			relay = x.relay();
-		x.deliver("[chamberlain] turn_ended: thread A", "t:A:1", TE("A"));
 		const a = await web.answer("Q-abcd", 0);
 		expect(a).toMatchObject({ status: 200, body: { recorded: true, wake: "queued" } });
-		// Recorded with its row: the page sent nothing itself.
-		expect(x.store().wakes.find("answer:item:Q-abcd")).toMatchObject({ status: "pending", attempts: 0 });
+		// Recorded and held: the page sent nothing itself.
+		expect(x.held()).toEqual(["answer:item:Q-abcd"]);
 		expect(x.w.accepted).toHaveLength(0);
 		await relay.pass();
 		expect(x.w.accepted.map((w) => w.deliveryId)).toEqual(["answer:item:Q-abcd"]);
 		expect(x.w.accepted[0]!.message).toContain("decision-queue item Q-abcd");
+		expect(x.w.accepted[0]!.message).not.toContain("digest");
 		expect(questionStates(x.store()).get("Q-abcd")!.delivered).toBe(true);
+		await web.recover();
+		await relay.pass();
+		expect(x.w.accepted).toHaveLength(1);
+	});
+
+	test("answers given while the Steward is busy wait together, are never folded, and go as one digest after three minutes at most", async () => {
+		const x = world();
+		for (const id of ["Q-abcd", "Q-efgh", "Q-ijkl"]) askQuestion(x.store(), item(id));
+		x.w.gate = "busy";
+		const web = page(x),
+			relay = x.relay();
+		x.deliver("[chamberlain] turn_ended: thread A", "t:A:1", TE("A"));
+		expect((await web.answer("Q-abcd", 0)).status).toBe(200);
+		x.advance(MIN);
 		expect((await web.answer("Q-efgh", 1)).status).toBe(200);
 		x.deliver("[chamberlain] turn_ended: thread A again", "t:A:2", TE("A"));
 		await relay.pass();
-		expect(x.w.accepted.map((w) => w.deliveryId)).toEqual(["answer:item:Q-abcd", "answer:item:Q-efgh"]);
-		expect(x.held()).toEqual(["t:A:1", "t:A:2"]);
-		await web.recover();
+		// Busy, and the oldest answer is a minute old: nothing goes, and the Steward's queue gets no turn per answer.
+		expect(x.w.accepted).toHaveLength(0);
+		x.advance(MIN);
+		expect((await web.answer("Q-ijkl", 0)).status).toBe(200);
 		await web.recover();
 		await relay.pass();
-		expect(x.w.accepted).toHaveLength(2);
-		x.w.gate = "idle";
+		expect(x.w.accepted).toHaveLength(0);
+		// Three minutes after the first answer, everything held goes as ONE wake, busy or not.
 		x.advance(MIN);
 		await relay.pass();
-		expect(x.w.accepted).toHaveLength(3);
-		const m = x.w.accepted[2]!.message;
+		expect(x.w.accepted).toHaveLength(1);
+		const m = x.w.accepted[0]!.message;
+		expect(x.w.accepted[0]!.deliveryId).toStartWith("digest:");
+		// All three answers are about the same thread, and each is its own item: none is folded.
+		for (const id of ["Q-abcd", "Q-efgh", "Q-ijkl"]) expect(m).toContain(`decision-queue item ${id}`);
 		expect(m).toContain("thread A again");
-		expect(m).not.toContain("decision-queue item");
 		expect(m).toContain("1 earlier wake about the same thread and kind was folded");
+		expect(x.held()).toEqual([]);
+		for (const id of ["Q-abcd", "Q-efgh", "Q-ijkl"]) expect(questionStates(x.store()).get(id)!.delivered).toBe(true);
 		await web.recover();
 		await relay.pass();
 		await page(x).recover();
-		expect(x.w.accepted).toHaveLength(3);
+		expect(x.w.accepted).toHaveLength(1);
+	});
+
+	test("a busy Steward that goes idle gets the held answers at once, before their ceiling", async () => {
+		const x = world();
+		for (const id of ["Q-abcd", "Q-efgh"]) askQuestion(x.store(), item(id));
+		x.w.gate = "busy";
+		const web = page(x),
+			relay = x.relay();
+		await web.answer("Q-abcd", 0);
+		await web.answer("Q-efgh", 1);
+		await relay.pass();
+		expect(x.w.accepted).toHaveLength(0);
+		x.w.gate = "idle";
+		x.advance(MIN);
+		await relay.pass();
+		expect(x.w.accepted).toHaveLength(1);
+		expect(x.w.accepted[0]!.message).toContain("decision-queue item Q-abcd");
+		expect(x.w.accepted[0]!.message).toContain("decision-queue item Q-efgh");
+	});
+
+	test("an answer stamped by a clock ahead of the relay's goes at once, busy or not: no clock correction holds it past its ceiling", async () => {
+		const x = world();
+		x.w.gate = "unknown";
+		x.store().wakes.hold({ deliveryId: "answer:item:Q-fut", message: "m", queuedAt: x.w.t + 10 * MIN, kind: "answer" });
+		await x.relay().pass();
+		expect(x.w.accepted.map((w) => w.deliveryId)).toEqual(["answer:item:Q-fut"]);
+	});
+
+	test("an answer-forced digest uses up the ceiling's window, logs why it went, and a lone answer logs when it was held", async () => {
+		const x = world();
+		x.w.gate = "busy";
+		const relay = x.relay();
+		await relay.pass();
+		x.advance(17 * MIN);
+		x.deliver("answer", "answer:item:Q-1", { kind: "answer" });
+		const heldAt = x.w.t;
+		x.advance(3 * MIN);
+		await relay.pass();
+		expect(x.w.accepted.map((w) => w.deliveryId)).toEqual(["answer:item:Q-1"]);
+		expect(x.events.find((e) => e.event === "composed")).toMatchObject({ forced: "answer" });
+		expect(x.events.find((e) => e.event === "delivered")).toMatchObject({ queuedAt: heldAt });
+		// Busy for the whole 20-minute ceiling now, but a digest was just forced: a turn end held a second later waits.
+		x.advance(1000);
+		x.deliver("[chamberlain] turn_ended: thread A", "t:A:1", TE("A"));
+		x.advance(MIN);
+		await relay.pass();
+		expect(x.w.accepted).toHaveLength(1);
+		expect(x.held()).toEqual(["t:A:1"]);
+	});
+
+	test("held notes and answers about one thread are never folded into the latest", () => {
+		const held: HeldItem[] = [
+			{ deliveryId: "answer:item:Q-1", message: "one", queuedAt: 1, kind: "answer", thread: "T" },
+			{ deliveryId: "answer:item:Q-2", message: "two", queuedAt: 2, kind: "answer", thread: "T" },
+			{ deliveryId: "note:a", message: "report a", queuedAt: 3, kind: "note", thread: "T" },
+			{ deliveryId: "note:b", message: "report b", queuedAt: 4, kind: "note", thread: "T" },
+		];
+		const c = composeWake(held, 10);
+		expect(c.folded).toBe(0);
+		expect(c.kept).toEqual(held.map((h) => h.deliveryId));
 	});
 
 	test("needs_input, failed and any other kind are pending rows at once while the Steward is busy, never behind held turn ends", async () => {

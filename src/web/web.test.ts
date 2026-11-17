@@ -79,7 +79,8 @@ describe("answering an item", () => {
 		expect(first.delivered()).toHaveLength(0);
 		// The process stops. A new one starts over the same files, and now the webhook answers.
 		const second = setup({ root: first.root });
-		expect(second.store.wakes.rows().map((w) => w.deliveryId)).toEqual(["answer:item:Q-abcd"]);
+		// Held, not yet a row: the answer waits for an idle Steward (hold.ts), and the next daemon sends it.
+		expect(second.store.wakes.held().map((w) => w.deliveryId)).toEqual(["answer:item:Q-abcd"]);
 		await second.tick();
 		expect(second.delivered().map((p) => p.deliveryId)).toEqual(["answer:item:Q-abcd"]);
 		expect(getQuestion(second.store, "Q-abcd")!.delivered).toBe(true);

@@ -7,7 +7,7 @@
  *
  * JSON: {kind: "only-you"|"product"|"ruling"|"idea", title, context, options: [{label, detail, route?: "thread"|"steward",
  *        relay?}], recommended?: index, proposedRuling?, proposedExpires?, evidence?: [{type: "image"|"video"|"link", path|url, caption}],
- *        thread, server, threadId?, blocks?, tag?, secret?, urgent?, notSettled?}
+ *        thread, server, threadId?, route?: "thread"|"steward", blocks?, tag?, secret?, urgent?, notSettled?}
  * `urgent: false` marks a question that can wait: it is recorded and listed on the queue page below the urgent ones, but
  * nothing is posted where the operator reads, so no notification goes out. Leave it off and the question is urgent.
  * An approval (tag "Approval") or a secret (`secret: true` or tag "Secret") is ALWAYS urgent: `urgent: false` on one is
@@ -24,6 +24,9 @@
  * step the thread can carry out alone, like a product or design pick or leave for its own next step. Keep "steward" for
  * anything complex or needing oversight (a gate, a release, a "hold" or "no" that needs re-planning). A note from the
  * principal, or a thread send that fails, always comes to the Steward as an answer wake.
+ * A thread asking about its own work sets `"route": "thread"` on the item instead: every option without a route of its own then goes
+ * straight back to `threadId`, its relay text defaulting to "Carry on with this choice." when it gives none. A plain pick then costs the
+ * Steward no turn at all. Mark the odd option that needs oversight `"route": "steward"`.
  * Lines of `context` that start with "- " render as bullets on the queue page and the Decisions view; write a few short ones.
  * Prints the item ID. A secret item posts no card: its value is entered in its own thread, never on a card or the page.
  */

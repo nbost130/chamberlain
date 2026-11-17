@@ -163,7 +163,11 @@ describe("recoverClaims: which claims it sends", () => {
 		const store = rig();
 		const r = await recoverClaims({ store, owns: (o) => o === "me", log: () => {} });
 		expect(r.sent).toEqual(["Q-own01", "Q-err01"]);
-		expect(store.wakes.find("answer:item:Q-own01")).toMatchObject({ message: "wake Q-own01" });
+		// An answer's wake is held (hold.ts): the relay sends it alone to an idle Steward, or in the next digest.
+		expect(store.wakes.held(null).find((h) => h.deliveryId === "answer:item:Q-own01")).toMatchObject({
+			message: "wake Q-own01",
+			kind: "answer",
+		});
 		const done: string[] = [];
 		const again = await recoverClaims({
 			store: rig(),
