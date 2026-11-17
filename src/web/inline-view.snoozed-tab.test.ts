@@ -183,14 +183,14 @@ describe("a card snoozed in the Waiting tab", () => {
 			},
 		});
 		await settle();
-		await press(dq, "Snooze");
+		await press(dq, "Snooze 1h");
 		expect(pane(dq, 0).textContent).toContain("Snoozed. It returns ");
 		expect(count(tab(dq, "Snoozed"))).toBe("1");
 		items = [item("x")]; // its time passed, or it was brought back
 		snoozed = [];
 		await press(dq, "Refresh");
 		expect(pane(dq, 0).textContent).not.toContain("Snoozed. It returns ");
-		expect(pane(dq, 0).all((e) => e.tag === "button" && e.textContent === "Snooze")).toHaveLength(1);
+		expect(pane(dq, 0).all((e) => e.tag === "button" && e.textContent === "Snooze 1h")).toHaveLength(1);
 		expect(count(tab(dq, "Snoozed"))).toBe("0");
 	});
 });

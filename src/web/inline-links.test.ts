@@ -149,7 +149,7 @@ async function everyLink(s: S, top: boolean): Promise<string[]> {
 		await settle();
 		collect(dq);
 		// after a tap on Snooze: what the card offers then
-		const snooze = dq.all((e) => e.tag === "button" && e.textContent === "Snooze")[0];
+		const snooze = dq.all((e) => e.tag === "button" && e.textContent === "Snooze 1h")[0];
 		if (snooze) {
 			const tapped = run(() => q, {
 				src,
@@ -157,7 +157,7 @@ async function everyLink(s: S, top: boolean): Promise<string[]> {
 				post: () => ({ status: 200, body: { ok: true, until: later } }),
 			});
 			await settle();
-			for (const fn of tapped.all((e) => e.tag === "button" && e.textContent === "Snooze")[0]!.listeners.click ?? [])
+			for (const fn of tapped.all((e) => e.tag === "button" && e.textContent === "Snooze 1h")[0]!.listeners.click ?? [])
 				await fn();
 			await settle();
 			collect(tapped);

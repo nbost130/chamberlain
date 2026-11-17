@@ -1,6 +1,7 @@
 /**
- * The Decisions view acts in place (Q-lxixg99db): little buttons along each card's bottom edge, one tap is one request, no confirmation and no
- * page change, and the card then says what happened or shows the error. Run against the in-memory DOM (src/testing/inline-dom.ts); the server
+ * The Decisions view acts in place (Q-lxixg99db), with no page change, and the card then says what happened or shows the error. An answer is a pick
+ * from the card's choice list, then one tap on the answer button under it (Nathan, 2026-11-17); every other button is one tap, one request.
+ * The list itself is src/web/inline-buttons.test.ts. Run against the in-memory DOM (src/testing/inline-dom.ts); the server
  * side of the same four writes, and what the view key may not do, is src/web/view-key.test.ts.
  */
 import { describe, expect, test } from "bun:test";
@@ -48,6 +49,12 @@ function view(post: (path: string, body: any) => { status: number; body: unknown
 const labels = (dq: El) =>
 	dq.all((e) => e.tag === "button" && e.className.split(" ").includes("dq-btn")).map((b) => b.textContent);
 const button = (dq: El, text: string) => dq.all((e) => e.tag === "button" && e.textContent === text)[0]!;
+/** An option's row in the choice list, by its label; the answer button under the list. */
+const opt = (dq: El, label: string) =>
+	dq.all(
+		(e) => e.className.split(" ").includes("dq-opt") && e.all((x) => x.className === "dq-l")[0]?.textContent === label,
+	)[0]!;
+const answerBtn = (dq: El) => dq.all((e) => e.className.split(" ").includes("dq-confirm"))[0]!;
 const tap = async (dq: El, text: string) => {
 	for (const fn of button(dq, text).listeners.click ?? []) await fn();
 	await settle();
@@ -64,33 +71,36 @@ const msg = (dq: El) =>
 		.at(-1)!;
 
 describe("the buttons along a card's bottom edge", () => {
-	test("each option, then Snooze, Dismiss and Direction, in one row; the recommended option is marked; no radio, no note box until Direction", async () => {
+	test("the options as a choice list with the recommended one chosen, then Snooze, Dismiss and Direction; no note box until Direction", async () => {
 		const { dq } = view(() => ok({}));
 		await settle();
-		expect(labels(dq)).toEqual(["Ship it", "Wait", "Cancel", "Snooze", "▾", "Dismiss", "Direction"]);
-		expect(button(dq, "Wait").className).toContain("rec");
-		expect(button(dq, "Ship it").className).not.toContain("rec");
+		expect(labels(dq)).toEqual(["Snooze 1h", "▾", "Dismiss", "Direction"]);
+		expect(opt(dq, "Wait").className).toContain("sel");
+		expect(opt(dq, "Ship it").className).not.toContain("sel");
+		expect(answerBtn(dq).textContent).toBe("Wait");
 		expect(dq.all((e) => e.tag === "input")).toHaveLength(0);
 		expect(dq.all((e) => e.tag === "textarea")[0]!.parent!.style.display).toBe("none");
-		expect(dq.textContent).toContain("Ship it: today");
+		expect(opt(dq, "Ship it").textContent).toBe("Ship ittoday");
 	});
 	test("a secret and a card pointer get Snooze and Dismiss, and no direction field", async () => {
 		for (const extra of [{ secret: true }, { cardRequest: "r1" }]) {
 			const { dq } = view(() => ok({}), [item(extra)]);
 			await settle();
-			expect(labels(dq)).toEqual(["Snooze", "▾", "Dismiss"]);
+			expect(labels(dq)).toEqual(["Snooze 1h", "▾", "Dismiss"]);
 			expect(dq.all((e) => e.tag === "textarea")).toHaveLength(0);
 		}
 	});
 });
 
 describe("one tap is one request", () => {
-	test("an option answers at once: one POST with the choice and nothing else, the card says answered, the buttons go, the count drops", async () => {
+	test("picking an option sends nothing; the answer button is one POST with the choice and nothing else, the card says answered, the buttons go, the count drops", async () => {
 		const { dq, posts, headers } = view((_path, body) =>
 			ok({ ok: true, choice: body.choice === 0 ? "Ship it" : "Wait", to: "steward" }),
 		);
 		await settle();
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("1 waiting");
+		for (const fn of opt(dq, "Ship it").listeners.click ?? []) await fn();
+		expect(posts()).toEqual([]);
 		await tap(dq, "Ship it");
 		expect(posts()).toEqual([{ method: "POST", path: "/api/items/Q-act1/answer", body: { choice: 0 } }]);
 		expect(headers.find((h) => h["x-decision-queue"])).toMatchObject({
@@ -99,13 +109,14 @@ describe("one tap is one request", () => {
 		});
 		expect(msg(dq).textContent).toBe("Answered: Ship it. Recorded; the wake to the Steward is queued.");
 		expect(labels(dq)).toEqual([]);
+		expect(dq.all((e) => e.className.includes("dq-opt") || e.className.includes("dq-confirm"))).toEqual([]);
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("clear");
 	});
 	test("Snooze: one POST for an hour on, the card says when it returns and offers Un-snooze in place (no link to the full page)", async () => {
 		const at = Date.now();
 		const { dq, posts, calls } = view((_p, body) => ok({ ok: true, until: body.until }));
 		await settle();
-		await tap(dq, "Snooze");
+		await tap(dq, "Snooze 1h");
 		expect(posts()).toHaveLength(1);
 		expect(posts()[0]).toMatchObject({ path: "/api/items/Q-act1/snooze" });
 		const until = Date.parse(posts()[0]!.body.until);
@@ -178,7 +189,7 @@ describe("an error shows on the card, and the buttons come back", () => {
 			expect(msg(dq).className).toContain("dq-bad");
 			expect(msg(dq).textContent).toBe(shown);
 			expect(button(dq, "Wait").disabled).toBe(false);
-			expect(button(dq, "Snooze").disabled).toBe(false);
+			expect(button(dq, "Snooze 1h").disabled).toBe(false);
 			expect(dq.querySelector(".dq-count")!.textContent).toBe("1 waiting");
 			status_ = 200;
 			await tap(dq, "Wait");

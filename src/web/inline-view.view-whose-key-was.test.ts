@@ -76,7 +76,7 @@ describe("links out of the view", () => {
 			expect(anchors(dq).map((a) => [a.text, a.href])).toEqual([
 				["Open the thread", "http://queue.test/open/mac/t2?k=KEY"],
 			]);
-			expect(buttons(dq)).toEqual(["Snooze", "▾", "Dismiss"]);
+			expect(buttons(dq)).toEqual(["Snooze 1h", "▾", "Dismiss"]);
 		}
 	});
 	test("no /open path, no thread link: never a raw t3-thread:// or other custom-scheme href, which the frame cannot open", async () => {
@@ -181,7 +181,7 @@ describe("a secret question whose secret box has closed", () => {
 		expect(dq.textContent).toContain("Request expired. Its secret box is closed: ask the thread to reopen it.");
 		expect(dq.textContent).not.toContain("A secret is entered in its own thread");
 		expect(dq.all((e) => e.tag === "a").map((a) => a.textContent)).toEqual(["Open the thread"]);
-		expect(buttons(dq)).toEqual(["Snooze", "▾", "Dismiss"]);
+		expect(buttons(dq)).toEqual(["Snooze 1h", "▾", "Dismiss"]);
 		expect(dq.all((e) => e.tag === "button" && e.className === "dq-go")).toEqual([]);
 	});
 	test("an open box, an unknown state or any other value reads as before", async () => {

@@ -85,7 +85,7 @@ describe("a snoozed note in Waiting follows its item", () => {
 			},
 		});
 		await settle();
-		await click(button(dq, "Snooze"));
+		await click(button(dq, "Snooze 1h"));
 		expect(pane(dq, 0).textContent).toContain("Snoozed. It returns ");
 		await click(tab(dq, "Snoozed"));
 		await click(button(dq, "Dismiss"));
@@ -108,7 +108,7 @@ describe("a snoozed note in Waiting follows its item", () => {
 			},
 		});
 		await settle();
-		await click(button(dq, "Snooze"));
+		await click(button(dq, "Snooze 1h"));
 		await click(button(dq, "Refresh"));
 		expect(pane(dq, 0).textContent).toContain("Snoozed. It returns ");
 	});
