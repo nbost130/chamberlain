@@ -54,12 +54,31 @@ function parseOption(x: unknown, i: number): Option {
 	};
 }
 
-/** The options, two to nine of them (none are needed for a secret). */
+/** True when this ask is a secret: `secret: true` or the tag "Secret". */
+function isSecretAsk(secret: boolean, tag: string | undefined): boolean {
+	return secret || /^\s*secret\s*$/i.test(tag ?? "");
+}
+
+/** The options, two to nine of them (a secret must have none). */
 function parseOptions(o: Raw, secret: boolean): Option[] {
 	const options = (Array.isArray(o.options) ? o.options : []).map(parseOption);
 	if (!secret && options.length < 2) throw Error("ask: give at least two options");
 	if (options.length > 9) throw Error("ask: at most nine options (keys 1-9)");
 	return options;
+}
+
+/**
+ * A secret that cannot be completed is refused before anything is recorded: options are never shown or answered on a
+ * secret, and a secret is entered only in the thread named by `threadId`.
+ */
+function checkSecretAsk(o: Raw, options: Option[], secret: boolean, tag: string | undefined): void {
+	if (!isSecretAsk(secret, tag)) return;
+	if (options.length > 0)
+		throw Error(
+			"ask: a secret question cannot have options; file a non-secret choice question first, then a secret request in its thread",
+		);
+	if (!optText(o, "threadId"))
+		throw Error("ask: a secret question needs a threadId; a secret is entered in its own thread");
 }
 
 /** The preselected option's index from 0, or undefined when none is given. */
@@ -133,16 +152,17 @@ export function parseAsk(
 	const kind = reqText(o, "kind") as Question["kind"];
 	if (!KINDS.includes(kind)) throw Error(`ask: kind must be one of ${KINDS.join(", ")}`);
 	const secret = o.secret === true;
-	const options = parseOptions(o, secret);
+	const tag = optText(o, "tag");
+	const options = parseOptions(o, isSecretAsk(secret, tag));
 	const recommended = parseRecommended(o, options.length);
 	const evidence = (Array.isArray(o.evidence) ? o.evidence : []).map(parseEvidenceItem);
 	const proposedRuling = optText(o, "proposedRuling");
 	const proposedExpires = optText(o, "proposedExpires");
 	checkProposedExpiry(proposedRuling, proposedExpires);
+	checkSecretAsk(o, options, secret, tag);
 	checkThreadRouting(o, options, secret);
 	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
 	const notSettled = optText(o, "notSettled");
-	const tag = optText(o, "tag");
 	const keepDemotion = keepsDemotion(o, secret, tag, warn);
 	return {
 		id,

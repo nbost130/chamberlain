@@ -1,10 +1,11 @@
 /** ask, continued: see ask.test.ts for the overview. */
 
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { queueBase, stageEvidence } from "./ask.ts";
 import type { Question } from "./core/items/questions.ts";
+import { dbPath } from "./core/store/store.ts";
 import { base, ID, mk } from "./testing/ask-fixtures.ts";
 
 describe("stageEvidence", () => {
@@ -184,5 +185,24 @@ describe("main: the inline view's key", () => {
 		expect(down.code).toBe(1);
 		const unset = await ask(scratch(undefined));
 		expect(unset.err).not.toContain("key");
+	});
+	test("a refused secret leaves the store and evidence dir untouched", async () => {
+		const d = scratch(undefined);
+		const state = `${d}/state`;
+		const r = await run(
+			d,
+			JSON.stringify({
+				...base,
+				secret: true,
+				options: ["open intake", "defer"],
+				notSettled: "test",
+			}),
+		);
+		expect(r.code).toBe(1);
+		expect(r.err.trim()).toBe(
+			"ask: a secret question cannot have options; file a non-secret choice question first, then a secret request in its thread",
+		);
+		expect(existsSync(dbPath(state))).toBe(false);
+		expect(existsSync(`${state}/evidence`)).toBe(false);
 	});
 });

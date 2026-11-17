@@ -78,8 +78,8 @@ describe("(a) everything that waits on the operator goes through the queue first
 		for (const [o, what] of [
 			[{ tag: "Approval", title: "Approve the payroll export" }, "an approval"],
 			[{ tag: "approval", title: "Approve the ledger rebuild" }, "an approval"],
-			[{ secret: true, options: [], title: "Paste the payroll API key" }, "a secret"],
-			[{ tag: "Secret", title: "Rotate the vendor key" }, "a secret"],
+			[{ secret: true, options: [], threadId: "th", title: "Paste the payroll API key" }, "a secret"],
+			[{ tag: "Secret", options: [], threadId: "th", title: "Rotate the vendor key" }, "a secret"],
 		] as const) {
 			const r = ask(d, { ...o, urgent: false, notSettled: "test" });
 			expect(r.stderr).toContain(`"urgent": false ignored: ${what} is always urgent`);
