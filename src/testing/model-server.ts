@@ -8,6 +8,8 @@ const dispatchType = messageCommand({ threadId: "fixture", text: "", identity: "
 export function modelServer() {
 	const conf = mkdtempSync(`${tmpdir()}/chamberlain-model-`);
 	const requests: { tag: string; payload: any }[] = [];
+	const tasks: any[] = [];
+	const posts: string[] = [];
 	let selection: any = { instanceId: "old", model: "old", options: [] };
 	const state = {
 		driver: "claudeAgent",
@@ -18,11 +20,18 @@ export function modelServer() {
 		ignoreSelection: false,
 		unauthenticated: false,
 		exhausted: false,
+		legacyCatalogHangs: false,
+		malformedCatalog: false,
+		emptyCatalog: false,
 	};
 	const server = Bun.serve({
 		hostname: "127.0.0.1",
 		port: 0,
-		fetch(req, server) {
+		async fetch(req, server) {
+			if (new URL(req.url).pathname.startsWith("/wake")) {
+				posts.push(await req.text());
+				return new Response(null, { status: 202 });
+			}
 			if (new URL(req.url).pathname === "/.well-known/t3/environment")
 				return Response.json({ serverVersion: "0.1.9", orchestrationProtocolVersion: 2 });
 			if (new URL(req.url).pathname === "/ws") {
@@ -37,7 +46,12 @@ export function modelServer() {
 				if (r._tag !== "Request") return;
 				requests.push({ tag: r.tag, payload: r.payload });
 				let value: any = {};
-				if (r.tag === "server.getConfig")
+				if (r.tag === "scheduledTasks.subscribe") {
+					ws.send(JSON.stringify({ _tag: "Chunk", requestId: r.id, values: [{ tasks }] }));
+					return;
+				}
+				if (r.tag === "server.getConfig" && state.legacyCatalogHangs) return;
+				if (r.tag === "server.getConfig" || r.tag === "subscribeServerConfig")
 					value = {
 						providers: [
 							{
@@ -60,6 +74,13 @@ export function modelServer() {
 							},
 						],
 					};
+				if (r.tag === "subscribeServerConfig" && !state.emptyCatalog) {
+					const snapshot = state.malformedCatalog
+						? { type: "snapshot", config: {} }
+						: { type: "snapshot", config: value };
+					ws.send(JSON.stringify({ _tag: "Chunk", requestId: r.id, values: [snapshot] }));
+					return;
+				}
 				if (r.tag === "orchestration.getThreadProjection")
 					value = {
 						thread: { modelSelection: selection },
@@ -97,6 +118,18 @@ export function modelServer() {
 		config,
 		state,
 		requests,
+		tasks,
+		posts,
+		bindWake: (url: string, threadId: string) => {
+			const existing = tasks.find((t) => t.webhook?.url === url);
+			if (existing) {
+				existing.threadId = threadId;
+				return existing;
+			}
+			const task = { enabled: true, threadId, schedule: { type: "webhook" }, webhook: { url, path: "/wake" } };
+			tasks.push(task);
+			return task;
+		},
 		save,
 		selection: () => selection,
 		sent: () =>

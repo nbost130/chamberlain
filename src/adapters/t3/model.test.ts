@@ -47,6 +47,27 @@ test("Decisions dispatch carries the validated selection, without relying on a l
 	expect(s.requests.at(-1)?.payload.modelSelection).toEqual(s.selection());
 });
 
+test("unrelated full-config discovery cannot block model selection", async () => {
+	const s = setup();
+	s.state.legacyCatalogHangs = true;
+	expect((await configuredPing(s.conf, "decisions", "selected provider remains usable")).ok).toBe(true);
+	expect(s.requests.some((r) => r.tag === "server.getConfig")).toBe(false);
+	expect(s.requests.find((r) => r.tag === "subscribeServerConfig")?.payload).toEqual({
+		workspaceSnapshotsOnDemand: true,
+		providerCatalogsOnDemand: true,
+	});
+});
+
+test("empty and malformed catalog snapshots never select or send", async () => {
+	for (const failure of ["emptyCatalog", "malformedCatalog"] as const) {
+		const s = setup();
+		s.state[failure] = true;
+		expect((await configuredPing(s.conf, "decisions", "must not send")).ok).toBe(false);
+		expect(s.selection().instanceId).toBe("old");
+		expect(s.sent()).toBe("");
+	}
+});
+
 test("Alert Desk rejects providers without the existing command-hook boundary and unmanaged gatherers", async () => {
 	const s = setup();
 	s.state.driver = "grok";
@@ -81,6 +102,8 @@ test("a matching selection is idempotent and failures never silently select a di
 
 test("wake preflight failure sends nothing and recovers after an operator selection change", async () => {
 	const s = setup();
+	const url = `${s.config.servers[0]!.origin}/wake`;
+	s.bindWake(url, "steward-id");
 	let calls = 0;
 	const wake = modelWake(
 		{
@@ -94,10 +117,10 @@ test("wake preflight failure sends nothing and recovers after an operator select
 		"steward",
 	);
 	s.state.unavailable = true;
-	expect(await wake.prepare!()).toBe(false);
+	expect(await wake.prepare!(undefined, url)).toBe(false);
 	expect(calls).toBe(0);
 	s.state.unavailable = false;
-	expect(await wake.prepare!()).toBe(true);
+	expect(await wake.prepare!(undefined, url)).toBe(true);
 	await wake.send("id", "message");
 	expect(calls).toBe(1);
 });

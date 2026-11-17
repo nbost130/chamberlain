@@ -27,13 +27,13 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 ## Criteria
 
 - [x] ISC-1: Every model-dependent surface is inventoried. Falsifier: an unlisted call site in the source audit.
-- [x] ISC-2: Central configuration owns all supported model selections; unsupported Desk combinations are refused. Falsifier: a runtime provider/model default outside explicit configuration or an unsupported Desk send.
+- [x] ISC-2: Central configuration owns all supported model selections; unsupported Desk combinations are refused. Falsifier: a runtime provider/model default, an unsupported Desk send, or a webhook destination not verified against the selected server and thread.
 - [x] ISC-3: Configured selection and failure behavior pass regression tests. Falsifier: an integration test fails.
 - [x] ISC-4: Repository checks pass. Falsifier: `bun run checks` exits nonzero.
 - [x] ISC-5: Non-Claude Decisions renders and relays a test answer. Falsifier: missing render or persisted answer evidence.
-- [x] ISC-6: Independent review passes. Falsifier: unresolved reviewer finding.
+- [ ] ISC-6: Independent review passes. Falsifier: unresolved reviewer finding.
 - [x] ISC-7: A recovered thread does not cause stale provider-failure wake cascades. Falsifier: replaying Claude failure, Grok recovery, then delayed Claude failure produces a new failure wake or retries obsolete work.
-- [ ] ISC-8: The final source and setup audit contains no active hard-coded model binding. Falsifier: a supported execution or setup path bypasses the documented central selection.
+- [x] ISC-8: The final source and setup audit contains no active hard-coded model binding. Falsifier: a supported execution or setup path bypasses the documented central selection.
 - [ ] ISC-9: The reviewed change ships through the normal release path, with compatible processes installed before live model configuration. Falsifier: a live process rejects the migrated schema or the deployed revision differs from the reviewed release.
 
 ## Anti-criteria
@@ -74,6 +74,12 @@ No new keys written into the live config before the pinned daemon supports them.
 - The CLI-sender architecture assertion is approved to require zero CLI senders; its single RPC sender assertion is unchanged.
 
 ## Status
+
+Release review found that model preparation and webhook delivery could address different servers or threads. Publication is held until Chamberlain verifies the actual pinned URL against the selected server's existing scheduled-task contract, refuses mismatches without spending attempts, and passes fresh checks and review. No upstream change is needed.
+
+Live acceptance also reproduced two catalog timeouts: T3's full configuration request waits for unrelated network discovery. Its existing configuration stream returned the same provider catalog in 954 ms. Model preparation and migration must use that stream, with regression coverage proving an unavailable full-config request cannot block a configured provider. Unknown catalog data still fails closed.
+
+Both adapter fixes are implemented. The mismatched-server control failed before the fix and passes now; destination, redirect, queued-work and compaction regressions pass. The full suite passed 3484 tests after updating only the two switched-thread crash fixtures' fake webhook bindings. The final catalog-stream change then passed 18 focused integration tests and a real configured Grok repost without changing live configuration. Final frozen-tree full checks and independent review remain release gates; their output belongs to the release evidence, not a predicted pass here.
 
 Source scope verified; publication/cutover is separate. `docs/MODELS.md` inventories configuration owners, adapters and capability boundaries. Both `bun test` and `bun run checks` passed 3426 tests with zero failures and 20666 assertions. Final source review by a fresh Sol agent reported `VERDICT: PASS` within the accepted scope. Its nonzero-exit billing and concurrent-import reporting findings were fixed and independently retested.
 

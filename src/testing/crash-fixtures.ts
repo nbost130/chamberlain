@@ -88,6 +88,7 @@ export async function world(id: string) {
 	const port = await freePort();
 	secret(`${conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port }));
 	const models = modelServer();
+	models.bindWake(`http://127.0.0.1:${hook.port}/wake`, "crash-steward-thread");
 	modelServers.push(models);
 	secret(`${conf}/test-token`, "test-only");
 	secret(
@@ -132,7 +133,7 @@ export async function world(id: string) {
 			await Bun.sleep(25);
 		}
 	};
-	return { root, conf, state, port, key, env, store, events, spawn, until };
+	return { root, conf, state, port, key, env, store, events, spawn, until, bindWake: models.bindWake };
 }
 export type World = Awaited<ReturnType<typeof world>>;
 

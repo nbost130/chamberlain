@@ -5,9 +5,10 @@ import { configureThread } from "./model.ts";
 /** Selection failure is a failed delivery, so the existing outbox retains its work. */
 export function modelWake(wake: WakeTransport, conf: string, role: ThreadKey): WakeTransport {
 	return Object.assign(wake, {
-		prepare: async (threadId?: string) => {
+		prepare: async (threadId?: string, target?: string) => {
 			try {
-				await configureThread(conf, role, threadId);
+				if (!target) return false;
+				await configureThread(conf, role, threadId, target);
 			} catch {
 				return false;
 			}

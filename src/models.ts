@@ -1,5 +1,6 @@
 /** One-time adoption of the pinned threads' existing selections; config.json owns them thereafter. */
 import { modelConnection, validateThreadModel } from "./adapters/t3/model.ts";
+import { readModelCatalog } from "./adapters/t3/model-catalog.ts";
 import { openWithin } from "./adapters/t3/ping.ts";
 import { connect } from "./adapters/t3/rpc.ts";
 import { CONF } from "./core/config/config.ts";
@@ -17,7 +18,7 @@ export async function adoptThreadModels(conf: string, server: string, dryRun = f
 	const rpc = await openWithin(connect, origin, token, 15_000);
 	const found: Partial<Record<ThreadKey, { threadId: string; model: ThreadModel }>> = {};
 	try {
-		const catalog = await within(rpc.request("server.getConfig", {}), 15_000, "catalog");
+		const catalog = await readModelCatalog(rpc);
 		for (const role of THREADS) {
 			if (current && Object.hasOwn(current, role)) continue;
 			const id = thread(conf, role);

@@ -139,7 +139,12 @@ export type RpcPingDeps = {
 };
 
 /** Opens a connection with a deadline. One that arrives after it is closed at once, so no socket or timer lingers. */
-export function openWithin(conn: NonNullable<RpcPingDeps["connect"]>, origin: string, token: string, ms: number) {
+export function openWithin<T extends Pick<Rpc, "request"> & { ws: { close(): void } }>(
+	conn: (origin: string, token: string) => Promise<T>,
+	origin: string,
+	token: string,
+	ms: number,
+) {
 	let late = false;
 	const p = conn(origin, token);
 	p.then(

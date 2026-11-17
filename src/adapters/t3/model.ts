@@ -5,30 +5,18 @@ import { readServers } from "../../core/config/servers.ts";
 import { parseModels, type ThreadModel } from "../../core/llm/selection.ts";
 import { withoutToken } from "../../core/ops/capability.ts";
 import { within } from "../../core/within.ts";
+import { type Catalog, readModelCatalog } from "./model-catalog.ts";
 import { activeRunOf, createRpcPing, openWithin, type PingResult } from "./ping.ts";
 import { connect, type Rpc } from "./rpc.ts";
+import { verifyWebhook } from "./webhook-binding.ts";
 
-type Descriptor = { id: string; type: string; options?: { id: string }[] };
-type Catalog = {
-	providers: {
-		instanceId: string;
-		driver?: string;
-		enabled: boolean;
-		installed: boolean;
-		availability?: string;
-		auth?: { status?: string };
-		status?: string;
-		usageLimits?: { windows: { usedPercent: number; resetsAt?: string }[] };
-		models: { slug: string; capabilities?: { optionDescriptors?: Descriptor[] } | null }[];
-	}[];
-};
 type Projection = {
 	thread?: {
 		modelSelection?: { instanceId: string; model: string; options?: { id: string; value: string | boolean }[] };
 	};
 	runs?: { id?: string; status?: string }[];
 };
-type Client = Pick<Rpc, "request">;
+type Client = Pick<Rpc, "request" | "call">;
 
 export function validateThreadModel(c: ThreadModel, catalog: Catalog): void {
 	const provider = catalog.providers.find((p) => p.instanceId === c.instanceId);
@@ -63,7 +51,7 @@ function matches(p: Projection, c: ThreadModel): boolean {
 
 async function applyThreadModel(rpc: Client, threadId: string, c: ThreadModel, desk = false): Promise<void> {
 	const request = (method: string, params: unknown) => within(rpc.request(method, params), 15_000, "model selection");
-	const catalog = (await request("server.getConfig", {})) as Catalog;
+	const catalog = await readModelCatalog(rpc);
 	validateThreadModel(c, catalog);
 	if (desk && catalog.providers.find((p) => p.instanceId === c.instanceId)?.driver !== "claudeAgent")
 		throw Error("Alert Desk requires an adapter enforcing its tool allowlist; this provider is unsupported");
@@ -102,7 +90,7 @@ export function modelConnection(
 	return { origin: server.origin, token, operateTokenFile: file };
 }
 
-export async function configureThread(conf: string, role: ThreadKey, targetThread?: string) {
+export async function configureThread(conf: string, role: ThreadKey, targetThread?: string, targetUrl?: string) {
 	if (role === "desk" && (cfg(conf, "alertDesk") as { gatherer?: unknown } | undefined)?.gatherer)
 		throw Error("Alert Desk gatherer has no centrally configured execution adapter; selection is unsupported");
 	const c = parseModels(cfg(conf, "models"))[role];
@@ -112,6 +100,7 @@ export async function configureThread(conf: string, role: ThreadKey, targetThrea
 	const { origin, token, operateTokenFile } = modelConnection(conf, c.server);
 	const rpc = await openWithin(connect, origin, token, 15_000);
 	try {
+		if (targetUrl !== undefined) await verifyWebhook(rpc, origin, id, targetUrl);
 		await applyThreadModel(rpc, id, c, role === "desk");
 	} finally {
 		rpc.ws.close();
