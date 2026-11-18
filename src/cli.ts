@@ -111,7 +111,8 @@ function routeDebug(rest: string[]): { cmd: string; rest: string[] } | number {
 /** Loads one command and runs it. A failing tool prints one line and gives exit 1; the two that stay up keep their stack trace. */
 async function runCommand(cmd: CommandName, rest: string[]): Promise<number> {
 	try {
-		await (await LOAD[cmd]()).main(rest);
+		const code = await (await LOAD[cmd]()).main(rest);
+		if (typeof code === "number") return code;
 	} catch (e) {
 		// The tools that run as scripts print an error as one line and exit 1; the two that stay up keep Bun's stack trace for the crash report.
 		if (cmd === "daemon" || cmd === "web") throw e;
