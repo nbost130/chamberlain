@@ -9,6 +9,7 @@ import {
 	deadLetterOversizedDigests,
 	deadLetterOversizedTransfers,
 } from "../steward/steward-transfer.ts";
+import { TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "../store/store-wakes.ts";
 import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
@@ -75,9 +76,36 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 const usesWindow = (ceiling: boolean, due: boolean, held: HeldItem[]): boolean =>
 	ceiling || (due && !held.some((h) => h.kind === "transfer"));
 
+/**
+ * Held turn-end reports the engine marked superseded (their thread started a new turn, or was settled or archived) are given up: composed
+ * into one row and cancelled in one transaction, so each keeps a permanent tombstone and is never sent. The Steward gets the thread's next
+ * report instead of a stale one, and no turn at all when nothing else was held.
+ */
+function giveUpSuperseded(r: Ctx, now: number) {
+	const { d, store } = r;
+	const gone = store.wakes.superseded().map((s) => s.deliveryId);
+	if (!gone.length) return;
+	store.tx(() => {
+		const row = store.wakes.compose(
+			now,
+			() => ({
+				deliveryId: `superseded:${now}:${gone.length}`,
+				message: `Held turn-end reports given up: their thread started a new turn or was settled or archived (${gone.join(", ")}).`,
+				folded: 0,
+				members: gone,
+				kind: "turn_ended",
+			}),
+			null,
+		);
+		if (row) store.wakes.cancel(row.deliveryId, now);
+	});
+	d.log("held-given-up", { members: gone });
+}
+
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
+	if (l.name === null) giveUpSuperseded(r, now);
 	if (!store.wakes.held(l.name).length) return;
 	// Oversized solo transfers never enter a batch: dead-letter with alarm before compose (R2).
 	deadLetterOversizedTransfers(r, l, now);
@@ -97,7 +125,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	let kept: string[] = [];
 	const row = store.wakes.compose(
 		now,
-		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due }),
+		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due, watchedSince: r.watchedSince }),
 		l.name,
 	);
 	if (!row) return;
@@ -140,12 +168,14 @@ function digestOf(
 	l: Lane,
 	held: HeldItem[],
 	now: number,
-	{ onKept, answerDue }: { onKept: (kept: string[]) => void; answerDue: boolean },
+	{ onKept, answerDue, watchedSince }: { onKept: (kept: string[]) => void; answerDue: boolean; watchedSince: number },
 ): Composed {
 	const transfers = held.filter((h) => h.kind === "transfer");
 	const others = held.filter((h) => h.kind !== "transfer");
 	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
-	const digestBatch = others.length ? composeDigestBatch(others, now) : undefined;
+	const digestBatch = others.length
+		? composeDigestBatch(others, now, TRANSFER_DIGEST_MAX_BYTES, { watchedSince })
+		: undefined;
 	const useTransfers = transferBatch && (!digestBatch || transfersFirst(transfers, others, answerDue));
 	if (useTransfers) {
 		const use = transfers.filter((h) => transferBatch.members.includes(h.deliveryId));

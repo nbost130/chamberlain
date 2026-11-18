@@ -150,11 +150,34 @@ export class Watcher extends WatcherHandoffs {
 			this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id)));
 			this.core.recovery?.moved(next.id);
 		}
+		this.supersedeHeld(prev, next);
 		if (prev && LIVE.has(prev.status) && ["completed", "idle"].includes(next.status))
 			this.core.recovery?.healthy(next.id);
 		if (next.pendingRequestId)
 			this.cardsSeen.set(next.id, (this.cardsSeen.get(next.id) ?? new Set()).add(next.pendingRequestId));
 		return prev;
+	}
+
+	/**
+	 * A held turn-end report goes stale the moment its thread starts a new turn, or is settled or archived: the next turn end reports
+	 * afresh, and a settled thread needs nothing. The store appends 'superseded' to each such held report, and the relay gives it up
+	 * instead of sending it in the next digest (relay-compose.ts). A failed write is logged and changes nothing: the report is sent.
+	 */
+	protected supersedeHeld(prev: ThreadState | undefined, next: ThreadState) {
+		const why = turnBegan(prev, next)
+			? "new-turn"
+			: prev && !prev.settled && next.settled
+				? "settled"
+				: prev && !prev.archived && next.archived
+					? "archived"
+					: undefined;
+		if (!why) return;
+		try {
+			const members = this.core.store.wakes.supersedeHeld(next.id, Date.now(), why);
+			if (members.length) this.log("held-superseded", { server: this.srv.name, threadId: next.id, members, why });
+		} catch (e) {
+			this.log("held-supersede-error", { server: this.srv.name, threadId: next.id, error: String(e).slice(0, 200) });
+		}
 	}
 
 	/** Wakes the Steward about a failure whose retry could not be made, with the note why. */

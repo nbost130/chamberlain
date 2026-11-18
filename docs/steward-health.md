@@ -97,3 +97,14 @@ field; per kind, the number of turns, the median and p90 tokens per turn, the me
 start; the cost of a full sweep wake; and the context trend per session: context at the first and latest wake, the peak, and the growth per
 wake since the last compaction, with how many wakes are left at that rate before the compaction line (`compactTokens`). A context that grows
 steadily wake over wake is the signal to compact or hand off. The cost of a wake is roughly its requests times its context, so both are shown.
+
+**Tool calls.** Each turn also records how many tool calls the Steward made and how many read another thread (`t3_thread_read`, peek,
+`t3x read`): `tool_calls` and `thread_reads` (migration 20; absent for turns measured before it). Only the tool name and the command's verb
+are looked at.
+
+**Flow.** `chamberlain steward-health flow [--days <n>] [--json]` prints, per UTC day: the Steward's turns and tokens by source (`direct`:
+a thread messaging it straight; `notice`: T3 itself, a watched PR or a delegated task's result; `wakes`: Chamberlain), the notes and
+answers held for a digest instead of sent alone, the digests sent and their items, the stale turn-end reports given up, the Steward's
+thread reads per digest item, and its median context at the start of a turn. Read it as: direct turns falling while notes rise means
+threads report through the digest; given-up items are stale reports the Steward never read; reads per item near 0 means it trusts the
+digest; the context sets the price of every request, since each one re-reads it.

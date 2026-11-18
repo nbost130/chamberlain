@@ -29,6 +29,12 @@ export const EVENTS = {
 	// ---- the wake path -----------------------------------------------------------------------------
 	"wake.queued": e("info", { kind: KIND }, "deliver-queued"),
 	"wake.held": e("info", { kind: KIND }, "deliver-held"),
+	"wake.superseded": e(
+		"info",
+		{ members: corrs("members"), why: f(T.enm("new-turn", "settled", "archived")) },
+		"held-superseded",
+	),
+	"wake.given-up": e("info", { members: corrs("members") }, "held-given-up"),
 	"wake.composed": e(
 		"info",
 		{ members: corrs("members"), kept: corrs("kept"), folded: int(), forced: f(T.enm("ceiling", "answer")) },
@@ -93,6 +99,7 @@ export const EVENTS = {
 	"card-reconciled": e("info", { server: SRV }),
 	"held-closed": e("info", { server: SRV, closed: int() }),
 	"held-close-error": serverFailure(),
+	"held-supersede-error": serverFailure(),
 	"held-closed-for-item": e("info", { item: ITEM, closed: int() }),
 	"held-close-failed": e("warn", { item: ITEM, err: ERR }),
 	"held-reconciled": e("info", { closed: int(), errors: int(), ran: bool() }),

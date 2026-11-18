@@ -8,7 +8,7 @@
  * sending are relay.ts's.
  */
 import { createHash } from "node:crypto";
-import { digestHead } from "../messages.ts";
+import { digestHead, fullSweepHead } from "../messages.ts";
 import type { HeldItem, HoldClock, WakeMeta } from "../store/store-wakes.ts";
 
 export type { HeldItem, HoldClock, WakeMeta };
@@ -60,9 +60,25 @@ const OBSERVE_GAP_MS = 5 * 60_000;
  * the latest is kept; the rest are folded into it and counted. Every item, folded or not, is a member: it is delivered with
  * the wake and is never sent again.
  */
+/**
+ * What a digest can say about a held turn-end report's thread. `watchedSince`: when the daemon began watching threads (its start). The
+ * engine gives up a report whose thread started a new turn while it was watched (store `supersedeHeld`), so a report held since then is
+ * still current; one held before a restart may have been missed, and says so.
+ */
+export type ComposeOpts = { watchedSince?: number };
+
+/** Pure: the freshness note a digest item carries, or "" for a kind that has none. */
+function freshness(i: HeldItem, o: ComposeOpts): string {
+	if (i.kind !== "turn_ended" || o.watchedSince === undefined) return "";
+	return i.queuedAt >= o.watchedSince
+		? " · its thread has not started a new turn since"
+		: " · held across a daemon restart, so its thread may have moved on: check it before acting";
+}
+
 export function composeWake(
 	items: HeldItem[],
 	now: number,
+	o: ComposeOpts = {},
 ): { deliveryId: string; message: string; members: string[]; kept: string[]; folded: number } {
 	const [only] = items;
 	if (only && items.length === 1)
@@ -80,6 +96,9 @@ export function composeWake(
 	 * another run's report: each completed run keeps its own final. Timestamp-only ended keys still fold as before.
 	 */
 	const key = (i: HeldItem) => {
+		// Only the full-sweep reminder repeats itself: the findings sweep and the idle-thread list carry only what is new since the last
+		// one, so folding an older one into a newer one would lose items.
+		if (i.kind === "sweep" && i.message.startsWith(fullSweepHead())) return "sweep\u0000full";
 		if (!i.kind || !i.thread || NEVER_FOLDED.has(i.kind)) return undefined;
 		if (i.kind === "turn_ended") {
 			const run = /:ended:([^:]+)/.exec(i.deliveryId)?.[1];
@@ -112,7 +131,7 @@ export function composeWake(
 		const f = folds.get(i) ?? [];
 		const waited = Math.max(0, Math.round((now - i.queuedAt) / 60_000));
 		return [
-			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
+			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${freshness(i, o)}${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
 			i.message,
 		].join("\n");
 	});

@@ -80,6 +80,9 @@ export type WakeUsage = {
 	contextPeak?: number;
 	/** Compactions inside the segment (`compact_boundary` rows). */
 	compactions: number;
+	/** Tool calls the Steward made in the turn, and how many read another thread (t3_thread_read, peek). Absent before migration 20. */
+	toolCalls?: number;
+	threadReads?: number;
 };
 export interface UsageStore {
 	/** Inserts or replaces each row by (session, wake key), in one transaction. A rerun over the same transcript writes the same rows. */

@@ -94,6 +94,8 @@ export type Ctx = {
 	pause: (attempts: number) => number;
 	ceiling: number;
 	clock: () => number;
+	/** When this relay (and the daemon's watching) began: a held report older than this may have missed its thread moving on (hold.ts). */
+	watchedSince: number;
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
 	owed: Map<number, OutboxRow>;
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */

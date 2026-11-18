@@ -4,7 +4,7 @@
  */
 import { exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { HeldItem } from "../store/store-wakes.ts";
-import { composeWake, hasOwnCeiling } from "./hold.ts";
+import { type ComposeOpts, composeWake, hasOwnCeiling } from "./hold.ts";
 
 /**
  * Room a digest of several wakes leaves under the replay bound for the transfer header (steward-header.ts) that wraps it if the Steward is
@@ -24,6 +24,7 @@ export function composeDigestBatch(
 	held: HeldItem[],
 	now: number,
 	maxBytes = TRANSFER_DIGEST_MAX_BYTES,
+	o: ComposeOpts = {},
 ): ReturnType<typeof composeWake> | undefined {
 	const sorted = [...held]
 		.filter((h) => h.kind !== "transfer")
@@ -32,7 +33,7 @@ export function composeDigestBatch(
 	const batch: HeldItem[] = [];
 	for (const item of sorted) {
 		const next = [...batch, item];
-		const trial = composeWake(next, now);
+		const trial = composeWake(next, now, o);
 		const cap = next.length > 1 ? maxBytes - TRANSFER_WRAP_RESERVE_BYTES : maxBytes;
 		if (exceedsEncodedCap(trial.message, trial.deliveryId, cap)) {
 			if (batch.length === 0) continue;
@@ -40,7 +41,7 @@ export function composeDigestBatch(
 		}
 		batch.push(item);
 	}
-	return batch.length ? composeWake(batch, now) : undefined;
+	return batch.length ? composeWake(batch, now, o) : undefined;
 }
 
 /** True when a held ordinary wake alone exceeds the encoded replay bound (final send framing included). */

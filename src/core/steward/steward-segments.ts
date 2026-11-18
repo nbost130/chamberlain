@@ -115,7 +115,16 @@ type Open = Omit<
 	"requests" | "inputTokens" | "cacheReadInputTokens" | "cacheCreationInputTokens" | "outputTokens"
 > & {
 	calls: Map<string, Call>;
+	/** The turn's tool calls by tool_use id (a request written as several rows names each once): true for a read of another thread. */
+	tools: Map<string, boolean>;
 };
+
+/**
+ * Whether a tool call reads another thread: T3's thread read, or Chamberlain's peek and t3x read. These are the verification reads a
+ * wake that does not say enough makes the Steward do; only the tool name and the command's verb are looked at, never the text.
+ */
+const readsThread = (name: string, command: string): boolean =>
+	/t3_thread_read$/.test(name) || (name === "Bash" && /\bpeek(?:\.ts)?\b|\bt3x(?:\.ts)?\s+read\b/.test(command));
 
 /** What `segmentTranscript` carries from row to row. */
 type Segmenter = {
@@ -153,6 +162,7 @@ function openSegment(sg: Segmenter, key: string, p: Prompt, at: number | undefin
 		endedAt: at ?? 0,
 		compactions: 0,
 		calls: new Map(),
+		tools: new Map(),
 	};
 	sg.out.push(seg);
 	return seg;
@@ -193,9 +203,19 @@ function scanAssistant(sg: Segmenter, r: Row, at: number | undefined) {
 	sg.owner.set(id, seg);
 	// A later row of the same request replaces its usage but keeps its place: the map's order is the order the requests started.
 	seg.calls.set(id, callOf(u));
+	countTools(seg, r.message?.content);
 	if (at !== undefined) {
 		if (!seg.startedAt) seg.startedAt = at;
 		seg.endedAt = Math.max(seg.endedAt, at);
+	}
+}
+
+/** Notes each tool call a row carries, once per tool_use id. */
+function countTools(seg: Open, content: unknown) {
+	if (!Array.isArray(content)) return;
+	for (const b of content as { type?: unknown; id?: unknown; name?: unknown; input?: { command?: unknown } }[]) {
+		if (b?.type !== "tool_use" || typeof b.id !== "string") continue;
+		seg.tools.set(b.id, readsThread(String(b.name ?? ""), String(b.input?.command ?? "")));
 	}
 }
 
@@ -220,7 +240,7 @@ function scanSegmentLine(sg: Segmenter, line: string) {
 }
 
 /** A segment's requests summed, with the context size at its first, last and largest request. */
-function finishSegment({ calls, ...s }: Open): WakeUsage {
+function finishSegment({ calls, tools, ...s }: Open): WakeUsage {
 	const list = [...calls.values()];
 	const sum = (f: (c: Call) => number) => list.reduce((a, c) => a + f(c), 0);
 	const first = list[0];
@@ -232,6 +252,8 @@ function finishSegment({ calls, ...s }: Open): WakeUsage {
 		cacheReadInputTokens: sum((c) => c.cacheRead),
 		cacheCreationInputTokens: sum((c) => c.cacheCreation),
 		outputTokens: sum((c) => c.output),
+		toolCalls: tools.size,
+		threadReads: [...tools.values()].filter(Boolean).length,
 		...(first && last
 			? {
 					contextStart: first.context,
