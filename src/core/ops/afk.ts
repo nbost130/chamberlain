@@ -87,12 +87,14 @@ export function briefMarkdown(a: Afk, decisions: Decision[], open: Held[], event
 	return out.join("\n");
 }
 
-/** Holds whose linked queue item is a secret: the card label never appears in the brief or the held list. */
+/** Holds whose linked queue item is a secret: what, taken and notes never appear in the brief or the held list. */
 function secretSafeHolds(store: Store, open: Held[]): Held[] {
 	return open.map((h) => {
 		if (!h.item) return h;
 		const q = getQuestion(store, h.item);
-		return q && isSecretItem(q) ? { ...h, what: SECRET_HOLD_WHAT } : h;
+		if (!q || !isSecretItem(q)) return h;
+		const { taken: _taken, notes: _notes, ...rest } = h;
+		return { ...rest, what: SECRET_HOLD_WHAT };
 	});
 }
 

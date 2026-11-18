@@ -58,6 +58,8 @@ describe("briefMarkdown", () => {
 		const store = memStore();
 		store.away.enter({ enteredAt: "2026-11-01T12:00:00.000Z", words: "out" });
 		const label = "SYNTH-AFK-SECRET-LABEL";
+		const taken = "SYNTH-AFK-SECRET-TAKEN";
+		const noteText = "SYNTH-AFK-SECRET-NOTE";
 		const { item } = holdCard(store, {
 			thread: "Launch thread",
 			server: "main",
@@ -66,15 +68,23 @@ describe("briefMarkdown", () => {
 			type: "secret_request",
 			label,
 		});
-		// New holds omit the label; a legacy hold that still carried it is redacted when its item is secret.
+		// New holds omit the label; a legacy hold that still carried it (and taken/notes) is redacted when its item is secret.
 		appendHeld(
 			store,
-			{ thread: "Legacy", what: `secret request: ${label}`, item },
+			{
+				thread: "Legacy",
+				what: `secret request: ${label}`,
+				taken,
+				item,
+				notes: [{ t: "2026-11-01T13:01:00.000Z", text: noteText }],
+			},
 			new Date("2026-11-01T13:00:00.000Z"),
 		);
 		const out = brief(store, store.away.current()!);
 		expect(out).toContain(SECRET_HOLD_WHAT);
 		expect(out).not.toContain(label);
+		expect(out).not.toContain(taken);
+		expect(out).not.toContain(noteText);
 		expect(heldOpen(store).some((h) => h.what === SECRET_HOLD_WHAT)).toBe(true);
 	});
 });
