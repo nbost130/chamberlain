@@ -36,27 +36,32 @@ describe("the run a report is about", () => {
 	});
 });
 
-describe("freshness of a held turn-end report, against T3's state now", () => {
-	test("still the thread's newest run and idle: current, stamped", () => {
-		expect(header(live())).toContain("as of 01:30 UTC this is still its thread's newest run, and the thread is idle");
-	});
-	test("a newer run, working again, settled or archived: each says so", () => {
-		expect(header(live({ latestRunId: "run:thread:T1:ordinal:9" }))).toContain("a newer run of its thread has started");
-		expect(header(live({ status: "running" }))).toContain("its thread is working again");
-		expect(header(live({ settled: true }))).toContain("its thread is settled: likely nothing to do");
+describe("what a digest notes about a held turn-end report", () => {
+	test("only what was observed: a newer run, working again, settled or archived, each stamped", () => {
+		expect(header(live({ latestRunId: "run:thread:T1:ordinal:9" }))).toContain(
+			"seen at 01:30 UTC: a newer run of its thread has started",
+		);
+		expect(header(live({ status: "running" }))).toContain("seen at 01:30 UTC: its thread is working again");
+		expect(header(live({ settled: true }))).toContain("its thread is settled");
 		expect(header(live({ archived: true }))).toContain("its thread is archived");
 	});
-	test("disconnected, unknown thread, or a report naming no run: not confirmed", () => {
-		expect(header(live({ connected: false }))).toContain("not confirmed current");
-		expect(header(undefined)).toContain("not confirmed current");
-		expect(header(live(), "T1:ended:1794944776113")).toContain("not confirmed current");
+	test("never a claim that the report is current: an untouched thread, an unknown one, a missing run id get no note", () => {
+		for (const h of [
+			header(live()),
+			header(undefined),
+			header(live({ latestRunId: null })),
+			header(live(), "T1:ended:1794944776113"),
+		])
+			expect(h).not.toMatch(/seen at|newest|current/);
 	});
 	test("no view at all, or another kind: no note", () => {
 		const plain = composeWake([te("a", "T1"), te("b", "T2")], T0);
-		expect(plain.message).not.toContain("newest run");
+		expect(plain.message).not.toContain("seen at");
 		const note: HeldItem = { deliveryId: "n", message: "note", queuedAt: T0, kind: "note", thread: "T1" };
-		const c = composeWake([note, te(`T1:ended:${RUN}:1794944776113`, "T1")], T0, { news: () => live() });
-		expect(c.message.match(/newest run/g)).toHaveLength(1);
+		const c = composeWake([note, te(`T1:ended:${RUN}:1794944776113`, "T1")], T0, {
+			news: () => live({ status: "running" }),
+		});
+		expect(c.message.match(/seen at/g)).toHaveLength(1);
 	});
 });
 
@@ -73,7 +78,7 @@ describe("which items fold", () => {
 		const c = composeWake([te("t:ended:1794944776113", "t"), te("t:ended:1794944776200", "t", T0 + 1)], T0);
 		expect(c.folded).toBe(1);
 	});
-	test("full-sweep reminders fold to the newest; findings and the idle-thread list never do", () => {
+	test("sweeps never fold: a full sweep, the findings sweep and the idle-thread list each carry what was new when made", () => {
 		const full = (id: string, at: number): HeldItem => ({
 			deliveryId: id,
 			message: `${fullSweepHead()}\nrun it`,
@@ -96,9 +101,8 @@ describe("which items fold", () => {
 			[full("f1", 1), full("f2", 2), findings("s1", 3), findings("s2", 4), idle("i1", 5), idle("i2", 6)],
 			10,
 		);
-		expect(c.folded).toBe(1);
-		expect(c.kept).toEqual(["f2", "s1", "s2", "i1", "i2"]);
-		expect(c.members).toHaveLength(6);
+		expect(c.folded).toBe(0);
+		expect(c.kept).toEqual(["f1", "f2", "s1", "s2", "i1", "i2"]);
 	});
 });
 
@@ -137,8 +141,19 @@ describe("tool calls per Steward turn", () => {
 			asst("m3", "a-m2", [bash("t3", "echo chamberlain peek later; echo peek")]),
 			asst("m4", "a-m3", [bash("t4", "chamberlain debug t3x read mac abc")]),
 			asst("m5", "a-m4", [bash("t5", "gh-axi pr view 7 | grep peek.ts")]),
+			asst("m6", "a-m5", [bash("t6", "echo 'example; chamberlain debug peek mac abc; done'")]),
+			asst("m7", "a-m6", [bash("t7", "/usr/local/bin/chamberlain debug peek mac abc")]),
 		];
 		const [seg] = await segmentTranscript(rows, "s1");
-		expect(seg).toMatchObject({ kind: "message", requests: 5, toolCalls: 5, threadReads: 3 });
+		expect(seg).toMatchObject({ kind: "message", requests: 7, toolCalls: 7, threadReads: 4 });
+	});
+});
+
+describe("the idle-thread list's header", () => {
+	test("classifies as an idle-parents wake, not a direct message", async () => {
+		const { classifyPrompt } = await import("../steward/steward-segments.ts");
+		expect(classifyPrompt("[chamberlain] idle threads: 2 top-level threads finished and went quiet")?.kind).toBe(
+			"idle-parents",
+		);
 	});
 });

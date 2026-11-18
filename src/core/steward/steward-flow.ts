@@ -149,8 +149,8 @@ export function formatFlow(days: FlowDay[]): string {
 		);
 	out.push(
 		"",
-		"Read it as: direct turns falling while notes rise means threads report through the digest; reads/item near 0 means the Steward",
-		"trusts the digest's freshness notes; ctx p50 sets the price of every request.",
+		"Read it as: direct turns falling while notes rise means threads report through the digest; reads/item is what checking digest",
+		"items costs; ctx p50 sets the price of every request.",
 	);
 	return out.join("\n");
 }

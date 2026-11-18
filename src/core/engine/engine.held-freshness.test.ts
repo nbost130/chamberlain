@@ -1,4 +1,4 @@
-/** Held turn-end reports are never dropped; the digest says what T3 reports of each one's thread now. */
+/** Held turn-end reports are never dropped; the digest notes what the engine saw of each one's thread since. */
 import { describe, expect, test } from "bun:test";
 import { useCoreEngineFixtures } from "../../testing/core-engine-fixtures.ts";
 import { createEngine } from "./engine.ts";
@@ -32,7 +32,7 @@ describe("held turn-end reports and what their thread did since", () => {
 	const itemLine = (message: string, thread: string) =>
 		message.split("\n").find((l) => l.startsWith("=== item") && l.includes(`${thread}:ended:`))!;
 
-	test("an untouched thread is still on the report's run and idle; a thread that started another run says so, and keeps its report", async () => {
+	test("an untouched thread gets no note; a thread that started another run says so, and keeps its report", async () => {
 		const r = rig({ steward: "steward-1" });
 		r.fake.setBusy("busy");
 		ended(r, "t2", 1);
@@ -42,8 +42,8 @@ describe("held turn-end reports and what their thread did since", () => {
 		r.fake.emit({ kind: "state", thread: thread("t3", "running", { latestRunId: RUN("t3", 2) }) });
 		await r.until("t3 seen running", () => r.engine.watchers[0]!.states.get("t3")?.status === "running");
 		const m = await digest(r);
-		expect(itemLine(m, "t2")).toContain("this is still its thread's newest run, and the thread is idle");
-		expect(itemLine(m, "t3")).toContain("a newer run of its thread has started: read the thread before acting");
+		expect(itemLine(m, "t2")).not.toContain("seen at");
+		expect(itemLine(m, "t3")).toMatch(/seen at \d\d:\d\d UTC: a newer run of its thread has started/);
 		expect(m).toContain('thread "Thread t3"');
 	});
 
@@ -57,7 +57,7 @@ describe("held turn-end reports and what their thread did since", () => {
 		r.fake.emit({ kind: "state", thread: thread("t5", "running", { latestRunId: RUN("t5", 3) }) });
 		await r.until("t5 on run 3", () => r.engine.watchers[0]!.states.get("t5")?.latestRunId === RUN("t5", 3));
 		const m = await digest(r);
-		expect(itemLine(m, "t5")).not.toContain("still its thread's newest run");
+		expect(itemLine(m, "t5")).toContain("a newer run of its thread has started");
 	});
 
 	test("a settled thread's report still arrives, marked settled", async () => {
@@ -69,11 +69,11 @@ describe("held turn-end reports and what their thread did since", () => {
 		r.fake.emit({ kind: "state", thread: thread("t6", "completed", { latestRunId: RUN("t6", 1), settled: true }) });
 		await r.until("t6 settled", () => r.engine.watchers[0]!.states.get("t6")?.settled === true);
 		const m = await digest(r);
-		expect(itemLine(m, "t6")).toContain("its thread is settled: likely nothing to do");
+		expect(itemLine(m, "t6")).toContain("its thread is settled");
 		expect(m).toContain('thread "Thread t6"');
 	});
 
-	test("with its server disconnected, nothing is claimed", async () => {
+	test("with its server disconnected, nothing new is noted", async () => {
 		const r = rig({ steward: "steward-1" });
 		r.fake.setBusy("busy");
 		ended(r, "t8", 1);
@@ -81,6 +81,6 @@ describe("held turn-end reports and what their thread did since", () => {
 		await r.until("two held", () => r.held().length === 2);
 		r.fake.setConnected(false);
 		const m = await digest(r);
-		expect(itemLine(m, "t8")).toContain("not confirmed current: read the thread before acting");
+		expect(itemLine(m, "t8")).not.toContain("seen at");
 	});
 });

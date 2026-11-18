@@ -106,5 +106,5 @@ are looked at.
 a thread messaging it straight; `notice`: T3 itself, a watched PR or a delegated task's result; `wakes`: Chamberlain), the notes and
 answers held for a digest instead of sent alone, the digests delivered to the Steward and the items they carried, the Steward's thread
 reads per digest item, and its median context at the start of a turn. All of it is counted from the token metric and the outbox, not from
-log lines. Read it as: direct turns falling while notes rise means threads report through the digest; reads per item near 0 means it
-trusts the digest's freshness notes; the context sets the price of every request, since each one re-reads it.
+log lines. Read it as: direct turns falling while notes rise means threads report through the digest; reads per item shows what checking
+digest items costs; the context sets the price of every request, since each one re-reads it.

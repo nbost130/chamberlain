@@ -8,7 +8,7 @@
  * sending are relay.ts's.
  */
 import { createHash } from "node:crypto";
-import { digestHead, fullSweepHead } from "../messages.ts";
+import { digestHead } from "../messages.ts";
 import type { HeldItem, HoldClock, WakeMeta } from "../store/store-wakes.ts";
 
 export type { HeldItem, HoldClock, WakeMeta };
@@ -68,8 +68,8 @@ const OBSERVE_GAP_MS = 5 * 60_000;
  * the wake and is never sent again.
  */
 /**
- * What T3 says about a thread now, from the daemon's live view of it: whether that view is current (its server connected), the thread's
- * newest run, its status, and whether it is settled or archived. Absent fields are unknown.
+ * What the engine last saw of a thread from T3: whether its server is connected, the thread's newest run, its status, and whether it is
+ * settled or archived. Absent fields are unknown.
  */
 export type ThreadNews = {
 	connected: boolean;
@@ -94,23 +94,22 @@ export function reportRunId(deliveryId: string): string | undefined {
 }
 
 /**
- * Pure: what a digest says about a held turn-end report, stamped with the time it was checked. State, not timing: the report's run is
- * compared with the thread's newest run as T3 reports it now. It says the report is current only when the daemon's view is live, the
- * thread's newest run is the report's run and the thread is idle. "" for other kinds, or when there is no view at all.
+ * Pure: what a digest notes about a held turn-end report, from T3's state as the engine holds it: only facts that were observed, never
+ * a claim that the report is still current (a reconnect shows "connected" before its catch-up arrives, so the engine's view can lag).
+ * Each note is a reason to read the thread before acting; no note means nothing was observed, not that nothing happened. "" for other
+ * kinds, or when nothing was observed.
  */
 function freshness(i: HeldItem, now: number, o: ComposeOpts): string {
 	if (i.kind !== "turn_ended" || !i.thread || !o.news) return "";
 	const n = o.news(i.thread);
 	const run = reportRunId(i.deliveryId);
+	if (!n) return "";
 	const at = hhmm(now);
-	if (!n?.connected || !run || n.latestRunId === undefined)
-		return " · not confirmed current: read the thread before acting";
-	if (n.settled || n.archived)
-		return ` · as of ${at} UTC its thread is ${n.settled ? "settled" : "archived"}: likely nothing to do`;
-	if (n.latestRunId !== run)
-		return ` · as of ${at} UTC a newer run of its thread has started: read the thread before acting`;
-	if (n.status && WORKING.has(n.status)) return ` · as of ${at} UTC its thread is working again: read it before acting`;
-	return ` · as of ${at} UTC this is still its thread's newest run, and the thread is idle`;
+	if (n.settled || n.archived) return ` · seen at ${at} UTC: its thread is ${n.settled ? "settled" : "archived"}`;
+	if (run && typeof n.latestRunId === "string" && n.latestRunId && n.latestRunId !== run)
+		return ` · seen at ${at} UTC: a newer run of its thread has started`;
+	if (n.status && WORKING.has(n.status)) return ` · seen at ${at} UTC: its thread is working again`;
+	return "";
 }
 
 export function composeWake(
@@ -134,9 +133,8 @@ export function composeWake(
 	 * another run's report: each completed run keeps its own final. Timestamp-only ended keys still fold as before.
 	 */
 	const key = (i: HeldItem) => {
-		// Only the full-sweep reminder repeats itself: the findings sweep and the idle-thread list carry only what is new since the last
-		// one, so folding an older one into a newer one would lose items.
-		if (i.kind === "sweep" && i.message.startsWith(fullSweepHead())) return "sweep\u0000full";
+		// Sweeps never fold: the findings sweep, the idle-thread list and even a full sweep carry what was new when each was made.
+		if (i.kind === "sweep") return undefined;
 		if (!i.kind || !i.thread || NEVER_FOLDED.has(i.kind)) return undefined;
 		if (i.kind === "turn_ended") {
 			// The whole run id: run ids hold colons, so cutting at the first one made every run-scoped report of a thread fold into one.
