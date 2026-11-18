@@ -2,6 +2,7 @@
 import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
 import { type QuestionState, questionStates } from "../core/items/questions.ts";
 import { batchable } from "../core/items/questions-wake.ts";
+import { redactSecretFields } from "../core/items/secret-fields.ts";
 import type { Capability } from "../core/ops/capability.ts";
 import type { Clock } from "../core/ops/rulings.ts";
 import type { Store } from "../core/store/store.ts";
@@ -98,7 +99,7 @@ const secretOf = (d: AppDeps, i: QuestionState) => {
 	return s ? { secretRequest: s } : {};
 };
 export const view = (d: AppDeps, i: QuestionState) => ({
-	...i,
+	...redactSecretFields(i),
 	...linkOf(d, i.server, i.threadId),
 	...secretOf(d, i),
 	batchable: batchable(i),

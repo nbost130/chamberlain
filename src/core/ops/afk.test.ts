@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { a } from "../../testing/core-afk-fixtures.ts";
 import { memStore } from "../../testing/store.ts";
+import { holdCard } from "../items/card-hold.ts";
+import { SECRET_HOLD_WHAT } from "../items/secret-fields.ts";
 import { awayModeLine } from "../messages.ts";
 import { brief, briefMarkdown } from "./afk.ts";
 import {
@@ -51,6 +53,29 @@ describe("briefMarkdown", () => {
 		const out = briefMarkdown(a, [], [], []);
 		expect(out).toContain("Waiting on the operator (0):\n- nothing");
 		expect(out).toContain("Decided for the operator (0):\n- nothing");
+	});
+	test("a secret card hold's label never appears in the return brief (#102)", () => {
+		const store = memStore();
+		store.away.enter({ enteredAt: "2026-11-01T12:00:00.000Z", words: "out" });
+		const label = "SYNTH-AFK-SECRET-LABEL";
+		const { item } = holdCard(store, {
+			thread: "Launch thread",
+			server: "main",
+			threadId: "th-1",
+			requestId: "req-afk-secret",
+			type: "secret_request",
+			label,
+		});
+		// New holds omit the label; a legacy hold that still carried it is redacted when its item is secret.
+		appendHeld(
+			store,
+			{ thread: "Legacy", what: `secret request: ${label}`, item },
+			new Date("2026-11-01T13:00:00.000Z"),
+		);
+		const out = brief(store, store.away.current()!);
+		expect(out).toContain(SECRET_HOLD_WHAT);
+		expect(out).not.toContain(label);
+		expect(heldOpen(store).some((h) => h.what === SECRET_HOLD_WHAT)).toBe(true);
 	});
 });
 

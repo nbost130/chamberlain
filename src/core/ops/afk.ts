@@ -32,6 +32,8 @@
 import { principal, selfCommand } from "../config/config.ts";
 import { startup } from "../config/migrate.ts";
 import { closeCardByHand } from "../items/card-hold.ts";
+import { getQuestion } from "../items/questions.ts";
+import { isSecretItem, SECRET_HOLD_WHAT } from "../items/secret-fields.ts";
 import { awayModeLine } from "../messages.ts";
 import { defaultStore } from "../store/default-store.ts";
 import type { Store } from "../store/store.ts";
@@ -85,12 +87,21 @@ export function briefMarkdown(a: Afk, decisions: Decision[], open: Held[], event
 	return out.join("\n");
 }
 
+/** Holds whose linked queue item is a secret: the card label never appears in the brief or the held list. */
+function secretSafeHolds(store: Store, open: Held[]): Held[] {
+	return open.map((h) => {
+		if (!h.item) return h;
+		const q = getQuestion(store, h.item);
+		return q && isSecretItem(q) ? { ...h, what: SECRET_HOLD_WHAT } : h;
+	});
+}
+
 /** The return brief for an absence, from the decision log, what is held and the events since it began (read with SQL). */
 export function brief(store: Store, a: Afk): string {
 	return briefMarkdown(
 		a,
 		store.decisions.list(),
-		heldOpen(store),
+		secretSafeHolds(store, heldOpen(store)),
 		store.events.query({
 			since: a.enteredAt,
 			events: ["fire", "skip-empty-wait", "held-by-daemon", "deliver-stale", "alarm"],
@@ -156,7 +167,9 @@ const holdCommand: Command = (store, rest) => {
 
 const heldCommand: Command = (store) => {
 	for (const h of heldOpen(store)) {
-		console.log(`${heldId(h)} | ${h.t.slice(5, 16)} | ${h.thread} | ${h.what}${h.taken ? ` | ${h.taken}` : ""}`);
+		// heldId hashes `what`: use the stored hold for the id, the redacted one for the line.
+		const shown = secretSafeHolds(store, [h])[0] ?? h;
+		console.log(`${heldId(h)} | ${h.t.slice(5, 16)} | ${h.thread} | ${shown.what}${h.taken ? ` | ${h.taken}` : ""}`);
 		for (const n of h.notes ?? []) console.log(`    note ${n.t.slice(5, 16)}: ${n.text}`);
 	}
 };

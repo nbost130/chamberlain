@@ -68,7 +68,7 @@ export function useWebCapabilityFixtures() {
 					body: JSON.stringify(body),
 				}),
 			);
-		return { app, store, logs, token, cap, get, post, item };
+		return { app, store, logs, token, cap, get, post, item, state: `${root}/state`, root };
 	}
 
 	const key = (t: string) => ({ [TOKEN_HEADER]: t });

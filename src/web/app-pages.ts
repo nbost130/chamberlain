@@ -25,6 +25,8 @@ function evidence(ctx: Ctx, url: URL, viewKey: boolean): Response {
 	}
 	if (viewKey && !viewKeyReadable(ctx).has(itemId)) return fail(404, "not found");
 	const item = ctx.state().get(itemId);
+	// A secret's evidence never leaves its thread: the view API clears the list, and a direct fetch is refused too.
+	if (item?.secret === true) return fail(404, "not found");
 	const listed = (item?.evidence ?? []).flatMap((e) => (e.type !== "link" && e.path ? [e.path] : []));
 	const hit = resolveEvidence(d.state, itemId, name, listed);
 	if (!hit) return fail(404, "not found");
