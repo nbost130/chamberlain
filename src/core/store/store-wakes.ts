@@ -89,6 +89,8 @@ export interface WakeStore {
 	supersedeHeld(thread: string, at: number, why: string): string[];
 	/** Held items marked superseded and not yet given up, oldest first. */
 	superseded(): { deliveryId: string; at: number; why: string }[];
+	/** Deletes the status marks of wakes no longer held; a mark on a held wake is refused (the table's trigger). */
+	forgetStatus(ids: readonly string[]): void;
 	/** Every held item, oldest first. `lane` picks one receiver's (`null`: the Steward's); without it, all of them. */
 	held(lane?: Lane): HeldItem[];
 	/**

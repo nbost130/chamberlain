@@ -85,7 +85,7 @@ function relayContext(d: RelayDeps): Ctx {
 		pause: d.retryAfterMs ?? retryAfterMs,
 		ceiling: d.ceilingMs ?? HOLD_CEILING_MS,
 		clock: () => d.now?.() ?? Date.now(),
-		watchedSince: d.now?.() ?? Date.now(),
+		...(d.threadNews ? { news: d.threadNews } : {}),
 		post,
 		owed: new Map(),
 		notBefore: new Map(),

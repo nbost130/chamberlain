@@ -124,7 +124,8 @@ type Open = Omit<
  * wake that does not say enough makes the Steward do; only the tool name and the command's verb are looked at, never the text.
  */
 const readsThread = (name: string, command: string): boolean =>
-	/t3_thread_read$/.test(name) || (name === "Bash" && /\bpeek(?:\.ts)?\b|\bt3x(?:\.ts)?\s+read\b/.test(command));
+	/t3_thread_read$/.test(name) ||
+	(name === "Bash" && /\bpeek\.ts\b|\bchamberlain\s+(?:debug\s+)?peek\b|\bt3x(?:\.ts)?\s+read\b/.test(command));
 
 /** What `segmentTranscript` carries from row to row. */
 type Segmenter = {
@@ -215,7 +216,11 @@ function countTools(seg: Open, content: unknown) {
 	if (!Array.isArray(content)) return;
 	for (const b of content as { type?: unknown; id?: unknown; name?: unknown; input?: { command?: unknown } }[]) {
 		if (b?.type !== "tool_use" || typeof b.id !== "string") continue;
-		seg.tools.set(b.id, readsThread(String(b.name ?? ""), String(b.input?.command ?? "")));
+		// A request written as several rows names a tool_use more than once; a row without its input never unmarks a read.
+		seg.tools.set(
+			b.id,
+			seg.tools.get(b.id) === true || readsThread(String(b.name ?? ""), String(b.input?.command ?? "")),
+		);
 	}
 }
 

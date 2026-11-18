@@ -135,6 +135,15 @@ export class Core extends CoreWork {
 					? failureFreshness(this.watcherOf(row.thread)?.adapter.inspect, row.thread)
 					: "send",
 			onDelivered: (id) => recordAnswerDelivered(this.store, id),
+			threadNews: (thread) => {
+				const w = this.watcherOf(thread);
+				if (!w) return {};
+				const lastTurnStart = w.turnStartedAt.get(thread);
+				return {
+					...(w.connected && w.connectedAt !== undefined ? { watchedSince: w.connectedAt } : {}),
+					...(lastTurnStart !== undefined ? { lastTurnStart } : {}),
+				};
+			},
 		});
 	}
 

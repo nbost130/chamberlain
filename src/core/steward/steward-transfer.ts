@@ -4,7 +4,7 @@
  * A single frozen payload that alone exceeds the encoded cap is never sent: it is dead-lettered with an alarm (R2).
  */
 import { crashPoint } from "../crash.ts";
-import { composeWake } from "../decide/hold.ts";
+import { composeWake, memberHash } from "../decide/hold.ts";
 import type { Store } from "../store/store.ts";
 import type { HeldItem, RightsStamp } from "../store/store-wakes.ts";
 import { isDischarged } from "./steward-discharge.ts";
@@ -192,7 +192,7 @@ function dropDischargedTransfers(store: Store, now = Date.now()): string[] {
 		const row = store.wakes.compose(
 			now,
 			() => ({
-				deliveryId: `transfer-discharged:${now}:${gone.length}`,
+				deliveryId: `transfer-discharged:${memberHash(gone)}`,
 				message: `Transfer items given up: the retired Steward handled their wakes before the switch (${gone.join(", ")}).`,
 				folded: 0,
 				members: gone,

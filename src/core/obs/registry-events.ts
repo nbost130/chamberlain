@@ -29,11 +29,7 @@ export const EVENTS = {
 	// ---- the wake path -----------------------------------------------------------------------------
 	"wake.queued": e("info", { kind: KIND }, "deliver-queued"),
 	"wake.held": e("info", { kind: KIND }, "deliver-held"),
-	"wake.superseded": e(
-		"info",
-		{ members: corrs("members"), why: f(T.enm("new-turn", "settled", "archived")) },
-		"held-superseded",
-	),
+	"wake.superseded": e("info", { members: corrs("members"), why: f(T.enm("settled", "archived")) }, "held-superseded"),
 	"wake.given-up": e("info", { members: corrs("members") }, "held-given-up"),
 	"wake.composed": e(
 		"info",

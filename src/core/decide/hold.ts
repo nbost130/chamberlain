@@ -28,6 +28,13 @@ export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta &&
  */
 const NEVER_FOLDED: ReadonlySet<string> = new Set(["answer", "note"]);
 
+/** A give-up row's id, from its members: two batches never share one, whatever the clock does. */
+export const memberHash = (ids: readonly string[]) =>
+	createHash("sha1")
+		.update([...ids].sort().join("\n"))
+		.digest("hex")
+		.slice(0, 16);
+
 /** A Steward busy this long gets the digest anyway, and never more than one such digest per window. */
 export const HOLD_CEILING_MS = 20 * 60_000;
 /**
@@ -61,18 +68,37 @@ const OBSERVE_GAP_MS = 5 * 60_000;
  * the wake and is never sent again.
  */
 /**
- * What a digest can say about a held turn-end report's thread. `watchedSince`: when the daemon began watching threads (its start). The
- * engine gives up a report whose thread started a new turn while it was watched (store `supersedeHeld`), so a report held since then is
- * still current; one held before a restart may have been missed, and says so.
+ * What the daemon saw of a thread: since when its server's connection has been up without a break (every state change since then was
+ * seen), and when the thread last started a turn. Either is absent when unknown.
  */
-export type ComposeOpts = { watchedSince?: number };
+export type ThreadNews = { watchedSince?: number; lastTurnStart?: number };
+/**
+ * `news`: the daemon's view of a thread at composition. `lagMs`: the longest a turn's end can take to become a held report (the engine's
+ * debounce plus its reads), so a turn start within that window before the report may be the report's own run or a new one.
+ */
+export type ComposeOpts = { news?: (thread: string) => ThreadNews; lagMs?: number };
+/** A turn end becomes a held report within this, conservatively: the debounce is seconds, the instruction reads a few more. */
+const REPORT_LAG_MS = 2 * 60_000;
+const hhmm = (ms: number) => new Date(ms).toISOString().slice(11, 16);
 
-/** Pure: the freshness note a digest item carries, or "" for a kind that has none. */
-function freshness(i: HeldItem, o: ComposeOpts): string {
-	if (i.kind !== "turn_ended" || o.watchedSince === undefined) return "";
-	return i.queuedAt >= o.watchedSince
-		? " · its thread has not started a new turn since"
-		: " · held across a daemon restart, so its thread may have moved on: check it before acting";
+/**
+ * Pure: what a digest says about a held turn-end report's thread, stamped with the time it was checked (a retried or transferred digest
+ * keeps the stamp). It claims "no new turn" only when the daemon watched the thread's server without a break across the whole window and saw
+ * no turn start in it; a start it cannot place, or a gap in watching, makes it say "not confirmed current". "" for other kinds.
+ */
+function freshness(i: HeldItem, now: number, o: ComposeOpts): string {
+	if (i.kind !== "turn_ended" || !i.thread || !o.news) return "";
+	const { watchedSince, lastTurnStart } = o.news(i.thread);
+	if (lastTurnStart !== undefined && lastTurnStart > i.queuedAt)
+		return ` · its thread started a new turn at ${hhmm(lastTurnStart)} UTC, after this report: read it before acting`;
+	const windowStart = i.queuedAt - (o.lagMs ?? REPORT_LAG_MS);
+	const unsure =
+		watchedSince === undefined ||
+		watchedSince > windowStart ||
+		(lastTurnStart !== undefined && lastTurnStart >= windowStart);
+	return unsure
+		? " · not confirmed current: read the thread before acting"
+		: ` · as of ${hhmm(now)} UTC its thread had started no new turn since this report`;
 }
 
 export function composeWake(
@@ -131,7 +157,7 @@ export function composeWake(
 		const f = folds.get(i) ?? [];
 		const waited = Math.max(0, Math.round((now - i.queuedAt) / 60_000));
 		return [
-			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${freshness(i, o)}${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
+			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${freshness(i, now, o)}${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
 			i.message,
 		].join("\n");
 	});

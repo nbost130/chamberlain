@@ -1,18 +1,20 @@
 /**
  * The flow report, `chamberlain steward-health flow`: day by day, where the Steward's turns come from and what they cost, and whether the
- * measures that cut them are working. Numbers only, from the token metric (steward_wake_usage) and the daemon's event log; no text of a
- * wake or a transcript reaches it.
+ * measures that cut them are working. Numbers only, from the token metric (steward_wake_usage) and the outbox; no text of a wake or a
+ * transcript reaches it.
  *
  * What each column answers:
  * - direct, notice, wakes: turns started by a thread messaging the Steward straight, by T3 itself (a watched PR, a delegated task's
  *   result), and by Chamberlain. Direct turns should fall as threads report with `chamberlain note`, which joins the next digest.
  * - notes, answers: reports and decision-queue answers held for a digest instead of sent as turns of their own.
- * - digests, items: digests sent and the wakes they carried; given up: held turn-end reports dropped because their thread moved on.
+ * - digests, items: digests delivered to the Steward and the wakes whose text they carried; given up: held turn-end reports dropped
+ *   because the principal settled or archived their thread.
  * - reads/item: the Steward's reads of other threads per digest item, the verification a digest that says too little costs.
  * - ctx p50: the Steward's context at the start of a turn. Every request re-reads it, so it sets the price of every turn.
  */
 import type { Store } from "../store/store.ts";
 import type { WakeUsage } from "../store/store-records.ts";
+import type { HeldItem, OutboxRow } from "../store/store-wakes.ts";
 import { percentile } from "./steward-report.ts";
 import { isWake, totalTokens } from "./steward-tokens.ts";
 
@@ -47,24 +49,42 @@ const emptyDay = (day: string): FlowDay => ({
 	givenUp: 0,
 });
 
-type Ev = { t: string; event: string; deliveryId?: unknown; members?: unknown };
-const memberCount = (e: Ev) => (Array.isArray(e.members) ? e.members.length : 0);
+/**
+ * Notes and answers count when they were held (every held wake becomes an outbox member, or is still held). Digests count when the
+ * Steward's lane delivered them; their items are the wakes whose text they carry (folded members excluded). Given-up reports count when
+ * their give-up row was written. All from the outbox itself, the durable record, not from log lines a process may not write.
+ */
+function addOutbox(
+	days: Map<string, FlowDay>,
+	rows: OutboxRow[],
+	held: HeldItem[],
+	itemsByDigest: Map<string, number>,
+) {
+	const steward = rows.filter((r) => !r.receiver);
+	addHeld(days, [...steward.flatMap((r) => r.members), ...held]);
+	for (const r of steward) addRow(days, r, itemsByDigest);
+}
 
-/** Folds the daemon's events into the days: held notes and answers, digests composed and their size, reports given up. */
-function addEvents(days: Map<string, FlowDay>, events: Ev[], itemsByDigest: Map<string, number>) {
-	for (const e of events) {
-		const d = days.get(e.t.slice(0, 10));
+/** Each note and answer counts on the day it was held. */
+function addHeld(days: Map<string, FlowDay>, members: HeldItem[]) {
+	for (const m of members) {
+		const d = days.get(dayOf(m.queuedAt));
 		if (!d) continue;
-		const id = String(e.deliveryId ?? "");
-		if (e.event === "deliver-held" && id.startsWith("note:")) d.notesHeld++;
-		else if (e.event === "deliver-held" && id.startsWith("answer:")) d.answersHeld++;
-		else if (e.event === "held-given-up") d.givenUp += memberCount(e);
-		else if (e.event === "composed" && memberCount(e) > 1) {
-			d.digests++;
-			d.digestItems += memberCount(e);
-			itemsByDigest.set(id, memberCount(e));
-		}
+		if (m.deliveryId.startsWith("note:")) d.notesHeld++;
+		else if (m.deliveryId.startsWith("answer:")) d.answersHeld++;
 	}
+}
+
+/** A delivered digest counts its items on the day it went; a give-up row counts its members on the day it was written. */
+function addRow(days: Map<string, FlowDay>, r: OutboxRow, itemsByDigest: Map<string, number>) {
+	const d = days.get(dayOf(r.finishedAt ?? r.createdAt));
+	if (r.status === "delivered" && r.deliveryId.startsWith("digest:")) {
+		const items = r.members.length - r.folded;
+		itemsByDigest.set(r.deliveryId, items);
+		if (!d) return;
+		d.digests++;
+		d.digestItems += items;
+	} else if (d && r.status === "cancelled" && r.deliveryId.startsWith("superseded:")) d.givenUp += r.members.length;
 }
 
 type Reads = Map<string, { reads: number; items: number }>;
@@ -105,12 +125,8 @@ export function flowReport(store: Store, o: { days?: number; now?: number } = {}
 	const days = new Map<string, FlowDay>();
 	for (let t = start; t <= now; t += DAY_MS) days.set(dayOf(t), emptyDay(dayOf(t)));
 	const itemsByDigest = new Map<string, number>();
-	const since = new Date(start).toISOString();
-	addEvents(
-		days,
-		store.events.query({ since, events: ["deliver-held", "composed", "held-given-up"] }) as Ev[],
-		itemsByDigest,
-	);
+	// Every row, not only the window's: a digest delivered before the window still names its items for a turn inside it.
+	addOutbox(days, store.wakes.rows("all"), store.wakes.held(null), itemsByDigest);
 	addTurns(days, store.usage.list({ since: start }), itemsByDigest);
 	return [...days.values()];
 }

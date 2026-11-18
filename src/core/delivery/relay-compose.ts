@@ -1,6 +1,6 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "../crash.ts";
-import { type composeWake, observe, overdue } from "../decide/hold.ts";
+import { type composeWake, memberHash, observe, overdue, type ThreadNews } from "../decide/hold.ts";
 import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
 import { alarms } from "../messages.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "../steward/rights-sent.ts";
@@ -77,7 +77,7 @@ const usesWindow = (ceiling: boolean, due: boolean, held: HeldItem[]): boolean =
 	ceiling || (due && !held.some((h) => h.kind === "transfer"));
 
 /**
- * Held turn-end reports the engine marked superseded (their thread started a new turn, or was settled or archived) are given up: composed
+ * Held turn-end reports the engine marked superseded (the principal settled or archived their thread) are given up: composed
  * into one row and cancelled in one transaction, so each keeps a permanent tombstone and is never sent. The Steward gets the thread's next
  * report instead of a stale one, and no turn at all when nothing else was held.
  */
@@ -89,7 +89,7 @@ function giveUpSuperseded(r: Ctx, now: number) {
 		const row = store.wakes.compose(
 			now,
 			() => ({
-				deliveryId: `superseded:${now}:${gone.length}`,
+				deliveryId: `superseded:${memberHash(gone)}`,
 				message: `Held turn-end reports given up: their thread started a new turn or was settled or archived (${gone.join(", ")}).`,
 				folded: 0,
 				members: gone,
@@ -98,6 +98,7 @@ function giveUpSuperseded(r: Ctx, now: number) {
 			null,
 		);
 		if (row) store.wakes.cancel(row.deliveryId, now);
+		store.wakes.forgetStatus(gone);
 	});
 	d.log("held-given-up", { members: gone });
 }
@@ -125,7 +126,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	let kept: string[] = [];
 	const row = store.wakes.compose(
 		now,
-		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due, watchedSince: r.watchedSince }),
+		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due, news: r.news }),
 		l.name,
 	);
 	if (!row) return;
@@ -168,13 +169,17 @@ function digestOf(
 	l: Lane,
 	held: HeldItem[],
 	now: number,
-	{ onKept, answerDue, watchedSince }: { onKept: (kept: string[]) => void; answerDue: boolean; watchedSince: number },
+	{
+		onKept,
+		answerDue,
+		news,
+	}: { onKept: (kept: string[]) => void; answerDue: boolean; news?: (thread: string) => ThreadNews },
 ): Composed {
 	const transfers = held.filter((h) => h.kind === "transfer");
 	const others = held.filter((h) => h.kind !== "transfer");
 	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
 	const digestBatch = others.length
-		? composeDigestBatch(others, now, TRANSFER_DIGEST_MAX_BYTES, { watchedSince })
+		? composeDigestBatch(others, now, TRANSFER_DIGEST_MAX_BYTES, news ? { news } : {})
 		: undefined;
 	const useTransfers = transferBatch && (!digestBatch || transfersFirst(transfers, others, answerDue));
 	if (useTransfers) {

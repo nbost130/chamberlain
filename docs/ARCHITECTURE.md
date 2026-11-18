@@ -194,11 +194,13 @@ sequenceDiagram
    wake that may wait (a turn end, the sweep, a decision-queue answer, a thread's note) becomes a **held item** (`held_wakes`); any
    other (a question or approval, a failure) becomes a **pending row** at once. An id
    the outbox already knows, in any state, writes nothing: a delivered or cancelled wake is never enqueued again.
-5. **Holding.** While `isBusy()` says the Steward is working (or `unknown`), held items wait. A held turn-end report goes stale when its
-   thread starts a new turn or is settled or archived: the engine appends a `superseded` status for it (table `held_wake_status`,
-   append-only), and the relay gives it up before composing (one cancelled row, so each id keeps a tombstone and is never sent). The
-   thread's next turn reports afresh. In a digest each turn-end item then says whether its thread has started a new turn since it was held,
-   or that it was held across a daemon restart and may have moved on. Of the sweeps, only the full-sweep reminder folds into the newest:
+5. **Holding.** While `isBusy()` says the Steward is working (or `unknown`), held items wait. A held turn-end report on a thread the
+   principal settles or archives needs nothing more: the engine appends a `superseded` status for it (table `held_wake_status`), and the
+   relay gives it up before composing (one cancelled row, its id a hash of its members, so each keeps a tombstone and is never sent) and
+   deletes the mark. A new turn never supersedes a report: that turn's own report may be skipped, and a completed run's result must still
+   arrive. Instead each turn-end item in a digest says, stamped with the time it was composed, either that its thread started no new turn
+   since the report (only when the daemon watched that thread's server without a break across the whole window), that it started a new
+   turn at a given time, or that it is not confirmed current. Of the sweeps, only the full-sweep reminder folds into the newest:
    the findings sweep and the idle-thread list carry only what is new since the last one. When the relay finds it idle, or it has
    been busy for the whole ceiling (20 minutes, once per ceiling), or a held answer has waited three minutes (the principal is waiting on
    it, so an answer never waits the full ceiling), the relay **composes** everything held into ONE row in one

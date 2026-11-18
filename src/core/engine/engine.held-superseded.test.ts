@@ -1,4 +1,4 @@
-/** A held turn-end report goes stale when its thread starts a new turn: the engine marks it, and the relay gives it up. */
+/** Held turn-end reports and what happens to their thread while they wait: a new turn keeps the report, settling gives it up. */
 import { describe, expect, test } from "bun:test";
 import { useCoreEngineFixtures } from "../../testing/core-engine-fixtures.ts";
 import { createEngine } from "./engine.ts";
@@ -6,7 +6,7 @@ import { createEngine } from "./engine.ts";
 const { rig, thread, stewardSigned } = useCoreEngineFixtures(createEngine);
 const posts = (r: ReturnType<typeof rig>) => r.fake.wakes.filter((w) => !w.deliveryId.includes(":rights-first:"));
 
-describe("held turn-end reports and their thread's next turn", () => {
+describe("held turn-end reports and their thread", () => {
 	const ended = (r: ReturnType<typeof rig>, id: string) => {
 		r.fake.threads.set(id, {
 			instruction: { items: [{ ...stewardSigned, id: `s-${id}` }], state: "complete", byMachine: false },
@@ -16,38 +16,31 @@ describe("held turn-end reports and their thread's next turn", () => {
 		r.fake.emit({ kind: "state", thread: thread(id, "completed") });
 	};
 
-	test("a report whose thread started a new turn is given up for good; the other goes, saying its thread has not moved", async () => {
+	test("a new turn never drops a held report: it still arrives, saying its thread moved on", async () => {
 		const r = rig({ steward: "steward-1" });
 		r.fake.setBusy("busy");
 		ended(r, "t2");
 		ended(r, "t3");
-		ended(r, "t4");
-		await r.until("three held", () => r.held().length === 3);
-		const t2 = r.held().find((h) => h.deliveryId.startsWith("t2:"))!.deliveryId;
-		// t2 starts its next turn while the Steward is busy: its held report is now stale.
+		await r.until("two held", () => r.held().length === 2);
+		// t2 starts another turn while the Steward is busy (a quick fix whose own report may never come).
 		r.fake.emit({ kind: "state", thread: thread("t2", "running") });
-		await r.until("t2 marked", () => r.store.wakes.superseded().some((s) => s.deliveryId === t2));
-		expect(r.store.wakes.superseded()).toEqual([{ deliveryId: t2, at: expect.any(Number), why: "new-turn" }]);
+		await r.engine.tick();
+		expect(r.store.wakes.superseded()).toEqual([]);
 		r.fake.setBusy("idle");
 		await r.engine.tick();
 		await r.until("the digest", () => posts(r).some((w) => w.deliveryId.startsWith("digest:")));
 		const digest = posts(r).find((w) => w.deliveryId.startsWith("digest:"))!;
-		expect(digest.message).toContain("digest: 2 wakes were held");
+		expect(digest.message).toContain('thread "Thread t2"');
 		expect(digest.message).toContain('thread "Thread t3"');
-		expect(digest.message).toContain('thread "Thread t4"');
-		expect(digest.message).not.toContain('thread "Thread t2"');
-		expect(digest.message).toContain("its thread has not started a new turn since");
-		// Given up: tombstoned, never sent, never held again.
-		expect(r.store.wakes.find(t2)).toMatchObject({ status: "cancelled" });
-		expect(r.store.wakes.known(t2)).toBe(true);
-		expect(r.events.some((e) => e.event === "held-given-up")).toBe(true);
+		expect(digest.message).toMatch(/its thread started a new turn at \d\d:\d\d UTC, after this report/);
 	});
 
-	test("a settled thread's held report is given up; when nothing else is held the Steward gets no turn", async () => {
+	test("a settled thread's held report is given up for good; when nothing else is held the Steward gets no turn", async () => {
 		const r = rig({ steward: "steward-1" });
 		r.fake.setBusy("busy");
 		ended(r, "t5");
 		await r.until("held", () => r.held().length === 1);
+		const id = r.held()[0]!.deliveryId;
 		r.fake.emit({ kind: "state", thread: { ...thread("t5", "completed"), settled: true } });
 		await r.until("marked", () => r.store.wakes.superseded().length === 1);
 		expect(r.store.wakes.superseded()[0]!.why).toBe("settled");
@@ -56,5 +49,22 @@ describe("held turn-end reports and their thread's next turn", () => {
 		await r.engine.tick();
 		expect(posts(r).filter((w) => w.message.includes('thread "Thread t5"'))).toEqual([]);
 		expect(r.held()).toEqual([]);
+		expect(r.store.wakes.find(id)).toMatchObject({ status: "cancelled" });
+		expect(r.store.wakes.find(id)!.deliveryId).toMatch(/^superseded:[0-9a-f]{16}$/);
+		expect(r.store.wakes.superseded()).toEqual([]);
+		expect(r.events.some((e) => e.event === "held-given-up")).toBe(true);
+	});
+
+	test("a dry run writes no mark", async () => {
+		const r = rig({ steward: "steward-1", dry: true });
+		r.fake.setBusy("busy");
+		// A report a live run held before this dry run started.
+		r.store.wakes.hold({ deliveryId: "t6:ended:1", message: "report", queuedAt: 1, kind: "turn_ended", thread: "t6" });
+		await r.until("watching", () => r.engine.watchers[0]!.connected);
+		r.fake.emit({ kind: "state", thread: thread("t6", "completed") });
+		await r.until("the watcher saw it", () => r.engine.watchers[0]!.states.has("t6"));
+		r.fake.emit({ kind: "state", thread: { ...thread("t6", "completed"), settled: true } });
+		await r.until("the watcher saw it settled", () => r.engine.watchers[0]!.states.get("t6")?.settled === true);
+		expect(r.store.wakes.superseded()).toEqual([]);
 	});
 });

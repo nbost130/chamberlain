@@ -149,6 +149,7 @@ export class Watcher extends WatcherHandoffs {
 		if (turnBegan(prev, next)) {
 			this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id)));
 			this.core.recovery?.moved(next.id);
+			this.turnStartedAt.set(next.id, Date.now());
 		}
 		this.supersedeHeld(prev, next);
 		if (prev && LIVE.has(prev.status) && ["completed", "idle"].includes(next.status))
@@ -159,19 +160,19 @@ export class Watcher extends WatcherHandoffs {
 	}
 
 	/**
-	 * A held turn-end report goes stale the moment its thread starts a new turn, or is settled or archived: the next turn end reports
-	 * afresh, and a settled thread needs nothing. The store appends 'superseded' to each such held report, and the relay gives it up
-	 * instead of sending it in the next digest (relay-compose.ts). A failed write is logged and changes nothing: the report is sent.
+	 * A held turn-end report about a thread the principal settles or archives needs nothing more: the store appends 'superseded' to it, and
+	 * the relay gives it up instead of sending it (relay-compose.ts). A new turn does NOT supersede a report: that turn's own report may be
+	 * skipped (a quick fix by the principal), and a completed run's result must still reach the Steward; the digest says the thread moved
+	 * on instead (hold.ts). A dry run writes nothing. A failed write is logged and changes nothing: the report is sent.
 	 */
 	protected supersedeHeld(prev: ThreadState | undefined, next: ThreadState) {
-		const why = turnBegan(prev, next)
-			? "new-turn"
-			: prev && !prev.settled && next.settled
+		const why =
+			prev && !prev.settled && next.settled
 				? "settled"
 				: prev && !prev.archived && next.archived
 					? "archived"
 					: undefined;
-		if (!why) return;
+		if (!why || this.core.DRY) return;
 		try {
 			const members = this.core.store.wakes.supersedeHeld(next.id, Date.now(), why);
 			if (members.length) this.log("held-superseded", { server: this.srv.name, threadId: next.id, members, why });
@@ -231,6 +232,8 @@ export class Watcher extends WatcherHandoffs {
 					// A fresh connection is when a restart can first see which held cards resolved while the daemon was down.
 					connected: (up, info) => {
 						if (up !== this.connected) this.epoch++;
+						if (up && !this.connected) this.connectedAt = Date.now();
+						if (!up) this.connectedAt = undefined;
 						this.connected = up;
 						if (!up) this.lastOk = Date.now();
 						if (info?.version) this.version = info.version;

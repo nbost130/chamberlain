@@ -4,7 +4,7 @@ exports[`the registry a field named for a duration is a duration, and the regist
 "wake.queued.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
 wake.held.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
 wake.superseded.members: list(hex12,200) <- members (corrs)
-wake.superseded.why: enum(new-turn|settled|archived)
+wake.superseded.why: enum(settled|archived)
 wake.given-up.members: list(hex12,200) <- members (corrs)
 wake.composed.members: list(hex12,200) <- members (corrs)
 wake.composed.kept: list(hex12,200) <- kept (corrs)

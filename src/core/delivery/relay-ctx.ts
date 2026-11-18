@@ -1,6 +1,6 @@
 /** What the relay runs on: its dependencies and one lane of the outbox, and the context every step is given. */
 
-import type { Gate } from "../decide/hold.ts";
+import type { Gate, ThreadNews } from "../decide/hold.ts";
 import type { AlarmText } from "../messages.ts";
 import type { RightsState } from "../steward/rights-sent.ts";
 import type { GenSnapshot } from "../steward/steward-gens.ts";
@@ -19,6 +19,8 @@ export const relayPollMs = (env: Record<string, string | undefined> = process.en
 
 export type RelayDeps = {
 	store: Store;
+	/** The daemon's view of a thread (its server's unbroken watch, its last turn start), for a digest's freshness notes. */
+	threadNews?: (thread: string) => ThreadNews;
 	/**
 	 * The held one-relay lock (`holdRelayLock`, singleton.ts). Required, and checked: the relay is the only code that calls a wake transport,
 	 * and it cannot be built without the lock that makes it the only relay. It must be the lock on this store's database file (`lockCovers`).
@@ -94,8 +96,8 @@ export type Ctx = {
 	pause: (attempts: number) => number;
 	ceiling: number;
 	clock: () => number;
-	/** When this relay (and the daemon's watching) began: a held report older than this may have missed its thread moving on (hold.ts). */
-	watchedSince: number;
+	/** The daemon's view of a thread for a digest's freshness notes (hold.ts); absent: no notes. */
+	news?: (thread: string) => ThreadNews;
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
 	owed: Map<number, OutboxRow>;
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */

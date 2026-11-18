@@ -2,7 +2,7 @@
 
 import { exceedsEncodedCap } from "../steward/steward-types.ts";
 import { type Db, type Row, required } from "./sqlite-db.ts";
-import { supersededHeld, supersedeHeld } from "./sqlite-held-status.ts";
+import { forgetStatus, supersededHeld, supersedeHeld } from "./sqlite-held-status.ts";
 import type { Store } from "./store.ts";
 import type {
 	Challenge,
@@ -177,6 +177,7 @@ export const makeWakes = (c: Db): Store["wakes"] => ({
 	hold: (w) => holdWake(c, w),
 	supersedeHeld: (thread, at, why) => supersedeHeld(c, thread, at, why),
 	superseded: () => supersededHeld(c),
+	forgetStatus: (ids) => forgetStatus(c, ids),
 	held: (lane) => heldWakes(c, lane),
 	compose: (now, compose, lane) => composeHeld(c, now, compose, lane),
 	rows: (status, lane) => outboxRows(c, status, lane),
