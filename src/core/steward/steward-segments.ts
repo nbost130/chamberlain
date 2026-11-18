@@ -1,11 +1,13 @@
 /** Cutting the Steward's Claude Code transcript into segments: one wake, the start prompt, a compaction, a notice or a message, each with its token numbers. */
+
 import type { WakeUsage } from "../store/store-records.ts";
+import { readsThread } from "./steward-thread-reads.ts";
 
 /**
  * The wake header every Chamberlain wake starts with (`t3-wake` is the name it had before), recognised only where a wake puts it: at the
  * very start of the prompt, or at the start of T3's webhook envelope (`<webhook-data-<id>>`). A header quoted in a message is not a wake.
  */
-const WAKE_HEADER = /(?:^|<webhook-data-[0-9a-f]+>)\[(?:chamberlain|t3-wake)\] ([a-z][a-z0-9_-]*):/;
+const WAKE_HEADER = /(?:^|<webhook-data-[0-9a-f]+>)\[(?:chamberlain|t3-wake)\] ([a-z][a-z0-9_-]*|idle threads):/;
 /**
  * The wake kinds Chamberlain (and t3-wake before it) has sent. A header naming any other word is stored as `wake`: the kind is a fixed
  * vocabulary, so no word of a transcript ever reaches the database or a report.
@@ -47,7 +49,9 @@ const isCompactCommand = (t: string): boolean =>
 	/^<command-name>\/compact<\/command-name>/.test(t) || /<command-name>\/compact<\/command-name>/.test(t.slice(0, 200));
 
 /** A wake: its kind (a word outside the fixed vocabulary is `wake`), a sweep's variant, and its delivery id when it carries one. */
-function wakePrompt(text: string, t: string, word: string): Prompt {
+function wakePrompt(text: string, t: string, header: string): Prompt {
+	// The idle-thread list's header is two words ("[chamberlain] idle threads:"); its kind is idle-parents.
+	const word = header === "idle threads" ? "idle-parents" : header;
 	const kind = (WAKE_KINDS as readonly string[]).includes(word) ? word : "wake";
 	const id = text.match(DELIVERY_ID)?.[1];
 	const variant =
@@ -115,6 +119,8 @@ type Open = Omit<
 	"requests" | "inputTokens" | "cacheReadInputTokens" | "cacheCreationInputTokens" | "outputTokens"
 > & {
 	calls: Map<string, Call>;
+	/** The turn's tool calls by tool_use id (a request written as several rows names each once): true for a read of another thread. */
+	tools: Map<string, boolean>;
 };
 
 /** What `segmentTranscript` carries from row to row. */
@@ -153,6 +159,7 @@ function openSegment(sg: Segmenter, key: string, p: Prompt, at: number | undefin
 		endedAt: at ?? 0,
 		compactions: 0,
 		calls: new Map(),
+		tools: new Map(),
 	};
 	sg.out.push(seg);
 	return seg;
@@ -193,9 +200,23 @@ function scanAssistant(sg: Segmenter, r: Row, at: number | undefined) {
 	sg.owner.set(id, seg);
 	// A later row of the same request replaces its usage but keeps its place: the map's order is the order the requests started.
 	seg.calls.set(id, callOf(u));
+	countTools(seg, r.message?.content);
 	if (at !== undefined) {
 		if (!seg.startedAt) seg.startedAt = at;
 		seg.endedAt = Math.max(seg.endedAt, at);
+	}
+}
+
+/** Notes each tool call a row carries, once per tool_use id. */
+function countTools(seg: Open, content: unknown) {
+	if (!Array.isArray(content)) return;
+	for (const b of content as { type?: unknown; id?: unknown; name?: unknown; input?: { command?: unknown } }[]) {
+		if (b?.type !== "tool_use" || typeof b.id !== "string") continue;
+		// A request written as several rows names a tool_use more than once; a row without its input never unmarks a read.
+		seg.tools.set(
+			b.id,
+			seg.tools.get(b.id) === true || readsThread(String(b.name ?? ""), String(b.input?.command ?? "")),
+		);
 	}
 }
 
@@ -220,7 +241,7 @@ function scanSegmentLine(sg: Segmenter, line: string) {
 }
 
 /** A segment's requests summed, with the context size at its first, last and largest request. */
-function finishSegment({ calls, ...s }: Open): WakeUsage {
+function finishSegment({ calls, tools, ...s }: Open): WakeUsage {
 	const list = [...calls.values()];
 	const sum = (f: (c: Call) => number) => list.reduce((a, c) => a + f(c), 0);
 	const first = list[0];
@@ -232,6 +253,8 @@ function finishSegment({ calls, ...s }: Open): WakeUsage {
 		cacheReadInputTokens: sum((c) => c.cacheRead),
 		cacheCreationInputTokens: sum((c) => c.cacheCreation),
 		outputTokens: sum((c) => c.output),
+		toolCalls: tools.size,
+		threadReads: [...tools.values()].filter(Boolean).length,
 		...(first && last
 			? {
 					contextStart: first.context,

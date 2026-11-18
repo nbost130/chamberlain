@@ -3,6 +3,8 @@
  *
  *   steward-health                                   the live health verdict
  *   steward-health tokens [--json]                   tokens per wake by kind, a full sweep's cost and the context trend (needs stewardTokens on)
+ *   steward-health flow [--days <n>] [--json]          per UTC day: where the Steward's turns came from, notes and answers held, digests,
+ *                                                    stale reports given up, reads per digest item and context (needs stewardTokens on)
  *   steward-health tokens backfill [--dir <d>] [<transcript.jsonl> ...]
  *                                                    read past Steward transcripts into the database (default: every Steward transcript in
  *                                                    the current Steward's project folder); idempotent
@@ -12,6 +14,7 @@ import { homeAdapter } from "./adapters/index.ts";
 import { has } from "./core/adapter/adapter-conformance.ts";
 import { CONF, compactTokens, STATE } from "./core/config/config.ts";
 import { setting } from "./core/config/layout.ts";
+import { flowReport, formatFlow } from "./core/steward/steward-flow.ts";
 import { liveHealth } from "./core/steward/steward-health.ts";
 import { HEALTH_CONFIG } from "./core/steward/steward-health-config.ts";
 import { usageReport } from "./core/steward/steward-report.ts";
@@ -55,8 +58,40 @@ async function tokens(argv: string[]) {
 	}
 }
 
-/** Prints the Steward's health; `tokens` prints its token usage per wake. */
+/** `flow [--days <n>] [--json]`: the day-by-day flow report. */
+function flow(argv: string[]) {
+	if (setting("stewardTokens", CONF) !== true) {
+		console.log(OFF);
+		return;
+	}
+	let days = 7;
+	let json = false;
+	for (let i = 0; i < argv.length; i++) {
+		if (argv[i] === "--json") json = true;
+		else if (argv[i] === "--days" && /^\d+$/.test(argv[i + 1] ?? "")) days = Number(argv[++i]);
+		else throw Error(`unknown argument ${argv[i]}`);
+	}
+	const store = defaultStore();
+	try {
+		const r = flowReport(store, { days });
+		console.log(json ? JSON.stringify(r, null, 2) : formatFlow(r));
+	} finally {
+		store.close();
+	}
+}
+
+/** Prints the Steward's health; `tokens` prints its token usage per wake, `flow` the day-by-day flow. */
 export async function main(argv: string[] = process.argv.slice(2)) {
+	if (argv[0] === "flow") {
+		try {
+			flow(argv.slice(1));
+		} catch (e) {
+			console.error(`Steward flow: ${String(e)}`);
+			console.error("usage: steward-health flow [--days <n>] [--json]");
+			process.exitCode = 1;
+		}
+		return;
+	}
 	if (argv[0] === "tokens") {
 		try {
 			await tokens(argv.slice(1));

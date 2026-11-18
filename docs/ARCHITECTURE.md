@@ -194,7 +194,13 @@ sequenceDiagram
    wake that may wait (a turn end, the sweep, a decision-queue answer, a thread's note) becomes a **held item** (`held_wakes`); any
    other (a question or approval, a failure) becomes a **pending row** at once. An id
    the outbox already knows, in any state, writes nothing: a delivered or cancelled wake is never enqueued again.
-5. **Holding.** While `isBusy()` says the Steward is working (or `unknown`), held items wait. When the relay finds it idle, or it has
+5. **Holding.** While `isBusy()` says the Steward is working (or `unknown`), held items wait. Nothing held is ever dropped for being stale:
+   a newer turn's own report may be skipped, and a completed run's result must still arrive. Instead a turn-end item in a digest may carry a
+   note of what the engine saw of its thread when the digest was built (through the relay's `threadNews`): a newer run started (the
+   report's run id differs from the thread's newest), working again, or settled or archived. Each is a reason to read the thread first. No
+   note claims the report is current: after a reconnect the engine's view can lag T3's, so absence of a note means nothing was seen.
+   Turn-end reports about different runs of one thread never fold together (the whole run id is the fold key), and sweeps never fold. Of the sweeps, only the full-sweep reminder folds into the newest:
+   the findings sweep and the idle-thread list carry only what is new since the last one. When the relay finds it idle, or it has
    been busy for the whole ceiling (20 minutes, once per ceiling), or a held answer has waited three minutes (the principal is waiting on
    it, so an answer never waits the full ceiling), the relay **composes** everything held into ONE row in one
    transaction (`WakeStore.compose`): the row's delivery id, text and member list are frozen, every held item is bound to it (a member
