@@ -47,7 +47,10 @@ test("question cards and approvals are answerable; secrets and links are listed 
 	expect(cards[1]!.command).toBe("rm -rf build");
 	expect(cards[1]!.question).toBe("command · clean");
 	expect(cards[1]!.options.map((o) => o.label)).toEqual(["Approve once", "Decline"]);
-	expect(cards[2]!.question).toBe("API key · deploy");
+	// #102: a secret mirror never carries the source card's label or reason.
+	expect(cards[2]!.question).toBe("Secret request");
+	expect(cards[2]!.question).not.toContain("API key");
+	expect(cards[2]!.question).not.toContain("deploy");
 	expect(cards[3]!.question).toBe("http://vps:3773 · link the vps");
 	for (const r of cards.slice(2)) {
 		expect(r.options).toEqual([]);
