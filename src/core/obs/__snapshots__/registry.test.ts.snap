@@ -3,9 +3,6 @@
 exports[`the registry a field named for a duration is a duration, and the registry's types are pinned: loosening one changes this listing and fails until the snapshot is updated on purpose 1`] = `
 "wake.queued.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
 wake.held.kind: enum(needs_input|failed|turn_ended|compact|sweep|digest|alert|question|pending|idle|report|rights|preamble|stale|card|window|thread|only-you|product|ruling|idea) <- kind
-wake.superseded.members: list(hex12,200) <- members (corrs)
-wake.superseded.why: enum(settled|archived)
-wake.given-up.members: list(hex12,200) <- members (corrs)
 wake.composed.members: list(hex12,200) <- members (corrs)
 wake.composed.kept: list(hex12,200) <- kept (corrs)
 wake.composed.folded: int
@@ -72,8 +69,6 @@ held-closed.server: known(server) <- server
 held-closed.closed: int
 held-close-error.server: known(server) <- server
 held-close-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
-held-supersede-error.server: known(server) <- server
-held-supersede-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 held-closed-for-item.item: item <- item
 held-closed-for-item.closed: int
 held-close-failed.item: item <- item

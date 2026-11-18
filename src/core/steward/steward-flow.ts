@@ -7,8 +7,7 @@
  * - direct, notice, wakes: turns started by a thread messaging the Steward straight, by T3 itself (a watched PR, a delegated task's
  *   result), and by Chamberlain. Direct turns should fall as threads report with `chamberlain note`, which joins the next digest.
  * - notes, answers: reports and decision-queue answers held for a digest instead of sent as turns of their own.
- * - digests, items: digests delivered to the Steward and the wakes whose text they carried; given up: held turn-end reports dropped
- *   because the principal settled or archived their thread.
+ * - digests, items: digests delivered to the Steward and the wakes whose text they carried.
  * - reads/item: the Steward's reads of other threads per digest item, the verification a digest that says too little costs.
  * - ctx p50: the Steward's context at the start of a turn. Every request re-reads it, so it sets the price of every turn.
  */
@@ -28,7 +27,6 @@ export type FlowDay = {
 	answersHeld: number;
 	digests: number;
 	digestItems: number;
-	givenUp: number;
 	/** Thread reads per digest item, over digest turns measured with tool counts (migration 20); undefined when there are none. */
 	readsPerItem?: number;
 	contextP50?: number;
@@ -46,7 +44,6 @@ const emptyDay = (day: string): FlowDay => ({
 	answersHeld: 0,
 	digests: 0,
 	digestItems: 0,
-	givenUp: 0,
 });
 
 /**
@@ -75,7 +72,7 @@ function addHeld(days: Map<string, FlowDay>, members: HeldItem[]) {
 	}
 }
 
-/** A delivered digest counts its items on the day it went; a give-up row counts its members on the day it was written. */
+/** A delivered digest counts its items on the day it went. */
 function addRow(days: Map<string, FlowDay>, r: OutboxRow, itemsByDigest: Map<string, number>) {
 	const d = days.get(dayOf(r.finishedAt ?? r.createdAt));
 	if (r.status === "delivered" && r.deliveryId.startsWith("digest:")) {
@@ -84,7 +81,7 @@ function addRow(days: Map<string, FlowDay>, r: OutboxRow, itemsByDigest: Map<str
 		if (!d) return;
 		d.digests++;
 		d.digestItems += items;
-	} else if (d && r.status === "cancelled" && r.deliveryId.startsWith("superseded:")) d.givenUp += r.members.length;
+	}
 }
 
 type Reads = Map<string, { reads: number; items: number }>;
@@ -144,16 +141,16 @@ const k = (n: number | undefined) =>
 export function formatFlow(days: FlowDay[]): string {
 	const out = [
 		"Steward turn flow by UTC day (turns, then tokens; see `chamberlain steward-health tokens` for per-kind cost)",
-		"  day          direct  notice  wakes | tokens direct  notice   wakes | notes answers | digests items given-up reads/item | ctx p50",
+		"  day          direct  notice  wakes | tokens direct  notice   wakes | notes answers | digests items reads/item | ctx p50",
 	];
 	for (const d of days)
 		out.push(
-			`  ${d.day}  ${String(d.turns.direct).padStart(6)}  ${String(d.turns.notice).padStart(6)}  ${String(d.turns.wakes).padStart(5)} | ${k(d.tokens.direct).padStart(13)}  ${k(d.tokens.notice).padStart(6)}  ${k(d.tokens.wakes).padStart(6)} | ${String(d.notesHeld).padStart(5)}  ${String(d.answersHeld).padStart(6)} | ${String(d.digests).padStart(7)}  ${String(d.digestItems).padStart(4)}  ${String(d.givenUp).padStart(8)}  ${(d.readsPerItem === undefined ? "-" : d.readsPerItem.toFixed(2)).padStart(10)} | ${k(d.contextP50).padStart(7)}`,
+			`  ${d.day}  ${String(d.turns.direct).padStart(6)}  ${String(d.turns.notice).padStart(6)}  ${String(d.turns.wakes).padStart(5)} | ${k(d.tokens.direct).padStart(13)}  ${k(d.tokens.notice).padStart(6)}  ${k(d.tokens.wakes).padStart(6)} | ${String(d.notesHeld).padStart(5)}  ${String(d.answersHeld).padStart(6)} | ${String(d.digests).padStart(7)}  ${String(d.digestItems).padStart(4)}  ${(d.readsPerItem === undefined ? "-" : d.readsPerItem.toFixed(2)).padStart(10)} | ${k(d.contextP50).padStart(7)}`,
 		);
 	out.push(
 		"",
-		"Read it as: direct turns falling while notes rise means threads report through the digest; given-up items are stale reports the",
-		"Steward never had to read; reads/item near 0 means it trusts the digest; ctx p50 sets the price of every request.",
+		"Read it as: direct turns falling while notes rise means threads report through the digest; reads/item near 0 means the Steward",
+		"trusts the digest's freshness notes; ctx p50 sets the price of every request.",
 	);
 	return out.join("\n");
 }

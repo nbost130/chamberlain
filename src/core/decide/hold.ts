@@ -68,37 +68,49 @@ const OBSERVE_GAP_MS = 5 * 60_000;
  * the wake and is never sent again.
  */
 /**
- * What the daemon saw of a thread: since when its server's connection has been up without a break (every state change since then was
- * seen), and when the thread last started a turn. Either is absent when unknown.
+ * What T3 says about a thread now, from the daemon's live view of it: whether that view is current (its server connected), the thread's
+ * newest run, its status, and whether it is settled or archived. Absent fields are unknown.
  */
-export type ThreadNews = { watchedSince?: number; lastTurnStart?: number };
-/**
- * `news`: the daemon's view of a thread at composition. `lagMs`: the longest a turn's end can take to become a held report (the engine's
- * debounce plus its reads), so a turn start within that window before the report may be the report's own run or a new one.
- */
-export type ComposeOpts = { news?: (thread: string) => ThreadNews; lagMs?: number };
-/** A turn end becomes a held report within this, conservatively: the debounce is seconds, the instruction reads a few more. */
-const REPORT_LAG_MS = 2 * 60_000;
+export type ThreadNews = {
+	connected: boolean;
+	latestRunId?: string | null;
+	status?: string;
+	settled?: boolean;
+	archived?: boolean;
+};
+/** `news`: the daemon's view of a thread at composition, for each turn-end item's freshness note. */
+export type ComposeOpts = { news?: (thread: string) => ThreadNews | undefined };
 const hhmm = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+const WORKING = new Set(["running", "queued", "starting", "preparing", "waiting"]);
 
 /**
- * Pure: what a digest says about a held turn-end report's thread, stamped with the time it was checked (a retried or transferred digest
- * keeps the stamp). It claims "no new turn" only when the daemon watched the thread's server without a break across the whole window and saw
- * no turn start in it; a start it cannot place, or a gap in watching, makes it say "not confirmed current". "" for other kinds.
+ * The run a turn-end report is about: its id is `<thread>:ended:<run id>:<time>` (decide.ts endedKey, then the watcher's timestamp), and
+ * a run id can itself hold colons (`run:thread:...:ordinal:8`). Undefined for a report that names no run (`<thread>:ended:<time>`).
+ */
+export function reportRunId(deliveryId: string): string | undefined {
+	const m = /:ended:(.+)$/.exec(deliveryId);
+	const run = m?.[1]?.replace(/:\d{12,}$/, "");
+	return !run || /^\d{12,}$/.test(run) ? undefined : run;
+}
+
+/**
+ * Pure: what a digest says about a held turn-end report, stamped with the time it was checked. State, not timing: the report's run is
+ * compared with the thread's newest run as T3 reports it now. It says the report is current only when the daemon's view is live, the
+ * thread's newest run is the report's run and the thread is idle. "" for other kinds, or when there is no view at all.
  */
 function freshness(i: HeldItem, now: number, o: ComposeOpts): string {
 	if (i.kind !== "turn_ended" || !i.thread || !o.news) return "";
-	const { watchedSince, lastTurnStart } = o.news(i.thread);
-	if (lastTurnStart !== undefined && lastTurnStart > i.queuedAt)
-		return ` · its thread started a new turn at ${hhmm(lastTurnStart)} UTC, after this report: read it before acting`;
-	const windowStart = i.queuedAt - (o.lagMs ?? REPORT_LAG_MS);
-	const unsure =
-		watchedSince === undefined ||
-		watchedSince > windowStart ||
-		(lastTurnStart !== undefined && lastTurnStart >= windowStart);
-	return unsure
-		? " · not confirmed current: read the thread before acting"
-		: ` · as of ${hhmm(now)} UTC its thread had started no new turn since this report`;
+	const n = o.news(i.thread);
+	const run = reportRunId(i.deliveryId);
+	const at = hhmm(now);
+	if (!n?.connected || !run || n.latestRunId === undefined)
+		return " · not confirmed current: read the thread before acting";
+	if (n.settled || n.archived)
+		return ` · as of ${at} UTC its thread is ${n.settled ? "settled" : "archived"}: likely nothing to do`;
+	if (n.latestRunId !== run)
+		return ` · as of ${at} UTC a newer run of its thread has started: read the thread before acting`;
+	if (n.status && WORKING.has(n.status)) return ` · as of ${at} UTC its thread is working again: read it before acting`;
+	return ` · as of ${at} UTC this is still its thread's newest run, and the thread is idle`;
 }
 
 export function composeWake(
@@ -127,8 +139,9 @@ export function composeWake(
 		if (i.kind === "sweep" && i.message.startsWith(fullSweepHead())) return "sweep\u0000full";
 		if (!i.kind || !i.thread || NEVER_FOLDED.has(i.kind)) return undefined;
 		if (i.kind === "turn_ended") {
-			const run = /:ended:([^:]+)/.exec(i.deliveryId)?.[1];
-			if (run && !/^\d{12,}$/.test(run)) return `${i.kind}\u0000${i.thread}\u0000${run}`;
+			// The whole run id: run ids hold colons, so cutting at the first one made every run-scoped report of a thread fold into one.
+			const run = reportRunId(i.deliveryId);
+			if (run) return `${i.kind}\u0000${i.thread}\u0000${run}`;
 		}
 		return `${i.kind}\u0000${i.thread}`;
 	};

@@ -137,11 +137,14 @@ export class Core extends CoreWork {
 			onDelivered: (id) => recordAnswerDelivered(this.store, id),
 			threadNews: (thread) => {
 				const w = this.watcherOf(thread);
-				if (!w) return {};
-				const lastTurnStart = w.turnStartedAt.get(thread);
+				const st = w?.states.get(thread);
+				if (!w || !st) return undefined;
 				return {
-					...(w.connected && w.connectedAt !== undefined ? { watchedSince: w.connectedAt } : {}),
-					...(lastTurnStart !== undefined ? { lastTurnStart } : {}),
+					connected: w.connected,
+					latestRunId: st.latestRunId ?? null,
+					status: st.status,
+					settled: st.settled,
+					archived: st.archived,
 				};
 			},
 		});

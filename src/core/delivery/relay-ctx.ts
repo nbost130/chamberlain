@@ -19,8 +19,8 @@ export const relayPollMs = (env: Record<string, string | undefined> = process.en
 
 export type RelayDeps = {
 	store: Store;
-	/** The daemon's view of a thread (its server's unbroken watch, its last turn start), for a digest's freshness notes. */
-	threadNews?: (thread: string) => ThreadNews;
+	/** T3's current view of a thread (newest run, status, settled, whether the view is live), for a digest's freshness notes. */
+	threadNews?: (thread: string) => ThreadNews | undefined;
 	/**
 	 * The held one-relay lock (`holdRelayLock`, singleton.ts). Required, and checked: the relay is the only code that calls a wake transport,
 	 * and it cannot be built without the lock that makes it the only relay. It must be the lock on this store's database file (`lockCovers`).
@@ -97,7 +97,7 @@ export type Ctx = {
 	ceiling: number;
 	clock: () => number;
 	/** The daemon's view of a thread for a digest's freshness notes (hold.ts); absent: no notes. */
-	news?: (thread: string) => ThreadNews;
+	news?: (thread: string) => ThreadNews | undefined;
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
 	owed: Map<number, OutboxRow>;
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */

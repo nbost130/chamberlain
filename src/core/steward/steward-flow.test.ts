@@ -45,7 +45,7 @@ function row(s: ReturnType<typeof memStore>, o: RowSpec) {
 }
 
 describe("the flow report", () => {
-	test("counts turns by source, held notes and answers, delivered digests and their items, reports given up, and reads per item", () => {
+	test("counts turns by source, held notes and answers, delivered digests and their items, and reads per item", () => {
 		const s = memStore();
 		s.usage.upsert([
 			turn({ kind: "message", at: "2026-11-17T10:00:00Z", key: "m1" }),
@@ -72,13 +72,6 @@ describe("the flow report", () => {
 		// Composed but never delivered, and one for the desk: neither is a Steward digest.
 		row(s, { id: "digest:bb", ids: ["p", "q"], when: "2026-11-18T09:40:00Z", status: "cancelled" });
 		row(s, { id: "digest:cc", ids: ["r", "t"], when: "2026-11-18T09:45:00Z", status: "delivered", receiver: "desk" });
-		// Two reports given up because their thread was settled.
-		row(s, {
-			id: "superseded:0123456789abcdef",
-			ids: ["t7:ended:1", "t8:ended:1"],
-			when: "2026-11-18T09:25:00Z",
-			status: "cancelled",
-		});
 		// A note still held.
 		s.wakes.hold({ deliveryId: "note:def", message: "m", queuedAt: at("2026-11-18T10:00:00Z"), kind: "note" });
 		const days = flowReport(s, { days: 2, now: NOW });
@@ -92,7 +85,6 @@ describe("the flow report", () => {
 			answersHeld: 1,
 			digests: 1,
 			digestItems: 4,
-			givenUp: 2,
 			readsPerItem: 0.5,
 			contextP50: 200_000,
 		});

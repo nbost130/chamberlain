@@ -149,36 +149,12 @@ export class Watcher extends WatcherHandoffs {
 		if (turnBegan(prev, next)) {
 			this.oldCards.set(next.id, new Set(this.cardsSeen.get(next.id)));
 			this.core.recovery?.moved(next.id);
-			this.turnStartedAt.set(next.id, Date.now());
 		}
-		this.supersedeHeld(prev, next);
 		if (prev && LIVE.has(prev.status) && ["completed", "idle"].includes(next.status))
 			this.core.recovery?.healthy(next.id);
 		if (next.pendingRequestId)
 			this.cardsSeen.set(next.id, (this.cardsSeen.get(next.id) ?? new Set()).add(next.pendingRequestId));
 		return prev;
-	}
-
-	/**
-	 * A held turn-end report about a thread the principal settles or archives needs nothing more: the store appends 'superseded' to it, and
-	 * the relay gives it up instead of sending it (relay-compose.ts). A new turn does NOT supersede a report: that turn's own report may be
-	 * skipped (a quick fix by the principal), and a completed run's result must still reach the Steward; the digest says the thread moved
-	 * on instead (hold.ts). A dry run writes nothing. A failed write is logged and changes nothing: the report is sent.
-	 */
-	protected supersedeHeld(prev: ThreadState | undefined, next: ThreadState) {
-		const why =
-			prev && !prev.settled && next.settled
-				? "settled"
-				: prev && !prev.archived && next.archived
-					? "archived"
-					: undefined;
-		if (!why || this.core.DRY) return;
-		try {
-			const members = this.core.store.wakes.supersedeHeld(next.id, Date.now(), why);
-			if (members.length) this.log("held-superseded", { server: this.srv.name, threadId: next.id, members, why });
-		} catch (e) {
-			this.log("held-supersede-error", { server: this.srv.name, threadId: next.id, error: String(e).slice(0, 200) });
-		}
 	}
 
 	/** Wakes the Steward about a failure whose retry could not be made, with the note why. */
@@ -232,8 +208,6 @@ export class Watcher extends WatcherHandoffs {
 					// A fresh connection is when a restart can first see which held cards resolved while the daemon was down.
 					connected: (up, info) => {
 						if (up !== this.connected) this.epoch++;
-						if (up && !this.connected) this.connectedAt = Date.now();
-						if (!up) this.connectedAt = undefined;
 						this.connected = up;
 						if (!up) this.lastOk = Date.now();
 						if (info?.version) this.version = info.version;

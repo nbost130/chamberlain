@@ -642,24 +642,8 @@ DROP TABLE old_thread_dispositions;`,
 	},
 	{
 		version: 20,
-		name: "held wake status and per-turn tool counts",
+		name: "per-turn tool counts",
 		sql: `
--- held_wake_status: what the daemon learned about a held wake after it was held. The engine appends 'superseded' when the principal
--- settles or archives the wake's thread; the relay then gives the item up instead of sending it, and deletes the mark.
--- A row is never changed.
-CREATE TABLE held_wake_status (
-	delivery_id TEXT NOT NULL,
-	status TEXT NOT NULL CHECK (status IN ('superseded')),
-	at INTEGER NOT NULL,
-	why TEXT NOT NULL,
-	PRIMARY KEY (delivery_id, status)
-) WITHOUT ROWID;
-CREATE TRIGGER held_wake_status_append_only BEFORE UPDATE ON held_wake_status
-BEGIN SELECT RAISE(ABORT, 'a held wake status is append-only'); END;
--- A mark goes only once its wake has left the held store (given up or composed): deleting it earlier would let a stale report be sent.
-CREATE TRIGGER held_wake_status_kept_while_held BEFORE DELETE ON held_wake_status
-WHEN EXISTS (SELECT 1 FROM held_wakes WHERE delivery_id = OLD.delivery_id)
-BEGIN SELECT RAISE(ABORT, 'a held wake keeps its status until it leaves the held store'); END;
 -- The Steward's tool calls per turn, and how many of them read another thread (t3_thread_read, peek): the verification reads a
 -- digest makes it do. NULL for a turn measured before this migration.
 ALTER TABLE steward_wake_usage ADD COLUMN tool_calls INTEGER;

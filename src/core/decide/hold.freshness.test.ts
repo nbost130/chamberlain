@@ -1,54 +1,78 @@
-/** What a digest says about each held item now: freshness of turn-end reports, which sweeps fold, and which items the store marks. */
+/** What a digest says about each held item: freshness of turn-end reports against T3's state, which items fold, and tool counts. */
 import { describe, expect, test } from "bun:test";
-import { memStore } from "../../testing/store.ts";
 import { fullSweepHead } from "../messages.ts";
 import { segmentTranscript } from "../steward/steward-segments.ts";
-import { composeWake, type HeldItem, type ThreadNews } from "./hold.ts";
+import { composeWake, type HeldItem, reportRunId, type ThreadNews } from "./hold.ts";
 
-const MIN = 60_000;
-const T0 = Date.parse("2026-11-18T01:00:00Z");
-const te = (id: string, thread: string, queuedAt: number): HeldItem => ({
+const T0 = Date.parse("2026-11-18T01:30:00Z");
+const RUN = "run:thread:T1:ordinal:8";
+const te = (id: string, thread: string, queuedAt = T0): HeldItem => ({
 	deliveryId: id,
 	message: `report ${id}`,
 	queuedAt,
 	kind: "turn_ended",
 	thread,
 });
-/** Two reports so composeWake writes item headers (a lone item goes as itself). */
-const header = (news: ThreadNews, queuedAt = T0) => {
-	const c = composeWake([te("a", "T1", queuedAt), te("b", "T2", queuedAt + 1)], T0 + 30 * MIN, {
-		news: (t) => (t === "T1" ? news : {}),
+/** Two reports so composeWake writes item headers (a lone item goes as itself); returns item a's header. */
+const header = (news: ThreadNews | undefined, id = `T1:ended:${RUN}:1794944776113`) => {
+	const c = composeWake([te(id, "T1"), te("T2:ended:run:thread:T2:ordinal:1:1794944776114", "T2")], T0, {
+		news: (t) => (t === "T1" ? news : undefined),
 	});
-	return c.message.split("\n").find((l) => l.includes("deliveryId: a "))!;
+	return c.message.split("\n").find((l) => l.includes(`deliveryId: ${id} `))!;
 };
+const live = (o: Partial<ThreadNews> = {}): ThreadNews => ({
+	connected: true,
+	latestRunId: RUN,
+	status: "completed",
+	...o,
+});
 
-describe("freshness of a held turn-end report", () => {
-	test("watched without a break and no turn start since: current, stamped with the time it was composed", () => {
-		expect(header({ watchedSince: T0 - 60 * MIN, lastTurnStart: T0 - 30 * MIN })).toContain(
-			"as of 01:30 UTC its thread had started no new turn since this report",
-		);
-		expect(header({ watchedSince: T0 - 60 * MIN })).toContain("had started no new turn since");
-	});
-	test("a turn start after the report: says when, and to read the thread", () => {
-		expect(header({ watchedSince: T0 - 60 * MIN, lastTurnStart: T0 + 5 * MIN })).toContain(
-			"its thread started a new turn at 01:05 UTC, after this report: read it before acting",
-		);
-	});
-	test("a turn start it cannot place (just before the report), a gap in watching, or no watch: not confirmed", () => {
-		expect(header({ watchedSince: T0 - 60 * MIN, lastTurnStart: T0 - 30_000 })).toContain("not confirmed current");
-		expect(header({ watchedSince: T0 - 30_000 })).toContain("not confirmed current");
-		expect(header({})).toContain("not confirmed current");
-	});
-	test("no view of threads, or another kind: no note", () => {
-		const plain = composeWake([te("a", "T1", T0), te("b", "T2", T0)], T0);
-		expect(plain.message).not.toContain("new turn");
-		const note: HeldItem = { deliveryId: "n", message: "note", queuedAt: T0, kind: "note", thread: "T1" };
-		const c = composeWake([note, te("b", "T2", T0)], T0, { news: () => ({ watchedSince: 0 }) });
-		expect(c.message.match(/no new turn/g)).toHaveLength(1);
+describe("the run a report is about", () => {
+	test("the whole run id, colons and all; none for a timestamp-only report", () => {
+		expect(reportRunId(`mcp:launch:abc:ended:${RUN}:1794944776113`)).toBe(RUN);
+		expect(reportRunId("t1:ended:r20")).toBe("r20");
+		expect(reportRunId("t1:ended:1794944776113")).toBeUndefined();
+		expect(reportRunId("t1:failed:x")).toBeUndefined();
 	});
 });
 
-describe("which sweeps fold", () => {
+describe("freshness of a held turn-end report, against T3's state now", () => {
+	test("still the thread's newest run and idle: current, stamped", () => {
+		expect(header(live())).toContain("as of 01:30 UTC this is still its thread's newest run, and the thread is idle");
+	});
+	test("a newer run, working again, settled or archived: each says so", () => {
+		expect(header(live({ latestRunId: "run:thread:T1:ordinal:9" }))).toContain("a newer run of its thread has started");
+		expect(header(live({ status: "running" }))).toContain("its thread is working again");
+		expect(header(live({ settled: true }))).toContain("its thread is settled: likely nothing to do");
+		expect(header(live({ archived: true }))).toContain("its thread is archived");
+	});
+	test("disconnected, unknown thread, or a report naming no run: not confirmed", () => {
+		expect(header(live({ connected: false }))).toContain("not confirmed current");
+		expect(header(undefined)).toContain("not confirmed current");
+		expect(header(live(), "T1:ended:1794944776113")).toContain("not confirmed current");
+	});
+	test("no view at all, or another kind: no note", () => {
+		const plain = composeWake([te("a", "T1"), te("b", "T2")], T0);
+		expect(plain.message).not.toContain("newest run");
+		const note: HeldItem = { deliveryId: "n", message: "note", queuedAt: T0, kind: "note", thread: "T1" };
+		const c = composeWake([note, te(`T1:ended:${RUN}:1794944776113`, "T1")], T0, { news: () => live() });
+		expect(c.message.match(/newest run/g)).toHaveLength(1);
+	});
+});
+
+describe("which items fold", () => {
+	test("reports about different runs of one thread never fold, though run ids share a prefix up to their first colon", () => {
+		const a = te("mcp:x:ended:run:thread:mcp%3Ax:ordinal:1:1794944776113", "mcp:x");
+		const b = te("mcp:x:ended:run:thread:mcp%3Ax:ordinal:2:1794944776200", "mcp:x", T0 + 1);
+		const c = composeWake([a, b], T0);
+		expect(c.folded).toBe(0);
+		expect(c.message).toContain("report mcp:x:ended:run:thread:mcp%3Ax:ordinal:1");
+		expect(c.message).toContain("report mcp:x:ended:run:thread:mcp%3Ax:ordinal:2");
+	});
+	test("timestamp-only reports of one thread still fold to the latest", () => {
+		const c = composeWake([te("t:ended:1794944776113", "t"), te("t:ended:1794944776200", "t", T0 + 1)], T0);
+		expect(c.folded).toBe(1);
+	});
 	test("full-sweep reminders fold to the newest; findings and the idle-thread list never do", () => {
 		const full = (id: string, at: number): HeldItem => ({
 			deliveryId: id,
@@ -78,33 +102,6 @@ describe("which sweeps fold", () => {
 	});
 });
 
-describe("the store's superseded marks", () => {
-	test("only the thread's held turn-end reports held before the moment, once each", () => {
-		const s = memStore();
-		s.wakes.hold(te("a", "T1", 100));
-		s.wakes.hold(te("late", "T1", 500));
-		s.wakes.hold(te("other", "T2", 100));
-		s.wakes.hold({ deliveryId: "n", message: "note", queuedAt: 100, kind: "note", thread: "T1" });
-		expect(s.wakes.supersedeHeld("T1", 300, "settled")).toEqual(["a"]);
-		expect(s.wakes.supersedeHeld("T1", 300, "archived")).toEqual([]);
-		expect(s.wakes.superseded()).toEqual([{ deliveryId: "a", at: 300, why: "settled" }]);
-	});
-	test("a mark cannot be deleted while its wake is held, and can once it has left", () => {
-		const s = memStore();
-		s.wakes.hold(te("a", "T1", 100));
-		s.wakes.supersedeHeld("T1", 300, "settled");
-		expect(() => s.wakes.forgetStatus(["a"])).toThrow("keeps its status");
-		const row = s.wakes.compose(
-			400,
-			() => ({ deliveryId: "superseded:x", message: "m", folded: 0, members: ["a"] }),
-			null,
-		)!;
-		s.wakes.cancel(row.deliveryId, 400);
-		s.wakes.forgetStatus(["a"]);
-		expect(s.wakes.superseded()).toEqual([]);
-	});
-});
-
 describe("tool calls per Steward turn", () => {
 	const user = JSON.stringify({
 		type: "user",
@@ -125,25 +122,23 @@ describe("tool calls per Steward turn", () => {
 				content,
 			},
 		});
-	test("counts each tool call once, and only real thread reads; a repeated row never unmarks one", async () => {
+	const bash = (id: string, command?: string) => ({
+		type: "tool_use",
+		id,
+		name: "Bash",
+		...(command ? { input: { command } } : {}),
+	});
+	test("counts each tool call once, and only what a command segment runs as a thread read", async () => {
 		const rows = [
 			user,
 			asst("m1", "u1", [{ type: "tool_use", id: "t1", name: "mcp__t3-code__t3_thread_read", input: {} }]),
-			asst("m2", "a-m1", [
-				{
-					type: "tool_use",
-					id: "t2",
-					name: "Bash",
-					input: { command: "cd ~/app; bun src/adapters/t3/peek.ts mac abc" },
-				},
-			]),
-			asst("m2", "a-m2", [{ type: "tool_use", id: "t2", name: "Bash" }]),
-			asst("m3", "a-m2", [{ type: "tool_use", id: "t3", name: "Bash", input: { command: "echo peek at it later" } }]),
-			asst("m4", "a-m3", [
-				{ type: "tool_use", id: "t4", name: "Bash", input: { command: "chamberlain debug peek mac abc" } },
-			]),
+			asst("m2", "a-m1", [bash("t2", "cd ~/app; timeout 25 bun src/adapters/t3/peek.ts mac abc")]),
+			asst("m2", "a-m2", [bash("t2")]),
+			asst("m3", "a-m2", [bash("t3", "echo chamberlain peek later; echo peek")]),
+			asst("m4", "a-m3", [bash("t4", "chamberlain debug t3x read mac abc")]),
+			asst("m5", "a-m4", [bash("t5", "gh-axi pr view 7 | grep peek.ts")]),
 		];
 		const [seg] = await segmentTranscript(rows, "s1");
-		expect(seg).toMatchObject({ kind: "message", requests: 4, toolCalls: 4, threadReads: 3 });
+		expect(seg).toMatchObject({ kind: "message", requests: 5, toolCalls: 5, threadReads: 3 });
 	});
 });

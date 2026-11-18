@@ -19,10 +19,6 @@ export class WatcherReads {
 	states = new Map<string, ThreadState>();
 	timers = new Map<string, ReturnType<typeof setTimeout>>();
 	connected = false;
-	/** When the current connection came up: every state change since then was seen. Undefined while disconnected. */
-	connectedAt: number | undefined;
-	/** When each thread last started a turn, as seen on this connection or an earlier one of this process. */
-	turnStartedAt = new Map<string, number>();
 	/** Counts every change of `connected`: a read whose epoch moved while it was out spanned a disconnect, so it is not believed. */
 	epoch = 0;
 	version: string | undefined;
