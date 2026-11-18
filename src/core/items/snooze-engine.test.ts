@@ -115,14 +115,44 @@ describe("the return notice", () => {
 		expect(ranked(questionStates(store, r.clock.t).values()).map((i) => i.id)).toEqual(["Q-late"]);
 	});
 
-	test("an approval or a secret is urgent whatever its field says, so it is shown again", async () => {
+	test("an approval is urgent whatever its field says, so it is shown again", async () => {
 		const store = memStore();
-		askQuestion(store, question("Q-secr", { secret: true, options: [] }));
+		askQuestion(store, question("Q-appr", { tag: "Approval", urgent: false, options: [] }));
+		snoozeQuestion(store, "Q-appr", iso(T0 + HOUR), T0);
+		const r = rig(store);
+		r.clock.t = T0 + HOUR;
+		await r.tick();
+		expect(r.fake.posted.map((p) => p.item.id)).toEqual(["Q-appr"]);
+	});
+
+	test("a snoozed secret returns to the active list with no post of its title, context or evidence", async () => {
+		const store = memStore();
+		const title = "SECRET-TITLE-MUST-NOT-POST";
+		const context = "SECRET-CONTEXT-MUST-NOT-POST";
+		askQuestion(
+			store,
+			question("Q-secr", {
+				secret: true,
+				urgent: false,
+				options: [],
+				title,
+				context,
+				evidence: [{ type: "link", url: "https://example.test/secret-evidence", caption: "SECRET-EVIDENCE" }],
+			}),
+		);
 		snoozeQuestion(store, "Q-secr", iso(T0 + HOUR), T0);
 		const r = rig(store);
 		r.clock.t = T0 + HOUR;
 		await r.tick();
-		expect(r.fake.posted.map((p) => p.item.id)).toEqual(["Q-secr"]);
+		expect(r.fake.posted).toEqual([]);
+		expect(r.events.filter((e) => e.event === "snooze-returned")).toEqual([
+			{ event: "snooze-returned", id: "Q-secr", notified: false },
+		]);
+		const dumped = JSON.stringify({ posted: r.fake.posted, events: r.events });
+		expect(dumped).not.toContain(title);
+		expect(dumped).not.toContain(context);
+		expect(dumped).not.toContain("SECRET-EVIDENCE");
+		expect(ranked(questionStates(store, r.clock.t).values()).map((i) => i.id)).toEqual(["Q-secr"]);
 	});
 
 	test("nothing is shown for a snooze that was ended, or an item that was answered, before its time", async () => {

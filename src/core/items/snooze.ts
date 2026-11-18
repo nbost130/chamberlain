@@ -6,9 +6,9 @@
  * The time is the item's own (`snoozedUntil` in its payload) and the active list reads it against a clock (`questionStates`), so a
  * snoozed item is back on the list the moment its time passes, with no timer and nothing to run: a restart, or a daemon that is
  * down, changes nothing. The daemon's one extra job is the notice: `returnDueSnoozes` runs on its tick and hands back each returned
- * item once, so an urgent one can be shown where the operator reads again. A snooze ends four ways: its time passes, the principal
- * un-snoozes, an answer, direction or dismissal settles the item (the page clears it; a dismissal may close a secret or a card
- * pointer without answering its card), or the card behind an open pointer resolves.
+ * item once, so an urgent one can be shown where the operator reads again (a secret never is: its title must not leave its thread).
+ * A snooze ends four ways: its time passes, the principal un-snoozes, an answer, direction or dismissal settles the item (the page
+ * clears it; a dismissal may close a secret or a card pointer without answering its card), or the card behind an open pointer resolves.
  */
 import type { Adapter, PostResult } from "../adapter/adapter.ts";
 import { heldForItem, heldId, heldOpen, noteHeld } from "../ops/afk-held.ts";
@@ -151,8 +151,9 @@ export type ReturnDeps = {
 
 /**
  * The daemon's tick for snoozes: each question whose time has come is recorded once (`returnDueSnoozes`), and an urgent one is shown where the
- * operator reads again, as a new question is. A question that can wait comes back silently. A notice that fails is logged and never retried:
- * the question is on the active list either way.
+ * operator reads again, as a new question is. A question that can wait comes back silently. A secret (`secret: true`) also comes back
+ * silently: its title, context and evidence must never reach a Decisions post (ask and the card-hold path already skip the initial post).
+ * A notice that fails is logged and never retried: the question is on the active list either way.
  */
 export async function announceReturns(d: ReturnDeps): Promise<void> {
 	try {
@@ -160,7 +161,8 @@ export async function announceReturns(d: ReturnDeps): Promise<void> {
 		for (const due of dueOf(d.store, d.now)) {
 			markReturned(d.store, due, d.now);
 			const q = due.question;
-			const notify = isUrgent(q) && !d.dry;
+			// A secret is always urgent, but it is never re-posted: the title would land in the ordinary Decisions thread.
+			const notify = isUrgent(q) && q.secret !== true && !d.dry;
 			d.log("snooze-returned", { id: q.id, notified: notify });
 			if (!notify) continue;
 			await d.post(plainQuestion(q), d.adapter).then(
