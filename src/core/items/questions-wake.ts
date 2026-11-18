@@ -11,6 +11,7 @@ import {
 	type Question,
 	type QuestionState,
 } from "./questions.ts";
+import { redactSecretFields } from "./secret-fields.ts";
 
 const KIND_RANK: Record<Kind, number> = { "only-you": 0, product: 1, ruling: 2, idea: 3 };
 /** How many threads an item holds up, read from its blocks text ("blocks 3 threads", "holds 2 PRs"). */
@@ -119,11 +120,14 @@ export function threadRelayMessage(i: Question, a: Answer, relay: string): strin
 /** What a direction's answer says in place of an option's label (the wake and the record carry these words). */
 export const DIRECTION_LABEL = "direction, no option chosen";
 export const DISMISSED_LABEL = "dismissed";
-const itemLines = (i: Question) => [
-	`item: ${i.id}`,
-	`question: ${i.title}`,
-	`thread: ${i.thread}${i.threadId ? ` (${i.server}, ${i.threadId})` : ` (${i.server})`}`,
-];
+const itemLines = (i: Question) => {
+	const q = redactSecretFields(i);
+	return [
+		`item: ${q.id}`,
+		`question: ${q.title}`,
+		`thread: ${q.thread}${q.threadId ? ` (${q.server}, ${q.threadId})` : ` (${q.server})`}`,
+	];
+};
 
 /** Pure: an answer with no option chosen. A direction needs its note (the caller checks); both choose `-1`, and neither saves a ruling. */
 export function plainAnswer(kind: AnswerKind, id: string, note: string | undefined, t: string): Answer {
@@ -172,9 +176,7 @@ export function answerWake(i: Question, a: Answer, why?: StewardWhy): string {
 	const chosen = i.options[a.choice];
 	const relay = chosen?.label === a.label && chosen.route === "thread" ? chosen.relay : undefined;
 	const lines = [
-		`item: ${i.id}`,
-		`question: ${i.title}`,
-		`thread: ${i.thread}${i.threadId ? ` (${i.server}, ${i.threadId})` : ` (${i.server})`}`,
+		...itemLines(i),
 		`choice: ${a.choice + 1}. ${a.label}${a.by === "batch" ? " (accepted with every recommendation)" : ""}`,
 		a.note ? `note: ${a.note}` : "note: none",
 		a.ruling

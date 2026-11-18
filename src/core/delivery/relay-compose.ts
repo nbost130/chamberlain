@@ -2,6 +2,7 @@
 import { crashPoint } from "../crash.ts";
 import { type composeWake, observe, overdue, type ThreadNews } from "../decide/hold.ts";
 import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
+import { scrubSecretHeldMessages } from "../items/questions-claim.ts";
 import { alarms } from "../messages.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "../steward/rights-sent.ts";
 import {
@@ -98,7 +99,12 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	let kept: string[] = [];
 	const row = store.wakes.compose(
 		now,
-		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due, news: r.news }),
+		(held) =>
+			digestOf(l, scrubSecretHeldMessages(store, held), now, {
+				onKept: (k) => (kept = k),
+				answerDue: due,
+				news: r.news,
+			}),
 		l.name,
 	);
 	if (!row) return;

@@ -77,6 +77,7 @@ describe("dismiss every kind (#68)", () => {
 	test("regression: a secret whose card has ended dismisses, with no answer and a wake that says stop tracking", async () => {
 		const s = setup();
 		const id = "Q-ended";
+		const secretTitle = "SYNTH-DISMISS-SECRET-TITLE";
 		askQuestion(
 			s.store,
 			question(id, {
@@ -84,7 +85,7 @@ describe("dismiss every kind (#68)", () => {
 				secret: true,
 				options: [],
 				tag: "Secret",
-				title: "sudo password for the install",
+				title: secretTitle,
 			}),
 		);
 		hold(s.store, id);
@@ -101,6 +102,9 @@ describe("dismiss every kind (#68)", () => {
 		expect(wake!.message).toContain("dismissed decision-queue item Q-ended");
 		expect(wake!.message).toContain("no secret was entered on the page");
 		expect(wake!.message).toContain("note: card already closed");
+		// #102: the wake must not carry the secret's title into the Steward digest.
+		expect(wake!.message).not.toContain(secretTitle);
+		expect(wake!.message).toContain("question: Secret request");
 	});
 
 	test("dismissing a card-backed item leaves the card alone; the item stays dismissed when the card later resolves", async () => {

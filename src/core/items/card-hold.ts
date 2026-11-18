@@ -34,6 +34,7 @@ import { appendHeld, type CardRef, closeHeldForCard, closeHeldWhere, heldOpen } 
 import type { Store } from "../store/store.ts";
 import { CARD_UNVERIFIED, cardAlarmKey, cardKey, cardRefOf, openCards, sameCard } from "./card-open.ts";
 import { askQuestion, newItemId, QUEUE, type Question, questionStates } from "./questions.ts";
+import { secretSafeHoldWhat } from "./secret-fields.ts";
 
 /** What the engine passes on of one waiting card. The card's questions, options and any value are not part of it. */
 export type CardWait = {
@@ -87,9 +88,9 @@ const WHAT: Record<string, WaitWords> = {
 };
 const kindOf = (type: string) => WHAT[type] ?? APPROVAL_REQUEST;
 
-/** Pure: the hold's one-line text: the card's kind and the adapter's label. */
+/** Pure: the hold's one-line text: the card's kind and the adapter's label (a secret never carries the label). */
 const holdText = (w: Pick<CardWait, "type" | "label">) =>
-	`${kindOf(w.type).hold}${w.label ? `: ${clip(flat(w.label), 100)}` : ""}`;
+	secretSafeHoldWhat(w.type === "secret_request", kindOf(w.type).hold, w.label ? clip(flat(w.label), 100) : undefined);
 
 /** Pure: the pointer question for a card, built from the CardWait fields only. */
 export function cardQuestion(w: CardWait, id: string, createdAt: string): Question {
@@ -101,7 +102,8 @@ export function cardQuestion(w: CardWait, id: string, createdAt: string): Questi
 		title: `${clip(flat(w.thread), 60)} waits on your ${k.noun}`,
 		context: [
 			`- Thread: ${clip(flat(w.thread), 120)} (on ${flat(w.server)})`,
-			`- It asks for: ${k.asks}${w.label ? `: ${clip(flat(w.label), 100)}` : ""}`,
+			// A secret's card label never leaves its thread (view/wake/settled/brief redact the rest).
+			`- It asks for: ${k.asks}${!secret && w.label ? `: ${clip(flat(w.label), 100)}` : ""}`,
 			"- Act on the question card itself, in its thread. Answering here closes nothing; dismiss stops tracking this item and does not answer the card.",
 			...(secret ? ["- The value never goes through this queue."] : []),
 		].join("\n"),

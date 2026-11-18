@@ -2,8 +2,10 @@
 
 import type { Ruling } from "../ops/rulings.ts";
 import type { Store } from "../store/store.ts";
-import { type Answer, QUEUE, type Question } from "./questions.ts";
+import type { HeldItem } from "../store/store-wakes.ts";
+import { type Answer, getQuestion, QUEUE, type Question } from "./questions.ts";
 import { answerRoute, answerWake, threadRelayMessage } from "./questions-wake.ts";
+import { scrubSecretQuestionLine } from "./secret-fields.ts";
 
 export const PAGE = "page";
 
@@ -57,6 +59,42 @@ export const readClaim = (store: Store, itemId: string): Claim | undefined =>
 export const wokenBy = (store: Store, itemId: string): string | undefined => readClaim(store, itemId)?.owner;
 export const readClaims = (store: Store): Claim[] => store.claims.list(QUEUE) as Claim[];
 
+const ANSWER_ITEM = /^answer:item:(Q-[a-z0-9]{4,16})$/;
+
+/** True when the queue item is a secret (payload flag). Used without rebuilding the full question state. */
+const itemIsSecret = (store: Store, id: string): boolean => store.items.get(QUEUE, id)?.payload?.secret === true;
+
+/**
+ * A secret claim's wake: re-derive from the live question when the claim still carries its answer (so a pre-upgrade
+ * title never ships), else scrub the stored `question:` line.
+ */
+function secretSafeClaimMessage(store: Store, c: Claim, message: string): string {
+	if (!itemIsSecret(store, c.item)) return message;
+	if (c.answer) {
+		const q = getQuestion(store, c.item);
+		if (q) return answerWake(q, c.answer);
+	}
+	return scrubSecretQuestionLine(message);
+}
+
+/**
+ * Held answer wakes for secret items: re-derive or scrub so a pre-upgrade message stored in `held_wakes` cannot ship
+ * the real title into a digest. Other kinds are unchanged.
+ */
+export function scrubSecretHeldMessages(store: Store, held: HeldItem[]): HeldItem[] {
+	return held.map((h) => {
+		if (h.kind !== "answer") return h;
+		const id = h.deliveryId.match(ANSWER_ITEM)?.[1];
+		if (!id || !itemIsSecret(store, id)) return h;
+		const claim = readClaim(store, id);
+		if (claim?.answer) {
+			const q = getQuestion(store, id);
+			if (q) return { ...h, message: answerWake(q, claim.answer) };
+		}
+		return { ...h, message: scrubSecretQuestionLine(h.message) };
+	});
+}
+
 export type RelayState = { started: boolean; outcome?: "delivered" | "failed"; detail?: string };
 /**
  * A question's thread is sent to at most once, across restarts and crashes. `startRelay` is true only for the first
@@ -71,10 +109,15 @@ export const finishRelay = (store: Store, itemId: string, outcome: "delivered" |
 /**
  * Writes a claim's wake (or the message given, a fallback) into the outbox as a held `answer` (hold.ts): it goes at once to an idle Steward,
  * and while the Steward is busy it waits and rides the next digest with the other answers, never as a turn of its own. False when the outbox
- * already knows its id.
+ * already knows its id. A secret item's message is re-derived or scrubbed so a pre-upgrade title never enters the outbox.
  */
 export const enqueueClaim = (store: Store, c: Claim, message = c.message, now = Date.now()): boolean =>
-	store.wakes.hold({ deliveryId: c.deliveryId, message, queuedAt: now, kind: "answer" });
+	store.wakes.hold({
+		deliveryId: c.deliveryId,
+		message: secretSafeClaimMessage(store, c, message),
+		queuedAt: now,
+		kind: "answer",
+	});
 
 /**
  * The claims a process owns are its wakes, whatever happened to the process that made them. Run at startup and on every heartbeat:

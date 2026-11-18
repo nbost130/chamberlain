@@ -64,6 +64,28 @@ describe("stageEvidence", () => {
 		expect(stage({ type: "image", path: `${d}/notes.txt` })).toThrow("ask: evidence 2 must be png, jpg, gif or webp");
 		expect(stage({ type: "video", path: `${d}/real.png` })).toThrow("ask: evidence 2 must be mp4, webm or mov");
 	});
+	test("a secret ask's staging error never includes the evidence path (#102)", () => {
+		const d = dir();
+		const path = `${d}/SYNTH-SECRET-EVIDENCE-MISSING.png`;
+		const secret: Question = {
+			...mk({
+				secret: true,
+				title: "SYNTH-SECRET-ASK-TITLE",
+				options: [],
+				tag: "Secret",
+				threadId: "th-synth-secret",
+			}),
+			evidence: [{ type: "image", path }],
+		};
+		expect(() => stageEvidence(secret, d)).toThrow("ask: evidence 1 is not a regular file");
+		try {
+			stageEvidence(secret, d);
+		} catch (e) {
+			const msg = String(e instanceof Error ? e.message : e);
+			expect(msg).not.toContain(path);
+			expect(msg).not.toContain("SYNTH-SECRET-EVIDENCE");
+		}
+	});
 });
 
 describe("queueBase", () => {

@@ -4,6 +4,7 @@ import { readRulings } from "../ops/rulings.ts";
 import { isExpired } from "../ops/rulings-expiry.ts";
 import type { Store } from "../store/store.ts";
 import { type QuestionState, questionStates } from "./questions.ts";
+import { redactSecretFields } from "./secret-fields.ts";
 import type { SettledRecord } from "./settled.ts";
 import { oneLine } from "./settled-text.ts";
 
@@ -20,6 +21,8 @@ export function queueRecords(store: Store): SettledRecord[] {
 	for (const q of questionStates(store).values()) {
 		// A dismissed item was never answered: it is not a ruling and answers no later question, so a lookup never sees it.
 		if (q.status === "open" || q.status === "dismissed") continue;
+		// A secret's title and context never enter matching or refusal text.
+		const safe = redactSecretFields(q);
 		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
 		const answer = queueAnswerText(q);
 		out.push({
@@ -27,8 +30,8 @@ export function queueRecords(store: Store): SettledRecord[] {
 			date,
 			id: q.id,
 			answer,
-			title: q.title,
-			text: `${q.title}\n${q.context ?? ""}\n${q.blocks ?? ""}`,
+			title: safe.title,
+			text: `${safe.title}\n${safe.context ?? ""}\n${safe.blocks ?? ""}`,
 			thread: q.thread,
 		});
 	}

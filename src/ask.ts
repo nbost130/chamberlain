@@ -55,13 +55,19 @@ import type { Store } from "./core/store/store.ts";
 
 export { newItemId };
 
-/** One piece of evidence: a link as it is, a file copied into `dir` under a safe, unique name (`used` holds the names taken) with its path rewritten to that name. */
-function stageOne(e: Evidence, i: number, dir: string, used: Set<string>): Evidence {
+/** Staging error for a missing/non-file path. A secret ask never includes the path. */
+function notRegularFile(i: number, path: string, secret: boolean): Error {
+	return Error(
+		secret ? `ask: evidence ${i + 1} is not a regular file` : `ask: evidence ${i + 1} is not a regular file: ${path}`,
+	);
+}
+
+/** One piece of evidence: a link as it is, a file copied into `dir` under a safe name. A secret never puts the path in the error. */
+function stageOne(e: Evidence, i: number, ctx: { dir: string; used: Set<string>; secret: boolean }): Evidence {
 	if (e.type === "link") return e;
 	if (e.path === undefined) throw Error(`ask: evidence ${i + 1} needs a path`);
 	const src = e.path.replace(/^~(?=\/)/, process.env.HOME ?? "");
-	if (!existsSync(src) || !lstatSync(src).isFile())
-		throw Error(`ask: evidence ${i + 1} is not a regular file: ${e.path}`);
+	if (!existsSync(src) || !lstatSync(src).isFile()) throw notRegularFile(i, e.path, ctx.secret);
 	const ext = extname(src).toLowerCase();
 	if (!(e.type === "image" ? IMAGE : VIDEO).has(ext))
 		throw Error(`ask: evidence ${i + 1} must be ${e.type === "image" ? "png, jpg, gif or webp" : "mp4, webm or mov"}`);
@@ -69,22 +75,26 @@ function stageOne(e: Evidence, i: number, dir: string, used: Set<string>): Evide
 		basename(src)
 			.replace(/[^A-Za-z0-9._-]/g, "_")
 			.replace(/^\.+/, "") || `file${ext}`;
-	if (used.has(name)) name = `${i + 1}-${name}`;
-	used.add(name);
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	copyFileSync(src, `${dir}/${name}`);
+	if (ctx.used.has(name)) name = `${i + 1}-${name}`;
+	ctx.used.add(name);
+	mkdirSync(ctx.dir, { recursive: true, mode: 0o700 });
+	copyFileSync(src, `${ctx.dir}/${name}`);
 	return { ...e, path: name };
 }
 
 /**
  * Copies each image or video into the item's own evidence folder and rewrites its path to the bare file name, which
  * is all the page serves. A file that is missing, not a regular file, or not an image or video fails the ask.
+ * A secret ask's staging error never includes the evidence path.
  */
 export function stageEvidence(item: Question, state = STATE): Question {
 	if (!item.evidence?.length) return item;
-	const dir = `${evidenceRoot(state)}/${item.id}`;
-	const used = new Set<string>();
-	return { ...item, evidence: item.evidence.map((e, i) => stageOne(e, i, dir, used)) };
+	const ctx = {
+		dir: `${evidenceRoot(state)}/${item.id}`,
+		used: new Set<string>(),
+		secret: item.secret === true,
+	};
+	return { ...item, evidence: item.evidence.map((e, i) => stageOne(e, i, ctx)) };
 }
 
 /** The queue page's base URL from web.json, or undefined when the page is not configured (then no inline view). */

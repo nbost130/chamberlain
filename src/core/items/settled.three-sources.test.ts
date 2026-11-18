@@ -1,7 +1,7 @@
 /** settled, continued: see settled.test.ts for the overview. */
 
 import { describe, expect, test } from "bun:test";
-import { DEFAULT, find, q } from "../../testing/core-settled-fixtures.ts";
+import { answered, DEFAULT, find, q } from "../../testing/core-settled-fixtures.ts";
 import { memStore } from "../../testing/store.ts";
 import { parseSettings } from "../config/config.ts";
 import { addInForce, propose } from "../ops/rulings.ts";
@@ -119,6 +119,21 @@ describe("the three sources", () => {
 		expect(out[0]).toContain("refused, this looks already settled");
 		expect(out[1]).toBe('  queue | 2026-11-11 | Q-x0001 | answered "No" [matched on title overlap: rename, atlas]');
 		expect(out.at(-1)).toContain('add "notSettled"');
+	});
+
+	test("a resolved secret's title words never appear in a later ask refusal (#102)", () => {
+		const store = memStore();
+		const secretTitle = "SYNTH-SETTLED-SECRET-TITLE rotate billing webhook signing";
+		answered(store, "Q-secr1", secretTitle, { secret: true, options: [], kind: "only-you" });
+		const r = find(store, {
+			title: "Rotate the billing webhook signing SYNTH-SETTLED-SECRET-TITLE now",
+		});
+		const why = r.matches.map((m) => m.why).join(" | ");
+		const lines = refusalLines("ask.ts", r.matches, 'add "notSettled"').join("\n");
+		expect(why).not.toContain("SYNTH-SETTLED-SECRET-TITLE");
+		expect(lines).not.toContain("SYNTH-SETTLED-SECRET-TITLE");
+		// No match may rest on the secret's real title words.
+		expect(r.matches.some((m) => m.id === "Q-secr1" && m.why.includes("title overlap"))).toBe(false);
 	});
 });
 

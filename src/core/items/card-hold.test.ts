@@ -97,6 +97,12 @@ describe("(d) a secret's value is never copied", () => {
 		expect(JSON.stringify(q)).not.toContain("SENTINEL");
 		expect(q.secret).toBe(true);
 		expect(q.context).toContain("The value never goes through this queue.");
+		// #102: the card label never enters the pointer's context or the hold's what.
+		expect(q.context).not.toContain(w.label);
+		const store = memStore();
+		holdCard(store, w);
+		expect(heldOpen(store).map((h) => h.what)).toEqual(["secret request"]);
+		expect(JSON.stringify(heldOpen(store))).not.toContain(w.label);
 	});
 	test("nothing written to the database (its file and its log) carries the value", () => {
 		const dir = mkdtempSync(`${tmpdir()}/chamberlain-card-`);
