@@ -126,8 +126,8 @@ describe("R5 publish-ref CLI (executed)", () => {
 		expect(out).toContain("published review-id.wake");
 
 		const again = Bun.spawn(args, { env, stdout: "ignore", stderr: "pipe" });
-		const refused = await new Response(again.stderr).text();
-		await again.exited;
+		const [againRc, refused] = await Promise.all([again.exited, new Response(again.stderr).text()]);
+		expect(againRc).toBe(3);
 		expect(refused).toContain("ref already exists");
 		expect(readFileSync(path, "utf8")).toBe("https://fake.example/review\n");
 	});
