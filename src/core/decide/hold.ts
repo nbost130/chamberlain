@@ -28,6 +28,13 @@ export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta &&
  */
 const NEVER_FOLDED: ReadonlySet<string> = new Set(["answer", "note"]);
 
+/** A give-up row's id, from its members: two batches never share one, whatever the clock does. */
+export const memberHash = (ids: readonly string[]) =>
+	createHash("sha1")
+		.update([...ids].sort().join("\n"))
+		.digest("hex")
+		.slice(0, 16);
+
 /** A Steward busy this long gets the digest anyway, and never more than one such digest per window. */
 export const HOLD_CEILING_MS = 20 * 60_000;
 /**
@@ -60,9 +67,55 @@ const OBSERVE_GAP_MS = 5 * 60_000;
  * the latest is kept; the rest are folded into it and counted. Every item, folded or not, is a member: it is delivered with
  * the wake and is never sent again.
  */
+/**
+ * What the engine last saw of a thread from T3: whether its server is connected, the thread's newest run, its status, and whether it is
+ * settled or archived. Absent fields are unknown.
+ */
+export type ThreadNews = {
+	connected: boolean;
+	latestRunId?: string | null;
+	status?: string;
+	settled?: boolean;
+	archived?: boolean;
+};
+/** `news`: the daemon's view of a thread at composition, for each turn-end item's freshness note. */
+export type ComposeOpts = { news?: (thread: string) => ThreadNews | undefined };
+const hhmm = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+const WORKING = new Set(["running", "queued", "starting", "preparing", "waiting"]);
+
+/**
+ * The run a turn-end report is about: its id is `<thread>:ended:<run id>:<time>` (decide.ts endedKey, then the watcher's timestamp), and
+ * a run id can itself hold colons (`run:thread:...:ordinal:8`). Undefined for a report that names no run (`<thread>:ended:<time>`).
+ */
+export function reportRunId(deliveryId: string): string | undefined {
+	const m = /:ended:(.+)$/.exec(deliveryId);
+	const run = m?.[1]?.replace(/:\d{12,}$/, "");
+	return !run || /^\d{12,}$/.test(run) ? undefined : run;
+}
+
+/**
+ * Pure: what a digest notes about a held turn-end report, from T3's state as the engine holds it: only facts that were observed, never
+ * a claim that the report is still current (a reconnect shows "connected" before its catch-up arrives, so the engine's view can lag).
+ * Each note is a reason to read the thread before acting; no note means nothing was observed, not that nothing happened. "" for other
+ * kinds, or when nothing was observed.
+ */
+function freshness(i: HeldItem, now: number, o: ComposeOpts): string {
+	if (i.kind !== "turn_ended" || !i.thread || !o.news) return "";
+	const n = o.news(i.thread);
+	const run = reportRunId(i.deliveryId);
+	if (!n) return "";
+	const at = hhmm(now);
+	if (n.settled || n.archived) return ` · seen at ${at} UTC: its thread is ${n.settled ? "settled" : "archived"}`;
+	if (run && typeof n.latestRunId === "string" && n.latestRunId && n.latestRunId !== run)
+		return ` · seen at ${at} UTC: a newer run of its thread has started`;
+	if (n.status && WORKING.has(n.status)) return ` · seen at ${at} UTC: its thread is working again`;
+	return "";
+}
+
 export function composeWake(
 	items: HeldItem[],
 	now: number,
+	o: ComposeOpts = {},
 ): { deliveryId: string; message: string; members: string[]; kept: string[]; folded: number } {
 	const [only] = items;
 	if (only && items.length === 1)
@@ -80,10 +133,13 @@ export function composeWake(
 	 * another run's report: each completed run keeps its own final. Timestamp-only ended keys still fold as before.
 	 */
 	const key = (i: HeldItem) => {
+		// Sweeps never fold: the findings sweep, the idle-thread list and even a full sweep carry what was new when each was made.
+		if (i.kind === "sweep") return undefined;
 		if (!i.kind || !i.thread || NEVER_FOLDED.has(i.kind)) return undefined;
 		if (i.kind === "turn_ended") {
-			const run = /:ended:([^:]+)/.exec(i.deliveryId)?.[1];
-			if (run && !/^\d{12,}$/.test(run)) return `${i.kind}\u0000${i.thread}\u0000${run}`;
+			// The whole run id: run ids hold colons, so cutting at the first one made every run-scoped report of a thread fold into one.
+			const run = reportRunId(i.deliveryId);
+			if (run) return `${i.kind}\u0000${i.thread}\u0000${run}`;
 		}
 		return `${i.kind}\u0000${i.thread}`;
 	};
@@ -112,7 +168,7 @@ export function composeWake(
 		const f = folds.get(i) ?? [];
 		const waited = Math.max(0, Math.round((now - i.queuedAt) / 60_000));
 		return [
-			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
+			`=== item ${n + 1} of ${kept.length} · deliveryId: ${i.deliveryId} · held ${waited} min${freshness(i, now, o)}${f.length ? ` · folded ${f.length} earlier ${i.kind} wake${f.length === 1 ? "" : "s"} for this thread (${f.map((x) => x.deliveryId).join(", ")})` : ""} ===`,
 			i.message,
 		].join("\n");
 	});

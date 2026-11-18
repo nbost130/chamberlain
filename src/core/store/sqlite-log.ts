@@ -172,13 +172,15 @@ export const makeDispositions = (c: Db): Store["dispositions"] => ({
 
 // ---- the Steward's token usage per wake ----------------------------------------------------------------
 const UPSERT_USAGE = `INSERT INTO steward_wake_usage (session, wake_key, kind, variant, delivery_id, started_at, ended_at, requests, input_tokens,
-								cache_read_input_tokens, cache_creation_input_tokens, output_tokens, context_start, context_end, context_peak, compactions)
-							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+								cache_read_input_tokens, cache_creation_input_tokens, output_tokens, context_start, context_end, context_peak, compactions,
+								tool_calls, thread_reads)
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 							ON CONFLICT (session, wake_key) DO UPDATE SET kind = excluded.kind, variant = excluded.variant, delivery_id = excluded.delivery_id,
 								started_at = excluded.started_at, ended_at = excluded.ended_at, requests = excluded.requests, input_tokens = excluded.input_tokens,
 								cache_read_input_tokens = excluded.cache_read_input_tokens, cache_creation_input_tokens = excluded.cache_creation_input_tokens,
 								output_tokens = excluded.output_tokens, context_start = excluded.context_start, context_end = excluded.context_end,
-								context_peak = excluded.context_peak, compactions = excluded.compactions`;
+								context_peak = excluded.context_peak, compactions = excluded.compactions, tool_calls = excluded.tool_calls,
+								thread_reads = excluded.thread_reads`;
 
 const usageParams = (r: WakeUsage): unknown[] => [
 	r.session,
@@ -197,6 +199,8 @@ const usageParams = (r: WakeUsage): unknown[] => [
 	r.contextEnd ?? null,
 	r.contextPeak ?? null,
 	r.compactions,
+	r.toolCalls ?? null,
+	r.threadReads ?? null,
 ];
 
 const toWakeUsage = (r: Row): WakeUsage => {
@@ -220,6 +224,8 @@ const toWakeUsage = (r: Row): WakeUsage => {
 		["contextStart", "context_start"],
 		["contextEnd", "context_end"],
 		["contextPeak", "context_peak"],
+		["toolCalls", "tool_calls"],
+		["threadReads", "thread_reads"],
 	] as const) {
 		const v = opt(r[col]);
 		if (v !== undefined) w[key] = v;

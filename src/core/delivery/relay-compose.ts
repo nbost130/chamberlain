@@ -1,6 +1,6 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "../crash.ts";
-import { type composeWake, observe, overdue } from "../decide/hold.ts";
+import { type composeWake, observe, overdue, type ThreadNews } from "../decide/hold.ts";
 import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
 import { alarms } from "../messages.ts";
 import { epochOf, RIGHTS_SENT_KEY, recordOf, rightsEpoch } from "../steward/rights-sent.ts";
@@ -9,6 +9,7 @@ import {
 	deadLetterOversizedDigests,
 	deadLetterOversizedTransfers,
 } from "../steward/steward-transfer.ts";
+import { TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "../store/store-wakes.ts";
 import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
@@ -97,7 +98,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	let kept: string[] = [];
 	const row = store.wakes.compose(
 		now,
-		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due }),
+		(held) => digestOf(l, held, now, { onKept: (k) => (kept = k), answerDue: due, news: r.news }),
 		l.name,
 	);
 	if (!row) return;
@@ -140,12 +141,18 @@ function digestOf(
 	l: Lane,
 	held: HeldItem[],
 	now: number,
-	{ onKept, answerDue }: { onKept: (kept: string[]) => void; answerDue: boolean },
+	{
+		onKept,
+		answerDue,
+		news,
+	}: { onKept: (kept: string[]) => void; answerDue: boolean; news?: (thread: string) => ThreadNews | undefined },
 ): Composed {
 	const transfers = held.filter((h) => h.kind === "transfer");
 	const others = held.filter((h) => h.kind !== "transfer");
 	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
-	const digestBatch = others.length ? composeDigestBatch(others, now) : undefined;
+	const digestBatch = others.length
+		? composeDigestBatch(others, now, TRANSFER_DIGEST_MAX_BYTES, news ? { news } : {})
+		: undefined;
 	const useTransfers = transferBatch && (!digestBatch || transfersFirst(transfers, others, answerDue));
 	if (useTransfers) {
 		const use = transfers.filter((h) => transferBatch.members.includes(h.deliveryId));

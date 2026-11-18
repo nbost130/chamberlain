@@ -19,21 +19,21 @@ describe("K. digests and receivers", () => {
 			deliveryId: "m1",
 			message: "one",
 			queuedAt: clock.t,
-			kind: "sweep",
+			kind: "turn_ended",
 			thread: "th-a",
 		});
 		store.wakes.hold({
 			deliveryId: "m2",
 			message: "two",
 			queuedAt: clock.t + 1,
-			kind: "sweep",
+			kind: "turn_ended",
 			thread: "th-a",
 		});
 		store.wakes.hold({
 			deliveryId: "m3",
 			message: "three",
 			queuedAt: clock.t + 2,
-			kind: "sweep",
+			kind: "turn_ended",
 			thread: "th-b",
 		});
 		const dig = store.wakes.compose(clock.t, (held) => composeWake(held, clock.t))!;

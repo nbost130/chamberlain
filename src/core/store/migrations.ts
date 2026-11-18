@@ -640,6 +640,16 @@ ${dispositionsSchema.replace("('rules', 'jev', 'haiku')", "('rules', 'jev', 'hai
 INSERT INTO thread_dispositions SELECT * FROM old_thread_dispositions;
 DROP TABLE old_thread_dispositions;`,
 	},
+	{
+		version: 20,
+		name: "per-turn tool counts",
+		sql: `
+-- The Steward's tool calls per turn, and how many of them read another thread (t3_thread_read, peek): the verification reads a
+-- digest makes it do. NULL for a turn measured before this migration.
+ALTER TABLE steward_wake_usage ADD COLUMN tool_calls INTEGER;
+ALTER TABLE steward_wake_usage ADD COLUMN thread_reads INTEGER;
+`,
+	},
 ];
 const lastMigration = MIGRATIONS.at(-1);
 if (!lastMigration) throw Error("MIGRATIONS lists no migration");
