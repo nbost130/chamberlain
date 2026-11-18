@@ -16,10 +16,19 @@ export type StewardQueue = {
 	compactPending: boolean;
 	lastActivityAt?: string;
 	openCardSince?: string;
+	/** Queued runs T3 has passed over: a later run of the thread has already started, so these are not waiting their turn. */
+	skipped?: number;
 };
 
+/**
+ * The thread's unfinished runs. `passed` marks a queued run that a later run (higher ordinal) has already started ahead of: T3 runs a
+ * thread's queue in order, so such a run is stuck, not next. On 2026-11-17 one queued message sat for hours while T3 ran a hundred later
+ * ones, and counting it kept the Steward "busy" the whole time, so every held wake waited for the 20-minute ceiling.
+ */
 const RUNS = `select r.status as status, r.requested_at as requested_at,
-	(select json_extract(m.payload_json, '$.text') from orchestration_v2_projection_messages m where m.message_id = json_extract(r.payload_json, '$.userMessageId')) as text
+	(select json_extract(m.payload_json, '$.text') from orchestration_v2_projection_messages m where m.message_id = json_extract(r.payload_json, '$.userMessageId')) as text,
+	exists (select 1 from orchestration_v2_projection_runs l where l.thread_id = r.thread_id and l.ordinal > r.ordinal
+		and json_extract(l.payload_json, '$.startedAt') is not null) as passed
 	from orchestration_v2_projection_runs r where r.thread_id = ? and r.status in ('queued', 'starting', 'preparing', 'running') order by r.ordinal`;
 const LAST_START =
 	"select max(json_extract(payload_json, '$.startedAt')) as started from orchestration_v2_projection_runs where thread_id = ?";
@@ -39,7 +48,14 @@ export function readStewardQueue(dbPath: string, threadId: string): StewardQueue
 		return undefined;
 	}
 	try {
-		const runs = db.query(RUNS).all(threadId) as { status: string; requested_at: string; text: string | null }[];
+		const all = db.query(RUNS).all(threadId) as {
+			status: string;
+			requested_at: string;
+			text: string | null;
+			passed: number;
+		}[];
+		const stuck = all.filter((r) => r.status === "queued" && r.passed);
+		const runs = all.filter((r) => !(r.status === "queued" && r.passed));
 		const queued = runs.filter((r) => r.status === "queued");
 		const started = (db.query(LAST_START).get(threadId) as { started: string | null } | null)?.started ?? "";
 		const moved = (db.query(LAST_ITEM).get(threadId) as { moved: string | null } | null)?.moved ?? "";
@@ -51,6 +67,7 @@ export function readStewardQueue(dbPath: string, threadId: string): StewardQueue
 			compactPending: runs.some((r) => r.text?.trim() === "/compact"),
 			lastActivityAt: [started, moved].sort().at(-1) || undefined,
 			openCardSince: card?.since ?? undefined,
+			...(stuck.length ? { skipped: stuck.length } : {}),
 		};
 	} catch {
 		return undefined;

@@ -132,6 +132,38 @@ describe("readStewardQueue", () => {
 			openCardSince: "2026-11-07T02:05:00Z",
 		});
 	});
+	test("a queued run T3 has passed over (a later run already started) is not counted: it is stuck, not next", () => {
+		const { path, db, run, msg } = seed();
+		msg("m1", "/steward-wake");
+		msg("q", "Why are you working 2+ min after every wake?");
+		run({ t: "s", n: 18, status: "queued", at: "2026-11-07T01:53:00Z", started: null, msg: "q" });
+		run({
+			t: "s",
+			n: 125,
+			status: "completed",
+			at: "2026-11-07T04:02:00Z",
+			started: "2026-11-07T04:02:02Z",
+			msg: "m1",
+		});
+		db.close();
+		const q = readStewardQueue(path, "s");
+		expect(q).toMatchObject({ queued: 0, running: 0, skipped: 1 });
+		expect(q?.oldestQueuedAt).toBeUndefined();
+		expect(queueGate(q)).toBe("idle");
+	});
+
+	test("a queued run behind the turn now working still counts: nothing later has started", () => {
+		const { path, db, run, msg } = seed();
+		msg("m1", "/steward-wake");
+		run({ t: "s", n: 1, status: "running", at: "2026-11-07T02:00:00Z", started: "2026-11-07T02:00:01Z", msg: "m1" });
+		run({ t: "s", n: 2, status: "queued", at: "2026-11-07T02:10:00Z", started: null, msg: "m1" });
+		db.close();
+		const q = readStewardQueue(path, "s");
+		expect(q).toMatchObject({ queued: 1, running: 1 });
+		expect(q?.skipped).toBeUndefined();
+		expect(queueGate(q)).toBe("busy");
+	});
+
 	test("a working turn counts as activity, and a wake arriving does not", () => {
 		const { path, db, run, msg } = seed();
 		msg("m1", "/steward-wake");
