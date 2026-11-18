@@ -2,7 +2,7 @@
 import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
 import { type QuestionState, questionStates } from "../core/items/questions.ts";
 import { batchable } from "../core/items/questions-wake.ts";
-import { redactSecretFields } from "../core/items/secret-fields.ts";
+import { redactSecretCard, redactSecretFields } from "../core/items/secret-fields.ts";
 import type { Capability } from "../core/ops/capability.ts";
 import type { Clock } from "../core/ops/rulings.ts";
 import type { Store } from "../core/store/store.ts";
@@ -106,9 +106,10 @@ export const view = (d: AppDeps, i: QuestionState) => ({
 });
 /** A card read from a thread keeps the link its adapter gave; the page adds the path that opens it from a frame, and the app link. */
 export const cardView = (d: AppDeps, c: WaitingCard) => {
-	const open = d.links?.openPath(c.server, c.threadId);
-	const app = d.links?.appLink(c.server, c.threadId);
-	return open || app ? { ...c, ...(open ? { open } : {}), ...(app ? { app } : {}) } : c;
+	const safe = redactSecretCard(c);
+	const open = d.links?.openPath(safe.server, safe.threadId);
+	const app = d.links?.appLink(safe.server, safe.threadId);
+	return open || app ? { ...safe, ...(open ? { open } : {}), ...(app ? { app } : {}) } : safe;
 };
 
 // ---- a thread-routed answer's direct send -------------------------------------------------------------

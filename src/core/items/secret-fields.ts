@@ -1,6 +1,7 @@
 /**
  * A secret item's title, context, evidence and options must never appear where a non-secret item's would (API views,
- * Steward wakes, settled refusals, AFK briefs). One helper rewrites those fields to fixed stand-ins; every surface uses it.
+ * Steward wakes, settled refusals, AFK briefs, mirrored cards). One helper rewrites those fields to fixed stand-ins;
+ * every surface uses it.
  */
 import type { Evidence, Option, Question } from "./questions.ts";
 
@@ -20,6 +21,14 @@ type SecretFields = {
 	blocks?: string;
 };
 
+/** A mirrored waiting card as the page shows it: a secret's `question` holds the source card's label/reason. */
+type SecretCard = {
+	type: string;
+	question: string;
+	header?: string;
+	options: unknown[];
+};
+
 /** Pure: true when this item must never expose title, context, evidence or options outside its thread. */
 export const isSecretItem = (q: Pick<Question, "secret">): boolean => q.secret === true;
 
@@ -33,8 +42,25 @@ export function redactSecretFields<T extends SecretFields>(q: T): T {
 	return { ...rest, title: SECRET_TITLE, context: SECRET_CONTEXT, options: [] } as unknown as T;
 }
 
+/**
+ * Pure: a mirrored secret card never carries the source card's label or reason in `question` (or options). Other kinds
+ * are unchanged. Used by cardView and by the T3 adapter when building the mirror.
+ */
+export function redactSecretCard<T extends SecretCard>(c: T): T {
+	if (c.type !== "secret") return c;
+	return { ...c, question: SECRET_TITLE, header: c.header ?? SECRET_TITLE, options: [] };
+}
+
 /** Pure: the hold/brief one-liner for a card. A secret never carries the card's label. */
 export function secretSafeHoldWhat(secret: boolean, kindHold: string, label: string | undefined): string {
 	if (secret) return SECRET_HOLD_WHAT;
 	return label ? `${kindHold}: ${label}` : kindHold;
+}
+
+/**
+ * Pure: scrub a stored wake's `question:` line to the stand-in title. Used when a pre-upgrade claim or held row still
+ * carries a secret's real title and the answer cannot be re-derived.
+ */
+export function scrubSecretQuestionLine(message: string): string {
+	return message.replace(/^question:.*$/m, `question: ${SECRET_TITLE}`);
 }

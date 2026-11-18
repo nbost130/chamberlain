@@ -201,7 +201,8 @@ function readOnly({ server, thread, link }: CardScope, i: TurnItem, kind: string
 			? [
 					"secret",
 					"Secret request",
-					[one(i.label), one(i.reason)].filter(Boolean).join(" · "),
+					// Label and reason stay in the source thread; the mirror never carries them (#102).
+					"Secret request",
 					"enter it in its thread; secrets are never entered here",
 				]
 			: [

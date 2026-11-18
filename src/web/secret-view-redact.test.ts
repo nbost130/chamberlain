@@ -4,11 +4,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
+import type { WaitingCard } from "../core/adapter/adapter-waiting.ts";
 import { holdCard } from "../core/items/card-hold.ts";
 import { askQuestion, type QuestionState } from "../core/items/questions.ts";
 import { SECRET_TITLE } from "../core/items/secret-fields.ts";
 import { useWebCapabilityFixtures } from "../testing/web-capability-fixtures.ts";
-import { view } from "./app-ctx.ts";
+import { cardView, view } from "./app-ctx.ts";
 
 const { ORIGIN, setup, key } = useWebCapabilityFixtures();
 
@@ -40,6 +41,28 @@ describe("view() redacts secrets (#102)", () => {
 		expect(out).toMatchObject({ secret: true, title: SECRET_TITLE, context: "", options: [] });
 		expect(out.evidence).toBeUndefined();
 		expect(JSON.stringify(out)).not.toContain("SYNTH-VIEW-SECRET");
+	});
+});
+
+describe("cardView redacts mirrored secrets (#102)", () => {
+	test("a secret card's label and reason never leave cardView", () => {
+		const card: WaitingCard = {
+			id: "C-aaaaaaaaaaaa",
+			type: "secret",
+			server: "main",
+			threadId: "th-1",
+			threadTitle: "Launch",
+			requestId: "req-1",
+			header: "Secret request",
+			question: "SYNTH-MIRROR-LABEL · SYNTH-MIRROR-REASON",
+			options: [],
+			answerable: false,
+			why: "enter it in its thread; secrets are never entered here",
+			sig: "sig",
+		};
+		const out = cardView({} as never, card);
+		expect(out.question).toBe(SECRET_TITLE);
+		expect(JSON.stringify(out)).not.toContain("SYNTH-MIRROR");
 	});
 });
 
