@@ -57,7 +57,7 @@ export function withNews(row: OutboxRow, c: Carried): OutboxRow {
  * Binds the news that rode in the row's POST as one DELIVERED row (`news-carried`), so it is never sent again. It runs inside the wake's own
  * delivered commit (`land`'s `alongside`), so the two are one commit. Throws when the news cannot be bound: nothing commits and the wake stays owed.
  */
-export function bindCarried(r: Ctx, l: Lane, c: Carried): OutboxRow | undefined {
+function bindCarried(r: Ctx, l: Lane, c: Carried): OutboxRow | undefined {
 	const ids = new Set(c.members);
 	const row = r.store.wakes.compose(
 		c.now,
