@@ -272,13 +272,23 @@ export const rightsUnreadable = () =>
 /** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
 /**
- * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they
- * changed, its context size is unknown, or its context shrank, which means a compaction or a new thread.
+ * A context that fell below this share of its high-water mark is a compaction (or a new thread): a summary is a fraction of what it replaces.
+ * A smaller dip is the reading wobbling (T3 reports the latest request's size, and a new turn's first request is smaller), never a lost record.
+ */
+const SHRINK_RATIO = 0.8;
+/** Pure: did the context shrink from `mark`, the largest size seen since the full rights went? */
+export const shrank = (mark: number, used: number): boolean => used < mark * SHRINK_RATIO;
+
+/**
+ * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they changed, there is no size mark
+ * to tell a shrink by, or its context shrank, which means a compaction or a new thread. A size that could not be read just now is NOT a shrink:
+ * the record is kept and the once-a-minute check (rightsHighWater) is the one that drops it on a real one. (Reading it as one dropped the record
+ * every time a new turn had no usage yet, and sent a whole standalone rights turn each time.)
  */
 export function rightsInFull(sent: RightsSent | undefined, hash: string, used: number | undefined): boolean {
 	if (!sent || sent.hash !== hash) return true;
-	if (used === undefined || sent.used === undefined) return true;
-	return used < sent.used;
+	if (sent.used === undefined) return true;
+	return used !== undefined && shrank(sent.used, used);
 }
 
 /** The waiting questions and their options as plain text, clipped to what a wake should carry. */

@@ -4,7 +4,7 @@
  * trusted, means the next wake sends them in full: doubt always sends them again.
  */
 import { createHash } from "node:crypto";
-import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged } from "../decide/decide.ts";
+import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged, shrank } from "../decide/decide.ts";
 import { rightsWake } from "../messages.ts";
 import type { Store } from "../store/store.ts";
 import type { RightsStamp } from "../store/store-wakes.ts";
@@ -107,10 +107,16 @@ export function openRightsSent(store: Store, onError: (e: unknown) => void = () 
 	};
 }
 
-/** Pure: the record after the minute's size check. A shrink (a compaction) drops it; otherwise the high-water mark rises. */
+/**
+ * Pure: the record after the minute's size check. A real shrink (a compaction or a new thread: `shrank`) drops it; a size that could not be
+ * read keeps it as it is (nothing to raise, nothing shown); the first size seen becomes the mark; otherwise the high-water mark rises.
+ */
 export function rightsHighWater(sent: RightsSent | undefined, used: number | undefined): RightsSent | undefined {
 	if (!sent) return undefined;
-	return rightsInFull(sent, sent.hash, used) ? undefined : { ...sent, used };
+	if (used === undefined) return sent;
+	if (sent.used === undefined) return { ...sent, used };
+	if (shrank(sent.used, used)) return undefined;
+	return { ...sent, used: Math.max(sent.used, used) };
 }
 
 /** Pure: what this wake records as sent: the Steward thread and its rights and rulings. The away mandate rides every wake, so it is not part of the hash: toggling away mode never re-sends the block. */

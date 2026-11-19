@@ -81,20 +81,24 @@ describe("the Steward check: the rights high-water mark", () => {
 			["rights-set", { hash: HASH, used: 100 }],
 		]);
 	});
-	test("a context that shrank, or whose size is unknown, drops the record and logs why", async () => {
+	test("must drop: a context that collapsed under the mark drops the record and logs why", async () => {
 		const shrunk = rig({}, { sent: { hash: HASH, used: 500 } });
 		await shrunk.check();
 		expect(shrunk.calls.slice(1)).toEqual([
 			["rights-set", undefined],
 			["log", "rights-invalidated", { reason: "context shrink", used: 100 }],
 		]);
+	});
+	test("must keep: a size that could not be read (a turn with no usage yet) never drops the record", async () => {
 		const unknown = rig({}, { sent: { hash: HASH, used: 500 } });
 		unknown.state.probe = { readable: true };
 		await unknown.check();
-		expect(unknown.calls.slice(1)).toEqual([
-			["rights-set", undefined],
-			["log", "rights-invalidated", { reason: "context shrink", used: undefined }],
-		]);
+		expect(unknown.calls.slice(1)).toEqual([["rights-set", { hash: HASH, used: 500 }]]);
+	});
+	test("must keep: a small dip under the mark keeps the record and leaves the mark where it was", async () => {
+		const dip = rig({}, { sent: { hash: HASH, used: 120 } });
+		await dip.check();
+		expect(dip.calls.slice(1)).toEqual([["rights-set", { hash: HASH, used: 120 }]]);
 	});
 	test("with no record there is nothing to raise or drop", async () => {
 		const r = rig();

@@ -7,7 +7,11 @@ import { existsSync } from "node:fs";
 import type { StewardProbe } from "../../core/adapter/adapter-inspect.ts";
 import { compactBlocked, queueStalled, readStewardQueue, stallAlarm } from "./queue.ts";
 
-/** The Steward's context from T3's own record, read-only. Undefined when there is no Steward here or no turn yet. */
+/**
+ * The Steward's context from T3's own record, read-only: the newest turn that HAS a size. A turn that has just begun carries no usage yet;
+ * reading only the newest row gave no size for the first minutes of every wake, and a missing size used to be taken for a compaction.
+ * Undefined when there is no Steward here or no turn has a size yet.
+ */
 function stewardTokens(dbPath: string, threadId: string): number | undefined {
 	if (!existsSync(dbPath)) return undefined;
 	let db: Database;
@@ -19,7 +23,7 @@ function stewardTokens(dbPath: string, threadId: string): number | undefined {
 	try {
 		const row = db
 			.query(
-				"select json_extract(payload_json, '$.tokenUsage.usedTokens') as used from orchestration_v2_projection_provider_turns where thread_id = ? order by ordinal desc limit 1",
+				"select json_extract(payload_json, '$.tokenUsage.usedTokens') as used from orchestration_v2_projection_provider_turns where thread_id = ? and json_extract(payload_json, '$.tokenUsage.usedTokens') is not null order by ordinal desc limit 1",
 			)
 			.get(threadId) as { used: number | null } | null;
 		return row?.used ?? undefined;

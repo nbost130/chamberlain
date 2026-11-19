@@ -69,10 +69,10 @@ describe("a restart keeps what was sent", () => {
 		daemonWake(s, 80_000);
 		expect(daemonWake(s, 90_000, { steward: "steward-thread-2" })).toBe(FULL);
 	});
-	test("an unknown context size sends them in full", () => {
+	test("must skip: a size that could not be read at this wake is not a shrink, so the pointer goes", () => {
 		const s = memStore();
 		daemonWake(s, 80_000);
-		expect(daemonWake(s, undefined)).toBe(FULL);
+		expect(daemonWake(s, undefined)).toBe(rightsUnchanged(AT));
 	});
 	test("the high-water mark a running daemon keeps is what the next one compares to", () => {
 		const s = memStore();
