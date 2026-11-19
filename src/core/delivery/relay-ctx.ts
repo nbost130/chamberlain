@@ -111,6 +111,10 @@ export type InlineRights = {
 	stale?: true;
 	/** The rights could not be read: `text` is the notice that goes instead, and no record is written. */
 	unreadable?: true;
+	/** The wake that carries the current rights was dead-lettered: `text` is the notice that goes instead, and no record is written. */
+	undelivered?: true;
+	/** The notice did not fit beside the row, so it went as a tiny wake of its own just before it: the row goes as queued. */
+	sentAlone?: true;
 };
 
 /** The held news chosen to ride in an immediate wake's POST (relay-carry.ts); `now` fixes its "held N min" notes, so the row bound later reads like what was sent. */

@@ -213,7 +213,7 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.asked.n).toBeGreaterThan(before);
 	});
 
-	test("a dead-lettered prerequisite holds the row until the operator acts: a retry sends both; a cancel makes the relay queue a fresh one", async () => {
+	test("a dead-lettered prerequisite does not strand the row: it goes with the notice and an alarm; a cancel makes the relay queue a fresh one", async () => {
 		const r = world({ max: 1 });
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		r.outbox.deliver("pointer", "w2", { kind: "needs_input", rights: [stamp] });
@@ -225,11 +225,12 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.store.wakes.find(G1)?.status).toBe("dead_letter");
 		r.w.answer = async () => ({ ok: true, status: 202 });
 		r.clock.t += 2000;
-		await r.relay().pass();
-		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
-		r.store.wakes.retry(F1);
-		expect(await r.relay().pass()).toEqual([F1, "w1", "w2"]);
-		// w2's prerequisite is no longer needed: the record shows the state now. Cancelled, it stays cancelled.
+		expect(await r.relay().pass()).toEqual(["w1", "w2"]);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", attempts: 1 });
+		expect(r.posts.filter((p) => p.id === "w1")[0]!.message).toContain("could not be delivered for this wake");
+		expect(r.alarms).toContain("rights-undelivered");
+		expect(r.store.wakes.find(F1)?.status).toBe("dead_letter");
+		// The operator cancels w2's dead-lettered prerequisite: it stays cancelled.
 		r.store.wakes.cancel(G1, r.clock.t);
 		await r.relay().pass();
 		expect(r.store.wakes.find(G1)?.status).toBe("cancelled");

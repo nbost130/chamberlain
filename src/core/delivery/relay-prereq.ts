@@ -1,13 +1,13 @@
 /** The rights a wake needs ahead of it: finding the prerequisite wake, queueing it, and sending it first. */
 import { crashPoint } from "../crash.ts";
-import { alarms, rightsInlineHead, rightsStaleNote, rightsUnreadNotice } from "../messages.ts";
+import { alarms, rightsInlineHead, rightsStaleNote, rightsUndeliveredNotice, rightsUnreadNotice } from "../messages.ts";
 import { loadRightsSent, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
 import { exceedsEncodedCap } from "../steward/steward-types.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
 import { readRightsNow } from "./relay-compose.ts";
-import { type Ctx, type InlineRights, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
+import { type Ctx, type InlineRights, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
 /**
  * `rightsInline`: what a Steward row that depends on the rights carries in its own POST. Nothing (undefined) when the durable record shows the
@@ -49,6 +49,52 @@ export function unreadableRights(r: Ctx, row: OutboxRow): InlineRights {
 }
 
 /**
+ * The wake that carries the current rights was DEAD-LETTERED: it will not be sent again by itself, and the row that waited on it must not wait for
+ * ever (an answer, a hand-off). It goes with a notice instead, the alarm is raised, and the next row has a prerequisite of its own, so the rights
+ * are tried again with it.
+ */
+export function undeliveredRights(r: Ctx, row: OutboxRow): InlineRights {
+	if (!r.reported.has(`rights-undelivered:${row.deliveryId}`)) {
+		r.reported.add(`rights-undelivered:${row.deliveryId}`);
+		r.d.log("rights-undelivered", { deliveryId: row.deliveryId });
+		raise(r, "rights-undelivered", alarms.rightsUndelivered());
+	}
+	return { text: rightsUndeliveredNotice, undelivered: true };
+}
+
+/** Pure: the notice a rights-less row carries, whichever way the rights failed to come. */
+const noticeOf = (i: InlineRights) => (i.undelivered ? rightsUndeliveredNotice : rightsUnreadNotice);
+
+/** Pure: whether the notice fits in the same POST as the row. It must always reach the Steward: when it does not fit it goes first, on its own (`noticeAlone`). */
+export function noticeFits(row: OutboxRow, inline: InlineRights): boolean {
+	const line = DELIVERY_ID_LINE(row.deliveryId);
+	return !exceedsEncodedCap(
+		`${row.message.replace(line, "").trimEnd()}\n\n${noticeOf(inline)}\n${line}`,
+		row.deliveryId,
+	);
+}
+
+/**
+ * The notice as a tiny wake of its own, POSTed just before a row that is too large to carry it. It is not an outbox row (nothing to retry or
+ * dedupe: a repeat is harmless), and under an id derived from the row's. False when it was not accepted: the row then waits for the next pass,
+ * since it must never go without either the rights or the notice.
+ */
+export async function noticeAlone(
+	r: Ctx,
+	row: OutboxRow,
+	inline: InlineRights,
+	{ l, target }: { l: Lane; target: string | undefined },
+): Promise<boolean> {
+	const res = await r.post(l, { ...row, deliveryId: `${row.deliveryId}:rights-notice` }, target, noticeOf(inline));
+	if (!res.ok)
+		r.d.log("rights-notice-failed", {
+			deliveryId: row.deliveryId,
+			...(res.status !== undefined ? { http: res.status } : {}),
+		});
+	return res.ok;
+}
+
+/**
  * Pure: a row that holds a FULL block was composed under the rights of its time. When the rights or rulings in force now are not the ones it was
  * stamped with (they changed, or were revoked, or cannot be read), delivering it would post old authorization as current and record the old hash.
  * Its text is never edited: the current rights ride after it and replace it, and the record is written from the current stamp (or not at all).
@@ -64,10 +110,13 @@ function staleFull(row: OutboxRow, now: RightsNow): string | undefined {
 export function withInlineRights(row: OutboxRow, inline: InlineRights): string {
 	const line = DELIVERY_ID_LINE(row.deliveryId);
 	const body = row.message.replace(line, "").trimEnd();
-	if (inline.text && !inline.unreadable) return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
-	// No block rides inside: the rights could not be read, or the current ones went as a wake of their own before this stale one. The row goes as
-	// it is, with a one-line note when that fits.
-	const noted = `${body}\n\n${inline.unreadable ? rightsUnreadNotice : rightsStaleNote}\n${line}`;
+	if (inline.text && !inline.unreadable && !inline.undelivered)
+		return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
+	// The row goes as queued when its notice already went in a wake of its own.
+	if (inline.sentAlone) return `${body}\n${line}`;
+	// No block rides inside: the rights could not be read or delivered, or the current ones went as a wake of their own before this stale one.
+	// The row goes with the notice (callers check `noticeFits` first; the stale one is best effort).
+	const noted = `${body}\n\n${inline.unreadable || inline.undelivered ? noticeOf(inline) : rightsStaleNote}\n${line}`;
 	return exceedsEncodedCap(noted, row.deliveryId) ? `${body}\n${line}` : noted;
 }
 

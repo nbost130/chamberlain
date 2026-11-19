@@ -15,6 +15,11 @@ export const alarms = {
 		title: `chamberlain: ${count} "${kind}" failures in ${windowMinutes} minutes`,
 		summary: "Automatic retries are stopped until ten quiet minutes pass.",
 	}),
+	rightsUndelivered: (): AlarmText => ({
+		title: "chamberlain could not deliver the decision rights",
+		summary:
+			"A wake went to the Steward without current rights because the wake that carries them was dead-lettered, so it was told to hold anything that needs them. Retry or cancel the dead-lettered rights wake (chamberlain wakes retry <id>); the next wake tries again.",
+	}),
 	rightsUnreadable: (): AlarmText => ({
 		title: "chamberlain cannot read the decision rights",
 		summary: "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.",
@@ -171,6 +176,10 @@ export const rightsStaleNote =
  */
 export const rightsUnreadNotice =
 	"[chamberlain] note: the current decision rights and rulings could not be read for this wake. Hold any action that needs them (anything on the ASK list) until a later wake carries them.";
+
+/** Said with a Steward row that goes because the wake carrying the current rights was dead-lettered: the row is not held back, and the next row tries the rights again. */
+export const rightsUndeliveredNotice =
+	"[chamberlain] note: the current decision rights and rulings could not be delivered for this wake. Hold any action that needs them (anything on the ASK list) until a later wake carries them.";
 
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>
