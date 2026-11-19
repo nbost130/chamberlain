@@ -20,7 +20,7 @@ import type { Store } from "../store/store.ts";
 import type { HeldItem, Parked } from "../store/store-wakes.ts";
 import type { Watcher } from "./engine-watcher.ts";
 
-export type ActiveHoldDeps = {
+type ActiveHoldDeps = {
 	store: Store;
 	log: Log;
 	config: ActiveHoldConfig;
@@ -114,7 +114,7 @@ async function settleDue(d: ActiveHoldDeps) {
 	}
 }
 
-export function createActiveHold(d: ActiveHoldDeps) {
+function createActiveHold(d: ActiveHoldDeps) {
 	let ticking: Promise<void> | undefined;
 	const timers = new Set<ReturnType<typeof setTimeout>>();
 	/** One pass at a time; a call while one runs joins it. */
