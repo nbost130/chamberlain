@@ -650,6 +650,16 @@ ALTER TABLE steward_wake_usage ADD COLUMN tool_calls INTEGER;
 ALTER TABLE steward_wake_usage ADD COLUMN thread_reads INTEGER;
 `,
 	},
+	{
+		version: 21,
+		name: "parked wakes",
+		sql: `
+-- A question card in a thread the principal is driving waits for them (activeHold) instead of waking the Steward at once. It is kept as a held
+-- wake with this column set: JSON {releaseAt, lastWriteAt, server, requestIds}. A parked wake is never composed into a digest; the engine's
+-- tick turns it into an ordinary pending row once releaseAt has passed (or drops it when the card was answered). NULL is every held wake so far.
+ALTER TABLE held_wakes ADD COLUMN parked TEXT CHECK (parked IS NULL OR json_valid(parked));
+`,
+	},
 ];
 const lastMigration = MIGRATIONS.at(-1);
 if (!lastMigration) throw Error("MIGRATIONS lists no migration");

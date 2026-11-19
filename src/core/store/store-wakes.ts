@@ -29,12 +29,20 @@ export type RightsStamp = {
 	 */
 	legacy?: "unstamped";
 };
+/**
+ * A question card held for the principal: it waits in `held_wakes` with this set, and is released (as an ordinary pending row) at `releaseAt`
+ * if its cards are still unanswered, or dropped if not. `lastWriteAt` is the principal's last message in the thread; `requestIds` are the cards
+ * it was raised for, `server` the server they are on. Never composed into a digest (`held` leaves it out; `parked` lists it).
+ */
+export type Parked = { releaseAt: number; lastWriteAt: number; server: string; requestIds: string[] };
 export type WakeMeta = {
 	kind: string;
 	thread?: string /** Who the wake is for: absent is the Steward, "desk" is the Alert Desk's own thread. Alertmanager's `receiver`. */;
 	receiver?: string;
 	/** One stamp per rights text the wake carries, a pointer or the full block (a digest can carry several); absent when it carries none. */
 	rights?: RightsStamp[];
+	/** Set on a question card held for the principal (`Parked`); absent on every other wake. */
+	parked?: Parked;
 };
 /** Which receiver's wakes a read is about: `null` is the Steward's, a name is that receiver's, and `undefined` is every receiver's. */
 export type Lane = string | null | undefined;
@@ -84,8 +92,17 @@ export interface WakeStore {
 	enqueue(w: WakeRow): boolean;
 	/** A producer's holdable wake: held until the relay composes it into a row. False (nothing written) when the id is already known. */
 	hold(w: HeldItem): boolean;
-	/** Every held item, oldest first. `lane` picks one receiver's (`null`: the Steward's); without it, all of them. */
+	/** Every held item, oldest first. `lane` picks one receiver's (`null`: the Steward's); without it, all of them. Parked items (`parked`) are not in it. */
 	held(lane?: Lane): HeldItem[];
+	/** The question cards held for the principal (`Parked`), oldest first. */
+	parked(lane?: Lane): HeldItem[];
+	/**
+	 * Releases a parked wake as an ordinary pending row under its own delivery id, with `message` as its text, in ONE transaction. Undefined (nothing
+	 * written) when no wake is parked under that id.
+	 */
+	unpark(deliveryId: string, now: number, message: string): OutboxRow | undefined;
+	/** Drops a parked wake: its card was answered. False when none is parked under that id. */
+	dropParked(deliveryId: string): boolean;
 	/**
 	 * The relay's composition, ONE transaction: `compose` picks the row from the items held now; the row is inserted with its members bound
 	 * (a member already bound to another row is refused by the primary key, and the whole composition with it) and they leave the held store.

@@ -16,6 +16,7 @@ import { Database } from "bun:sqlite";
 import { type OpenOptions, openDatabase, queries } from "./database.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { SchemaTooNewError } from "./schema.ts";
+import { makeChallenges } from "./sqlite-challenges.ts";
 import { makeClaims, makeEvidence, makeSequence, makeState } from "./sqlite-claims.ts";
 import { makeHandoffs } from "./sqlite-handoffs.ts";
 import { makeItems } from "./sqlite-items.ts";
@@ -23,7 +24,7 @@ import { makeDispositions, makeEvents, makeUsage } from "./sqlite-log.ts";
 import { makePreparePrLinks } from "./sqlite-prepare-pr-links.ts";
 import { makeAway, makeButlers, makeDecisions, makeRulings } from "./sqlite-rulings.ts";
 import { makeStewardSql } from "./sqlite-steward.ts";
-import { makeChallenges, makeWakes } from "./sqlite-wakes.ts";
+import { makeWakes } from "./sqlite-wakes.ts";
 import type { Store } from "./store.ts";
 
 export type { OpenOptions };

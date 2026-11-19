@@ -44,6 +44,13 @@ function listWakes(store: Store, max: number, out: Out): number {
 		out(
 			`  ${h.deliveryId}${h.kind ? `  ${h.kind}` : ""}${h.receiver ? `  for ${h.receiver}` : ""}  held ${iso(h.queuedAt)}`,
 		);
+	const parked = store.wakes.parked();
+	if (parked.length) {
+		out(
+			`parked for the principal to answer (released at the time shown if the card is still unanswered): ${parked.length}`,
+		);
+		for (const h of parked) out(`  ${h.deliveryId}  until ${iso(h.parked?.releaseAt ?? h.queuedAt)}`);
+	}
 	const cancelled = store.wakes.rows("cancelled").length;
 	if (cancelled) out(`cancelled (kept as tombstones, so nothing queues them again): ${cancelled}`);
 	return 0;
