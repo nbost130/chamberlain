@@ -76,6 +76,8 @@ export type RelayDeps = {
 	onDelivered?: (deliveryId: string) => void;
 	/** Attempts per row before it is dead-lettered (default CHAMBERLAIN_MAX_ATTEMPTS, else 3). */
 	maxAttempts?: number;
+	/** Failures of the tiny no-rights notice wake after which the row goes with the notice prepended to its own text (default 3, or 15 minutes). */
+	noticeRetries?: number;
 	retryAfterMs?: (attempts: number) => number;
 	ceilingMs?: number;
 	/**
@@ -115,6 +117,10 @@ export type InlineRights = {
 	undelivered?: true;
 	/** The notice did not fit beside the row, so it went as a tiny wake of its own just before it: the row goes as queued. */
 	sentAlone?: true;
+	/** The tiny notice wake kept failing: the notice goes FIRST in the row's own POST, even past the soft size bound. */
+	prepend?: true;
+	/** The row carries a full rights block of its own that cannot be confirmed as current: the notice says it is possibly out of date. */
+	staleCopy?: true;
 };
 
 /** The held news chosen to ride in an immediate wake's POST (relay-carry.ts); `now` fixes its "held N min" notes, so the row bound later reads like what was sent. */
@@ -141,6 +147,8 @@ export type Ctx = {
 	owed: Map<number, OutboxRow>;
 	/** For each owed row, what its delivered commit must also record (`Landing`): the same retry as the first try, so the record and the news are never lost on it. */
 	landing: Map<number, Landing>;
+	/** Rows whose tiny notice wake has failed: how often, and since when (relay-prereq.ts `noticeFor`). */
+	noticeFails: Map<string, { n: number; since: number }>;
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */
 	notBefore: Map<number, number>;
 	/** Rows whose receiver this relay has no transport for, already logged. */

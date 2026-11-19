@@ -20,6 +20,11 @@ export const alarms = {
 		summary:
 			"A wake went to the Steward without current rights because the wake that carries them was dead-lettered, so it was told to hold anything that needs them. Retry or cancel the dead-lettered rights wake (chamberlain wakes retry <id>); the next wake tries again.",
 	}),
+	rightsNoticeUndelivered: (): AlarmText => ({
+		title: "chamberlain could not send the no-rights notice on its own",
+		summary:
+			'A wake too large to carry the "hold any action that needs the rights" notice kept failing to be preceded by it, so it went with the notice prepended to its own text instead. Check that the Steward\'s webhook is reachable.',
+	}),
 	rightsUnreadable: (): AlarmText => ({
 		title: "chamberlain cannot read the decision rights",
 		summary: "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.",
@@ -180,6 +185,10 @@ export const rightsUnreadNotice =
 /** Said with a Steward row that goes because the wake carrying the current rights was dead-lettered: the row is not held back, and the next row tries the rights again. */
 export const rightsUndeliveredNotice =
 	"[chamberlain] note: the current decision rights and rulings could not be delivered for this wake. Hold any action that needs them (anything on the ASK list) until a later wake carries them.";
+
+/** Added to a notice when the row it rides with also carries a full rights block of its own, which can no longer be trusted as current. */
+export const rightsStaleCopyNote =
+	"Any rights block in the text above is possibly out of date and does not count as the current rights.";
 
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>

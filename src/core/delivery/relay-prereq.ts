@@ -1,8 +1,15 @@
 /** The rights a wake needs ahead of it: finding the prerequisite wake, queueing it, and sending it first. */
 import { crashPoint } from "../crash.ts";
-import { alarms, rightsInlineHead, rightsStaleNote, rightsUndeliveredNotice, rightsUnreadNotice } from "../messages.ts";
+import {
+	alarms,
+	rightsInlineHead,
+	rightsStaleCopyNote,
+	rightsStaleNote,
+	rightsUndeliveredNotice,
+	rightsUnreadNotice,
+} from "../messages.ts";
 import { loadRightsSent, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
-import { exceedsEncodedCap } from "../steward/steward-types.ts";
+import { encodedSendBytes, exceedsEncodedCap } from "../steward/steward-types.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
@@ -45,7 +52,7 @@ export function unreadableRights(r: Ctx, row: OutboxRow): InlineRights {
 		r.d.log("rights-unreadable", { deliveryId: row.deliveryId });
 		raise(r, "rights-unreadable", alarms.rightsUnreadable());
 	}
-	return { text: rightsUnreadNotice, unreadable: true };
+	return { text: rightsUnreadNotice, unreadable: true, ...copyMark(row) };
 }
 
 /**
@@ -59,11 +66,15 @@ export function undeliveredRights(r: Ctx, row: OutboxRow): InlineRights {
 		r.d.log("rights-undelivered", { deliveryId: row.deliveryId });
 		raise(r, "rights-undelivered", alarms.rightsUndelivered());
 	}
-	return { text: rightsUndeliveredNotice, undelivered: true };
+	return { text: rightsUndeliveredNotice, undelivered: true, ...copyMark(row) };
 }
 
+/** A row that holds its own full rights block carries a copy that cannot be confirmed as current when the current rights are not confirmed: its notice says so. */
+const copyMark = (row: OutboxRow): { staleCopy?: true } => (row.rights?.some((s) => s.full) ? { staleCopy: true } : {});
+
 /** Pure: the notice a rights-less row carries, whichever way the rights failed to come. */
-const noticeOf = (i: InlineRights) => (i.undelivered ? rightsUndeliveredNotice : rightsUnreadNotice);
+const noticeOf = (i: InlineRights) =>
+	`${i.undelivered ? rightsUndeliveredNotice : rightsUnreadNotice}${i.staleCopy ? ` ${rightsStaleCopyNote}` : ""}`;
 
 /** Pure: whether the notice fits in the same POST as the row. It must always reach the Steward: when it does not fit it goes first, on its own (`noticeAlone`). */
 export function noticeFits(row: OutboxRow, inline: InlineRights): boolean {
@@ -94,6 +105,44 @@ export async function noticeAlone(
 	return res.ok;
 }
 
+/** The tiny notice wake is tried this many times at most before the notice is prepended to the row itself, and for at most this long. */
+const NOTICE_RETRIES = 3;
+const NOTICE_GIVE_UP_MS = 15 * 60_000;
+/** The largest POST sent even past the soft bound (the replay bound): well under the largest wake T3 has taken (a 53 KB digest). */
+const HARD_SEND_MAX_BYTES = 64_000;
+
+/**
+ * What a row that cannot carry its notice inside the soft size bound goes with: the notice as a tiny wake of its own first (`sentAlone`); if that
+ * keeps failing (`noticeRetries`, default 3, or 15 minutes), the `rights-notice-undelivered` alarm and the notice PREPENDED to the row's own POST
+ * even past the soft bound, as long as the hard bound allows; past it the row is refused (dead-lettered, loudly). Null: the row waits (the tiny
+ * wake failed, with a pause before the next try). So a row is never held at 0 attempts for ever, and never goes without either the rights or the notice.
+ */
+export async function noticeFor(
+	r: Ctx,
+	row: OutboxRow,
+	inline: InlineRights,
+	dest: { l: Lane; target: string | undefined },
+): Promise<InlineRights | null | "refuse"> {
+	const fails = r.noticeFails.get(row.deliveryId);
+	const limit = r.d.noticeRetries ?? NOTICE_RETRIES;
+	if (!fails || (fails.n < limit && r.clock() - fails.since < NOTICE_GIVE_UP_MS)) {
+		if (await noticeAlone(r, row, inline, dest)) return { ...inline, sentAlone: true };
+		const n = (fails?.n ?? 0) + 1;
+		r.noticeFails.set(row.deliveryId, { n, since: fails?.since ?? r.clock() });
+		r.notBefore.set(row.id, r.clock() + r.pause(n));
+		return null;
+	}
+	if (!r.reported.has(`rights-notice-undelivered:${row.deliveryId}`)) {
+		r.reported.add(`rights-notice-undelivered:${row.deliveryId}`);
+		r.d.log("rights-notice-undelivered", { deliveryId: row.deliveryId, failures: fails.n });
+		raise(r, "rights-notice-undelivered", alarms.rightsNoticeUndelivered());
+	}
+	const prepended = { ...inline, prepend: true as const };
+	return encodedSendBytes(withInlineRights(row, prepended), row.deliveryId) <= HARD_SEND_MAX_BYTES
+		? prepended
+		: "refuse";
+}
+
 /**
  * Pure: a row that holds a FULL block was composed under the rights of its time. When the rights or rulings in force now are not the ones it was
  * stamped with (they changed, or were revoked, or cannot be read), delivering it would post old authorization as current and record the old hash.
@@ -114,6 +163,8 @@ export function withInlineRights(row: OutboxRow, inline: InlineRights): string {
 		return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
 	// The row goes as queued when its notice already went in a wake of its own.
 	if (inline.sentAlone) return `${body}\n${line}`;
+	// The tiny notice wake kept failing: the notice leads the row's own text, past the soft size bound (the hard bound is checked by the caller).
+	if (inline.prepend) return `${noticeOf(inline)}\n\n${body}\n${line}`;
 	// No block rides inside: the rights could not be read or delivered, or the current ones went as a wake of their own before this stale one.
 	// The row goes with the notice (callers check `noticeFits` first; the stale one is best effort).
 	const noted = `${body}\n\n${inline.unreadable || inline.undelivered ? noticeOf(inline) : rightsStaleNote}\n${line}`;

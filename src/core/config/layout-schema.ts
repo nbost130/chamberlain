@@ -41,6 +41,7 @@ export const SCALARS = {
 	healthFormatPattern: "string",
 	stewardTokens: "boolean",
 	rightsInline: "boolean",
+	rightsNoticeRetries: "posint",
 	wakeDebounceMs: "nonneg",
 } as const satisfies Record<string, ScalarKind>;
 export type ScalarKey = keyof typeof SCALARS;

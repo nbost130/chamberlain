@@ -59,6 +59,7 @@ export function land(r: Ctx, row: OutboxRow, inline?: InlineRights, alongside?: 
 	}
 	r.owed.delete(row.id);
 	r.landing.delete(row.id);
+	r.noticeFails.delete(row.deliveryId);
 	crashPoint("delivered");
 	for (const m of [...row.members, ...((carried as OutboxRow | undefined)?.members ?? [])]) {
 		try {

@@ -18,6 +18,7 @@ type RigOptions = {
 	compact?: WakeTransport;
 	rightsInline?: boolean;
 	debounceMs?: number;
+	noticeRetries?: number;
 };
 
 /** Registers this suite's scratch cleanup for the test file that calls it, and returns its fixtures. */
@@ -59,6 +60,7 @@ export function useCoreRelayFixtures(makeRelay: (d: RelayDeps) => Relay) {
 				...(o.rightsNow ? { rightsNow: o.rightsNow } : {}),
 				...(o.compact ? { compact: o.compact } : {}),
 				...(o.rightsInline ? { rightsInline: true } : {}),
+				...(o.noticeRetries !== undefined ? { noticeRetries: o.noticeRetries } : {}),
 				...(o.debounceMs !== undefined ? { debounceMs: o.debounceMs } : {}),
 				wake: {
 					ready: () => w.ready,

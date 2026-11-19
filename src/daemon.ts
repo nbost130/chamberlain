@@ -139,6 +139,9 @@ function engineDeps(
 		// and idle turn ends, notes and sweeps wait `wakeDebounceMs` for company so they go as one digest. Each is off with false / 0.
 		relay: {
 			rightsInline: setting("rightsInline", CONF) !== false,
+			...(setting("rightsNoticeRetries", CONF) !== undefined
+				? { noticeRetries: setting("rightsNoticeRetries", CONF) as number }
+				: {}),
 			debounceMs: setting("wakeDebounceMs", CONF) ?? DEFAULT_WAKE_DEBOUNCE_MS,
 		},
 		log,

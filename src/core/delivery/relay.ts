@@ -91,6 +91,7 @@ function relayContext(d: RelayDeps): Ctx {
 		post,
 		owed: new Map(),
 		landing: new Map(),
+		noticeFails: new Map(),
 		notBefore: new Map(),
 		unrouted: new Set(),
 		waitingOn: new Set(),

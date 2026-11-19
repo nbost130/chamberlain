@@ -67,7 +67,14 @@ export type EngineDeps = {
 	relay?: Partial<
 		Pick<
 			RelayDeps,
-			"retryAfterMs" | "maxAttempts" | "staleAfterMs" | "now" | "ceilingMs" | "rightsInline" | "debounceMs"
+			| "retryAfterMs"
+			| "maxAttempts"
+			| "staleAfterMs"
+			| "now"
+			| "ceilingMs"
+			| "rightsInline"
+			| "debounceMs"
+			| "noticeRetries"
 		>
 	>;
 	/** Runs `ask.ts` for the Steward-health hand-off question, asked only when the adapter cannot start the hand-off itself (no `handoffInstruction`). Undefined: that question is not asked. */

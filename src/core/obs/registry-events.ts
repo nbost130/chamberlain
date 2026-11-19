@@ -67,6 +67,7 @@ export const EVENTS = {
 	"rights-unreadable": e("warn"),
 	"rights-undelivered": e("warn"),
 	"rights-notice-failed": e("warn"),
+	"rights-notice-undelivered": e("warn"),
 	"wake-debounced": e("info", { held: int(), forMs: int() }),
 	"rights-full-stale": e("warn", { epoch: int(), current: int() }),
 	"rights-invalidated": e("info", { reason: f(T.enm("compaction", "context shrink")), epoch: int(), used: int() }),

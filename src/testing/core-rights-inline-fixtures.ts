@@ -9,7 +9,7 @@ type Fixtures = ReturnType<typeof useCoreRelayFixtures>;
  * engine's does. Built over a test file's own relay fixtures (`useCoreRelayFixtures(createRelay)`).
  */
 export function inlineWorldOf({ rig, H1, stamp, BLOCK }: Fixtures) {
-	return function inlineWorld(o: { inline?: boolean; block?: string } = {}) {
+	return function inlineWorld(o: { inline?: boolean; block?: string; noticeRetries?: number } = {}) {
 		const store = memStore();
 		const st: {
 			steward: string;
@@ -19,6 +19,8 @@ export function inlineWorldOf({ rig, H1, stamp, BLOCK }: Fixtures) {
 			compactions?: number;
 			/** The read of the rights throws (a transcript or database that cannot be read). */
 			broken?: true;
+			/** The read of the rights throws from this read on (1 is the first): the first read works, a later one fails. */
+			failFromRead?: number;
 		} = {
 			steward: "steward-1",
 			session: "s1",
@@ -26,9 +28,12 @@ export function inlineWorldOf({ rig, H1, stamp, BLOCK }: Fixtures) {
 			used: 100_000,
 			compactions: 4,
 		};
+		let reads = 0;
 		const rightsNow = async () => {
-			if (st.broken) throw new Error("transcript unreadable");
-			const { broken: _broken, ...now } = st;
+			reads++;
+			if (st.broken || (st.failFromRead !== undefined && reads >= st.failFromRead))
+				throw new Error("transcript unreadable");
+			const { broken: _broken, failFromRead: _from, ...now } = st;
 			return {
 				...now,
 				wake: (forId: string) => ({
@@ -51,7 +56,12 @@ export function inlineWorldOf({ rig, H1, stamp, BLOCK }: Fixtures) {
 				}),
 			};
 		};
-		const r = rig({ store, rightsNow, rightsInline: o.inline ?? true });
+		const r = rig({
+			store,
+			rightsNow,
+			rightsInline: o.inline ?? true,
+			...(o.noticeRetries !== undefined ? { noticeRetries: o.noticeRetries } : {}),
+		});
 		const record = () => store.state.get(RIGHTS_SENT_KEY) as Record<string, unknown> | undefined;
 		const pointer = (id: string) => r.outbox.deliver(`text of ${id}`, id, { kind: "needs_input", rights: [stamp] });
 		const rightsRows = () => store.wakes.rows("all").filter((w) => w.kind === "rights");

@@ -24,8 +24,8 @@ import {
 	current,
 	findPrerequisite,
 	inlineRights,
-	noticeAlone,
 	noticeFits,
+	noticeFor,
 	prerequisiteBlocked,
 	queuePrerequisite,
 	undeliveredRights,
@@ -205,16 +205,17 @@ async function withinCap(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
 		...(replaceAlone ? { inlineOff: true } : {}),
 	});
 	const first = await standalone(a);
-	return inline.stale && first.go ? { ...first, inline: { text: "", stale: true } } : first;
+	// A stale copy is marked "replaced" only when the current rights really went before the row; a notice from the second read failing wins.
+	return inline.stale && first.go && !first.inline ? { ...first, inline: { text: "", stale: true } } : first;
 }
 
-/** A row that goes without the rights always carries the notice: in its own POST when it fits, else as a tiny wake of its own just before it. */
+/** A row that goes without the rights always carries the notice: in its own POST when it fits, else as a tiny wake of its own just before it (`noticeFor`). */
 async function carryNotice(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
 	if (noticeFits(a.row, inline)) return { ...GO, inline };
 	const target = a.snap ? a.snap.wakeUrl : a.l.wake.target?.();
-	return (await noticeAlone(a.r, a.row, inline, { l: a.l, target }))
-		? { ...GO, inline: { ...inline, sentAlone: true } }
-		: STOP;
+	const out = await noticeFor(a.r, a.row, inline, { l: a.l, target });
+	if (out === "refuse") deadLetter(a.r, a.l, a.row, a.row.attempts);
+	return out && out !== "refuse" ? { ...GO, inline: out } : STOP;
 }
 
 /** One standalone full-rights prerequisite for the state now, whatever the record says (it is what was doubted), then the row. */
