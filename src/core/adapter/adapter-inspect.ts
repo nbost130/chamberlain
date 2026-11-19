@@ -57,6 +57,12 @@ export type Inspector = {
 	lastAssistant?(threadId: string): Promise<LastAssistant | undefined>;
 	/** What the thread is waiting on now. Never rejects; only an `ok: true` read may be believed (see `WaitingRead`). */
 	waiting(threadId: string): Promise<WaitingRead>;
+	/**
+	 * When the principal last wrote in the thread, in epoch milliseconds, if that was at or after `since`; undefined when they did not write
+	 * since then. A message from a machine (an agent, a tool, the daemon's own posts) is not the principal's. It rejects when it cannot tell,
+	 * and the core then acts as if the principal were not there. Absent: the adapter cannot say, and `activeHold` never holds its threads' cards.
+	 */
+	principalLastWrite?(threadId: string, since: number): Promise<number | undefined>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
 	runningSubagents(threadId: string): Promise<number>;
 	/**
