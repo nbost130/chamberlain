@@ -25,7 +25,7 @@ export function summarizeManaged(r: OverheadReport): ManagedSummary {
 		status: m.status,
 		minCoverage: r.limits.managedRatio.minCoverage,
 		...(m.report ? { threads: m.report.threads, mapped: m.report.mapped } : {}),
-		...(m.report?.coverage !== undefined ? { coverage: m.report.coverage } : {}),
+		...(m.coverage !== undefined ? { coverage: m.coverage } : {}),
 		...(m.ratio !== undefined ? { ratio: m.ratio } : {}),
 		...(m.costPerThread !== undefined ? { costPerThread: m.costPerThread } : {}),
 	};

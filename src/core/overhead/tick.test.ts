@@ -72,15 +72,14 @@ describe("the guards against a feedback loop", () => {
 		expect(stateOf(r).investigations.map((i) => i.status)).toEqual(["closed", "open"]);
 	});
 
-	test("a wall clock that jumps forward does not shorten the cooldown the monotonic clock saw", async () => {
+	test("a real forward jump of the wall clock cannot be told from time passing, so it ends the cooldown: accepted and documented", async () => {
 		const r = rig({ cfg: crossing({ checkEveryHours: 1 }) });
 		await r.tick();
 		closeInvestigation(r.store, stateOf(r).investigations[0]?.id as string, { by: "investigator", now: r.at() });
 		r.advance(2 * HOUR);
 		r.jump(40 * HOUR);
 		await r.tick();
-		expect(r.t3.launched).toHaveLength(1);
-		expect(r.logs.at(-1)?.fields).toMatchObject({ skipped: "cooldown" });
+		expect(r.t3.launched).toHaveLength(2);
 	});
 
 	test("disabled (monitor on, investigator off): the numbers are kept and nothing launches", async () => {

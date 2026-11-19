@@ -19,7 +19,6 @@ import { randomBytes } from "node:crypto";
 import type { GhRead } from "../decide/hold-lookup.ts";
 import type { Store } from "../store/store.ts";
 import { type BriefCommands, investigatorBrief } from "./brief.ts";
-import { advanceClock } from "./clock.ts";
 import { collect } from "./collect.ts";
 import { HOUR_MS, type OverheadConfig } from "./config.ts";
 import type { RunQuery } from "./fleet-spend.ts";
@@ -28,8 +27,6 @@ import { type Investigator, LaunchRefused } from "./investigator.ts";
 import type { OwnThreads } from "./managed.ts";
 import { priceOf } from "./prices.ts";
 import {
-	type Clock,
-	clockElapsed,
 	decide,
 	type Elapsed,
 	heldNotes,
@@ -59,10 +56,31 @@ export type OverheadTickDeps = {
 	investigator?: Investigator;
 	commands: BriefCommands;
 	now?: () => number;
-	/** A monotonic clock in ms (default `performance.now`): feeds the persisted cooldown clock (clock.ts), so a cooldown is never shorter than it says. */
+	/** A monotonic clock in ms (default `performance.now`), read inside one process for the reservations that process made; it dies with the process. */
 	mono?: () => number;
 	log: (event: Event, fields: Record<string, unknown>) => void;
 };
+
+/**
+ * One tick's readings of the two clocks, and `seen`: the monotonic reading at which this process made each reservation. A reservation from before a
+ * restart has none, and is measured by the wall clock alone.
+ */
+type At = { now: number; mono: number; seen: Map<string, number> };
+
+/**
+ * How long a reservation has been held. Across restarts: the wall-clock time since the STORED launch time, with no credit for a restart. Inside the
+ * process that made it: the larger of that and the monotonic time. Either one below zero (the clock reads earlier than the stored launch) means the
+ * cooldown is not over, so 0. A real forward jump of the wall clock cannot be told apart from time passing and ends the cooldown early: accepted.
+ */
+const elapsedOf =
+	(at: At): Elapsed =>
+	(i) => {
+		const wall = at.now - i.openedAt;
+		const made = at.seen.get(i.id);
+		const mono = made === undefined ? undefined : at.mono - made;
+		const readings = mono === undefined ? [wall] : [wall, mono];
+		return readings.every(Number.isFinite) && readings.every((r) => r >= 0) ? Math.max(...readings) : 0;
+	};
 
 /** What one attempt to send a launch came to. */
 type Sent = "opened" | "refused" | "unknown";
@@ -152,7 +170,7 @@ async function open(
 	d: OverheadTickDeps,
 	inv: Investigator,
 	report: Awaited<ReturnType<typeof collect>>,
-	at: { now: number; clock: Clock },
+	at: At,
 ): Promise<void> {
 	const id = `OV-${randomBytes(3).toString("hex")}`;
 	const price = d.model ? priceOf(d.cfg.prices, d.model) : undefined;
@@ -170,13 +188,13 @@ async function open(
 	const rec: Investigation = {
 		id,
 		openedAt: at.now,
-		openedClock: at.clock.ms,
 		status: "pending",
 		title,
 		brief,
 		crossings: report.crossings.map((c) => c.detail),
 	};
 	recordOpened(d.store, rec);
+	at.seen.set(id, at.mono);
 	if ((await send(d, inv, rec)) !== "refused") return;
 	// Refused before anything went out: still released only on T3's own word that no thread exists.
 	const t = await inspect(d, inv, rec);
@@ -188,7 +206,7 @@ const checkDue = (d: OverheadTickDeps, last: number | undefined, now: number): b
 	last === undefined || now < last || now - last >= d.cfg.checkEveryHours * HOUR_MS;
 
 /** One measurement: the report, its numbers kept, and the decision whether to open an investigation. */
-async function measure(d: OverheadTickDeps, at: { now: number; clock: Clock }, elapsed: Elapsed): Promise<void> {
+async function measure(d: OverheadTickDeps, at: At, elapsed: Elapsed): Promise<void> {
 	const report = await collect({
 		store: d.store,
 		cfg: d.cfg,
@@ -219,21 +237,18 @@ async function measure(d: OverheadTickDeps, at: { now: number; clock: Clock }, e
 export function overheadTicker(d: OverheadTickDeps) {
 	let busy = false;
 	let reconciledAt: number | undefined;
-	let lastMono: number | undefined;
+	const seen = new Map<string, number>();
 	return async () => {
 		if (busy) return;
 		busy = true;
 		try {
-			const now = (d.now ?? Date.now)();
-			const mono = (d.mono ?? (() => performance.now()))();
-			const clock = advanceClock(d.store, now, lastMono === undefined ? undefined : mono - lastMono);
-			lastMono = mono;
-			const elapsed = clockElapsed(now, clock);
-			if (reconciledAt === undefined || now < reconciledAt || now - reconciledAt >= RECONCILE_MS) {
-				reconciledAt = now;
-				await reconcile(d, now, elapsed);
+			const at: At = { now: (d.now ?? Date.now)(), mono: (d.mono ?? (() => performance.now()))(), seen };
+			const elapsed = elapsedOf(at);
+			if (reconciledAt === undefined || at.now < reconciledAt || at.now - reconciledAt >= RECONCILE_MS) {
+				reconciledAt = at.now;
+				await reconcile(d, at.now, elapsed);
 			}
-			if (checkDue(d, readOverheadState(d.store).lastCheckAt, now)) await measure(d, { now, clock }, elapsed);
+			if (checkDue(d, readOverheadState(d.store).lastCheckAt, at.now)) await measure(d, at, elapsed);
 		} finally {
 			busy = false;
 		}

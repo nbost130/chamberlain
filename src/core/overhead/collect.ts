@@ -263,6 +263,6 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 }
 
 const coverageOf = (m: ManagedSection): { coverage?: number; unmapped?: number } => ({
-	...(m.report?.coverage !== undefined ? { coverage: m.report.coverage } : {}),
-	...(m.report ? { unmapped: m.report.unmapped } : {}),
+	...(m.coverage !== undefined ? { coverage: m.coverage } : {}),
+	...(m.unmapped !== undefined ? { unmapped: m.unmapped } : {}),
 });

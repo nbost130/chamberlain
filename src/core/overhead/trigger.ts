@@ -11,8 +11,11 @@
  *   archived or gone once `ttlHours` has passed (`expired`), or someone closes it (`chamberlain overhead close`). An outcome that is unknown
  *   counts as launched. Past `ttlHours` an investigation is STALE: it is reported, and still held;
  * - the record keeps every held reservation, and only the newest closed ones: history is capped, a live reservation never is.
- * Time here is only ever the clamp `elapsed` gives: never negative, and never longer than the persisted clock vouched for (clock.ts, kept in this
- * state, so a restart does not lose it), so a clock that jumps forward cannot shorten a cooldown. The investigator's own spend is its own line (fleet-spend.ts), outside the cost the trigger divides.
+ * Time here is only ever what `elapsed` gives. Across restarts it is the wall-clock time since the STORED launch time (`openedAt`), never added to
+ * by a restart; a clock that reads earlier than that launch means the cooldown is not over. Inside one process the monotonic clock is also read
+ * and the larger of the two is taken, unless either is below zero. A forward jump of the wall clock cannot be told apart from time passing, so
+ * it ends a cooldown early: accepted, and documented in docs/CONFIGURATION.md. The investigator's own spend is its own line (fleet-spend.ts),
+ * outside the cost the trigger divides.
  */
 import type { Store } from "../store/store.ts";
 import type { Status } from "./collect.ts";
@@ -27,8 +30,6 @@ const KEEP_CLOSED = 20;
 export type Investigation = {
 	id: string;
 	openedAt: number;
-	/** The cooldown clock's reading when it was reserved (clock.ts); absent in a record written before the clock was kept. */
-	openedClock?: number;
 	/** `pending`: reserved, launch outcome unknown or not yet made. `open`: T3 has the thread and its brief. */
 	status: "pending" | "open" | "closed";
 	/** The T3 thread the investigator runs in; absent until the launch is confirmed. */
@@ -65,12 +66,7 @@ export type OverheadSummary = {
 	unavailable: string[];
 };
 
-/** The cooldown's persisted clock (clock.ts): the last wall reading and the time it has vouched for. */
-export type Clock = { at: number; ms: number };
-
 export type OverheadState = {
-	/** Advanced by every tick, so a restart keeps it. */
-	clock?: Clock;
 	lastCheckAt?: number;
 	last?: OverheadSummary;
 	investigations: Investigation[];
@@ -82,18 +78,10 @@ export const readOverheadState = (store: Pick<Store, "state">): OverheadState =>
 /** A reservation that still counts: pending or open. */
 export const isHeld = (i: Investigation): boolean => i.status !== "closed";
 
-/** How long a reservation has been held. The daemon gives the persisted clock's clamp (clock.ts), a reader the wall clock alone; never negative. */
+/** How long a reservation has been held: never negative. A clock that reads before the stored launch gives 0, so the cooldown is not over. */
 export type Elapsed = (i: Investigation) => number;
 
-/** The persisted clock's reading of how long a reservation has been held: never more than the wall clock says, never more than the clock vouched for. */
-export const clockElapsed =
-	(now: number, clock: Clock): Elapsed =>
-	(i) => {
-		const wall = Math.max(0, now - i.openedAt);
-		return i.openedClock === undefined ? wall : Math.min(wall, Math.max(0, clock.ms - i.openedClock));
-	};
-
-/** Pure: the wall-clock elapsed time, for a reader with no monotonic clock. A clock that went backwards is 0, not negative. */
+/** Pure: the wall-clock elapsed time since the stored launch time, for a reader with no monotonic clock. A clock that went backwards is 0, not negative. */
 export const wallElapsed =
 	(now: number): Elapsed =>
 	(i) =>

@@ -18,10 +18,9 @@ export type Experiments = { sessions: ReadonlySet<string>; threads: ReadonlySet<
 
 const NO_EXPERIMENTS: Experiments = { sessions: new Set(), threads: new Set() };
 
-/** Whether any experiment can be told apart: something is excluded, and LifeOS is the source that knows sessions. */
-export const exclusionConfigured = (
-	cfg: Pick<OverheadConfig, "excludeProjects" | "excludeLabels" | "fleet">,
-): boolean => cfg.fleet.source !== "off" && excludedSql(cfg) !== "";
+/** Whether the operator excluded anything. When so, the exclusion must be applied to every figure it touches, or those figures are unavailable. */
+export const exclusionConfigured = (cfg: Pick<OverheadConfig, "excludeProjects" | "excludeLabels">): boolean =>
+	excludedSql(cfg) !== "";
 
 /** Pure: the SELECT that names which of these ids belong to an experiment, by Claude session id or by the T3 thread id a session ran for. */
 export function experimentsSql(cfg: OverheadConfig, kind: "session" | "thread", ids: readonly string[]): string {
@@ -48,7 +47,10 @@ async function experimentsAmong(
 	const sessions = new Set<string>();
 	const threads = new Set<string>();
 	for (const kind of ["session", "thread"] as const) {
-		const askable = [...new Set(ids[`${kind}s`])].filter((i) => SAFE_ID.test(i));
+		const all = [...new Set(ids[`${kind}s`])];
+		const askable = all.filter((i) => SAFE_ID.test(i));
+		// An id that cannot be put in a statement cannot be told apart from an experiment's: the exclusion cannot be applied.
+		if (askable.length < all.length) throw Error(`a ${kind} id cannot be looked up`);
 		for (let i = 0; i < askable.length; i += BATCH) {
 			const sql = experimentsSql(cfg, kind, askable.slice(i, i + BATCH));
 			const found = parseExperiments(await run(cfg.fleet.command, ["query", "--sql", sql, "--limit", "200"]));
@@ -68,6 +70,13 @@ export async function readExperiments(
 	unavailable: string[],
 ): Promise<ExperimentRead> {
 	if (!exclusionConfigured(d.cfg)) return { experiments: NO_EXPERIMENTS, unverified: false };
+	if (d.cfg.fleet.source === "off") {
+		// LifeOS is the only source that knows sessions: with it off the exclusion cannot be applied, and an unapplied exclusion is never skipped.
+		unavailable.push(
+			'experiment exclusion: overhead.fleet.source is "off", so excludeProjects/excludeLabels cannot be applied and Steward and classifier spend and the no-op rate are not judged',
+		);
+		return { experiments: NO_EXPERIMENTS, unverified: true };
+	}
 	try {
 		const ids = { sessions: own.usage.map((r) => r.session), threads: own.classifier.map((r) => r.threadId) };
 		return { experiments: await experimentsAmong(d.cfg, ids, d.query), unverified: false };

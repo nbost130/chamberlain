@@ -15,6 +15,12 @@ import type { Status } from "./status.ts";
 export type ManagedSection = {
 	status: Status;
 	report?: ManagedReport;
+	/**
+	 * Coverage and unmapped counting the launched threads (butlers, investigators) too: a launched thread with no LifeOS session leaves the
+	 * Chamberlain-caused spend short, as an unmapped managed thread leaves the denominator short, so either one makes the ratio PARTIAL and blocks a trigger.
+	 */
+	coverage?: number;
+	unmapped?: number;
 	/** Chamberlain-caused spend over the window: the numerator. Undefined when it is not known. */
 	causedUsd?: number;
 	/** causedUsd / the mapped threads' spend. PARTIAL whenever coverage is below 1. */
@@ -79,11 +85,25 @@ type Deps = Source & { store: Pick<Store, "events" | "wakes"> };
 export async function readSupervision(d: Deps, span: Span, day: WindowMetrics, notes: Notes) {
 	const launched = await readLaunched(d, span, notes);
 	const causedUsd = causedUsdOf(day, launched);
-	return { launched, causedUsd, managed: await readManaged(d, span, causedUsd, notes) };
+	return { launched, causedUsd, managed: await readManaged(d, span, { causedUsd, launched }, notes) };
+}
+
+/** Coverage over the managed threads and the launched ones together. A launched thread whose spend could not be read at all counts as unmapped too. */
+function coverageWith(d: Deps, report: ManagedReport, launched: LaunchedSpend | undefined) {
+	const ids = new Set([...d.own.butlers, ...d.own.investigators]);
+	const total = report.threads + ids.size;
+	const unmapped = report.unmapped + (launched ? launched.unmapped : ids.size);
+	return { unmapped, ...(total ? { coverage: (total - unmapped) / total } : {}) };
 }
 
 /** The managed threads' figures for [from, to). */
-async function readManaged(d: Deps, span: Span, causedUsd: number | undefined, notes: Notes): Promise<ManagedSection> {
+async function readManaged(
+	d: Deps,
+	span: Span,
+	spent: { causedUsd: number | undefined; launched: LaunchedSpend | undefined },
+	notes: Notes,
+): Promise<ManagedSection> {
+	const { causedUsd, launched } = spent;
 	if (d.cfg.fleet.source === "off") {
 		notes.notConfigured.push('managed overhead: overhead.fleet.source is "off", so the threads\' spend cannot be read');
 		return { status: "not-configured" };
@@ -108,6 +128,7 @@ async function readManaged(d: Deps, span: Span, causedUsd: number | undefined, n
 		return {
 			status: "ok",
 			report,
+			...coverageWith(d, report, launched),
 			...(causedUsd !== undefined ? { causedUsd } : {}),
 			...managedFigures(causedUsd, report),
 		};

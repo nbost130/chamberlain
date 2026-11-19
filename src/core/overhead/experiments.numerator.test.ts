@@ -126,6 +126,43 @@ describe("the numerator leaves out Steward turns and classifier calls made for e
 	});
 });
 
+describe("an exclusion that is configured and cannot be applied is never skipped", () => {
+	const noop = { noopRate: { mode: "trigger", threshold: 0.01, minWakes: 1 } };
+
+	test("with excludeProjects set and no LifeOS source (fleet off), the money figures and the no-op rate are unavailable and nothing triggers", async () => {
+		const calls: string[] = [];
+		const r = await run(cfgWith({ excludeProjects: ["lab"], triggers: noop }), stores(), lifeos(calls));
+		expect(r.day.stewardUsd).toBeUndefined();
+		expect(r.day.basisUsd).toBeUndefined();
+		expect(r.day.noopRate).toBeUndefined();
+		expect(r.crossings).toEqual([]);
+		expect(r.unavailable.join(" ")).toContain('experiment exclusion: overhead.fleet.source is "off"');
+		expect(calls).toEqual([]);
+	});
+
+	test("the same for excludeLabels alone", async () => {
+		const r = await run(cfgWith({ excludeLabels: ["assay"], triggers: noop }));
+		expect(r.day.noopRate).toBeUndefined();
+		expect(r.crossings).toEqual([]);
+	});
+
+	test("an id that cannot be put in a statement leaves the exclusion unapplied: unavailable, not skipped", async () => {
+		const s = memStore();
+		s.usage.upsert([{ ...wake({ hoursAgo: 1, usd: 9, tools: 0 }), session: "bad id; drop" }]);
+		const r = await run(cfg({ triggers: noop }), s);
+		expect(r.day.noopRate).toBeUndefined();
+		expect(r.crossings).toEqual([]);
+		expect(r.unavailable.join(" ")).toContain("experiment exclusion: unavailable");
+	});
+
+	test("with nothing excluded and fleet off, nothing is unavailable for that reason: the figures stand and may trigger", async () => {
+		const r = await run(cfgWith({ triggers: noop }));
+		expect(r.day.noopRate).toBeCloseTo(0.5, 9);
+		expect(r.crossings.map((c) => c.metric)).toEqual(["noopRate"]);
+		expect(r.unavailable.join(" ")).not.toContain("experiment exclusion");
+	});
+});
+
 describe("the lookup statements", () => {
 	test("by session id, and by the T3 thread id a session ran for, with the same exclusion as the fleet total", () => {
 		const s = experimentsSql(cfg(), "session", ["a", "b"]);
