@@ -16,6 +16,7 @@
 import type { Store } from "../store/store.ts";
 import type { Status } from "./collect.ts";
 import { HOUR_MS, type OverheadConfig } from "./config.ts";
+import type { ManagedSummary } from "./managed.ts";
 import type { Crossing } from "./metrics.ts";
 
 export const OVERHEAD_KEY = "overhead";
@@ -55,6 +56,8 @@ export type OverheadSummary = {
 	/** The headline overhead share, and the Steward's own share beside it. */
 	spendShare?: number;
 	stewardShare?: number;
+	/** The managed overhead ratio and its coverage. */
+	managed?: ManagedSummary;
 	crossings: string[];
 	unavailable: string[];
 };

@@ -11,7 +11,7 @@ import { startup } from "./core/config/migrate.ts";
 import { ghRead } from "./core/gh.ts";
 import { collect } from "./core/overhead/collect.ts";
 import { formatOverhead } from "./core/overhead/format.ts";
-import { overheadSettings } from "./core/overhead/settings.ts";
+import { overheadSettings, ownThreads } from "./core/overhead/settings.ts";
 import {
 	closeInvestigation,
 	heldNotes,
@@ -52,7 +52,8 @@ const withStore = async <T>(f: (store: ReturnType<typeof defaultStore>) => T | P
 const measure = (json: boolean) =>
 	withStore(async (store) => {
 		const { cfg: cfgDoc, model } = overheadSettings(CONF);
-		const report = await collect({ store, cfg: cfgDoc, ...(model ? { model } : {}), gh: ghRead, now: Date.now() });
+		const own = ownThreads(CONF, store);
+		const report = await collect({ store, cfg: cfgDoc, ...(model ? { model } : {}), own, gh: ghRead, now: Date.now() });
 		if (json) return console.log(JSON.stringify(report, null, 2));
 		console.log(formatOverhead(report));
 		const state = readOverheadState(store);

@@ -48,6 +48,8 @@ export type OverheadTickDeps = {
 	model?: string;
 	gh: GhRead;
 	query?: RunQuery;
+	/** The threads Chamberlain runs itself, read at each measurement: never counted as managed (settings.ts `ownThreads`). */
+	own?: () => readonly string[];
 	/** Absent: no investigator can be launched (not configured), and a crossing is only recorded. */
 	investigator?: Investigator;
 	commands: BriefCommands;
@@ -178,6 +180,7 @@ async function measure(d: OverheadTickDeps, now: number, elapsed: Elapsed, seen:
 		...(d.model ? { model: d.model } : {}),
 		gh: d.gh,
 		...(d.query ? { query: d.query } : {}),
+		...(d.own ? { own: d.own() } : {}),
 		now,
 	});
 	const state = readOverheadState(d.store);

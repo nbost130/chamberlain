@@ -15,6 +15,7 @@
  */
 import { execFile } from "node:child_process";
 import type { OverheadConfig } from "./config.ts";
+import { excludedSql, quoted, spanSql } from "./sql.ts";
 
 export type FleetSpend = {
 	totalUsd: number;
@@ -30,7 +31,7 @@ export type FleetSpend = {
 /** Runs the query command with its arguments and returns what it printed. A test gives its own. */
 export type RunQuery = (command: string, args: string[]) => Promise<string>;
 
-const runQuery: RunQuery = (command, args) =>
+export const runQuery: RunQuery = (command, args) =>
 	new Promise((resolve, reject) => {
 		execFile(command, args, { timeout: 60_000, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
 			if (err)
@@ -41,18 +42,13 @@ const runQuery: RunQuery = (command, args) =>
 		});
 	});
 
-const quoted = (names: readonly string[]) => names.map((n) => `'${n.replace(/'/g, "''")}'`).join(", ");
-
 /** Pure: the one SELECT, for [from, to) in epoch milliseconds. */
 export function fleetSql(cfg: OverheadConfig, from: number, to: number): string {
-	const span = `o.occurred_at >= to_timestamp(${Math.floor(from / 1000)}) AND o.occurred_at < to_timestamp(${Math.floor(to / 1000)})`;
+	const span = spanSql(from, to);
 	const sum = "coalesce(round(sum(o.cost_usd_micros)), 0)::bigint";
 	const join = "FROM otel_api_requests o JOIN sessions s ON s.id = o.session_id";
 	const projects = cfg.fleet.spawnedProjects;
-	const excluded = [
-		...(cfg.excludeProjects.length ? [`coalesce(s.project IN (${quoted(cfg.excludeProjects)}), false)`] : []),
-		...(cfg.excludeLabels.length ? [`coalesce(s.labels && ARRAY[${quoted(cfg.excludeLabels)}]::text[], false)`] : []),
-	].join(" OR ");
+	const excluded = excludedSql(cfg);
 	const keep = excluded ? ` AND NOT (${excluded})` : "";
 	const fleet = excluded
 		? `FROM otel_api_requests o LEFT JOIN sessions s ON s.id = o.session_id WHERE ${span}${keep}`

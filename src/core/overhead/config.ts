@@ -59,6 +59,11 @@ export type OverheadConfig = {
 		noopRate: { mode: Mode; threshold?: number; minWakes: number };
 		/** The monitor's spend as a share of the fleet's. */
 		spendShare: { mode: Mode; threshold?: number };
+		/**
+		 * The managed overhead ratio: Chamberlain-caused spend / the spend of the threads it supervised. Never triggers below `minCoverage` of the
+		 * managed threads having a LifeOS session to take spend from, whatever `mode` says: below it the ratio is partial and only reported.
+		 */
+		managedRatio: { mode: Mode; threshold?: number; minCoverage: number };
 	};
 	investigator: {
 		enabled: boolean;
@@ -103,6 +108,7 @@ export const OVERHEAD_DEFAULTS: OverheadConfig = {
 		costPerPr: { mode: "report" },
 		noopRate: { mode: "report", minWakes: 20 },
 		spendShare: { mode: "report" },
+		managedRatio: { mode: "report", minCoverage: 0.9 },
 	},
 	investigator: {
 		enabled: false,
@@ -171,14 +177,29 @@ const sub = (t: Obj, k: string, where: string, keys: string[]) => {
 	return { w, o: t[k] === undefined ? {} : object(t[k], w, ["mode", ...keys]) };
 };
 
+/** The coverage a managed ratio needs before it may trigger: above 0, up to 1. */
+function coverage(o: Obj, where: string, d: number): number {
+	const v = o.minCoverage;
+	if (v === undefined) return d;
+	if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > 1)
+		throw Error(`${where}: minCoverage must be a number above 0 and up to 1 (0.9 is 90%)`);
+	return v;
+}
+
 function parseTriggers(raw: unknown, where: string): OverheadConfig["triggers"] {
 	const d = OVERHEAD_DEFAULTS.triggers;
 	if (raw === undefined) return structuredClone(d);
-	const t = object(raw, where, ["costPerPr", "noopRate", "spendShare"]);
+	const t = object(raw, where, ["costPerPr", "noopRate", "spendShare", "managedRatio"]);
 	const c = sub(t, "costPerPr", where, ["baselineMultiplier", "fixedUsd", "zeroPrFloorUsd"]);
 	const n = sub(t, "noopRate", where, ["threshold", "minWakes"]);
 	const s = sub(t, "spendShare", where, ["threshold"]);
+	const m = sub(t, "managedRatio", where, ["threshold", "minCoverage"]);
 	return {
+		managedRatio: {
+			mode: modeOf(m.o, m.w),
+			...opt("threshold", optNum(m.o, "threshold", m.w, false)),
+			minCoverage: coverage(m.o, m.w, d.managedRatio.minCoverage),
+		},
 		costPerPr: {
 			mode: modeOf(c.o, c.w),
 			...opt("baselineMultiplier", optNum(c.o, "baselineMultiplier", c.w, false)),
@@ -214,6 +235,12 @@ function triggerChecks(c: OverheadConfig, where: string): void {
 		throw Error(`${where}.triggers.spendShare: mode "trigger" needs a threshold`);
 	if (t.spendShare.mode === "trigger" && c.fleet.source === "off")
 		throw Error(`${where}.triggers.spendShare: mode "trigger" needs fleet.source "lifeos", the share's denominator`);
+	if (t.managedRatio.mode === "trigger" && t.managedRatio.threshold === undefined)
+		throw Error(`${where}.triggers.managedRatio: mode "trigger" needs a threshold`);
+	if (t.managedRatio.mode === "trigger" && c.fleet.source === "off")
+		throw Error(
+			`${where}.triggers.managedRatio: mode "trigger" needs fleet.source "lifeos", where the threads' spend is read`,
+		);
 }
 
 function enabledChecks(c: OverheadConfig, where: string, stewardModel: string | undefined): void {

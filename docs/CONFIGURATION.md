@@ -347,6 +347,16 @@ What is measured, over a rolling window (default 24 h):
 - **Overhead share** (the headline) = Chamberlain-caused spend (the Steward, Chamberlain's own model calls, the threads it launches, the
   investigator) / the whole fleet's Claude spend, over the window. **Experiments are in neither side** (`excludeProjects`, `excludeLabels`).
   The **Steward-only share**, the Steward's own spend / the same fleet spend, is shown beside it. Its key is `triggers.spendShare`.
+- **Managed overhead ratio** = Chamberlain-caused spend (the numerator of the overhead share) / the spend of the T3 threads Chamberlain
+  **supervised** in the window, experiments excluded. Also shown: the count of managed threads, the cost per managed thread (caused spend /
+  count) and the **coverage**. A thread is managed when Chamberlain took action on it in the window, which its own database records twice: a
+  `fire` event of the event log (the watcher woke the Steward about it; the event carries the server, so the host) and a wake or report queued
+  for the Steward naming it (`outbox_members` and `held_wakes`; the notes builders send). The threads Chamberlain runs itself are not managed:
+  the pinned Steward, Decisions and Desk threads, the butlers it launched and its investigators. The spend comes from LifeOS: a Claude session's
+  `metadata->>'t3_thread_id'` names the T3 thread it ran for, and `otel_api_requests` its cost. A managed thread with at least one such session
+  is **mapped**; one with none is **unmapped**, and its spend is unknown, **never $0**. **Coverage** = mapped / managed, shown by host. Below
+  100% the ratio is **PARTIAL** (its denominator is short, so it overstates), and below `triggers.managedRatio.minCoverage` it only ever
+  reports. Needs `fleet.source` `"lifeos"`.
 - **Cost per useful wake** = Steward spend / wakes that made at least one tool call. Reported only.
 
 Each number is one of three things, and says which: a value, **not configured** (you have not asked for it) or **unavailable** (you asked, and the
@@ -394,6 +404,7 @@ panel) and in the brief the investigator is given.
 | `fleet.spawnedProjects` | none | Session projects whose spend counts as threads Chamberlain's Steward launches (butlers, say), added to the overhead. Experiments are not among them: `excludeProjects` wins. |
 | `triggers.costPerPr` | `mode: "report"` | `mode` is `"report"` (shown only) or `"trigger"`. Crosses when the window's cost per PR is above `fixedUsd`, or above `baselineMultiplier` x the baseline's cost per PR (whichever are given; the lower applies). `zeroPrFloorUsd`: with no PR merged, spend above it crosses. A trigger needs at least one of the three, and `github.owners` or `github.repos`. |
 | `triggers.noopRate` | `mode: "report"`, `minWakes: 20` | Crosses when the share of wakes with no tool call is above `threshold` (above 0, up to 1; `0.1` is 10%), on at least `minWakes` measured wakes. |
+| `triggers.managedRatio` | `mode: "report"`, `minCoverage: 0.9` | Judges the managed overhead ratio. `"trigger"` needs a `threshold` (above 0) and `fleet.source` `"lifeos"`, and crosses when the ratio is above it **and** at least `minCoverage` (above 0, up to 1) of the managed threads are mapped; below that coverage it never crosses, whatever `mode` says. `"report"` with a `threshold` shows it as a target. |
 | `triggers.spendShare` | `mode: "report"` | Judges the headline overhead share. `"trigger"`: crosses above `threshold`, and needs `fleet.source` other than `"off"`. `"report"` with a `threshold`: the threshold is shown as the target ("target at most 20.0%") and nothing opens. |
 | `investigator.enabled` | `false` | Open an investigator thread on a crossing. Needs `model` and `projectId`. |
 | `investigator.model` | none | The provider, model and effort of the thread: a T3 selection, `{ adapter, server, instanceId, model, options }`, the same shape `models.<role>` takes and checked the same way against the server's catalog before anything starts (no default, no fallback to another provider). |

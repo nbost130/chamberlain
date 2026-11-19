@@ -31,6 +31,29 @@ describe("the view's payload", () => {
 		expect(overheadView({ investigations: [] })).toBeNull();
 	});
 
+	test("carries the managed overhead ratio with its coverage: partial below full coverage, and why when there is none", () => {
+		const managed = {
+			status: "ok" as const,
+			threads: 167,
+			mapped: 162,
+			coverage: 162 / 167,
+			ratio: 0.245,
+			minCoverage: 0.9,
+		};
+		const line = (m: object) => overheadView(state({ last: { ...last, managed: m as never } }))?.line;
+		expect(line(managed)).toContain(
+			"managed overhead 24.5%, PARTIAL, coverage 97.0% (162 of 167 threads have sessions)",
+		);
+		expect(line({ ...managed, coverage: 1, mapped: 167 })).toContain(
+			"managed overhead 24.5% (167 of 167 threads have sessions)",
+		);
+		expect(line({ ...managed, ratio: undefined })).toContain(
+			"managed overhead unavailable (coverage 97.0% of 167 threads)",
+		);
+		expect(line({ status: "not-configured", minCoverage: 0.9 })).toContain("managed overhead not configured");
+		expect(line({ status: "unavailable", minCoverage: 0.9 })).toContain("managed overhead unavailable");
+	});
+
 	test("carries the line with cost per PR (window and trailing), PRs merged, Steward spend, no-op rate and share, and what crossed", () => {
 		const v = overheadView(state());
 		expect(v?.line).toBe(

@@ -5,11 +5,10 @@
  */
 import type { OverheadReport, Status } from "./collect.ts";
 import { DAY_MS, HOUR_MS } from "./config.ts";
+import { managedLine, managedLines, pct, summarizeManaged, usd } from "./format-managed.ts";
 import type { WindowMetrics } from "./metrics.ts";
 import { isHeld, type OverheadState, type OverheadSummary } from "./trigger.ts";
 
-const usd = (n: number | undefined) => (n === undefined ? "unavailable" : `$${n.toFixed(2)}`);
-const pct = (n: number | undefined) => (n === undefined ? "unavailable" : `${(n * 100).toFixed(1)}%`);
 const day = (ms: number) => new Date(ms).toISOString().slice(5, 10);
 
 /** A span as a short label: whole days from two days up ("7 d"), hours below that ("24 h", "6 h"). */
@@ -38,6 +37,7 @@ export function summarize(r: OverheadReport): OverheadSummary {
 	if (r.day.noopRate !== undefined) s.noopRate = r.day.noopRate;
 	if (r.spendShare !== undefined) s.spendShare = r.spendShare;
 	if (r.stewardShare !== undefined) s.stewardShare = r.stewardShare;
+	s.managed = summarizeManaged(r);
 	return s;
 }
 
@@ -58,6 +58,7 @@ export function summaryLine(s: OverheadSummary): string {
 		`Steward ${usd(s.stewardUsdDay)}`,
 		`no-op ${pct(s.noopRate)}`,
 		`overhead share ${shareText(s.fleetStatus, s.spendShare, s.stewardShare)}`,
+		...(s.managed ? [managedLine(s.managed)] : []),
 	].join(" · ");
 }
 
@@ -93,6 +94,7 @@ export function formatOverhead(r: OverheadReport): string {
 		`  cost per useful wake ${W} ${usd(d.costPerUsefulWake).padEnd(14)} ${B} ${usd(r.trailing.costPerUsefulWake)}`,
 		`  overhead share       ${W} ${shareText(r.fleetStatus, r.spendShare, r.stewardShare)}  (${shareMode(r.limits.spendShare)})`,
 	];
+	out.push(...managedLines(r, W));
 	if (r.fleet)
 		out.push(
 			`    fleet ${usd(r.fleet.totalUsd)} (${Object.entries(r.fleet.byHost)

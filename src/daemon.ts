@@ -26,7 +26,7 @@ import { ghRead } from "./core/gh.ts";
 import { type Logger, logFor } from "./core/log.ts";
 import { startReconciler } from "./core/obs/ledger.ts";
 import { maintain } from "./core/ops/maintain.ts";
-import { overheadSettings } from "./core/overhead/settings.ts";
+import { overheadSettings, ownThreads } from "./core/overhead/settings.ts";
 import { overheadTicker } from "./core/overhead/tick.ts";
 import { evidencePass } from "./core/steward/steward-evidence.ts";
 import { checkSwitchNotice } from "./core/steward/steward-notice.ts";
@@ -129,6 +129,7 @@ function overheadTick(store: ReturnType<typeof defaultStore>, log: Logger) {
 		cfg,
 		...(model ? { model } : {}),
 		gh: ghRead,
+		own: () => ownThreads(CONF, store),
 		...(selection && projectId ? { investigator: investigatorFor(CONF, { model: selection, projectId }) } : {}),
 		commands: {
 			note: selfCommand("note"),

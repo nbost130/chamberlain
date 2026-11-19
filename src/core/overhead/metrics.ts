@@ -124,7 +124,7 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 }
 
 export type Crossing = {
-	metric: "costPerPr" | "noopRate" | "spendShare";
+	metric: "costPerPr" | "noopRate" | "spendShare" | "managedRatio";
 	/** What was measured: USD for the cost metric (per PR, or the whole window's spend when no PR merged), a share for the other two. */
 	value: number;
 	threshold: number;
@@ -149,7 +149,14 @@ export function costLimit(t: OverheadConfig["triggers"]["costPerPr"], baseline: 
 	return limits.length ? Math.min(...limits) : undefined;
 }
 
-type Inputs = { day: WindowMetrics; baseline: WindowMetrics; spendShare?: number; cfg: OverheadConfig };
+type Inputs = {
+	day: WindowMetrics;
+	baseline: WindowMetrics;
+	spendShare?: number;
+	/** The managed overhead ratio and the share of managed threads whose spend could be found. */
+	managed?: { ratio?: number; coverage?: number };
+	cfg: OverheadConfig;
+};
 
 function noopCrossing({ day, cfg }: Inputs): Crossing[] {
 	const t = cfg.triggers.noopRate;
@@ -205,7 +212,31 @@ function shareCrossing({ spendShare, cfg }: Inputs): Crossing[] {
 }
 
 /**
- * Pure: the limits the window crosses, for the metrics whose mode is "trigger" (a "report" metric crosses nothing). Fails closed: a number that is
- * unavailable (no PR count, no price, no fleet total, too few wakes, no baseline) crosses nothing.
+ * The managed ratio crosses only when the operator made it a trigger AND the managed threads' spend was found for at least `minCoverage` of them:
+ * a ratio over fewer is partial (its denominator is short, so it overstates) and is only reported, never judged.
  */
-export const crossings = (a: Inputs): Crossing[] => [...noopCrossing(a), ...costCrossing(a), ...shareCrossing(a)];
+function managedCrossing({ managed, cfg }: Inputs): Crossing[] {
+	const t = cfg.triggers.managedRatio;
+	if (t.mode !== "trigger" || t.threshold === undefined || !managed) return [];
+	const { ratio, coverage } = managed;
+	if (!usable(ratio) || !usable(coverage) || coverage < t.minCoverage || ratio <= t.threshold) return [];
+	return [
+		{
+			metric: "managedRatio",
+			value: ratio,
+			threshold: t.threshold,
+			detail: `Chamberlain-caused spend is ${pct(ratio)} of what the threads it manages spent (coverage ${pct(coverage)}), above ${pct(t.threshold)}`,
+		},
+	];
+}
+
+/**
+ * Pure: the limits the window crosses, for the metrics whose mode is "trigger" (a "report" metric crosses nothing). Fails closed: a number that is
+ * unavailable (no PR count, no price, no fleet total, too few wakes, no baseline, too little coverage) crosses nothing.
+ */
+export const crossings = (a: Inputs): Crossing[] => [
+	...noopCrossing(a),
+	...costCrossing(a),
+	...shareCrossing(a),
+	...managedCrossing(a),
+];
