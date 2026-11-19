@@ -3,6 +3,7 @@ import type { Adapter, PostResult, ThreadState } from "../adapter/adapter.ts";
 import { has } from "../adapter/adapter-conformance.ts";
 import type { WaitingItem } from "../adapter/adapter-waiting.ts";
 import type { ClassifyDeps } from "../classifier/classify.ts";
+import type { ActiveHoldConfig } from "../config/active-hold-config.ts";
 import { PrincipalPoss, principal, selfCommand } from "../config/config.ts";
 import { setting } from "../config/layout.ts";
 import type { ServerEntry } from "../config/servers.ts";
@@ -17,6 +18,7 @@ import type { InstructionRead } from "../ops/history.ts";
 import type { Judge } from "../ops/judge.ts";
 import type { RecoverTiming } from "../ops/recover-classify.ts";
 import type { Store } from "../store/store.ts";
+import type { Parked } from "../store/store-wakes.ts";
 
 /** The key in the database's state table where recovery keeps what it must remember across a restart. */
 export const RECOVER_KEY = "recover";
@@ -87,6 +89,8 @@ export type EngineDeps = {
 	sweepPromptFile?: string;
 	/** Run the routine sweep and the Steward-health check. Off for a bare watcher. */
 	housekeeping?: boolean;
+	/** Whether a question card in a thread the principal is writing in waits for them before it wakes the Steward, and for how long (engine-active-hold.ts). Absent: never. The daemon passes `activeHold` from config.json (default on, 5 minutes). */
+	activeHold?: ActiveHoldConfig;
 	/** Stalled-thread recovery (src/core/ops/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
 	recover?: boolean | Partial<RecoverTiming>;
 	/** The Steward's token usage per wake (src/core/steward/steward-tokens.ts). OFF unless asked (`stewardTokens`): when on, the daemon re-reads the Steward's transcript hourly and upserts its per-wake rows. */
@@ -128,6 +132,8 @@ export type Draft = {
 	waitNote: string;
 	question: string;
 	failedWhat: string;
+	/** Set when the wake is a question card to hold for the principal (engine-active-hold.ts). */
+	park?: Parked;
 };
 
 /** The note a wake carries about what a settled turn still has open: an older card, background tasks still running. */

@@ -69,6 +69,11 @@ export const EVENTS = {
 	"rights-notice-failed": e("warn"),
 	"rights-notice-undelivered": e("warn"),
 	"wake-debounced": e("info", { held: int(), forMs: int() }),
+	// A question card in a thread the principal is writing in, held for them before the Steward is woken (engine-active-hold.ts).
+	"active-hold-held": e("info", { server: SRV, for_ms: ms("forMs") }),
+	"active-hold-released": e("info", { server: SRV, held_ms: ms("heldMs"), reason: f(T.enm("due", "away")) }),
+	"active-hold-dropped": e("info", { server: SRV, held_ms: ms("heldMs"), reason: f(T.enm("answered", "left")) }),
+	"active-hold-error": failure(),
 	"rights-full-stale": e("warn", { epoch: int(), current: int() }),
 	"rights-invalidated": e("info", { reason: f(T.enm("compaction", "context shrink")), epoch: int(), used: int() }),
 	"rights-sent-unsaved": failure(),

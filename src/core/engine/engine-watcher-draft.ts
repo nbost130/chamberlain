@@ -171,6 +171,14 @@ export class WatcherDrafts extends WatcherReads {
 		// Carrying the question saves the Steward a thread read on most wakes.
 		draft.question = questionText(fresh.flatMap((i) => i.questions));
 		draft.excerpt = await this.lastMessage(live.id).catch(this.readFailed("last message", live.id, ""));
+		// A card in a thread the principal is writing in waits for their window before the Steward is woken for it (engine-active-hold.ts).
+		const park = await this.core.activeHold.plan(
+			live.id,
+			this.srv.name,
+			this.adapter,
+			fresh.map((i) => i.requestId),
+		);
+		if (park) draft.park = park;
 		return true;
 	}
 

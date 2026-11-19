@@ -9,8 +9,9 @@ import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
 import { findReceipt } from "./adapters/t3/receipts.ts";
 import { t3StateDbPath } from "./adapters/t3/settings.ts";
 import { postQuestion } from "./ask.ts";
+import { parseActiveHold } from "./core/config/active-hold-config.ts";
 import { CONF, STATE, selfArgv } from "./core/config/config.ts";
-import { setting } from "./core/config/layout.ts";
+import { cfg, setting } from "./core/config/layout.ts";
 import { startup } from "./core/config/migrate.ts";
 import { DEFAULT_WAKE_DEBOUNCE_MS } from "./core/decide/hold.ts";
 import {
@@ -144,6 +145,8 @@ function engineDeps(
 				: {}),
 			debounceMs: setting("wakeDebounceMs", CONF) ?? DEFAULT_WAKE_DEBOUNCE_MS,
 		},
+		// A question card in a thread the principal is writing in waits `activeHold.windowMinutes` for them before it wakes the Steward (on by default).
+		activeHold: parseActiveHold(cfg(CONF, "activeHold")),
 		log,
 		// A snoozed urgent question that returns is shown where the operator reads, in the pinned view like a new one (ask.ts).
 		post: postQuestion,

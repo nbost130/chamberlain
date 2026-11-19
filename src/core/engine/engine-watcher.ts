@@ -79,7 +79,8 @@ export class Watcher extends WatcherHandoffs {
 		const what = wakeWhat(c.kind, draft);
 		// Holdable turn_ended: pointer rights + no Last-message fence (Steward peeks). Gap filling is rights-first at send.
 		const slimTurnEnded = c.kind === "turn_ended";
-		const rights = await this.composeRights(slimTurnEnded ? { forcePointer: true } : {});
+		// A parked card waits minutes before it is sent, so it carries a pointer like a turn end: the relay puts the rights in front of it at send.
+		const rights = await this.composeRights(slimTurnEnded || draft.park ? { forcePointer: true } : {});
 		const { excerpt, question } = draft;
 		const message = [
 			threadWakeHead(c.kind, clip(live.title, 80), what),
@@ -111,13 +112,19 @@ export class Watcher extends WatcherHandoffs {
 		const result = this.core.deliver(
 			message,
 			deliveryId,
-			{ kind: c.kind, thread: live.id, ...(rights.stamp ? { rights: [rights.stamp] } : {}) },
+			{
+				kind: c.kind,
+				thread: live.id,
+				...(rights.stamp ? { rights: [rights.stamp] } : {}),
+				...(draft.park ? { parked: draft.park } : {}),
+			},
 			() => {
 				if (!mine.map(this.core.markNotified).every(Boolean)) return false;
 				this.persistHandoffConfirmed(c.key);
 				return true;
 			},
 		);
+		if (result === "queued" && draft.park) this.core.activeHold.parked(draft.park);
 		if (result !== "none" || this.durableClaim(c.key)) this.publishHandoffConfirmed(c.key);
 	}
 

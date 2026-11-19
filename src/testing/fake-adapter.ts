@@ -98,6 +98,11 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 			if (!fake.connected) return { ok: false, reason: "fake is not connected" };
 			return { ok: true, cards: th?.waiting ?? [], resolved: th?.resolved ?? [] };
 		},
+		principalLastWrite: async (id, since) => {
+			const at = fake.threads.get(id)?.principalAt;
+			if (at === "error") throw Error("the history could not be read");
+			return at !== undefined && at >= since ? at : undefined;
+		},
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
 		instruction: async (id, runId) => {
 			const base = fake.threads.get(id)?.instruction ?? { items: [], state: "complete" as const, byMachine: false };

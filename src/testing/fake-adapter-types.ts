@@ -44,6 +44,8 @@ export type FakeThread = {
 	runs?: { id?: string; ordinal?: number; status?: string }[];
 	failure?: RunFailure;
 	look?: RunLook;
+	/** When the principal last wrote in the thread, in epoch ms: what `principalLastWrite` reports if it is not before the window asked for. `"error"` makes the read throw. Unset: they never did. */
+	principalAt?: number | "error";
 };
 
 export type FakeOptions = {
