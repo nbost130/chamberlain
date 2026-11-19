@@ -167,7 +167,7 @@ function withMeta(
  * Transfer items compose alone under the encoded-byte cap (V2-M1/M1); mixed ordinary traffic never expands a replay digest.
  * Overflow transfers and ordinary held wakes stay held for later passes.
  */
-function digestOf(
+export function digestOf(
 	l: Lane,
 	held: HeldItem[],
 	now: number,
@@ -175,14 +175,19 @@ function digestOf(
 		onKept,
 		answerDue,
 		news,
-	}: { onKept: (kept: string[]) => void; answerDue: boolean; news?: (thread: string) => ThreadNews | undefined },
+		maxBytes = TRANSFER_DIGEST_MAX_BYTES,
+	}: {
+		onKept: (kept: string[]) => void;
+		answerDue: boolean;
+		news?: (thread: string) => ThreadNews | undefined;
+		/** The bound the digest must fit in: less than the full one when it shares a POST with an immediate wake. */
+		maxBytes?: number;
+	},
 ): Composed {
 	const transfers = held.filter((h) => h.kind === "transfer");
 	const others = held.filter((h) => h.kind !== "transfer");
 	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
-	const digestBatch = others.length
-		? composeDigestBatch(others, now, TRANSFER_DIGEST_MAX_BYTES, news ? { news } : {})
-		: undefined;
+	const digestBatch = others.length ? composeDigestBatch(others, now, maxBytes, news ? { news } : {}) : undefined;
 	const useTransfers = transferBatch && (!digestBatch || transfersFirst(transfers, others, answerDue));
 	if (useTransfers) {
 		const use = transfers.filter((h) => transferBatch.members.includes(h.deliveryId));

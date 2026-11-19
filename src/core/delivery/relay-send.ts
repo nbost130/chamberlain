@@ -5,10 +5,11 @@ import { loadRightsSent, needsRights, rightsFirstKey, rightsGap, rightsStateKey 
 import { type GenSnapshot, snapshotGen } from "../steward/steward-gens.ts";
 import { encodedSendBytes, exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
-import type { WakeResult } from "./deliver.ts";
 import type { Posted } from "./relay.ts";
+import { type Carried, landCarried, previewCarry, withNews } from "./relay-carry.ts";
 import { deadLetter, land, readRightsNow } from "./relay-compose.ts";
 import { type Ctx, type InlineRights, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.ts";
+import { deliveredLog } from "./relay-delivered-log.ts";
 import {
 	current,
 	findPrerequisite,
@@ -42,7 +43,7 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 		return [];
 	}
 	// Sample once before any awaited rights work so CAS and POST share the same generation.
-	const { before, go, inline } = await sendPrerequisites({ r, l, row, prerequisite, snap });
+	const { before, go, inline, post, carried } = await readyToPost({ r, l, row, prerequisite, snap });
 	if (!go) return before;
 	// Generation moved during rights: do not POST under a stale rights decision; next pass rechecks.
 	if (snap && !sameGen(snap, readSnap(r))) return before;
@@ -54,7 +55,7 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	});
 	if (n === undefined) return before;
 	crashPoint("attempt-counted");
-	return posted(r, { l, row, n, before, target, inline });
+	return posted(r, { l, row, post, n, before, target, inline, carried });
 }
 
 /** The one POST of an attempt (the full rights riding in it, when `rightsInline` found a gap), and what follows its answer. */
@@ -63,15 +64,19 @@ async function posted(
 	a: {
 		l: Lane;
 		row: OutboxRow;
+		/** The row as POSTed: with the held news that rides in it, when there is any. */
+		post: OutboxRow;
 		n: number;
 		before: OutboxRow[];
 		target: string | undefined;
 		inline: InlineRights | undefined;
+		carried: Carried | undefined;
 	},
 ): Promise<OutboxRow[]> {
-	const { l, row, n, before, target, inline } = a;
-	const res = await r.post(l, row, target, inline ? withInlineRights(row, inline) : undefined);
-	const p: Posted = { l, row, n, res, before, ...(inline ? { inline } : {}) };
+	const { l, row, post, n, before, target, inline, carried } = a;
+	const text = inline ? withInlineRights(post, inline) : carried ? post.message : undefined;
+	const res = await r.post(l, row, target, text);
+	const p: Posted = { l, row, n, res, before, ...(inline ? { inline } : {}), ...(carried ? { carried } : {}) };
 	return res.ok ? accepted(r, p) : refused(r, p);
 }
 
@@ -136,40 +141,16 @@ function sameGen(a: GenSnapshot | undefined, b: GenSnapshot | undefined): boolea
 }
 
 /** The transport accepted the POST: the row is owed its delivered commit, which lands now (the rows delivered include it only if it did). */
-function accepted(r: Ctx, { l, row, n, res, before, inline }: Posted): OutboxRow[] {
+function accepted(r: Ctx, { l, row, n, res, before, inline, carried }: Posted): OutboxRow[] {
 	crashPoint("accepted");
 	r.owed.set(row.id, row);
 	l.look.lastPostAt = r.clock();
 	l.failures = 0;
 	r.notBefore.delete(row.id);
 	r.d.log("delivered", deliveredLog(l, row, n, res));
-	return land(r, row, inline) ? [...before, row] : before;
-}
-
-/** Pure: what the `delivered` log line says about a row: its attempt, kind, thread and receiver, and each member of a digest. */
-function deliveredLog(l: Lane, row: OutboxRow, n: number, res: WakeResult): Record<string, unknown> {
-	const [only] = row.members;
-	const digest = row.members.length !== 1 || only?.deliveryId !== row.deliveryId;
-	return {
-		deliveryId: row.deliveryId,
-		...(res.status !== undefined ? { http: res.status } : {}),
-		attempt: n,
-		// A lone held wake keeps the time it was held, not the time it was composed, so its wait counts in queue-waits.
-		queuedAt: digest ? row.createdAt : (only?.queuedAt ?? row.createdAt),
-		...(row.kind ? { kind: row.kind } : {}),
-		...(row.thread ? { thread: row.thread } : {}),
-		...(l.name ? { receiver: l.name } : {}),
-		...(digest
-			? {
-					members: row.members.map((m) => ({
-						deliveryId: m.deliveryId,
-						queuedAt: m.queuedAt,
-						...(m.kind ? { kind: m.kind } : {}),
-						...(m.thread ? { thread: m.thread } : {}),
-					})),
-				}
-			: {}),
-	};
+	if (!land(r, row, inline)) return before;
+	if (carried) landCarried(r, l, carried, inline);
+	return [...before, row];
 }
 
 /** The POST failed: the attempt stays counted, attempt_gen is cleared, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
@@ -188,8 +169,15 @@ function refused(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
 	return before;
 }
 
-const GO = { before: [] as OutboxRow[], go: true };
-const STOP = { before: [] as OutboxRow[], go: false };
+/** The text a row goes with: held news rides in an immediate wake (relay-carry.ts), and the rights are settled for that whole text. `post` is the row as POSTed; the stored one is untouched. */
+async function readyToPost(a: PrereqArgs): Promise<Prereq & { post: OutboxRow; carried?: Carried }> {
+	const carried = a.prerequisite ? undefined : previewCarry(a.r, a.l, a.row);
+	const post = carried ? withNews(a.row, carried) : a.row;
+	return { ...(await sendPrerequisites({ ...a, row: post })), post, ...(carried ? { carried } : {}) };
+}
+
+const GO = { before: [] as OutboxRow[], go: true },
+	STOP = { before: [] as OutboxRow[], go: false };
 type Prereq = { before: OutboxRow[]; go: boolean; inline?: InlineRights };
 
 /**

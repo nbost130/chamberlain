@@ -62,6 +62,7 @@ export const EVENTS = {
 	"rights-first-waiting": e("info"),
 	"rights-first-obsolete": e("info"),
 	"rights-inlined": e("info"),
+	"news-carried": e("info"),
 	"rights-inline-oversized": e("info"),
 	"wake-debounced": e("info", { held: int(), forMs: int() }),
 	"rights-full-stale": e("warn", { epoch: int(), current: int() }),

@@ -35,6 +35,7 @@ import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import { finalSendMessage, maxAttemptsFromEnv, type WakeResult, type WakeTransport } from "./deliver.ts";
 import { audit } from "./relay-audit.ts";
+import type { Carried } from "./relay-carry.ts";
 import { serially } from "./relay-compose.ts";
 import {
 	type Ctx,
@@ -154,6 +155,8 @@ export type Posted = {
 	before: OutboxRow[];
 	/** The full rights that rode in this POST (`rightsInline`): the delivered commit writes the record from its stamp. */
 	inline?: InlineRights;
+	/** The held news that rode in this POST (relay-carry.ts): bound delivered with the row. */
+	carried?: Carried;
 };
 
 /**
