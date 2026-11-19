@@ -65,7 +65,7 @@ async function load() {
 			S.rulings = j.rulings; S.route = "rulings";
 		} else {
 			const j = await api("/api/queue");
-			S.health = j.health;
+			S.health = j.health; S.overhead = j.overhead;
 			Object.assign(S, { items: j.items, snoozed: j.snoozed || [], cards: j.cards || [], inForce: j.inForce, unconfirmed: j.unconfirmed, testMode: j.testMode });
 			scheduleReturn();
 			if (!S.total || S.items.length > S.total - S.done) { S.total = S.items.length + S.done; }
@@ -275,7 +275,7 @@ function detailHtml() {
 function renderQueue() {
 	const batch = visible().filter((i) => i.batchable).length;
 	app.className = `app ${S.route === "item" ? "on-item" : ""}`;
-	app.innerHTML = `${header()}<details><summary>${esc(S.health ? `Steward: ${S.health.verdict} · ${S.health.at}${Date.now() - Date.parse(S.health.at) > 2 * 3600_000 ? " · stale" : ""}` : "Steward health: awaiting first measurement")}</summary><pre>${esc(S.health?.report ?? "")}</pre></details><main class="main">${listHtml()}${detailHtml()}</main>${cardsHtml()}
+	app.innerHTML = `${header()}<details><summary>${esc(S.health ? `Steward: ${S.health.verdict} · ${S.health.at}${Date.now() - Date.parse(S.health.at) > 2 * 3600_000 ? " · stale" : ""}` : "Steward health: awaiting first measurement")}</summary><pre>${esc(S.health?.report ?? "")}${S.overhead ? esc(`\n\nOverhead (24 h): ${S.overhead.line}${S.overhead.crossed.map((c) => `\nOver threshold: ${c}`).join("")}${S.overhead.open ? `\nInvestigation ${S.overhead.open} is open.` : ""}${S.overhead.unavailable.map((u) => `\nUnavailable: ${u}`).join("")}`) : ""}</pre></details><main class="main">${listHtml()}${detailHtml()}</main>${cardsHtml()}
 		<footer class="hints"><span><span class="kbd">J</span> <span class="kbd">K</span> move</span><span><span class="kbd">1</span>–<span class="kbd">9</span> choose</span><span><span class="kbd">Enter</span> answer</span><span><span class="kbd">H</span> not now</span><span><span class="kbd">R</span> note</span><span><span class="kbd">S</span> save as ruling</span><span><span class="kbd">Shift</span> <span class="kbd">Enter</span> accept every recommendation</span><span class="right">Only-you items and secrets never batch</span></footer>
 		<footer class="mbar q-mbar"><button type="button" class="btn-primary" data-act="accept-all" ${batch ? "" : "disabled"}>Accept ${batch} recommendation${batch === 1 ? "" : "s"}</button></footer>`;
 }
