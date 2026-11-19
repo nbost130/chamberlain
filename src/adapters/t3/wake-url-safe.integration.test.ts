@@ -148,6 +148,7 @@ async function compactVia(log: ReturnType<typeof logFor>, relay: ReturnType<type
 		raiseAlarm: () => {},
 		dry: false,
 		compactAt: 100,
+		compactState: { get: () => undefined, set: () => {} },
 		onDecisionsThread: () => {},
 	}).check();
 	return production;

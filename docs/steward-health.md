@@ -32,7 +32,7 @@ All counters reset at the latest compaction. Verdicts:
 - **WATCH**: something elevated, or something could not be measured (unknown is never OK).
 - **COMPACT**: context above the compaction threshold with healthy quality signals. The daemon sends a `/compact`
   to the Steward's compact webhook; no hand-off is needed.
-- **HAND OFF**: a quality signal (rereading or format) is past its limit. Compaction does not fix that. The daemon
+- **HAND OFF**: a quality signal (rereading or format) is past its limit, or the last compaction did not bring the context back under the compaction line (`compact-ineffective`; the daemon records its compactions in state `steward-compact`, so a restart keeps the cooldown, and never compacts again instead of handing off). Compaction does not fix that. The daemon
   starts the hand-off itself, at most once per native session: it queues one wake (kind `handoff`, delivery id
   `steward-handoff:<session>`) telling the Steward to run its hand-off now, with no question to you. The wake is an
   ordinary outbox row sent by the one relay, so a failed delivery is retried with the usual pause and, after the

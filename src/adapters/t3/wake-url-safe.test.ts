@@ -138,6 +138,7 @@ describe("PR 0: URL-safe transport errors", () => {
 			const calls: [string, ...unknown[]][] = [];
 			await createStewardCheck({
 				...base,
+				compactState: { get: () => undefined, set: () => {} },
 				compact: async () => compact(),
 				log: (event, data) => calls.push(["log", event, data]),
 			}).check();

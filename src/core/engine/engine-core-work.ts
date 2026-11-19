@@ -16,7 +16,7 @@ import { CoreRights } from "./engine-core-rights.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createIdleParents } from "./engine-idle.ts";
 import { createPreparePr } from "./engine-prepare-pr.ts";
-import { createStewardCheck } from "./engine-steward.ts";
+import { COMPACT_STATE_KEY, type CompactState, createStewardCheck } from "./engine-steward.ts";
 import { clip, closeCardCommand } from "./engine-support.ts";
 import { createUndelivered } from "./engine-undelivered.ts";
 
@@ -34,6 +34,10 @@ export abstract class CoreWork extends CoreRights {
 			raiseAlarm: this.raiseAlarm,
 			dry: this.DRY,
 			compactAt: this.d.compactAt ?? compactTokens(HEALTH_CONFIG.compactContext),
+			compactState: {
+				get: () => this.store.state.get<CompactState>(COMPACT_STATE_KEY),
+				set: (s) => this.store.state.set(COMPACT_STATE_KEY, s),
+			},
 			onDecisionsThread: (id) => {
 				this.decisionsThread = id;
 			},
@@ -128,6 +132,11 @@ export abstract class CoreWork extends CoreRights {
 			store: this.store,
 			server: () => this.home.name,
 			collect: () => liveHealth(() => adapter.transcriptPath()),
+			// A compaction that did not bring the context under the line is not repeated: the Steward is handed off instead (steward-health-ticker.ts).
+			compactFailed: (h: Health) => {
+				const s = this.store.state.get<CompactState>(COMPACT_STATE_KEY);
+				return Boolean(s?.failed && s.thread === h.thread);
+			},
 			...(ask ? { ask } : {}),
 			// A HAND OFF verdict starts the hand-off itself when the adapter says how: a wake, as an outbox row like any other, so the relay's attempts and dead-letter rules apply. Without that capability the operator is asked.
 			...(has(adapter, "handoffInstruction")

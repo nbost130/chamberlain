@@ -3,16 +3,20 @@ import type { StewardProbe } from "../adapter/adapter-inspect.ts";
 import type { RightsSent } from "../decide/decide.ts";
 import { alarms } from "../messages.ts";
 import { HEALTH_CONFIG } from "../steward/steward-health-config.ts";
-import { createStewardCheck, type StewardCheckDeps } from "./engine-steward.ts";
+import { type CompactState, createStewardCheck, type StewardCheckDeps } from "./engine-steward.ts";
 
 const HASH = "a".repeat(64);
 const NOW = Date.parse("2026-11-14T12:00:00.000Z");
 const MIN = 60_000;
 
 /** A steward check over fakes that record everything it is told, in order. */
-function rig(over: Partial<StewardCheckDeps> = {}, o: { files?: Record<string, string>; sent?: RightsSent } = {}) {
+function rig(
+	over: Partial<StewardCheckDeps> = {},
+	o: { files?: Record<string, string>; sent?: RightsSent; compacted?: CompactState } = {},
+) {
 	const calls: [string, ...unknown[]][] = [];
 	let sent = o.sent;
+	let compacted: CompactState | undefined = o.compacted;
 	const files: Record<string, string> = {
 		"steward-thread": "th-steward",
 		"decisions-thread": "th-decisions",
@@ -41,11 +45,17 @@ function rig(over: Partial<StewardCheckDeps> = {}, o: { files?: Record<string, s
 		raiseAlarm: (key, a) => calls.push(["raise", key, a]),
 		dry: false,
 		compactAt: 1000,
+		compactState: {
+			get: () => compacted,
+			set: (s) => {
+				compacted = s;
+			},
+		},
 		onDecisionsThread: (id) => calls.push(["decisions", id]),
 		...over,
 	};
 	const check = createStewardCheck(deps);
-	return { ...check, calls, state, deps, files };
+	return { ...check, calls, state, deps, files, compacted: () => compacted };
 }
 const over = (n: number): StewardProbe => ({ readable: true, contextTokens: n });
 
@@ -239,6 +249,11 @@ describe("the Steward check: compaction", () => {
 		setSystemTime(new Date(NOW + 10 * MIN - 1));
 		await r.check();
 		expect(r.calls.filter((c) => c[0] === "compact")).toHaveLength(1);
+		// The compaction worked (the context was seen under the line), and it has grown past it again.
+		setSystemTime(new Date(NOW + 5 * MIN));
+		r.state.probe = over(500);
+		await r.check();
+		r.state.probe = over(2000);
 		setSystemTime(new Date(NOW + 10 * MIN));
 		await r.check();
 		expect(r.calls.filter((c) => c[0] === "compact")).toHaveLength(2);

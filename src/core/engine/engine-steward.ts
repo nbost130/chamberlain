@@ -32,12 +32,22 @@ export type StewardCheckDeps = {
 	dry: boolean;
 	/** The Steward's context size, in tokens, past which it is compacted. */
 	compactAt: number;
+	/** The last compaction asked for (`CompactState`), durable. */
+	compactState: { get: () => CompactState | undefined; set: (s: CompactState) => void };
 	/** Told, each minute, which thread is the pinned Decisions thread. */
 	onDecisionsThread: (id: string | undefined) => void;
 };
 
 /** What the check remembers from one minute to the next. */
-type StewardState = { lastCompactAt: number; compactHeldFor: string | undefined; queueReadFailures: number };
+type StewardState = { compactHeldFor: string | undefined; queueReadFailures: number };
+
+/**
+ * The last compaction the daemon asked for, kept in the database (state key `steward-compact`) so a restart does not forget it. `cleared` is
+ * whether the context has been seen at or under the line since; `failed` is that it had not when the line was crossed again: the compaction did
+ * not work, compacting again would only repeat it every cooldown, and the health check says HAND OFF instead (`compactFailed`).
+ */
+export type CompactState = { thread: string; at: number; used: number; cleared: boolean; failed?: boolean };
+export const COMPACT_STATE_KEY = "steward-compact";
 
 /**
  * Keeps the high-water mark every minute: compared only to the last wake's size, a compaction could go unseen. A shrink invalidates the
@@ -88,15 +98,39 @@ async function sendCompact(c: StewardCheckDeps, id: string): Promise<void> {
 	}
 }
 
+/**
+ * The last compaction for THIS Steward thread, after noting whether the context has come back under the line since (a compaction that
+ * worked leaves it there; one that did not leaves it above, and a new Steward thread starts clean).
+ */
+function lastCompaction(c: StewardCheckDeps, used: number | undefined, id: string): CompactState | undefined {
+	const last = c.compactState.get();
+	if (!last || last.thread !== id) return undefined;
+	if (!last.cleared && used !== undefined && used <= c.compactAt) {
+		const next = { ...last, cleared: true };
+		c.compactState.set(next);
+		return next;
+	}
+	return last;
+}
+
 /** Compacts the Steward `id` when its context has outgrown the limit, unless one went in the cooldown or the backend says one must not go now. */
 async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: StewardProbe, id: string): Promise<void> {
 	const used = p.contextTokens;
-	if (!needsCompact(used, c.compactAt, Date.now() - st.lastCompactAt < COMPACT_COOLDOWN_MS)) return;
+	const last = lastCompaction(c, used, id);
+	if (!needsCompact(used, c.compactAt, last !== undefined && Date.now() - last.at < COMPACT_COOLDOWN_MS)) return;
+	if (last && !last.cleared) {
+		// The context never came back under the line after the last compaction: compacting again would repeat it every cooldown.
+		if (!last.failed) {
+			c.compactState.set({ ...last, failed: true });
+			c.log("compact-ineffective", { threadId: id, used, was: last.used });
+		}
+		return;
+	}
 	const blocked = p.compactBlocked;
 	if (blocked !== st.compactHeldFor) c.log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
 	st.compactHeldFor = blocked;
 	if (blocked) return;
-	st.lastCompactAt = Date.now();
+	c.compactState.set({ thread: id, at: Date.now(), used: used ?? 0, cleared: false });
 	if (!c.compactReady()) {
 		c.raiseAlarm("steward-compact", alarms.compactUnavailable(used));
 		return;
@@ -110,7 +144,7 @@ async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: Steward
 }
 
 export function createStewardCheck(c: StewardCheckDeps) {
-	const st: StewardState = { lastCompactAt: 0, compactHeldFor: undefined, queueReadFailures: 0 };
+	const st: StewardState = { compactHeldFor: undefined, queueReadFailures: 0 };
 	/** Once a minute: keep the Steward out of its own wakes, and compact it when its context has outgrown the limit. */
 	async function stewardCheck() {
 		c.onDecisionsThread(c.privateFile("decisions-thread"));
