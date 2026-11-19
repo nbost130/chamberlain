@@ -7,6 +7,8 @@ export type ActiveHoldConfig = { enabled: boolean; windowMs: number };
 
 /** The window the principal's last message keeps a card from waking the Steward, unless `activeHold.windowMinutes` says otherwise. */
 const DEFAULT_ACTIVE_HOLD_MINUTES = 5;
+/** The longest a card may wait for the principal: a due time that is always a real number, and a card that is never parked for hours. */
+const MAX_ACTIVE_HOLD_MINUTES = 60;
 export const DEFAULT_ACTIVE_HOLD: ActiveHoldConfig = { enabled: true, windowMs: DEFAULT_ACTIVE_HOLD_MINUTES * 60_000 };
 const KEYS = ["enabled", "windowMinutes"] as const;
 
@@ -20,8 +22,10 @@ export function parseActiveHold(raw: unknown): ActiveHoldConfig {
 	if (o.enabled !== undefined && typeof o.enabled !== "boolean")
 		throw Error('config.json: "activeHold.enabled" must be true or false');
 	const m = o.windowMinutes;
-	if (m !== undefined && (typeof m !== "number" || !Number.isFinite(m) || m <= 0))
-		throw Error('config.json: "activeHold.windowMinutes" must be a positive number');
+	if (m !== undefined && (typeof m !== "number" || !Number.isInteger(m) || m < 1 || m > MAX_ACTIVE_HOLD_MINUTES))
+		throw Error(
+			`config.json: "activeHold.windowMinutes" must be a whole number of minutes, 1 to ${MAX_ACTIVE_HOLD_MINUTES}`,
+		);
 	return {
 		enabled: o.enabled ?? DEFAULT_ACTIVE_HOLD.enabled,
 		windowMs: (m ?? DEFAULT_ACTIVE_HOLD_MINUTES) * 60_000,

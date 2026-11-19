@@ -12,9 +12,9 @@ import type { Parked } from "../store/store-wakes.ts";
  * one window from now.
  */
 export function holdUntil(lastWriteAt: number | undefined, now: number, windowMs: number): number | undefined {
-	if (lastWriteAt === undefined || !(windowMs > 0)) return undefined;
+	if (lastWriteAt === undefined || !Number.isFinite(lastWriteAt) || !(windowMs > 0)) return undefined;
 	const until = Math.min(lastWriteAt + windowMs, now + windowMs);
-	return until > now ? until : undefined;
+	return Number.isFinite(until) && until > now ? until : undefined;
 }
 
 /** What to do with a held card when its window ends: wake the Steward as an ordinary needs_input wake, or drop it, and why. */
@@ -22,9 +22,11 @@ export type Verdict = { act: "wake" } | { act: "drop"; reason: "answered" | "lef
 
 /**
  * Pure: the verdict on a held card, from the thread as the engine knows it now (`live`, undefined when it does not know it) and a fresh read
- * of what the thread waits on (`read`, undefined when none was made). Only evidence drops a card: a thread that is archived, settled or snoozed
- * (`left`), or a successful read that shows none of the card's own requests waiting (`answered`). Anything else (no read, a failed read, a
- * thread the engine cannot see) wakes the Steward, so a card is never lost for want of knowing.
+ * of what the thread waits on (`read`, undefined when none was made). A card is dropped only on positive evidence: its thread is archived,
+ * settled or snoozed (`left`, T3's own record), or a successful read shows EVERY one of the card's requests with its own item in a terminal status
+ * (`answered`, `WaitingRead.resolved`). A card merely missing from the read is not evidence: T3's snapshot is a bounded window of the thread's
+ * history, so an unanswered card can be absent from it. Everything else (no read, a failed read, a card not seen either way, a thread the engine
+ * cannot see) wakes the Steward. A wake raised with no card ids has no request to look for, so the thread's own status is the record.
  */
 export function releaseVerdict(
 	p: Pick<Parked, "requestIds">,
@@ -33,11 +35,10 @@ export function releaseVerdict(
 ): Verdict {
 	if (!live) return { act: "wake" };
 	if (live.archived || live.settled || live.snoozed) return { act: "drop", reason: "left" };
-	if (!read?.ok) return { act: "wake" };
-	const open = p.requestIds.length
-		? read.cards.some((c) => p.requestIds.includes(c.requestId))
-		: read.cards.length > 0 || live.status === "waiting";
-	return open ? { act: "wake" } : { act: "drop", reason: "answered" };
+	if (!p.requestIds.length)
+		return live.status === "waiting" || live.pendingRequestId ? { act: "wake" } : { act: "drop", reason: "answered" };
+	if (read?.ok && p.requestIds.every((id) => read.resolved?.includes(id))) return { act: "drop", reason: "answered" };
+	return { act: "wake" };
 }
 
 /** Pure: the wake's text with `note` as its second line, after the head line the Steward reads first. */

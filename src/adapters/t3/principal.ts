@@ -1,13 +1,13 @@
 /**
  * When the principal last wrote in a T3 thread. T3 marks a message `createdBy: "user"` for the principal's own clients (`mobile`, `web`) but also
  * for what a tool or the daemon posts as the principal (`mcp`: the Decisions thread's cards and the Steward's relays; `server`: a Codex card's
- * answer record), so the author alone says nothing: a message counts only when it came from a client a person types in. A machine source is
- * named (`MACHINE_SOURCES`), not a person's, so a new kind of client counts as a person's.
+ * answer record), so the author alone says nothing: a message counts only when it came from a client a person types in, and only the clients
+ * named here (`PERSON_SOURCES`) are known to be. A missing or unknown source is not the principal's: the worst of that is a card that was not held.
  */
 import type { TurnItem } from "../../core/decide/decide.ts";
 import type { HistoryGet } from "./history.ts";
 
-const MACHINE_SOURCES: ReadonlySet<string> = new Set(["mcp", "server", "provider"]);
+const PERSON_SOURCES: ReadonlySet<string> = new Set(["mobile", "web"]);
 /** History pages read before the answer is "cannot tell". A page holds up to 75 conversation items, so this reaches far past any window. */
 const PAGES_MAX = 3;
 
@@ -20,7 +20,7 @@ type Page = {
 
 /** Pure: is this item a message the principal typed? */
 export const isPrincipalMessage = (i: TurnItem): boolean =>
-	i.type === "user_message" && i.createdBy === "user" && !MACHINE_SOURCES.has(String(i.creationSource ?? ""));
+	i.type === "user_message" && i.createdBy === "user" && PERSON_SOURCES.has(String(i.creationSource ?? ""));
 
 /** Pure: the time of the newest message of the principal's among `items` (none after `until`, when given), in epoch milliseconds, or undefined. */
 export function lastPrincipalWrite(items: readonly TurnItem[], until = Number.POSITIVE_INFINITY): number | undefined {

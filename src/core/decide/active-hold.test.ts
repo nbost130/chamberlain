@@ -21,6 +21,11 @@ describe("holdUntil", () => {
 	test("a message stamped in the future holds one window from now, never longer", () => {
 		expect(holdUntil(NOW + 60 * MIN, NOW, 5 * MIN)).toBe(NOW + 5 * MIN);
 	});
+	test("a window that is not a real number holds nothing, never a due time that is not one", () => {
+		expect(holdUntil(NOW, NOW, Number.POSITIVE_INFINITY)).toBeUndefined();
+		expect(holdUntil(NOW, NOW, 1e308 * 60_000)).toBeUndefined();
+		expect(holdUntil(Number.POSITIVE_INFINITY, NOW, 5 * MIN)).toBeUndefined();
+	});
 	test("a zero window holds nothing", () => {
 		expect(holdUntil(NOW, NOW, 0)).toBeUndefined();
 	});
@@ -29,16 +34,28 @@ describe("holdUntil", () => {
 const live = (over: Partial<ThreadInput> = {}): ThreadState =>
 	normalizeThread({ id: "t1", title: "T", status: "waiting", pendingRequestId: "r1", ...over });
 const card = (requestId: string) => ({ type: "user_input_request" as const, requestId, label: "L", questions: [] });
-const read = (...ids: string[]): WaitingRead => ({ ok: true, cards: ids.map(card) });
+const read = (...ids: string[]): WaitingRead => ({ ok: true, cards: ids.map(card), resolved: [] });
+/** A read that shows these cards resolved (each with its own terminal item). */
+const resolved = (...ids: string[]): WaitingRead => ({ ok: true, cards: [], resolved: ids });
 
 describe("releaseVerdict", () => {
 	const p = { requestIds: ["r1"] };
 	test("still waiting on its card: wake", () => {
 		expect(releaseVerdict(p, live(), read("r1"))).toEqual({ act: "wake" });
 	});
-	test("its card is gone from the thread: dropped as answered", () => {
-		expect(releaseVerdict(p, live(), read())).toEqual({ act: "drop", reason: "answered" });
-		expect(releaseVerdict(p, live(), read("r2"))).toEqual({ act: "drop", reason: "answered" });
+	test("its card shown resolved by its own terminal item: dropped as answered", () => {
+		expect(releaseVerdict(p, live(), resolved("r1"))).toEqual({ act: "drop", reason: "answered" });
+	});
+	test("absence is not evidence: a card missing from a bounded read, resolved or waiting nowhere, wakes", () => {
+		expect(releaseVerdict(p, live(), read())).toEqual({ act: "wake" });
+		expect(releaseVerdict(p, live(), read("r2"))).toEqual({ act: "wake" });
+		expect(releaseVerdict(p, live(), { ok: true, cards: [] })).toEqual({ act: "wake" });
+		expect(releaseVerdict(p, live(), resolved("r2"))).toEqual({ act: "wake" });
+	});
+	test("several cards: dropped only when every one is resolved", () => {
+		const two = { requestIds: ["r1", "r2"] };
+		expect(releaseVerdict(two, live(), resolved("r1", "r2"))).toEqual({ act: "drop", reason: "answered" });
+		expect(releaseVerdict(two, live(), resolved("r1"))).toEqual({ act: "wake" });
 	});
 	test("an archived, settled or snoozed thread: dropped as left", () => {
 		for (const over of [{ archived: true }, { settled: true }, { snoozed: true }])
@@ -51,7 +68,7 @@ describe("releaseVerdict", () => {
 	});
 	test("a wake raised with no card ids follows the thread: waiting wakes, not waiting is dropped", () => {
 		expect(releaseVerdict({ requestIds: [] }, live(), read())).toEqual({ act: "wake" });
-		expect(releaseVerdict({ requestIds: [] }, live({ status: "running" }), read())).toEqual({
+		expect(releaseVerdict({ requestIds: [] }, live({ status: "running", pendingRequestId: null }), read())).toEqual({
 			act: "drop",
 			reason: "answered",
 		});
@@ -75,11 +92,13 @@ describe("activeHold config", () => {
 	});
 	test("enabled and windowMinutes are read", () => {
 		expect(parseActiveHold({ enabled: false })).toEqual({ enabled: false, windowMs: 5 * MIN });
-		expect(parseActiveHold({ windowMinutes: 2.5 })).toEqual({ enabled: true, windowMs: 150_000 });
+		expect(parseActiveHold({ windowMinutes: 2 })).toEqual({ enabled: true, windowMs: 120_000 });
+		expect(parseActiveHold({ windowMinutes: 60 })).toEqual({ enabled: true, windowMs: 60 * MIN });
+		expect(parseActiveHold({ windowMinutes: 1 })).toEqual({ enabled: true, windowMs: MIN });
 	});
 	test("a bad value is refused, naming the key", () => {
 		expect(() => parseActiveHold({ enabled: "yes" })).toThrow("activeHold.enabled");
-		for (const windowMinutes of [0, -1, "5", Number.NaN, Number.POSITIVE_INFINITY])
+		for (const windowMinutes of [0, -1, 0.5, 2.5, 61, 1e308, "5", Number.NaN, Number.POSITIVE_INFINITY])
 			expect(() => parseActiveHold({ windowMinutes })).toThrow("activeHold.windowMinutes");
 		expect(() => parseActiveHold({ windowMinute: 5 })).toThrow("activeHold.windowMinute");
 		expect(() => parseActiveHold([])).toThrow("activeHold");

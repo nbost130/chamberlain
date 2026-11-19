@@ -94,6 +94,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		waiting: async (id): Promise<WaitingRead> => {
 			const th = fake.threads.get(id);
 			if (th?.waitingError) throw Error(th.waitingError);
+			if (th?.waitingHang) return new Promise<WaitingRead>(() => {});
 			if (th?.waitingRead) return typeof th.waitingRead === "function" ? th.waitingRead() : th.waitingRead;
 			if (!fake.connected) return { ok: false, reason: "fake is not connected" };
 			return { ok: true, cards: th?.waiting ?? [], resolved: th?.resolved ?? [] };

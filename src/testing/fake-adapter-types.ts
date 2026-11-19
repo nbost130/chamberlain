@@ -38,6 +38,8 @@ export type FakeThread = {
 	resolved?: string[];
 	waitingRead?: WaitingRead | (() => WaitingRead);
 	waitingError?: string;
+	/** The waiting read never answers, as a request to a hung server does. */
+	waitingHang?: boolean;
 	subagents?: number;
 	instruction?: InstructionRead;
 	/** Runs for the handoff gate (completed-only, human-successor suppress). */

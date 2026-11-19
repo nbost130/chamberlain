@@ -22,14 +22,25 @@ const wakeTags = (r: Row): { kind?: string; thread?: string; receiver?: string }
 	...(r.thread ? { thread: r.thread as string } : {}),
 	...(r.receiver ? { receiver: r.receiver as string } : {}),
 });
-/** A parked wake's record (migration 21), or nothing. Unreadable is no record: the item is then an ordinary held wake, never lost. */
+/**
+ * A parked wake's record (migration 21). `held()` leaves out every row whose column is set, so a record that cannot be read must not
+ * become "no record" (the wake would be in neither list and never sent): it is a record due at once, which the next tick releases.
+ */
 const parkedOf = (r: Row): { parked?: Parked } => {
 	if (r.parked === null || r.parked === undefined) return {};
+	let v: Partial<Parked> | null = null;
 	try {
-		const v = JSON.parse(r.parked as string) as Parked;
-		if (typeof v.releaseAt === "number" && Array.isArray(v.requestIds)) return { parked: v };
+		v = JSON.parse(r.parked as string) as Partial<Parked> | null;
 	} catch {}
-	return {};
+	const at = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : undefined);
+	return {
+		parked: {
+			releaseAt: at(v?.releaseAt) ?? 0,
+			lastWriteAt: at(v?.lastWriteAt) ?? (r.queued_at as number),
+			server: typeof v?.server === "string" ? v.server : "",
+			requestIds: Array.isArray(v?.requestIds) ? v.requestIds.filter((x): x is string => typeof x === "string") : [],
+		},
+	};
 };
 const toHeld = (r: Row): HeldItem => ({
 	deliveryId: r.delivery_id as string,

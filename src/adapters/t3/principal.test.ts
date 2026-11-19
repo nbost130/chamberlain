@@ -20,14 +20,19 @@ describe("who counts as the principal", () => {
 		expect(isPrincipalMessage(msg("mobile", 1))).toBe(true);
 		expect(isPrincipalMessage(msg("web", 1))).toBe(true);
 	});
-	test("the daemon's and the tools' posts as the principal (mcp, server) do not, nor does an agent's message", () => {
+	test("the daemon's and the tools' posts as the principal (mcp, server, provider) do not, nor does an agent's message", () => {
 		expect(isPrincipalMessage(msg("mcp", 1))).toBe(false);
 		expect(isPrincipalMessage(msg("server", 1))).toBe(false);
+		expect(isPrincipalMessage(msg("provider", 1))).toBe(false);
 		expect(isPrincipalMessage(msg("mobile", 1, "agent"))).toBe(false);
 		expect(isPrincipalMessage(tool(1))).toBe(false);
 	});
-	test("a client kind this adapter has not seen counts as a person's", () => {
-		expect(isPrincipalMessage(msg("desktop", 1))).toBe(true);
+	test("an unknown or missing source is not the principal's", () => {
+		expect(isPrincipalMessage(msg("desktop", 1))).toBe(false);
+		expect(isPrincipalMessage(msg("", 1))).toBe(false);
+		const none: TurnItem = { type: "user_message", id: "x", createdBy: "user", updatedAt: at(1) };
+		expect(isPrincipalMessage(none)).toBe(false);
+		expect(lastPrincipalWrite([none, msg("desktop", 1)])).toBeUndefined();
 	});
 	test("the newest of several is the answer", () => {
 		expect(lastPrincipalWrite([msg("mobile", 9), msg("web", 2), msg("mcp", 1)])).toBe(NOW - 2 * MIN);

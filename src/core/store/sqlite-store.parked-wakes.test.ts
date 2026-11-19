@@ -73,6 +73,16 @@ describe("parked wakes", () => {
 		expect(s.wakes.unpark("p1", 7000, "twice")).toBeUndefined();
 	});
 
+	test("a parked record that cannot be read is due at once, never a wake in neither list", () => {
+		const s = memStore();
+		// JSON has no Infinity: it is stored as null, as an overflowed due time would be.
+		s.wakes.hold(parked("p1", Number.POSITIVE_INFINITY));
+		expect(s.wakes.held()).toEqual([]);
+		const p = s.wakes.parked();
+		expect(p.map((h) => h.deliveryId)).toEqual(["p1"]);
+		expect(p[0]!.parked).toMatchObject({ releaseAt: 0, requestIds: ["r1", "r2"], server: "mithrandir" });
+	});
+
 	test("dropParked removes a parked card and nothing else", () => {
 		const s = memStore();
 		s.wakes.hold(parked("p1", 5000));

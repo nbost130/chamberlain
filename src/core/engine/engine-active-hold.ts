@@ -80,9 +80,13 @@ async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, aw
 	const p = item.parked;
 	const w = d.watcher(p.server);
 	const live = item.thread ? w?.states.get(item.thread) : undefined;
+	// The read gets the same deadline as the activity read: a hung request must not hold up the card, nor any other. No read wakes the card.
 	const read =
 		w && item.thread && has(w.adapter, "inspect")
-			? await w.adapter.inspect.waiting(item.thread).catch(() => undefined)
+			? await within(w.adapter.inspect.waiting(item.thread), d.readMs ?? READ_MS).catch((e) => {
+					d.log("active-hold-unavailable", { server: p.server, threadId: item.thread, error: String(e).slice(0, 200) });
+					return undefined;
+				})
 			: undefined;
 	const verdict = releaseVerdict(p, live, read);
 	const now = d.now();
@@ -101,17 +105,27 @@ async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, aw
 
 /**
  * Settles the parked cards: those whose time has come (all of them while the principal is away) are released or dropped; one not yet due is
- * dropped as soon as it is answered or its thread is gone, and otherwise left alone. A failure is logged and the next tick tries again.
+ * dropped as soon as it is answered or its thread is gone, and otherwise left alone. Each card is settled on its own, side by side: one that
+ * fails (a read that hangs, a write that throws) is logged and tried again next tick, and holds up none of the others.
  */
 async function settleDue(d: ActiveHoldDeps) {
+	let items: (HeldItem & { parked: Parked })[];
+	let away: boolean;
 	try {
-		const away = Boolean(d.store.away.current());
-		const now = d.now();
-		for (const item of d.store.wakes.parked(null))
-			if (item.parked) await settle(d, { ...item, parked: item.parked }, away, away || now >= item.parked.releaseAt);
+		away = Boolean(d.store.away.current());
+		items = d.store.wakes.parked(null).flatMap((i) => (i.parked ? [{ ...i, parked: i.parked }] : []));
 	} catch (e) {
 		d.log("active-hold-error", { error: String(e).slice(0, 200) });
+		return;
 	}
+	const now = d.now();
+	await Promise.all(
+		items.map((item) =>
+			settle(d, item, away, away || now >= item.parked.releaseAt).catch((e) =>
+				d.log("active-hold-error", { error: String(e).slice(0, 200) }),
+			),
+		),
+	);
 }
 
 function createActiveHold(d: ActiveHoldDeps) {
