@@ -12,7 +12,14 @@ import { ghRead } from "./core/gh.ts";
 import { collect } from "./core/overhead/collect.ts";
 import { formatOverhead } from "./core/overhead/format.ts";
 import { overheadSettings } from "./core/overhead/settings.ts";
-import { closeInvestigation, type Investigation, readOverheadState, settle } from "./core/overhead/trigger.ts";
+import {
+	closeInvestigation,
+	heldNotes,
+	type Investigation,
+	isHeld,
+	readOverheadState,
+	wallElapsed,
+} from "./core/overhead/trigger.ts";
 import { defaultStore } from "./core/store/default-store.ts";
 
 const when = (ms: number | undefined) => (ms === undefined ? "-" : new Date(ms).toISOString().slice(0, 16));
@@ -22,7 +29,7 @@ export function formatInvestigations(list: readonly Investigation[]): string {
 	return list
 		.map(
 			(i) =>
-				`${i.id}\t${i.status === "open" ? "open" : `closed ${when(i.closedAt)} (${i.closedBy})`}\topened ${when(i.openedAt)}\tthread ${i.threadId ?? "-"}${i.note ? `\t${i.note}` : ""}`,
+				`${i.id}\t${isHeld(i) ? i.status : `closed ${when(i.closedAt)} (${i.closedBy})`}\treserved ${when(i.openedAt)}\tthread ${i.threadId ?? "-"}${i.note ? `\t${i.note}` : ""}`,
 		)
 		.join("\n");
 }
@@ -48,8 +55,14 @@ const measure = (json: boolean) =>
 		const report = await collect({ store, cfg: cfgDoc, ...(model ? { model } : {}), gh: ghRead, now: Date.now() });
 		if (json) return console.log(JSON.stringify(report, null, 2));
 		console.log(formatOverhead(report));
-		const open = settle(readOverheadState(store), Date.now(), cfgDoc).investigations.filter((i) => i.status === "open");
-		console.log(open.length ? `  INVESTIGATION OPEN: ${open.map((i) => i.id).join(", ")}` : "  No investigation open.");
+		const state = readOverheadState(store);
+		const held = state.investigations.filter(isHeld);
+		console.log(
+			held.length
+				? `  INVESTIGATION HELD: ${held.map((i) => `${i.id} (${i.status})`).join(", ")}`
+				: "  No investigation held.",
+		);
+		for (const n of heldNotes(state, wallElapsed(Date.now()), cfgDoc)) console.log(`  STALE OR UNCONFIRMED: ${n}`);
 	});
 
 const close = (argv: string[]) => {

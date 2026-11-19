@@ -2,12 +2,16 @@
  * When a crossing opens an investigation, and the record that keeps it from opening another. The record is Chamberlain's own state (key
  * `overhead`), so it survives a restart and `chamberlain overhead` shows the same thing the daemon acts on.
  *
- * The guards against a feedback loop, all decided in `decide`:
- * - at most one investigation per `investigator.cooldownHours`, counted from when the last one was OPENED, so a quick one does not make the next sooner;
- * - no more than `investigator.maxOpen` open at once. One stays open until `chamberlain overhead close <id>` (the investigator runs it when it is
- *   done) or, so a lost thread cannot block the next forever, until `investigator.ttlHours` passes;
- * - a launch that failed never started anything, so it neither holds the cooldown nor stays open.
- * The investigator's own spend is reported as its own line (fleet-spend.ts) and is kept out of the cost the trigger divides.
+ * A record is a RESERVATION with three states: `pending` (reserved before any command goes out; the launch outcome is not known yet),
+ * `open` (T3 has the thread and its brief) and `closed`. The guards against a feedback loop, all decided in `decide`:
+ * - at most one investigation per `investigator.cooldownHours`, counted from when the last one was RESERVED, pending ones included;
+ * - no more than `investigator.maxOpen` held at once, held meaning pending or open;
+ * - a reservation is released only on evidence, never by the clock: the launch was refused before anything was sent (`launch-failed`), T3 shows
+ *   the thread settled, idle, archived or gone once `ttlHours` has passed (`expired`), or someone closes it (`chamberlain overhead close`). An
+ *   outcome that is unknown counts as launched. Past `ttlHours` an investigation is STALE: it is reported, and still held;
+ * - the record keeps every held reservation, and only the newest closed ones: history is capped, a live reservation never is.
+ * Time here is only ever the clamp `elapsed` gives: never negative, and never longer than the monotonic clock saw in this process, so a clock
+ * that jumps forward cannot shorten a cooldown. The investigator's own spend is its own line (fleet-spend.ts), outside the cost the trigger divides.
  */
 import type { Store } from "../store/store.ts";
 import type { Status } from "./collect.ts";
@@ -15,14 +19,19 @@ import { HOUR_MS, type OverheadConfig } from "./config.ts";
 import type { Crossing } from "./metrics.ts";
 
 export const OVERHEAD_KEY = "overhead";
-const KEEP = 20;
+/** How many CLOSED investigations are kept. Held ones are never counted against this. */
+const KEEP_CLOSED = 20;
 
 export type Investigation = {
 	id: string;
 	openedAt: number;
-	/** The T3 thread the investigator runs in; absent until the launch returns. */
+	/** `pending`: reserved, launch outcome unknown or not yet made. `open`: T3 has the thread and its brief. */
+	status: "pending" | "open" | "closed";
+	/** The T3 thread the investigator runs in; absent until the launch is confirmed. */
 	threadId?: string;
-	status: "open" | "closed";
+	/** Kept while pending, so a retry sends byte-identical commands. Numbers and keys only (brief.ts). */
+	title?: string;
+	brief?: string;
 	closedAt?: number;
 	closedBy?: "investigator" | "operator" | "expired" | "launch-failed";
 	/** What crossed, one line each, as the brief carried it. */
@@ -57,28 +66,53 @@ export type OverheadState = {
 export const readOverheadState = (store: Pick<Store, "state">): OverheadState =>
 	store.state.get<OverheadState>(OVERHEAD_KEY) ?? { investigations: [] };
 
-/** Pure: the investigations as they stand at `now`: an open one older than the TTL is closed by the clock. */
-export function settle(state: OverheadState, now: number, cfg: Pick<OverheadConfig, "investigator">): OverheadState {
+/** A reservation that still counts: pending or open. */
+export const isHeld = (i: Investigation): boolean => i.status !== "closed";
+
+/** How long a reservation has been held. Called with the monotonic-aware clamp in the daemon, the wall clock alone elsewhere; never negative. */
+export type Elapsed = (i: Investigation) => number;
+
+/** Pure: the wall-clock elapsed time, for a reader with no monotonic clock. A clock that went backwards is 0, not negative. */
+export const wallElapsed =
+	(now: number): Elapsed =>
+	(i) =>
+		Math.max(0, now - i.openedAt);
+
+/** Pure: the held reservations older than the TTL. They are reported and stay held; only evidence from T3 releases them. */
+export function staleOf(
+	state: OverheadState,
+	elapsed: Elapsed,
+	cfg: Pick<OverheadConfig, "investigator">,
+): Investigation[] {
 	const ttlMs = cfg.investigator.ttlHours * HOUR_MS;
-	return {
-		...state,
-		investigations: state.investigations.map((i) =>
-			i.status === "open" && now - i.openedAt >= ttlMs
-				? { ...i, status: "closed", closedAt: now, closedBy: "expired" }
-				: i,
-		),
-	};
+	return state.investigations.filter((i) => isHeld(i) && elapsed(i) >= ttlMs);
+}
+
+/** Pure: one line per held reservation that needs a look: a launch with no confirmed outcome, or one past its TTL. For the report and the view. */
+export function heldNotes(state: OverheadState, elapsed: Elapsed, cfg: Pick<OverheadConfig, "investigator">): string[] {
+	const stale = new Set(staleOf(state, elapsed, cfg).map((i) => i.id));
+	const hours = (i: Investigation) => Math.round(elapsed(i) / HOUR_MS);
+	return state.investigations.filter(isHeld).flatMap((i) => {
+		const out: string[] = [];
+		if (i.status === "pending")
+			out.push(`investigation ${i.id}: launch outcome not confirmed (${hours(i)} h), held as launched until T3 says`);
+		if (stale.has(i.id))
+			out.push(
+				`investigation ${i.id} is stale: held ${hours(i)} h, past ${cfg.investigator.ttlHours} h, until T3 shows its thread settled`,
+			);
+		return out;
+	});
 }
 
 export type Decision =
 	| { open: true }
 	| { open: false; reason: "disabled" | "no-crossing" | "open-investigation" | "cooldown"; detail: string };
 
-/** Pure: whether to open an investigation now. `state` is settled first, so an expired open one no longer blocks. */
+/** Pure: whether to open an investigation now. Pending, open and stale reservations all count; none is ever released by this function. */
 export function decide(a: {
 	crossings: readonly Crossing[];
 	state: OverheadState;
-	now: number;
+	elapsed: Elapsed;
 	cfg: OverheadConfig;
 }): Decision {
 	const inv = a.cfg.investigator;
@@ -89,30 +123,35 @@ export function decide(a: {
 			detail: "overhead.enabled and overhead.investigator.enabled are both needed",
 		};
 	if (!a.crossings.length) return { open: false, reason: "no-crossing", detail: "no threshold crossed" };
-	const state = settle(a.state, a.now, a.cfg);
-	const open = state.investigations.filter((i) => i.status === "open");
-	if (open.length >= inv.maxOpen)
+	const held = a.state.investigations.filter(isHeld);
+	if (held.length >= inv.maxOpen)
 		return {
 			open: false,
 			reason: "open-investigation",
-			detail: `${open.map((i) => i.id).join(", ")} still open (at most ${inv.maxOpen})`,
+			detail: `${held.map((i) => `${i.id} (${i.status})`).join(", ")} held (at most ${inv.maxOpen})`,
 		};
-	const cooldownMs = inv.cooldownHours * HOUR_MS;
-	const last = [...state.investigations].reverse().find((i) => i.closedBy !== "launch-failed");
-	if (last && a.now - last.openedAt < cooldownMs)
+	const last = [...a.state.investigations].reverse().find((i) => i.closedBy !== "launch-failed");
+	if (last && a.elapsed(last) < inv.cooldownHours * HOUR_MS)
 		return {
 			open: false,
 			reason: "cooldown",
-			detail: `${last.id} opened ${Math.round((a.now - last.openedAt) / 60_000)} min ago; one investigation per ${inv.cooldownHours} h`,
+			detail: `${last.id} reserved ${Math.round(a.elapsed(last) / 60_000)} min ago; one investigation per ${inv.cooldownHours} h`,
 		};
 	return { open: true };
 }
 
-/** Records a new open investigation, before the launch, so a crash between the launch and the record cannot launch twice. */
-export function recordOpened(store: Pick<Store, "state">, inv: Investigation, now: number, cfg: OverheadConfig): void {
+/** The list with the closed ones past the newest KEEP_CLOSED dropped, oldest first. A pending or open reservation is never dropped. */
+function capClosed(list: Investigation[]): Investigation[] {
+	const closed = list.filter((i) => !isHeld(i));
+	const drop = new Set(closed.slice(0, Math.max(0, closed.length - KEEP_CLOSED)));
+	return list.filter((i) => !drop.has(i));
+}
+
+/** Reserves a new investigation, before any command goes out, so a launch whose outcome is lost is still on record. */
+export function recordOpened(store: Pick<Store, "state">, inv: Investigation): void {
 	store.state.update<OverheadState>(OVERHEAD_KEY, (prior) => {
-		const s = settle(prior ?? { investigations: [] }, now, cfg);
-		return { ...s, investigations: [...s.investigations, inv].slice(-KEEP) };
+		const s = prior ?? { investigations: [] };
+		return { ...s, investigations: capClosed([...s.investigations, inv]) };
 	});
 }
 
@@ -127,11 +166,13 @@ export function updateInvestigation(
 		const s = prior ?? { investigations: [] };
 		return {
 			...s,
-			investigations: s.investigations.map((i) => {
-				if (i.id !== id) return i;
-				found = { ...i, ...change };
-				return found;
-			}),
+			investigations: capClosed(
+				s.investigations.map((i) => {
+					if (i.id !== id) return i;
+					found = { ...i, ...change };
+					return found;
+				}),
+			),
 		};
 	});
 	return found;
@@ -157,6 +198,8 @@ export function closeInvestigation(
 	if (cur.status === "closed") return { investigation: cur, already: true };
 	const investigation = updateInvestigation(store, id, {
 		status: "closed",
+		brief: undefined,
+		title: undefined,
 		closedAt: o.now,
 		closedBy: o.by,
 		...(o.note ? { note: o.note.slice(0, 500) } : {}),

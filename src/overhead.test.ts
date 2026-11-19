@@ -39,7 +39,7 @@ describe("chamberlain overhead", () => {
 		expect(r.out).toContain("NOT CONFIGURED: merged PRs: set overhead.github.owners or overhead.github.repos");
 		expect(r.out).toContain("NOT CONFIGURED: fleet spend");
 		expect(r.out).toContain("UNAVAILABLE: Steward spend: no models.steward");
-		expect(r.out).toContain("No investigation open.");
+		expect(r.out).toContain("No investigation held.");
 	});
 
 	test("--json prints the report, with the status of each outside read", () => {

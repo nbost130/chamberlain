@@ -6,7 +6,7 @@
  */
 
 import { adapterNames, loadServers, makeAdapter } from "./adapters/index.ts";
-import { launchInvestigator } from "./adapters/t3/investigator.ts";
+import { investigatorFor } from "./adapters/t3/investigator.ts";
 import { findReceipt } from "./adapters/t3/receipts.ts";
 import { t3StateDbPath } from "./adapters/t3/settings.ts";
 import { postQuestion } from "./ask.ts";
@@ -129,7 +129,7 @@ function overheadTick(store: ReturnType<typeof defaultStore>, log: Logger) {
 		cfg,
 		...(model ? { model } : {}),
 		gh: ghRead,
-		...(selection && projectId ? { launch: (a) => launchInvestigator(CONF, { model: selection, projectId }, a) } : {}),
+		...(selection && projectId ? { investigator: investigatorFor(CONF, { model: selection, projectId }) } : {}),
 		commands: {
 			note: selfCommand("note"),
 			close: `${selfCommand("overhead")} close`,

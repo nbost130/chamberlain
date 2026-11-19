@@ -6,7 +6,7 @@
 import type { OverheadReport, Status } from "./collect.ts";
 import { DAY_MS, HOUR_MS } from "./config.ts";
 import type { WindowMetrics } from "./metrics.ts";
-import type { OverheadState, OverheadSummary } from "./trigger.ts";
+import { isHeld, type OverheadState, type OverheadSummary } from "./trigger.ts";
 
 const usd = (n: number | undefined) => (n === undefined ? "unavailable" : `$${n.toFixed(2)}`);
 const pct = (n: number | undefined) => (n === undefined ? "unavailable" : `${(n * 100).toFixed(1)}%`);
@@ -110,6 +110,6 @@ export function overheadView(state: OverheadState): OverheadView | null {
 		line: summaryLine(state.last),
 		crossed: state.last.crossings,
 		unavailable: state.last.unavailable,
-		open: state.investigations.find((i) => i.status === "open")?.id ?? null,
+		open: state.investigations.find(isHeld)?.id ?? null,
 	};
 }
