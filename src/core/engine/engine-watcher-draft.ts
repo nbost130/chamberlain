@@ -184,17 +184,29 @@ export class WatcherDrafts extends WatcherReads {
 
 	/** Holds one card for the operator's return, and files the pointer question that leads to it. */
 	async holdCard(live: ThreadState, i: WaitingItem) {
+		const filed = this.recordCardHold(live, i);
+		this.log("held-by-daemon", { server: this.srv.name, threadId: live.id, kind: i.type });
+		await this.postPointer(live, filed);
+	}
+
+	/**
+	 * The record half of a card hold: that the request was seen, the question that points to the card and the hold the operator will read are one
+	 * transaction (a crash between them would leave the request marked seen with nothing on the queue or held), and it joins the caller's
+	 * transaction when it has one. Only the card's kind, request ID and label travel (card-hold.ts); its questions and any value never do. Returns the
+	 * pointer question to post, which `postPointer` does outside the transaction.
+	 */
+	recordCardHold(live: ThreadState, i: WaitingItem): Question | undefined {
 		const { store } = this.core;
-		// The record that it was seen, the question that points to the card and the hold the operator will read are one
-		// transaction: a crash between them would leave the request marked seen with nothing on the queue or held.
-		// Only the card's kind, request ID and label travel (card-hold.ts); its questions and any value never do.
 		let filed: Question | undefined;
 		store.tx(() => {
 			this.core.markNotified(this.reqKey(i.requestId));
 			filed = holdCard(store, cardWaitOf(i, { thread: live.title, server: this.srv.name, threadId: live.id })).question;
 		});
-		this.log("held-by-daemon", { server: this.srv.name, threadId: live.id, kind: i.type });
-		// A new pointer question is shown where the operator reads, like any other; a secret's never is. Best effort: it is on the queue page either way.
+		return filed;
+	}
+
+	/** The post half: a new pointer question is shown where the operator reads, like any other; a secret's never is. Best effort: it is on the queue page either way. */
+	async postPointer(live: ThreadState, filed: Question | undefined) {
 		if (filed && !filed.secret && !this.core.DRY) await this.postCardQuestion(live, filed);
 	}
 

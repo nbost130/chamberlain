@@ -12,10 +12,11 @@
  */
 import type { Adapter, ThreadState } from "../adapter/adapter.ts";
 import { has } from "../adapter/adapter-conformance.ts";
-import type { WaitingRead } from "../adapter/adapter-waiting.ts";
+import type { WaitingItem, WaitingRead } from "../adapter/adapter-waiting.ts";
 import type { ActiveHoldConfig } from "../config/active-hold-config.ts";
 import { holdUntil, releaseVerdict, withNote } from "../decide/active-hold.ts";
 import { routeNeedsInput } from "../decide/decide.ts";
+import type { Question } from "../items/questions.ts";
 import type { Log } from "../log.ts";
 import { activeHoldNote } from "../messages.ts";
 import type { Store } from "../store/store.ts";
@@ -77,69 +78,120 @@ async function plan(
 		: { releaseAt, lastWriteAt: last, server, requestIds };
 }
 
-/**
- * A released card goes through the routing a fresh card gets (`routeNeedsInput`): while the principal is away, a card only they can clear
- * (an approval, a secret, a machine link) is held for their return by the daemon and never handed to the Steward, so a card parked before they
- * went away follows away routing too. True when it was held and its parked wake is gone. A hold that cannot be made (a read that hangs, a write that
- * throws) is logged and the card wakes the Steward as it would have without this routing.
- */
-async function heldForReturn(
-	d: ActiveHoldDeps,
-	{
-		w,
-		live,
-		read,
-		p,
-		item,
-		held,
-	}: {
-		w: Watcher | undefined;
-		live: ThreadState | undefined;
-		read: WaitingRead | undefined;
-		p: Parked;
-		item: HeldItem;
-		held: { server: string; held_ms: number };
-	},
-): Promise<boolean> {
-	const items = read?.ok ? read.cards.filter((c) => !p.requestIds.length || p.requestIds.includes(c.requestId)) : [];
-	if (!w || !live || routeNeedsInput(items, true, Boolean(d.store.away.current())) !== "hold") return false;
-	try {
-		for (const i of items) await within(w.holdCard(live, i), d.readMs ?? READ_MS);
-	} catch (e) {
-		d.log("active-hold-error", { error: String(e).slice(0, 200) });
-		return false;
-	}
-	if (d.store.wakes.dropParked(item.deliveryId)) d.log("active-hold-dropped", { ...held, reason: "held-for-return" });
-	return true;
+/** How many times a pointer post that times out is tried: the hold is saved, so the post is all there is to retry. */
+const POINTER_TRIES = 3;
+
+/** Posts a held card's pointer question, trying again when a post times out; the daemon's own hold is already saved, so this never wakes anyone. */
+function postPointers(d: ActiveHoldDeps, w: Watcher, live: ThreadState, filed: (Question | undefined)[]) {
+	for (const q of filed)
+		void (async () => {
+			for (let n = 1; n <= POINTER_TRIES; n++)
+				try {
+					return await within(w.postPointer(live, q), d.readMs ?? READ_MS);
+				} catch (e) {
+					d.log("active-hold-error", { error: `pointer post try ${n}: ${String(e).slice(0, 160)}` });
+				}
+		})();
 }
 
-/** One parked card: dropped when it is answered or its thread is gone; else, when due, released as an ordinary wake with the note. */
-async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, away: boolean, due: boolean) {
-	const p = item.parked;
-	const w = d.watcher(p.server);
-	const live = item.thread ? w?.states.get(item.thread) : undefined;
-	// The read gets the same deadline as the activity read: a hung request must not hold up the card, nor any other. No read wakes the card.
-	const read =
-		w && item.thread && has(w.adapter, "inspect")
-			? await within(w.adapter.inspect.waiting(item.thread), d.readMs ?? READ_MS).catch((e) => {
-					d.log("active-hold-unavailable", { server: p.server, threadId: item.thread, error: String(e).slice(0, 200) });
-					return undefined;
-				})
-			: undefined;
-	const verdict = releaseVerdict(p, live, read);
-	const now = d.now();
-	const held = { server: p.server, held_ms: Math.max(0, now - item.queuedAt) };
-	if (verdict.act === "drop") {
-		if (d.store.wakes.dropParked(item.deliveryId)) d.log("active-hold-dropped", { ...held, reason: verdict.reason });
-		return;
+/** What a release does with one parked wake, card by card: the cards to hold for the principal's return, and whether any is left for the Steward. */
+type Plan = { drop?: "answered" | "left"; held: WaitingItem[]; steward: boolean };
+
+/** Pure: what one card's own evidence says to do with it (`planRelease`). */
+function cardFate(
+	id: string,
+	live: ThreadState | undefined,
+	read: WaitingRead | undefined,
+	away: boolean,
+): "left" | "answered" | "steward" | WaitingItem {
+	const v = releaseVerdict({ requestIds: [id] }, live, read);
+	if (v.act === "drop") return v.reason;
+	const shown = read?.ok ? read.cards.find((c) => c.requestId === id) : undefined;
+	return shown && routeNeedsInput([shown], true, away) === "hold" ? shown : "steward";
+}
+
+/**
+ * Pure: a group of cards is split, and each card is routed or dropped on its OWN evidence (`releaseVerdict` for that request alone). A card shown
+ * resolved is done; one shown waiting that only the principal can clear, while they are away, is held for their return (`routeNeedsInput`, as a
+ * fresh card would be); every other card, a card missing from the bounded snapshot included, stays with the Steward, whose wake carries the group.
+ * Nothing is held or dropped for a card on another card's evidence. A wake with no card ids is the thread's own.
+ */
+export function planRelease(
+	p: Pick<Parked, "requestIds">,
+	live: ThreadState | undefined,
+	read: WaitingRead | undefined,
+	away: boolean,
+): Plan {
+	if (!p.requestIds.length) {
+		const v = releaseVerdict(p, live, read);
+		return v.act === "drop" ? { drop: v.reason, held: [], steward: false } : { held: [], steward: true };
 	}
-	// Not yet due and still waiting: it stays parked until its time.
-	if (!due) return;
-	if (await heldForReturn(d, { w, live, read, p, item, held })) return;
-	const text = withNote(item.message, activeHoldNote(p.lastWriteAt, now));
-	if (!d.store.wakes.unpark(item.deliveryId, now, text)) return;
-	d.log("active-hold-released", { ...held, reason: away ? "away" : "due" });
+	const fates = p.requestIds.map((id) => cardFate(id, live, read, away));
+	if (fates.includes("left")) return { drop: "left", held: [], steward: false };
+	const held = fates.filter((f): f is WaitingItem => typeof f === "object");
+	const steward = fates.includes("steward");
+	return !steward && !held.length ? { drop: "answered", held, steward } : { held, steward };
+}
+
+/** The thread's cards, read with the same deadline as the activity read: a hung request must not hold up the card, nor any other. No read wakes the card. */
+async function readCards(
+	d: ActiveHoldDeps,
+	w: Watcher | undefined,
+	item: HeldItem,
+	server: string,
+): Promise<WaitingRead | undefined> {
+	if (!w || !item.thread || !has(w.adapter, "inspect")) return undefined;
+	return within(w.adapter.inspect.waiting(item.thread), d.readMs ?? READ_MS).catch((e) => {
+		d.log("active-hold-unavailable", { server, threadId: item.thread, error: String(e).slice(0, 200) });
+		return undefined;
+	});
+}
+
+/**
+ * Carries out a plan in ONE transaction: the cards held for the principal's return are saved, and the wake is released (or dropped, when no card
+ * is left for the Steward). A card is the Steward's or held, never both and never neither. The pointer posts come after, and retry on their own.
+ */
+function apply(
+	d: ActiveHoldDeps,
+	c: {
+		w: Watcher | undefined;
+		live: ThreadState | undefined;
+		item: HeldItem & { parked: Parked };
+		plan: Plan;
+		away: boolean;
+	},
+) {
+	const { w, live, item, plan } = c;
+	const p = item.parked;
+	const now = d.now();
+	const filed: (Question | undefined)[] = [];
+	const done = d.store.tx(() => {
+		if (w && live) for (const h of plan.held) filed.push(w.recordCardHold(live, h));
+		if (!plan.steward) return d.store.wakes.dropParked(item.deliveryId);
+		const also = plan.held.length
+			? ` ${plan.held.length} of its cards are held for the principal's return instead: do not act on those.`
+			: "";
+		const text = withNote(item.message, activeHoldNote(p.lastWriteAt, now) + also);
+		return d.store.wakes.unpark(item.deliveryId, now, text) !== undefined;
+	});
+	if (!done) return;
+	if (w && live) {
+		for (const h of plan.held) d.log("held-by-daemon", { server: p.server, threadId: live.id, kind: h.type });
+		postPointers(d, w, live, filed);
+	}
+	const held = { server: p.server, held_ms: Math.max(0, now - item.queuedAt) };
+	if (!plan.steward) return d.log("active-hold-dropped", { ...held, reason: plan.drop ?? "held-for-return" });
+	d.log("active-hold-released", { ...held, reason: c.away ? "away" : "due" });
 	d.nudge();
+}
+
+/** One parked wake, settled card by card (`planRelease`). Before its time only a drop acts: every card answered, or its thread gone. */
+async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, away: boolean, due: boolean) {
+	const w = d.watcher(item.parked.server);
+	const live = item.thread ? w?.states.get(item.thread) : undefined;
+	const read = await readCards(d, w, item, item.parked.server);
+	const plan = planRelease(item.parked, live, read, Boolean(d.store.away.current()));
+	if (due || plan.drop) apply(d, { w, live, item, plan, away });
 }
 
 /**

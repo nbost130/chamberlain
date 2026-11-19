@@ -51,6 +51,8 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		deskWakes: [] as { deliveryId: string; message: string }[],
 		deskAttempts: 0,
 		posted: [] as { item: Question; opts: PostOptions }[],
+		/** The next this many `post` calls never answer. */
+		postHangs: 0,
 		titles: [] as string[],
 		answers: [] as { card: WaitingCard; choice: number; sig: string }[],
 		sends: [] as { threadId: string; text: string; seed: string; identity?: string }[],
@@ -155,6 +157,11 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		wake,
 		isBusy: () => busy,
 		post: async (item, o): Promise<PostResult> => {
+			// A server that does not answer: this many posts hang and are not recorded (a test sets `postHangs`).
+			if (fake.postHangs > 0) {
+				fake.postHangs--;
+				return new Promise<PostResult>(() => {});
+			}
 			handles.posted.push({ item, opts: o });
 			return { ok: true, detail: "posted in memory", where: o.queueUrl ? "view" : "notice" };
 		},

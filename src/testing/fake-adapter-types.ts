@@ -68,6 +68,8 @@ export type FakeAdapter = Adapter & {
 	deskWakes: { deliveryId: string; message: string }[];
 	deskAttempts: number;
 	posted: { item: Question; opts: PostOptions }[];
+	/** The next this many `post` calls never answer (a server that hangs). */
+	postHangs: number;
 	titles: string[];
 	answers: { card: WaitingCard; choice: number; sig: string }[];
 	sends: { threadId: string; text: string; seed: string; identity?: string }[];
