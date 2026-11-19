@@ -156,7 +156,7 @@ export const rightsWake = (forId: string, full: string) =>
  * standalone wake of their own: the Steward gets them in the same turn, and one request is not spent reading its whole context just to receive them.
  */
 export const rightsInlineHead =
-	"[chamberlain] rights, in full: this wake was queued for a Steward that may not hold your decision rights and the rulings in force, so the full copy rides with it. Where the text above says they are unchanged, these are the ones it means, and they replace any older copy you carry.";
+	"[chamberlain] rights, in full: this wake was queued for a Steward that may not hold your decision rights and the rulings in force, so the full copy rides with it. Where the text above says they are unchanged, these are the ones it means, and they replace any older copy you carry, one in the text above included.";
 
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>

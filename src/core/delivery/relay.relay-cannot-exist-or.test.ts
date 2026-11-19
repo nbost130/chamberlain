@@ -111,14 +111,14 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(r.ids()).toEqual([F, "w1"]);
 	});
 
-	test("the record shows this state: no extra wake; a row with no stamp, or only a full stamp, is never asked about", async () => {
+	test("the record shows this state: no extra wake; a row with no stamp is never asked about, and a row with only a full stamp is asked once, only whether its block is the current one", async () => {
 		const r = world();
 		r.store.state.set(RIGHTS_SENT_KEY, { steward: "steward-1", session: "s1", hash: H1 });
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		r.outbox.deliver("plain", "w2", { kind: "needs_input" });
 		r.outbox.deliver("block", "w3", { kind: "needs_input", rights: [{ ...stamp, session: "s1", full: true }] });
 		expect(await r.relay().pass()).toEqual(["w1", "w2", "w3"]);
-		expect(r.asked.n).toBe(1);
+		expect(r.asked.n).toBe(2);
 		expect(r.firstFor("w1")).toEqual([]);
 		expect(r.events.some((e) => e.event === "rights-first")).toBe(false);
 	});

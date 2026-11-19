@@ -143,7 +143,7 @@ function accepted(r: Ctx, { l, row, n, res, before, inline }: Posted): OutboxRow
 	l.failures = 0;
 	r.notBefore.delete(row.id);
 	r.d.log("delivered", deliveredLog(l, row, n, res));
-	return land(r, row, inline?.stamp) ? [...before, row] : before;
+	return land(r, row, inline) ? [...before, row] : before;
 }
 
 /** Pure: what the `delivered` log line says about a row: its attempt, kind, thread and receiver, and each member of a digest. */
@@ -188,6 +188,66 @@ function refused(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
 	return before;
 }
 
+const GO = { before: [] as OutboxRow[], go: true };
+const STOP = { before: [] as OutboxRow[], go: false };
+type Prereq = { before: OutboxRow[]; go: boolean; inline?: InlineRights };
+
+/**
+ * What goes before a row's own POST: `before` the prerequisite rows already delivered, whether the row may go on, and the full rights that ride
+ * inside its POST. A row holding a FULL stamp is checked too: its block may be older than the rights in force now (`staleFull`).
+ */
+async function sendPrerequisites(a: PrereqArgs): Promise<Prereq> {
+	const { r, l, row, prerequisite } = a;
+	const { rightsNow } = r.d;
+	if (prerequisite || l.desk || !rightsNow) return GO;
+	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow))) return STOP;
+	const dependent = needsRights(row.rights),
+		hasFull = Boolean(row.rights?.some((s) => s.full));
+	if (!dependent && !hasFull) return GO;
+	const gaps = dependent && Boolean(r.d.rightsInline);
+	const inline = gaps || hasFull ? await inlineRights(r, row, rightsNow, { steward: a.snap?.thread, gaps }) : undefined;
+	if (inline === null) return STOP;
+	if (inline) return withinCap(a, inline);
+	return dependent && !r.d.rightsInline ? viaPrerequisite(a) : GO;
+}
+
+/** The legacy way: the standalone prerequisite rows the record calls for, delivered before the row. */
+async function viaPrerequisite(a: PrereqArgs): Promise<Prereq> {
+	const { r, l, row, snap } = a;
+	const went = await ahead({ r, l, row, rightsNow: r.d.rightsNow as NonNullable<RelayDeps["rightsNow"]>, snap });
+	return went === null ? STOP : { before: went, go: r.d.lock.held() };
+}
+
+/**
+ * The size bound is checked on what is POSTed, the rights included. Over it, the rights go as a standalone prerequisite instead of inline;
+ * a row whose own stale full block cannot be replaced inline is dead-lettered (loudly), since it must never go as it is.
+ */
+async function withinCap(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
+	const { r, l, row } = a;
+	if (!exceedsEncodedCap(withInlineRights(row, inline), row.deliveryId)) return { ...GO, inline };
+	r.d.log("rights-inline-oversized", { deliveryId: row.deliveryId, stale: Boolean(inline.stale) });
+	if (inline.stale) {
+		deadLetter(r, l, row, row.attempts);
+		return STOP;
+	}
+	return standalone(a);
+}
+
+/** One standalone full-rights prerequisite for the state now, whatever the record says (it is what was doubted), then the row. */
+async function standalone(a: PrereqArgs): Promise<Prereq> {
+	const { r, l, row, snap } = a;
+	const rightsNow = r.d.rightsNow as NonNullable<RelayDeps["rightsNow"]>;
+	const now = await readRightsNow(r, row, () => rightsNow(snap ? { steward: snap.thread } : undefined));
+	const found = now && findPrerequisite(r, row, rightsStateKey(now));
+	if (!now || !found) return STOP;
+	const first =
+		r.store.wakes.find(found.id) ??
+		queuePrerequisite(r, row, now, { id: found.id, reason: "the rights do not fit inside this row's own wake" });
+	if (!first || prerequisiteBlocked(r, row, first, found.id)) return STOP;
+	const sent = await send(r, l, first, true);
+	return sent.length ? { before: sent, go: r.d.lock.held() } : STOP;
+}
+
 type PrereqArgs = {
 	r: Ctx;
 	l: Lane;
@@ -195,23 +255,6 @@ type PrereqArgs = {
 	prerequisite: boolean;
 	snap: GenSnapshot | undefined;
 };
-
-/** What goes before a row's own POST: `before` the prerequisite rows already delivered, and whether the row may go on. */
-async function sendPrerequisites(a: PrereqArgs): Promise<{ before: OutboxRow[]; go: boolean; inline?: InlineRights }> {
-	const { r, l, row, prerequisite, snap } = a;
-	const { rightsNow } = r.d;
-	if (prerequisite || l.desk || !rightsNow) return { before: [], go: true };
-	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow)))
-		return { before: [], go: false };
-	if (!needsRights(row.rights)) return { before: [], go: true };
-	if (r.d.rightsInline) {
-		const inline = await inlineRights(r, row, rightsNow, snap?.thread);
-		return inline === null ? { before: [], go: false } : { before: [], go: true, ...(inline ? { inline } : {}) };
-	}
-	const went = await ahead({ r, l, row, rightsNow, snap });
-	if (went === null) return { before: [], go: false };
-	return { before: went, go: r.d.lock.held() };
-}
 
 type AheadArgs = {
 	r: Ctx;

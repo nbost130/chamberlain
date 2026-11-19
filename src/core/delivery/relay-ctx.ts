@@ -104,7 +104,11 @@ export type Lane = {
 };
 
 /** The full rights block that rides inside a row's POST (`rightsInline`), and the stamp whose delivery proves the Steward holds it. */
-export type InlineRights = { text: string; stamp?: RightsStamp };
+export type InlineRights = {
+	text: string;
+	stamp?: RightsStamp /** The row's own full block is not the rights in force now: this one replaces it. */;
+	stale?: true;
+};
 
 /** The Steward and the rights in force now, as `rightsNow` answers them, with the epoch read from the database. */
 export type RightsNow = Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;

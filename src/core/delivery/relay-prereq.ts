@@ -33,16 +33,33 @@ export async function inlineRights(
 	r: Ctx,
 	row: OutboxRow,
 	rightsNow: NonNullable<RelayDeps["rightsNow"]>,
-	steward: string | undefined,
+	{ steward, gaps }: { steward: string | undefined; gaps: boolean },
 ): Promise<InlineRights | null | undefined> {
 	const now = await readRightsNow(r, row, () => rightsNow(steward ? { steward } : undefined));
 	if (!now) return null;
 	const record = loadRightsSent(r.store);
-	const reason = rightsGap(record, now) ?? sizeDoubt(record, now);
+	const stale = staleFull(row, now);
+	const reason = stale ?? (gaps ? (rightsGap(record, now) ?? sizeDoubt(record, now)) : undefined);
 	if (!reason) return undefined;
 	const w = now.wake(row.deliveryId);
 	r.d.log("rights-inlined", { deliveryId: row.deliveryId, reason });
-	return { text: w.text ?? w.message, ...(w.stamp ? { stamp: w.stamp } : {}) };
+	return {
+		text: w.text ?? w.message,
+		...(w.stamp ? { stamp: w.stamp } : {}),
+		...(stale ? { stale: true as const } : {}),
+	};
+}
+
+/**
+ * Pure: a row that holds a FULL block was composed under the rights of its time. When the rights or rulings in force now are not the ones it was
+ * stamped with (they changed, or were revoked, or cannot be read), delivering it would post old authorization as current and record the old hash.
+ * Its text is never edited: the current rights ride after it and replace it, and the record is written from the current stamp (or not at all).
+ */
+function staleFull(row: OutboxRow, now: RightsNow): string | undefined {
+	const old = row.rights?.some((s) => s.full && (now.hash === undefined || s.hash !== now.hash));
+	return old
+		? "the full rights this row carries are not the ones in force now (they changed, or cannot be read)"
+		: undefined;
 }
 
 /** The text a row is POSTed with when the full rights ride in it: its own text exactly as queued, then the block under its heading, the delivery-id line last. */

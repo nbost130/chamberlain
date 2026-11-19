@@ -12,7 +12,7 @@ import {
 } from "../steward/steward-transfer.ts";
 import { TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "../store/store-wakes.ts";
-import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
+import { type Ctx, type InlineRights, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
 /**
  * The row's delivered commit. False while it cannot commit (the row stays owed). A Steward row with a `full` stamp (it carried the whole
@@ -22,11 +22,12 @@ import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./re
  * Only while the stamp's epoch is still the current one: a full block composed before a compaction or a shrink bumped the epoch (a wake in
  * flight when the compaction was asked for, or one owed across it) is marked delivered and writes nothing, so it can never restore a record
  * the compaction took away (`rights-full-stale`).
- * `inline` is the full stamp of the block that rode inside this row's POST (`rightsInline`): it writes the record exactly as a standalone full wake would.
+ * `inline` is the block that rode inside this row's POST (`rightsInline`, or a stale full block replaced): its stamp writes the record exactly as a standalone full wake would, and without one nothing is written.
  */
-export function land(r: Ctx, row: OutboxRow, inline?: RightsStamp): boolean {
+export function land(r: Ctx, row: OutboxRow, inline?: InlineRights): boolean {
 	const { d, store } = r;
-	const full = row.receiver ? undefined : (inline ?? row.rights?.filter((s) => s.full).at(-1));
+	// The block that rode inside the POST is the one the Steward holds now (none at all when the rights could not be read): never the row's own, older one.
+	const full = row.receiver ? undefined : inline ? inline.stamp : row.rights?.filter((s) => s.full).at(-1);
 	let stale: number | undefined;
 	try {
 		const done = store.tx(() => {
