@@ -42,7 +42,7 @@ export type Scan = {
 export type Turn = { handoff: boolean; recovery: boolean; deliveryIds: string[] };
 export const ORDINARY_TURN: Turn = { handoff: false, recovery: false, deliveryIds: [] };
 /** The user turns after a compaction boundary (the continuation summary, then the first wake) in which the Steward rebuilds what the summary dropped. */
-export const RECOVERY_TURNS = 2;
+const RECOVERY_TURNS = 2;
 
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 
