@@ -30,6 +30,8 @@ const KEEP_CLOSED = 20;
 export type Investigation = {
 	id: string;
 	openedAt: number;
+	/** When the most recent launch call for it went out, written BEFORE the call: the cooldown counts from the later of this and `openedAt`. */
+	launchedAt?: number;
 	/** `pending`: reserved, launch outcome unknown or not yet made. `open`: T3 has the thread and its brief. */
 	status: "pending" | "open" | "closed";
 	/** The T3 thread the investigator runs in; absent until the launch is confirmed. */
@@ -78,14 +80,21 @@ export const readOverheadState = (store: Pick<Store, "state">): OverheadState =>
 /** A reservation that still counts: pending or open. */
 export const isHeld = (i: Investigation): boolean => i.status !== "closed";
 
-/** How long a reservation has been held: never negative. A clock that reads before the stored launch gives 0, so the cooldown is not over. */
-export type Elapsed = (i: Investigation) => number;
+/**
+ * How long a reservation has been held (since it was reserved), or with `"launch"` how long since the later of that and its last launch call: never
+ * negative. A clock that reads before the stored time gives 0, so the cooldown is not over.
+ */
+export type Elapsed = (i: Investigation, from?: "launch") => number;
 
-/** Pure: the wall-clock elapsed time since the stored launch time, for a reader with no monotonic clock. A clock that went backwards is 0, not negative. */
+/** The stored time `Elapsed` counts from. */
+export const stampOf = (i: Investigation, from?: "launch"): number =>
+	from === "launch" ? Math.max(i.openedAt, i.launchedAt ?? 0) : i.openedAt;
+
+/** Pure: the wall-clock elapsed time since the stored time, for a reader with no monotonic clock. A clock that went backwards is 0, not negative. */
 export const wallElapsed =
 	(now: number): Elapsed =>
-	(i) =>
-		Math.max(0, now - i.openedAt);
+	(i, from) =>
+		Math.max(0, now - stampOf(i, from));
 
 /** Pure: the held reservations older than the TTL. They are reported and stay held; only evidence from T3 releases them. */
 export function staleOf(
@@ -133,18 +142,28 @@ export function decide(a: {
 		};
 	if (!a.crossings.length) return { open: false, reason: "no-crossing", detail: "no threshold crossed" };
 	const held = a.state.investigations.filter(isHeld);
-	if (held.length >= inv.maxOpen)
+	// A pending reservation may already have, or be about to get, its thread: nothing new is reserved until T3 has said which.
+	const pending = held.filter((i) => i.status === "pending");
+	if (pending.length || held.length >= inv.maxOpen)
 		return {
 			open: false,
 			reason: "open-investigation",
-			detail: `${held.map((i) => `${i.id} (${i.status})`).join(", ")} held (at most ${inv.maxOpen})`,
+			detail: pending.length
+				? `${pending.map((i) => i.id).join(", ")} pending (launch outcome unknown); nothing new until T3 says`
+				: `${held.map((i) => `${i.id} (${i.status})`).join(", ")} held (at most ${inv.maxOpen})`,
 		};
-	const last = [...a.state.investigations].reverse().find((i) => i.closedBy !== "launch-failed");
-	if (last && a.elapsed(last) < inv.cooldownHours * HOUR_MS)
+	// The cooldown counts from the newest reservation or launch call of any reservation that did not end as a launch that sent nothing.
+	const last = a.state.investigations
+		.filter((i) => i.closedBy !== "launch-failed")
+		.reduce<Investigation | undefined>(
+			(n, i) => (!n || stampOf(i, "launch") >= stampOf(n, "launch") ? i : n),
+			undefined,
+		);
+	if (last && a.elapsed(last, "launch") < inv.cooldownHours * HOUR_MS)
 		return {
 			open: false,
 			reason: "cooldown",
-			detail: `${last.id} reserved ${Math.round(a.elapsed(last) / 60_000)} min ago; one investigation per ${inv.cooldownHours} h`,
+			detail: `${last.id} launched ${Math.round(a.elapsed(last, "launch") / 60_000)} min ago; one investigation per ${inv.cooldownHours} h`,
 		};
 	return { open: true };
 }

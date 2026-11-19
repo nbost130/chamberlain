@@ -27,9 +27,15 @@ export type Thread = { briefSent: boolean; active: boolean; archived: boolean };
 export function fakeT3() {
 	const threads = new Map<string, Thread>();
 	const launched: { seed: string; title: string; brief: string }[] = [];
+	const created = new Map<string, number>();
 	const t3 = {
 		threads,
 		launched,
+		/** True time (the rig's monotonic clock) at which each thread was first made: the cooldown is judged on it. The rig sets the clock. */
+		created,
+		clock: () => 0,
+		/** The launch never reaches T3: no thread is made, and the error is not a refusal (the outcome is unknown). */
+		failLaunch: false,
 		/** After T3 accepts the thread and the brief, the response is lost. */
 		loseResponse: false,
 		/** The thread is made but the brief never arrives, then the response is lost. */
@@ -40,7 +46,9 @@ export function fakeT3() {
 			async launch(a) {
 				launched.push(a);
 				if (t3.refuse) throw new LaunchRefused("launch selection unavailable; nothing launched");
+				if (t3.failLaunch) throw Error("connection lost");
 				const t = threads.get(a.seed) ?? { briefSent: false, active: true, archived: false };
+				if (!threads.has(a.seed)) created.set(a.seed, t3.clock());
 				threads.set(a.seed, t);
 				if (t3.loseBrief) throw Error("connection lost");
 				t.briefSent = true;
@@ -75,6 +83,7 @@ export function rig(
 	const logs: { event: string; fields: Record<string, unknown> }[] = [];
 	let now = NOW;
 	let mono = 0;
+	t3.clock = () => mono;
 	const make = () =>
 		overheadTicker({
 			store,
@@ -112,6 +121,8 @@ export function rig(
 			fresh();
 		},
 		at: () => now,
+		/** True time: only `advance` moves it, never `jump`. */
+		true: () => mono,
 	};
 }
 

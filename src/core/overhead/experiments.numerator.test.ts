@@ -6,6 +6,7 @@ import type { DispositionWrite } from "../store/store-records.ts";
 import { collect } from "./collect.ts";
 import { experimentsSql, parseExperiments } from "./experiments.ts";
 import { parseFleet } from "./fleet-spend.ts";
+import { formatOverhead } from "./format.ts";
 
 const FLEET = "k,name,micros\nfleet,h1,200000000\nfleet,h2,100000000";
 const cfg = (extra: Record<string, unknown> = {}) =>
@@ -138,6 +139,23 @@ describe("an exclusion that is configured and cannot be applied is never skipped
 		expect(r.crossings).toEqual([]);
 		expect(r.unavailable.join(" ")).toContain('experiment exclusion: overhead.fleet.source is "off"');
 		expect(calls).toEqual([]);
+	});
+
+	test("every money figure goes unavailable, the classifier's included, in every window and in the text", async () => {
+		const r = await run(cfgWith({ excludeProjects: ["lab"], triggers: noop }));
+		for (const w of [r.day, r.baseline, r.trailing, ...r.trend]) {
+			expect(w.classifierUsd).toBeUndefined();
+			expect(w.stewardUsd).toBeUndefined();
+			expect(w.basisUsd).toBeUndefined();
+			expect(w.costPerPr).toBeUndefined();
+			expect(w.costPerUsefulWake).toBeUndefined();
+		}
+		expect(r.spendShare).toBeUndefined();
+		expect(r.stewardShare).toBeUndefined();
+		expect(r.managed.causedUsd).toBeUndefined();
+		const text = formatOverhead(r);
+		expect(text).toContain("classifier unavailable");
+		expect(text).not.toMatch(/\$(10|3|7)\.00/);
 	});
 
 	test("the same for excludeLabels alone", async () => {

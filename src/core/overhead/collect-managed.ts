@@ -60,7 +60,7 @@ async function readLaunched(d: Source, span: Span, notes: Notes): Promise<Launch
 		const unmapped = ids.filter((i) => !mapped.has(i)).length;
 		if (unmapped)
 			notes.unavailable.push(
-				`Chamberlain-launched threads: ${unmapped} of ${ids.length} have no LifeOS session, so their spend is not counted`,
+				`Chamberlain-launched threads: ${unmapped} of ${ids.length} have no LifeOS session, so the caused spend, the spend share and the managed ratio are unavailable`,
 			);
 		return {
 			butlers: butlers.size,
@@ -75,9 +75,14 @@ async function readLaunched(d: Source, span: Span, notes: Notes): Promise<Launch
 	}
 }
 
-/** Chamberlain-caused spend: the Steward and its own calls, plus the butlers and investigators it launched. Undefined when any part is unknown. */
+/**
+ * Chamberlain-caused spend: the Steward and its own calls, plus the butlers and investigators it launched. Undefined when any part is unknown,
+ * a launched thread with no LifeOS session included: a partial numerator would feed the share and the ratio a figure that is short.
+ */
 const causedUsdOf = (day: WindowMetrics, launched: LaunchedSpend | undefined): number | undefined =>
-	launched && usable(day.basisUsd) ? day.basisUsd + launched.butlersUsd + launched.investigatorsUsd : undefined;
+	launched && launched.unmapped === 0 && usable(day.basisUsd)
+		? day.basisUsd + launched.butlersUsd + launched.investigatorsUsd
+		: undefined;
 
 type Deps = Source & { store: Pick<Store, "events" | "wakes"> };
 

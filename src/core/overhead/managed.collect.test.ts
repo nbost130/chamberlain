@@ -207,27 +207,6 @@ describe("the trigger judges only enough coverage", () => {
 		expect(formatOverhead(edge)).toContain("PARTIAL");
 	});
 
-	test("a launched butler or investigator whose spend is missing counts in the coverage and blocks a trigger, though the ratio is still shown", async () => {
-		const { s, sessions } = supervised(10);
-		const r = await managedReport(s, mode({}), lifeos(sessions), { butlers: ["b1"], investigators: ["inv"] });
-		expect(r.launched).toMatchObject({ butlers: 1, investigators: 1, unmapped: 2 });
-		expect(r.managed.report?.coverage).toBe(1); // the managed threads alone are fully mapped
-		expect(r.managed.unmapped).toBe(2);
-		expect(r.managed.coverage).toBeCloseTo(10 / 12, 9);
-		expect(r.managed.ratio).toBeGreaterThan(0.2);
-		expect(r.crossings).toEqual([]);
-		expect(formatOverhead(r)).toContain("PARTIAL");
-		expect(summarize(r).managed?.coverage).toBeCloseTo(10 / 12, 9);
-	});
-
-	test("with every launched thread mapped as well, the same trigger crosses", async () => {
-		const { s, sessions } = supervised(10);
-		const all: Sessions = { ...sessions, b1: { host: "mac", micros: 4_000_000 } };
-		const r = await managedReport(s, mode({}), lifeos(all), { butlers: ["b1"] });
-		expect(r.managed.coverage).toBe(1);
-		expect(r.crossings.map((c) => c.metric)).toEqual(["managedRatio"]);
-	});
-
 	test("only full mapping crosses: the same threads with the tenth session found do", async () => {
 		const { s, sessions } = supervised(10);
 		expect((await managedReport(s, mode({ minCoverage: 0.9 }), lifeos(sessions))).crossings).toHaveLength(1);

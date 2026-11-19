@@ -56,7 +56,20 @@ describe("the cooldown", () => {
 	test("one investigation per cooldown: a crossing inside it is suppressed, with the time in the reason", () => {
 		const d = decision(state(closed("OV-a", 5)));
 		expect(d).toMatchObject({ open: false, reason: "cooldown" });
-		expect(d.open === false && d.detail).toContain("OV-a reserved 300 min ago");
+		expect(d.open === false && d.detail).toContain("OV-a launched 300 min ago");
+	});
+
+	test("it counts from the later of the reservation and its last launch call: a retry 2 h ago restarts it", () => {
+		const retried = inv("OV-a", 30, { status: "closed", closedBy: "investigator", launchedAt: NOW - 2 * HOUR });
+		expect(decision(state(retried))).toMatchObject({ open: false, reason: "cooldown" });
+		const long = inv("OV-a", 30, { status: "closed", closedBy: "investigator", launchedAt: NOW - 25 * HOUR });
+		expect(decision(state(long))).toEqual({ open: true });
+	});
+
+	test("it counts from the newest of every reservation's launch, not the last one in the list", () => {
+		const older = inv("OV-a", 40, { status: "closed", closedBy: "investigator", launchedAt: NOW - HOUR });
+		const newer = inv("OV-b", 30, { status: "closed", closedBy: "investigator" });
+		expect(decision(state(older, newer))).toMatchObject({ open: false, reason: "cooldown" });
 	});
 
 	test("it counts from when the last one was RESERVED, and ends exactly at the cooldown", () => {
@@ -65,8 +78,17 @@ describe("the cooldown", () => {
 		expect(decision(state(closed("OV-a", 80)))).toEqual({ open: true });
 	});
 
-	test("a pending reservation holds the cooldown as a launched one does", () => {
-		expect(decision(state(inv("OV-a", 1, { status: "pending" })), cfg({ maxOpen: 5 }))).toMatchObject({
+	test("a pending reservation blocks a new one whatever maxOpen is, old or new", () => {
+		for (const hours of [1, 30]) {
+			expect(decision(state(inv("OV-a", hours, { status: "pending" })), cfg({ maxOpen: 5 }))).toMatchObject({
+				open: false,
+				reason: "open-investigation",
+			});
+		}
+	});
+
+	test("an open reservation inside the cooldown holds it, whatever maxOpen is", () => {
+		expect(decision(state(inv("OV-a", 1, { status: "open" })), cfg({ maxOpen: 5 }))).toMatchObject({
 			open: false,
 			reason: "cooldown",
 		});
@@ -101,7 +123,9 @@ describe("held reservations", () => {
 		for (const status of ["pending", "open"] as const) {
 			const d = decision(state(inv("OV-a", 30, { status })));
 			expect(d).toMatchObject({ open: false, reason: "open-investigation" });
-			expect(d.open === false && d.detail).toContain(`OV-a (${status}) held (at most 1)`);
+			expect(d.open === false && d.detail).toContain(
+				status === "pending" ? "OV-a pending (launch outcome unknown)" : "OV-a (open) held (at most 1)",
+			);
 		}
 	});
 

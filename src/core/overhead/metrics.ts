@@ -58,7 +58,8 @@ export type WindowMetrics = {
 	noopRate?: number;
 	/** The Steward's tokens priced, USD. Undefined when the model has no price: the number is unavailable, never zero. */
 	stewardUsd?: number;
-	classifierUsd: number;
+	/** Chamberlain's own classifier calls, USD. Undefined when experiments could not be taken out of it (`unverified`). */
+	classifierUsd?: number;
 	/** stewardUsd + classifierUsd: what the cost trigger divides. */
 	basisUsd?: number;
 	/** Merged PRs in the window; undefined when GitHub could not be read in full. */
@@ -105,7 +106,8 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 	const noop = measured.filter((r) => r.toolCalls === 0).length;
 	const useful = measured.length - noop;
 	const stewardUsd = i.unverified ? undefined : stewardSpend(rows, i.price, i.cacheWrite);
-	const basisUsd = stewardUsd === undefined ? undefined : stewardUsd + i.classifierUsd;
+	const classifierUsd = i.unverified ? undefined : i.classifierUsd;
+	const basisUsd = stewardUsd === undefined || classifierUsd === undefined ? undefined : stewardUsd + classifierUsd;
 	const m: WindowMetrics = {
 		from: i.from,
 		to: i.to,
@@ -114,8 +116,8 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 		measured: measured.length,
 		noop,
 		useful,
-		classifierUsd: i.classifierUsd,
 	};
+	if (classifierUsd !== undefined) m.classifierUsd = classifierUsd;
 	if (measured.length && !i.unverified) m.noopRate = noop / measured.length;
 	if (stewardUsd !== undefined) m.stewardUsd = stewardUsd;
 	if (basisUsd !== undefined) m.basisUsd = basisUsd;
