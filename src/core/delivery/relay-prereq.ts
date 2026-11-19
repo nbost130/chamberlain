@@ -2,8 +2,9 @@
 import { crashPoint } from "../crash.ts";
 import type { RightsSent } from "../decide/decide.ts";
 import { shrank } from "../decide/decide.ts";
-import { rightsInlineHead } from "../messages.ts";
+import { rightsInlineHead, rightsStaleNote } from "../messages.ts";
 import { loadRightsSent, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
+import { exceedsEncodedCap } from "../steward/steward-types.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
@@ -66,7 +67,10 @@ function staleFull(row: OutboxRow, now: RightsNow): string | undefined {
 export function withInlineRights(row: OutboxRow, inline: InlineRights): string {
 	const line = DELIVERY_ID_LINE(row.deliveryId);
 	const body = row.message.replace(line, "").trimEnd();
-	return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
+	if (inline.text) return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
+	// Nothing rides inside (the current rights went as a wake of their own): the stale block's row goes as it is, with a one-line note when that fits.
+	const noted = `${body}\n\n${rightsStaleNote}\n${line}`;
+	return exceedsEncodedCap(noted, row.deliveryId) ? `${body}\n${line}` : noted;
 }
 
 /** The ids `:1`, `:2`, ... of the prerequisite for a state, where each stands: delivered, cancelled, or not ended (or unknown). */

@@ -233,17 +233,35 @@ describe("the size bound is checked on what is POSTed, the rights included (audi
 		expect(r.record()).toMatchObject({ hash: H1 });
 	});
 
-	test("must not go as it is: a stale full block that cannot be replaced inside the bound is dead-lettered, loudly", async () => {
-		const r = inlineWorld({ block: BIG });
-		r.outbox.deliver(ROW, "o3", {
-			kind: "needs_input",
-			rights: [{ steward: "steward-1", session: "s1", hash: H1, at: "t0", used: 100_000, full: true }],
+	for (const kind of ["needs_input", "failed", "message"])
+		test(`must not be lost (${kind}): a row with a stale full block whose replacement does not fit inline gets a standalone prerequisite, then goes unchanged`, async () => {
+			const r = inlineWorld({ block: "r".repeat(9_000) });
+			const row = "x".repeat(15_500);
+			r.outbox.deliver(row, "o3", {
+				kind,
+				rights: [{ steward: "steward-1", session: "s1", hash: H1, at: "t0", used: 100_000, full: true }],
+			});
+			r.st.hash = H2;
+			await r.relay().pass();
+			expect(r.store.wakes.find("o3")?.status).toBe("delivered");
+			const ids = r.ids();
+			expect(ids).toHaveLength(2);
+			expect(ids[0]).toContain("o3:rights-first:");
+			expect(ids[1]).toBe("o3");
+			expect(r.posts[1]!.message.startsWith(row)).toBe(true);
+			expect(r.posts[1]!.message).not.toContain(rightsInlineHead);
+			for (const p of r.posts) expect(exceedsEncodedCap(p.message, p.id)).toBe(false);
+			// The record names the CURRENT rights, never the stale block the row carried.
+			expect(r.record()).toMatchObject({ hash: H2 });
+			expect(r.alarms).toEqual([]);
 		});
-		r.st.hash = H2;
+
+	test("dead-lettered only when the row by itself is over the bound, as before this PR", async () => {
+		const r = inlineWorld();
+		r.outbox.deliver("x".repeat(24_500), "o5", { kind: "needs_input", rights: [stamp] });
 		await r.relay().pass();
 		expect(r.posts).toEqual([]);
-		expect(r.store.wakes.find("o3")?.status).toBe("dead_letter");
-		expect(r.alarms.some((a) => a.includes("dead-letter"))).toBe(true);
+		expect(r.store.wakes.find("o5")?.status).toBe("dead_letter");
 	});
 
 	test("must skip: a row that fits with the block inline still goes in one wake", async () => {

@@ -207,18 +207,16 @@ async function viaPrerequisite(a: PrereqArgs): Promise<Prereq> {
 }
 
 /**
- * The size bound is checked on what is POSTed, the rights included. Over it, the rights go as a standalone prerequisite instead of inline;
- * a row whose own stale full block cannot be replaced inline is dead-lettered (loudly), since it must never go as it is.
+ * The size bound is checked on what is POSTed, the rights included. Over it, the current rights go as a standalone prerequisite first and the
+ * row goes after it exactly as queued, whatever its kind (it fit alone when it was queued: a row that does not is refused at the top of `send`).
+ * A row whose own full block was stale is then sent without writing that block into the record: the prerequisite wrote the current one.
  */
 async function withinCap(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
-	const { r, l, row } = a;
+	const { r, row } = a;
 	if (!exceedsEncodedCap(withInlineRights(row, inline), row.deliveryId)) return { ...GO, inline };
 	r.d.log("rights-inline-oversized", { deliveryId: row.deliveryId, stale: Boolean(inline.stale) });
-	if (inline.stale) {
-		deadLetter(r, l, row, row.attempts);
-		return STOP;
-	}
-	return standalone(a);
+	const first = await standalone(a);
+	return inline.stale && first.go ? { ...first, inline: { text: "", stale: true } } : first;
 }
 
 /** One standalone full-rights prerequisite for the state now, whatever the record says (it is what was doubted), then the row. */

@@ -158,6 +158,13 @@ export const rightsWake = (forId: string, full: string) =>
 export const rightsInlineHead =
 	"[chamberlain] rights, in full: this wake was queued for a Steward that may not hold your decision rights and the rulings in force, so the full copy rides with it. Where the text above says they are unchanged, these are the ones it means, and they replace any older copy you carry, one in the text above included.";
 
+/**
+ * Said after a row whose own full rights block is older than the rights in force, when the current rights cannot ride inside the same wake
+ * (they would not fit the size bound) and went as a standalone wake just before it. The row's text is never edited; this only follows it.
+ */
+export const rightsStaleNote =
+	"[chamberlain] note: the full rights block in the text above was composed before the rights or rulings changed. The rights wake delivered just before this one is current; where they differ, it wins.";
+
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>
 	`[chamberlain] ${kind}: thread "${title}" ${what}.`;
