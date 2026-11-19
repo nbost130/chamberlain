@@ -279,7 +279,7 @@ export const RIGHTS_MARKER = "Decision rights (standing rules):";
  */
 const SHRINK_RATIO = 0.8;
 /** Pure: did the context collapse from `mark`, the largest size seen since the full rights went? */
-export const shrank = (mark: number, used: number): boolean => used < mark * SHRINK_RATIO;
+const shrank = (mark: number, used: number): boolean => used < mark * SHRINK_RATIO;
 
 /**
  * Pure: the EVIDENCE that the Steward may have lost the rights a record says it holds, or undefined. A compaction counted since the record was
