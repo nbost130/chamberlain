@@ -6,7 +6,7 @@
 export type ActiveHoldConfig = { enabled: boolean; windowMs: number };
 
 /** The window the principal's last message keeps a card from waking the Steward, unless `activeHold.windowMinutes` says otherwise. */
-export const DEFAULT_ACTIVE_HOLD_MINUTES = 5;
+const DEFAULT_ACTIVE_HOLD_MINUTES = 5;
 export const DEFAULT_ACTIVE_HOLD: ActiveHoldConfig = { enabled: true, windowMs: DEFAULT_ACTIVE_HOLD_MINUTES * 60_000 };
 const KEYS = ["enabled", "windowMinutes"] as const;
 
