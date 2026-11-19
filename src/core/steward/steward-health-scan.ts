@@ -5,6 +5,8 @@ import { HEALTH_CONFIG } from "./steward-health-config.ts";
 /** One canonical transcript row, as far as the health check reads it. Rows come from JSON, so every field may be missing or odd. */
 type Row = {
 	isSidechain?: unknown;
+	/** A prompt the harness wrote (a skill's expansion, a reminder), not the one that started the turn: it never starts or ends one. */
+	isMeta?: unknown;
 	type?: string;
 	subtype?: string;
 	timestamp: string;
@@ -80,6 +82,8 @@ const DELIVERY_ID = /delivery id: (\S+)/g;
 
 /** A user prompt starts a turn: what it is for decides which of its own-transcript reads are the Steward's wear and which are its work. */
 function noteUserTurn(scan: Scan, r: Row) {
+	// A meta row (the steward-wake skill's expansion follows the wake itself) is transparent: it changes no classification and uses up no recovery turn.
+	if (r.isMeta) return;
 	const text = promptText(r);
 	if (text === undefined) return;
 	scan.turn = {

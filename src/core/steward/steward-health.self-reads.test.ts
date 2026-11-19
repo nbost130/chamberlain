@@ -105,3 +105,66 @@ describe("self-reads: what counts as wear", () => {
 		expect(h.verdict).toBe("HAND OFF");
 	});
 });
+
+describe("self-reads: harness meta rows are transparent", () => {
+	// The shape the repo's own transcript fixture uses (src/core/fixtures/steward-tokens.jsonl): the skill's expansion of a wake, flagged isMeta.
+	const meta = () =>
+		row({
+			type: "user",
+			isMeta: true,
+			timestamp: T,
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: "Handle this wake as your hand-off says. A wake carries a delivery id (its last line, `delivery id: ...`).",
+					},
+				],
+			},
+		});
+
+	test("must not fire: a meta row after the hand-off wake does not end the hand-off turn", async () => {
+		const h = await measure(
+			[
+				user(
+					"[chamberlain] steward-handoff: the Steward has slipped.\ndelivery id: steward-handoff:s1 (the same id again is a repeat)",
+				),
+				meta(),
+				assistant(AT_181K, reads("m")),
+			],
+			session,
+		);
+		expect(h.selfReads).toBe(0);
+		expect(h.verdict).toBe("COMPACT");
+	});
+
+	test("must not fire: a meta row after a wake does not replace its delivery id, so the repeat check still does not count", async () => {
+		const h = await measure(
+			[wake("sweep:1794940676968"), meta(), assistant(AT_181K, reads("d", "sweep:1794940676968"))],
+			session,
+		);
+		expect(h.selfReads).toBe(0);
+	});
+
+	test("must not fire: a meta row uses up none of the two recovery turns after a compaction", async () => {
+		const h = await measure(
+			[
+				boundary(),
+				user("This session is being continued from a previous conversation."),
+				meta(),
+				wake("note:1"),
+				assistant(AT_181K, reads("r")),
+			],
+			session,
+		);
+		expect(h.selfReads).toBe(0);
+		expect(h.verdict).toBe("COMPACT");
+	});
+
+	test("must fire: a meta row does not hide ordinary lookups", async () => {
+		const h = await measure([wake("note:1"), meta(), assistant(AT_181K, reads("o"))], session);
+		expect(h.selfReads).toBe(3);
+		expect(h.verdict).toBe("HAND OFF");
+	});
+});
