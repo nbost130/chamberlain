@@ -35,6 +35,7 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 - [x] ISC-7: A recovered thread does not cause stale provider-failure wake cascades. Falsifier: replaying Claude failure, Grok recovery, then delayed Claude failure produces a new failure wake or retries obsolete work.
 - [x] ISC-8: The final source and setup audit contains no active hard-coded model binding. Falsifier: a supported execution or setup path bypasses the documented central selection.
 - [ ] ISC-9: The reviewed change ships through the normal release path, with compatible processes installed before live model configuration. Falsifier: a live process rejects the migrated schema or the deployed revision differs from the reviewed release.
+- [ ] ISC-10 (separate change, PR #111, draft): `chamberlain decisions verify` says a relayed decision answer is the principal's only when Chamberlain's own record shows it, and fails closed otherwise. Falsifier: a record with no key, a malformed record, an answer not among the question's options, a non-page claim, a forged id, or `verify` run without `--choice` and `--thread` verifies; or `show`/`verify` writes, migrates, chmods or creates a file in the state directory. Evidence so far: `src/core/items/provenance.test.ts` (20 tests, two mutation checks), `bun run checks` 3596 pass. Open: the trust anchor (an agent running as the same user can still write the record); Nathan decides before merge.
 
 ## Anti-criteria
 
@@ -55,11 +56,13 @@ No new keys written into the live config before the pinned daemon supports them.
 | ISC-7 | bun-test | Reordered failure/recovery event and queued delivery regressions | bun test src/adapters/t3 src/core/delivery |
 | ISC-8 | manual | Source and setup audit with independent review | rg source audit and Sol review |
 | ISC-9 | manual | Release revision and service/config compatibility read-back | Normal release/cutover probes |
+| ISC-10 | bun-test | Provenance, argument and read-only-store regressions | bun test src/core/items/provenance.test.ts |
 
 ## Decisions
 
 - Direction authorized by the accepted goal. Execution remains inline with an independent final review.
 - Changes to mail/config.test.ts and classifier/config.test.ts model-default expectations approved; safety checks preserved. Other existing tests remain read-only.
+- ISC-10 is a separate, small change that touches no model selection (provenance of relayed decision answers, `src/core/items/provenance.ts`, `decisions show|verify`, a read-only store open in `src/core/store/database.ts`). It adds a `Provenance:` line to the relayed message and no existing test changed.
 - Mail is currently a configuration/database seam; no mailbox processing is added.
 - Preserve explicit per-role selections; never silently fallback to another provider. Stale failure suppression must inspect the newest run and its recovered state, including work already queued for delivery.
 - Decisions fixture and classifier observability enum snapshot updates approved.
