@@ -56,18 +56,24 @@ export function fleetSql(cfg: OverheadConfig, from: number, to: number): string 
 
 /** Pure: the rows of the query's CSV answer, from the lines of the form `fleet,mac,1234`. The tool's own header and help lines are ignored. */
 export function parseFleet(output: string, cfg: OverheadConfig): FleetSpend {
-	const byHost: Record<string, number> = {};
+	// A Map, never an object: a host called `constructor` or `__proto__` must not be found on an object's prototype and pass for a reporting host.
+	const rows = new Map<string, number>();
 	let excludedUsd = 0;
 	for (const line of output.split("\n")) {
 		const m = /^(fleet|excluded),([^,]*),(-?\d+)$/.exec(line.trim());
 		if (!m) continue;
 		const usd = Number(m[3]) / 1_000_000;
-		if (m[1] === "fleet") byHost[m[2] as string] = usd;
+		if (m[1] === "fleet") rows.set(m[2] as string, usd);
 		else excludedUsd += usd;
 	}
-	if (!Object.keys(byHost).length) throw Error("the LifeOS query returned no fleet rows");
-	const totalUsd = Object.values(byHost).reduce((a, b) => a + b, 0);
-	return { totalUsd, byHost, missingHosts: cfg.fleet.hosts.filter((h) => byHost[h] === undefined), excludedUsd };
+	if (!rows.size) throw Error("the LifeOS query returned no fleet rows");
+	const totalUsd = [...rows.values()].reduce((a, b) => a + b, 0);
+	return {
+		totalUsd,
+		byHost: Object.fromEntries(rows),
+		missingHosts: cfg.fleet.hosts.filter((h) => !rows.has(h)),
+		excludedUsd,
+	};
 }
 
 /** The fleet's spend over [from, to). Rejects when the LifeOS database cannot be read: the caller reports "unavailable". */

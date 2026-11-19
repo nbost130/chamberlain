@@ -13,10 +13,7 @@
 import type { OverheadConfig } from "./config.ts";
 import { type RunQuery, runQuery } from "./fleet-spend.ts";
 import type { ThreadSpend } from "./managed.ts";
-import { excludedSql, quoted, spanSql } from "./sql.ts";
-
-const BATCH = 100;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9:._%-]{0,300}$/;
+import { BATCH, excludedSql, quoted, SAFE_ID, spanSql } from "./sql.ts";
 
 /** Pure: the SELECT for one batch of ids over [from, to): one row per (host, thread) with its spend in the window. */
 export function managedSql(cfg: OverheadConfig, ids: readonly string[], from: number, to: number): string {

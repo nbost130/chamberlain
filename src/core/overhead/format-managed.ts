@@ -31,10 +31,11 @@ export function summarizeManaged(r: OverheadReport): ManagedSummary {
 	};
 }
 
-/** How the ratio is judged: only at enough coverage, and only when it is a trigger. */
+/** How the ratio is judged: only at full coverage with every fleet host reporting, and only when it is a trigger. `minCoverage` is the reporting bar. */
 function judged(t: OverheadReport["limits"]["managedRatio"]): string {
-	if (t.mode === "trigger") return `triggers above ${pct(t.threshold)}, only at coverage ${pct(t.minCoverage)} or more`;
-	return `report only${t.threshold === undefined ? "" : `, target at most ${pct(t.threshold)}`}; judged only at coverage ${pct(t.minCoverage)} or more`;
+	const bar = `judged only at full coverage with every fleet host reporting (reporting bar ${pct(t.minCoverage)})`;
+	if (t.mode === "trigger") return `triggers above ${pct(t.threshold)}, ${bar}`;
+	return `report only${t.threshold === undefined ? "" : `, target at most ${pct(t.threshold)}`}; ${bar}`;
 }
 
 /** The fleet total by host, what Chamberlain's launched butlers and investigators spent (by its launch records), and what was left out as experiments. */

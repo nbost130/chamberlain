@@ -46,6 +46,8 @@ export interface DispositionStore {
 	): void;
 	/** Calls made since `since` (ms) by these providers, and what they cost: the daily budget is summed from here. */
 	usage(since: number, providers: readonly string[]): { calls: number; usd: number };
+	/** What those providers cost per thread and per call time since `since` (ms): the overhead monitor leaves out the threads of experiments. */
+	spend(since: number, providers: readonly string[]): { threadId: string; at: number; usd: number }[];
 	/** Marks a disposition right or wrong, with the action it should have had. False when there is no such row. */
 	feedback(k: DispositionKey, feedback: "right" | "wrong", corrected?: Exclude<DispositionAction, "unknown">): boolean;
 	/** Deletes rows classified before `before`, except rows with feedback (the next evaluation set). */

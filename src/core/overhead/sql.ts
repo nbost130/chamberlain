@@ -18,3 +18,8 @@ export function excludedSql(cfg: Pick<OverheadConfig, "excludeProjects" | "exclu
 		...(cfg.excludeLabels.length ? [`coalesce(s.labels && ARRAY[${quoted(cfg.excludeLabels)}]::text[], false)`] : []),
 	].join(" OR ");
 }
+
+/** The ids per statement: a statement's row limit is 200, so a batch this size is read in one page. */
+export const BATCH = 100;
+/** An id that may be put in a statement: letters, digits and `: . _ % -`. Anything else is never sent and simply cannot be looked up. */
+export const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9:._%-]{0,300}$/;

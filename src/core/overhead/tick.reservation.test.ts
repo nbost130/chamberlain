@@ -89,10 +89,112 @@ describe("a launch whose outcome is lost is not launched twice", () => {
 		expect(stateOf(r).investigations.at(-1)).toMatchObject({ status: "open" });
 	});
 
-	test("with no investigator configured the crossing is recorded as a launch that sent nothing", async () => {
+	test("with no investigator configured the crossing reserves nothing: there is no thread to reconcile a reservation against", async () => {
 		const r = rig({ investigator: null });
 		await r.tick();
+		expect(stateOf(r).investigations).toEqual([]);
+		expect(r.logs[0]?.fields).toMatchObject({ opened: false, skipped: "no-investigator" });
+	});
+});
+
+describe("a reservation leaves pending only when T3 positively shows no thread", () => {
+	const ten = (r: Rig) => r.advance(10 * 60_000);
+
+	test("a retry whose preflight is refused keeps the reservation whose thread T3 already made: no second live investigator", async () => {
+		const r = rig({ cfg: quick() });
+		r.t3.loseBrief = true; // T3 made the thread, the brief never arrived
+		await r.tick();
+		expect(r.t3.threads.size).toBe(1);
+		r.t3.loseBrief = false;
+		r.t3.refuse = true; // the retry's preflight is refused
+		ten(r);
+		await r.tick();
+		expect(stateOf(r).investigations).toHaveLength(1);
+		expect(stateOf(r).investigations[0]).toMatchObject({ status: "pending" });
+		expect(heldOf(r)).toHaveLength(1);
+		// the next measurement sees the held slot, and opens nothing
+		r.advance(2 * HOUR);
+		await r.tick();
+		expect(r.logs.at(-1)?.fields).toMatchObject({ skipped: "open-investigation" });
+		expect(r.t3.threads.size).toBe(1);
+		// once the preflight passes, the same thread gets its brief
+		r.t3.refuse = false;
+		ten(r);
+		await r.tick();
+		expect(stateOf(r).investigations[0]).toMatchObject({
+			status: "open",
+			threadId: expect.stringContaining("thread-OV-"),
+		});
+		expect(r.t3.threads.size).toBe(1);
+	});
+
+	test("a first launch refused while T3 cannot say whether a thread exists stays held; it is released when T3 answers that none does", async () => {
+		const r = rig({ cfg: quick() });
+		r.t3.refuse = true;
+		r.t3.inspectFails = true;
+		await r.tick();
+		expect(stateOf(r).investigations[0]).toMatchObject({ status: "pending" });
+		expect(heldOf(r)).toHaveLength(1);
+		r.t3.inspectFails = false;
+		ten(r);
+		await r.tick();
 		expect(stateOf(r).investigations[0]).toMatchObject({ status: "closed", closedBy: "launch-failed" });
+		expect(heldOf(r)).toHaveLength(0);
+	});
+
+	test("a refusal with a thread that exists but has no brief releases nothing, however often it repeats", async () => {
+		const r = rig({ cfg: quick() });
+		r.t3.loseBrief = true;
+		await r.tick();
+		r.t3.loseBrief = false;
+		r.t3.refuse = true;
+		for (let i = 0; i < 5; i++) {
+			ten(r);
+			await r.tick();
+		}
+		expect(heldOf(r)).toHaveLength(1);
+		expect(r.t3.threads.size).toBe(1);
+	});
+});
+
+describe("with the investigator disabled, reconciliation only observes and closes", () => {
+	const off = () => crossing({ investigator: { ...inv, enabled: false } });
+	/** A ticker with the investigator disabled over the state the enabled one left. */
+	const disabledOver = (r: Rig) => rig({ cfg: off(), store: r.store, t3: r.t3 });
+
+	test("a pending reservation whose thread has no brief is not launched again: no command, no brief, still held", async () => {
+		const r = rig({ cfg: quick() });
+		r.t3.loseBrief = true;
+		await r.tick();
+		r.t3.loseBrief = false;
+		const sent = r.t3.launched.length;
+		const d = disabledOver(r);
+		await d.tick();
+		expect(r.t3.launched).toHaveLength(sent);
+		expect(r.t3.threads.get(r.t3.launched[0]?.seed as string)?.briefSent).toBe(false);
+		expect(heldOf(d)).toHaveLength(1);
+		expect(stateOf(d).investigations[0]).toMatchObject({ status: "pending" });
+	});
+
+	test("a pending reservation whose thread has its brief is opened, and one whose thread does not exist is closed; neither launches", async () => {
+		const r = rig({ cfg: quick() });
+		r.t3.loseResponse = true;
+		await r.tick();
+		const sent = r.t3.launched.length;
+		const d = disabledOver(r);
+		await d.tick();
+		expect(stateOf(d).investigations[0]).toMatchObject({ status: "open" });
+
+		const g = rig({ cfg: quick() });
+		g.t3.loseBrief = true;
+		await g.tick();
+		g.t3.threads.clear(); // T3 never saw the create
+		const gSent = g.t3.launched.length;
+		const dg = disabledOver(g);
+		await dg.tick();
+		expect(stateOf(dg).investigations[0]).toMatchObject({ status: "closed", closedBy: "launch-failed" });
+		expect(r.t3.launched).toHaveLength(sent);
+		expect(g.t3.launched).toHaveLength(gSent);
 	});
 });
 

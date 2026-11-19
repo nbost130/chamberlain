@@ -174,7 +174,9 @@ describe("the trigger judges only enough coverage", () => {
 			lifeos(sessions),
 		);
 		expect(r.crossings).toEqual([]);
-		expect(formatOverhead(r)).toContain("report only, target at most 1.0%; judged only at coverage 90.0% or more");
+		expect(formatOverhead(r)).toContain(
+			"report only, target at most 1.0%; judged only at full coverage with every fleet host reporting (reporting bar 90.0%)",
+		);
 	});
 
 	test("a trigger with full coverage crosses above its threshold, and does not at or below it", async () => {
@@ -185,23 +187,60 @@ describe("the trigger judges only enough coverage", () => {
 		expect((await managedReport(s, mode({ threshold: 0.3 }), lifeos(sessions))).crossings).toEqual([]);
 	});
 
-	test("below minCoverage it never crosses, however high the partial ratio: 60% mapped, default 90%", async () => {
+	test("below full coverage it never crosses, however high the partial ratio: 60% mapped, default 90% bar", async () => {
 		const { s, sessions } = supervised(6);
 		const r = await managedReport(s, mode({ threshold: 0.01 }), lifeos(sessions));
 		expect(r.managed.ratio).toBeGreaterThan(0.01);
 		expect(r.crossings).toEqual([]);
 	});
 
-	test("minCoverage is configurable: at 50% the same 60% coverage may cross, and at exactly the coverage it does", async () => {
-		const { s, sessions } = supervised(6);
-		expect((await managedReport(s, mode({ minCoverage: 0.5 }), lifeos(sessions))).crossings).toHaveLength(1);
-		expect((await managedReport(s, mode({ minCoverage: 0.6 }), lifeos(sessions))).crossings).toHaveLength(1);
-		expect((await managedReport(s, mode({ minCoverage: 0.61 }), lifeos(sessions))).crossings).toEqual([]);
+	test("a partial ratio never crosses, whatever minCoverage says: 60% coverage at a 50% bar, and 90% coverage at exactly the 90% bar", async () => {
+		const sixty = supervised(6);
+		const r = await managedReport(sixty.s, mode({ minCoverage: 0.5 }), lifeos(sixty.sessions));
+		expect(r.managed.ratio).toBeGreaterThan(0.2);
+		expect(r.crossings).toEqual([]);
+		const ninety = supervised(9);
+		const edge = await managedReport(ninety.s, mode({ minCoverage: 0.9 }), lifeos(ninety.sessions));
+		expect(edge.managed.report).toMatchObject({ threads: 10, mapped: 9, unmapped: 1, coverage: 0.9 });
+		expect(edge.managed.ratio).toBeGreaterThan(0.2);
+		expect(edge.crossings).toEqual([]);
+		expect(formatOverhead(edge)).toContain("PARTIAL");
+	});
+
+	test("only full mapping crosses: the same threads with the tenth session found do", async () => {
+		const { s, sessions } = supervised(10);
+		expect((await managedReport(s, mode({ minCoverage: 0.9 }), lifeos(sessions))).crossings).toHaveLength(1);
 	});
 
 	test("an unavailable ratio crosses nothing", async () => {
 		const { s } = supervised(0);
 		expect((await managedReport(s, mode({ minCoverage: 0.01 }), lifeos({}))).crossings).toEqual([]);
+	});
+
+	test("a configured fleet host with no rows is a short total: the managed ratio is reported and does not trigger, as the share does not", async () => {
+		const { s, sessions } = supervised(10);
+		const query = async (c: string, a: string[]) => {
+			const out = await lifeos(sessions)(c, a);
+			return out.startsWith("k,name,micros\nfleet") ? "k,name,micros\nfleet,h1,200000000" : out;
+		};
+		const r = await managedReport(s, mode({}), query);
+		expect(r.fleet?.missingHosts).toEqual(["h2"]);
+		expect(r.managed.ratio).toBeGreaterThan(0.2);
+		expect(r.crossings).toEqual([]);
+		expect(r.unavailable.join(" ")).toContain("spend share and managed ratio: no fleet rows for h2");
+	});
+
+	test("a fleet that cannot be read cannot vouch for its hosts: the managed ratio does not trigger", async () => {
+		const { s, sessions } = supervised(10);
+		const ok = lifeos(sessions);
+		const query = async (c: string, a: string[]) => {
+			if (!(a[2] ?? "").includes("'mthread'")) throw Error("LifeOS query failed: no route");
+			return ok(c, a);
+		};
+		const r = await managedReport(s, mode({}), query);
+		expect(r.fleetStatus).toBe("unavailable");
+		expect(r.managed.ratio).toBeGreaterThan(0.2);
+		expect(r.crossings).toEqual([]);
 	});
 });
 

@@ -76,6 +76,8 @@ export type WindowInput = {
 	cacheWrite: CacheWrite;
 	classifierUsd: number;
 	prs?: number;
+	/** The experiments could not be told apart (experiments.ts), so the rows may contain some: no spend and no no-op rate is judged. */
+	unverified?: boolean;
 };
 
 /** A number a limit may be judged on: present and finite. Anything else (undefined, NaN, Infinity) crosses nothing. */
@@ -102,7 +104,7 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 	const measured = wakes.filter((r) => r.toolCalls !== undefined);
 	const noop = measured.filter((r) => r.toolCalls === 0).length;
 	const useful = measured.length - noop;
-	const stewardUsd = stewardSpend(rows, i.price, i.cacheWrite);
+	const stewardUsd = i.unverified ? undefined : stewardSpend(rows, i.price, i.cacheWrite);
 	const basisUsd = stewardUsd === undefined ? undefined : stewardUsd + i.classifierUsd;
 	const m: WindowMetrics = {
 		from: i.from,
@@ -114,7 +116,7 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 		useful,
 		classifierUsd: i.classifierUsd,
 	};
-	if (measured.length) m.noopRate = noop / measured.length;
+	if (measured.length && !i.unverified) m.noopRate = noop / measured.length;
 	if (stewardUsd !== undefined) m.stewardUsd = stewardUsd;
 	if (basisUsd !== undefined) m.basisUsd = basisUsd;
 	if (i.prs !== undefined) m.prs = i.prs;
@@ -153,8 +155,11 @@ type Inputs = {
 	day: WindowMetrics;
 	baseline: WindowMetrics;
 	spendShare?: number;
-	/** The managed overhead ratio and the share of managed threads whose spend could be found. */
-	managed?: { ratio?: number; coverage?: number };
+	/**
+	 * The managed overhead ratio, the share of managed threads whose spend was found, how many were not, and whether every configured fleet host
+	 * reported (a missing host is a short denominator, as for the share).
+	 */
+	managed?: { ratio?: number; coverage?: number; unmapped?: number; hostsComplete?: boolean };
 	cfg: OverheadConfig;
 };
 
@@ -212,14 +217,16 @@ function shareCrossing({ spendShare, cfg }: Inputs): Crossing[] {
 }
 
 /**
- * The managed ratio crosses only when the operator made it a trigger AND the managed threads' spend was found for at least `minCoverage` of them:
- * a ratio over fewer is partial (its denominator is short, so it overstates) and is only reported, never judged.
+ * The managed ratio crosses only when the operator made it a trigger AND every managed thread's spend was found (none unmapped) AND every
+ * configured fleet host reported. A ratio over fewer is partial: its denominator is short, so it overstates, and it is only reported, never
+ * judged, at ANY coverage short of full, `minCoverage` included (that is the bar the report flags, not a licence to trigger on a partial ratio).
  */
 function managedCrossing({ managed, cfg }: Inputs): Crossing[] {
 	const t = cfg.triggers.managedRatio;
 	if (t.mode !== "trigger" || t.threshold === undefined || !managed) return [];
 	const { ratio, coverage } = managed;
-	if (!usable(ratio) || !usable(coverage) || coverage < t.minCoverage || ratio <= t.threshold) return [];
+	if (managed.unmapped !== 0 || managed.hostsComplete !== true) return [];
+	if (!usable(ratio) || !usable(coverage) || coverage < 1 || ratio <= t.threshold) return [];
 	return [
 		{
 			metric: "managedRatio",

@@ -12,8 +12,10 @@ import { SENDS_TEXT } from "../classifier/config.ts";
 import type { GhRead } from "../decide/hold-lookup.ts";
 import { errClass } from "../obs/fields.ts";
 import type { Store } from "../store/store.ts";
+import type { WakeUsage } from "../store/store-records.ts";
 import { type LaunchedSpend, type ManagedSection, readSupervision } from "./collect-managed.ts";
 import { DAY_MS, HOUR_MS, type OverheadConfig, perPrConfigured } from "./config.ts";
+import { type ClassifierSpend, type Experiments, exclusionConfigured, readExperiments } from "./experiments.ts";
 import { type FleetSpend, fleetSpend, type RunQuery } from "./fleet-spend.ts";
 import type { OwnThreads } from "./managed.ts";
 import { mergedPrs } from "./merged-prs.ts";
@@ -92,10 +94,31 @@ export type CollectDeps = {
 
 type Notes = Pick<OverheadReport, "unavailable" | "notConfigured">;
 
-/** Chamberlain's own classifier spend in [from, to): the database sums from a start, so the window is the difference of two sums. */
-function classifierUsd(store: CollectDeps["store"], from: number, to: number): number {
+/** What Chamberlain recorded itself, with the experiments (experiments.ts) taken out of it. */
+type Own = {
+	usage: readonly WakeUsage[];
+	spend: readonly ClassifierSpend[];
+	experiments: Experiments;
+	/** The experiments could not be told apart: the money figures and the no-op rate are not judged. */
+	unverified: boolean;
+};
+
+/** Chamberlain's own classifier spend in [from, to), less the calls made for experiments: the database sums from a start, so the window is the difference of two sums. */
+function classifierUsd(store: CollectDeps["store"], own: Own, from: number, to: number): number {
 	const providers = [...SENDS_TEXT];
-	return store.dispositions.usage(from, providers).usd - store.dispositions.usage(to, providers).usd;
+	const total = store.dispositions.usage(from, providers).usd - store.dispositions.usage(to, providers).usd;
+	const left = own.spend.filter((r) => r.at >= from && r.at < to && own.experiments.threads.has(r.threadId));
+	return total - left.reduce((s, r) => s + r.usd, 0);
+}
+
+/** The usage rows and classifier spend of the longest span any window needs, less the experiments. */
+async function readOwn(d: CollectDeps, notes: Notes): Promise<Own> {
+	const W = d.cfg.windowHours * HOUR_MS;
+	const since = d.now - Math.max(3 * W, W + d.cfg.baselineDays * DAY_MS);
+	const usage = d.store.usage.list({ since });
+	const spend = exclusionConfigured(d.cfg) ? d.store.dispositions.spend(since, [...SENDS_TEXT]) : [];
+	const { experiments, unverified } = await readExperiments(d, { usage, classifier: spend }, notes.unavailable);
+	return { usage: usage.filter((r) => !experiments.sessions.has(r.session)), spend, experiments, unverified };
 }
 
 /**
@@ -172,18 +195,17 @@ function limitsOf(cfg: OverheadConfig, baseline: WindowMetrics): OverheadReport[
 }
 
 /** The window function: the metrics of [from, to) over the usage rows, read once for the longest span any window needs. */
-function windowsOf(d: CollectDeps, price: Price | undefined, prs: readonly MergedPr[] | undefined) {
-	const W = d.cfg.windowHours * HOUR_MS;
-	const usage = d.store.usage.list({ since: d.now - Math.max(3 * W, W + d.cfg.baselineDays * DAY_MS) });
+function windowsOf(d: CollectDeps, own: Own, price: Price | undefined, prs: readonly MergedPr[] | undefined) {
 	return (from: number, to: number) =>
 		windowMetrics({
-			usage,
+			usage: own.usage,
 			from,
 			to,
 			...(price ? { price } : {}),
 			cacheWrite: d.cfg.cacheWrite,
-			classifierUsd: classifierUsd(d.store, from, to),
+			classifierUsd: classifierUsd(d.store, own, from, to),
 			...(prs ? { prs: countedPrs(prs, { from, to }, d.cfg.github).length } : {}),
+			...(own.unverified ? { unverified: true } : {}),
 		});
 }
 
@@ -194,7 +216,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 	const B = d.cfg.baselineDays * DAY_MS;
 	const price = stewardPrice(d, notes.unavailable);
 	const [pr, fl] = await Promise.all([readPrs(d, d.now - Math.max(3 * W, W + B), notes), readFleet(d, notes)]);
-	const window = windowsOf(d, price, pr.prs);
+	const window = windowsOf(d, await readOwn(d, notes), price, pr.prs);
 	const day = window(d.now - W, d.now);
 	const baseline = window(d.now - W - B, d.now - W);
 	const own = { pinned: [], butlers: [], investigators: [], ...d.own };
@@ -203,7 +225,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 	const { overhead: spendShare, steward: stewardShare } = sharesOf(fl.fleet, day, causedUsd);
 	if (fl.fleet?.missingHosts.length)
 		notes.unavailable.push(
-			`spend share: no fleet rows for ${fl.fleet.missingHosts.join(", ")} in the window, so the total is short`,
+			`spend share and managed ratio: no fleet rows for ${fl.fleet.missingHosts.join(", ")} in the window, so the total is short and neither is judged`,
 		);
 	return {
 		at: d.now,
@@ -226,7 +248,12 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 			day,
 			baseline,
 			...(spendShare !== undefined ? { spendShare } : {}),
-			managed: { ...(managed.ratio !== undefined ? { ratio: managed.ratio } : {}), ...coverageOf(managed) },
+			managed: {
+				...(managed.ratio !== undefined ? { ratio: managed.ratio } : {}),
+				...coverageOf(managed),
+				// A configured host with no fleet rows is a short denominator for this ratio as for the share; a fleet that could not be read cannot say.
+				hostsComplete: fl.fleet !== undefined && fl.fleet.missingHosts.length === 0,
+			},
 			cfg: d.cfg,
 		}),
 		...notes,
@@ -235,5 +262,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 	};
 }
 
-const coverageOf = (m: ManagedSection): { coverage?: number } =>
-	m.report?.coverage === undefined ? {} : { coverage: m.report.coverage };
+const coverageOf = (m: ManagedSection): { coverage?: number; unmapped?: number } => ({
+	...(m.report?.coverage !== undefined ? { coverage: m.report.coverage } : {}),
+	...(m.report ? { unmapped: m.report.unmapped } : {}),
+});
