@@ -168,6 +168,16 @@ describe("bad values are refused with the key named", () => {
 		);
 	});
 
+	test("a T3 project id is a UUID or an mcp: one, and nothing else", () => {
+		const model = { adapter: "t3", server: "s", instanceId: "p", model: "m" };
+		expect(
+			parseOverhead({ investigator: { model, projectId: "mcp:810af8af-b2ec-475a-9d21-91e636737c7a" } }).investigator
+				.projectId,
+		).toBe("mcp:810af8af-b2ec-475a-9d21-91e636737c7a");
+		refuses({ investigator: { model, projectId: "a b" } }, /projectId must be a T3 project id/);
+		refuses({ investigator: { model, projectId: "x'; --" } }, /projectId must be a T3 project id/);
+	});
+
 	test("an enabled investigator needs a model and a project", () => {
 		refuses({ investigator: { enabled: true } }, /investigator: enabled needs model and projectId/);
 		refuses({ investigator: { enabled: true, projectId: "p" } }, /enabled needs model and projectId/);

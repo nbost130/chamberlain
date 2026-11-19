@@ -217,6 +217,13 @@ function parseTriggers(raw: unknown, where: string): OverheadConfig["triggers"] 
 	};
 }
 
+/** A T3 project id: a UUID, or `mcp:` and a UUID for a project an agent created. It goes only into a T3 command, never a query. */
+function projectId(o: Obj, where: string): string {
+	const v = str(o, "projectId", where, "");
+	if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,100}$/.test(v)) throw Error(`${where}: projectId must be a T3 project id`);
+	return v;
+}
+
 function parseInvestigator(raw: unknown, where: string): OverheadConfig["investigator"] {
 	const d = OVERHEAD_DEFAULTS.investigator;
 	if (raw === undefined) return structuredClone(d);
@@ -229,7 +236,7 @@ function parseInvestigator(raw: unknown, where: string): OverheadConfig["investi
 	return {
 		enabled: bool(o, "enabled", where, d.enabled),
 		model,
-		projectId: o.projectId === undefined || o.projectId === null ? null : plain(o, "projectId", where, ""),
+		projectId: o.projectId === undefined || o.projectId === null ? null : projectId(o, where),
 		title: plain(o, "title", where, d.title),
 		cooldownHours: num(o, "cooldownHours", where, { d: d.cooldownHours, whole: false, zeroOk: true }),
 		maxOpen: num(o, "maxOpen", where, { d: d.maxOpen, whole: true }),
