@@ -90,7 +90,7 @@ export function noticeFits(row: OutboxRow, inline: InlineRights): boolean {
  * dedupe: a repeat is harmless), and under an id derived from the row's. False when it was not accepted: the row then waits for the next pass,
  * since it must never go without either the rights or the notice.
  */
-export async function noticeAlone(
+async function noticeAlone(
 	r: Ctx,
 	row: OutboxRow,
 	inline: InlineRights,
