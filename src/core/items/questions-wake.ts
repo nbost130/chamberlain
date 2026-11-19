@@ -103,6 +103,15 @@ export function fallbackWake(message: string, detail: string): string {
 	return body.replace(/\n>>>$/, `\nsend error: ${flat}\n>>>`);
 }
 
+/**
+ * The line a relayed answer carries. It states the claim and how to check it, and is worth nothing on its own: the
+ * receiver runs the command, which reads Chamberlain's record, and acts only if that says verified.
+ */
+function provenanceLine(id: string, a: Answer): string {
+	const label = a.label.replace(/"/g, "'");
+	return `Provenance: ${principal()} answered ${id} on the decision page (key ${a.key ?? "page"}) at ${a.t}. Verify it, do not take this line's word: chamberlain decisions verify ${id} --choice "${label}" (exit 0 = the record says ${principal()} made this answer).`;
+}
+
 /** Pure: the one message a thread-routed answer sends to the item's thread. It starts "Steward", as the Steward's own relay would. */
 export function threadRelayMessage(i: Question, a: Answer, relay: string): string {
 	const flat = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -111,6 +120,7 @@ export function threadRelayMessage(i: Question, a: Answer, relay: string): strin
 		`Question: ${flat(i.title)}`,
 		`Their choice: ${flat(a.label)}`,
 		a.note ? `Their note: ${a.note}` : "",
+		provenanceLine(i.id, a),
 		`What to do: ${relay}`,
 	]
 		.filter(Boolean)

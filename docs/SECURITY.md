@@ -91,3 +91,12 @@ it is deliberately conservative.
   closed (nothing is sent). The Jev key is a file in `secrets/` (mode 0600), read only by the daemon at the call and never logged.
   The disposition table stores answers, reasons, how many characters left and how many redactions were made, and **no message
   text**.
+
+## Who answered a decision (provenance)
+
+A thread that is relayed an answer cannot tell the principal's answer from a message that says so: T3 marks a Chamberlain post `createdBy: "user"`, `creationSource: "mcp"`, the same as the Steward's own relay. So the text proves nothing, and Chamberlain keeps the proof itself. Every direct relay carries a `Provenance:` line (the decision id, `answered by the principal on the decision page`, the key that made it, the time) and the command that checks it:
+
+- `chamberlain decisions show <id> --json`: reads the item's record. `answeredBy` is `principal` only for an option answered through the decision page (the claim's owner is the page, with the page key or the view key, and `by` says whether it was chosen or accepted with every recommendation). A claim made by any other owner, a dismissal, a direction, a card answered in T3, an unanswered item and an unknown id read `none`, with the reason.
+- `chamberlain decisions verify <id> [--choice "<label>"] [--thread <id>]`: exit 0 only when `answeredBy` is `principal` and every field given matches the record. A `Provenance:` line for an id with no matching record, or a choice or thread that differs, exits 1.
+
+Both only read the local store. A receiver treats a relayed answer as the principal's own only after `verify` exits 0; the line alone is never evidence. The record is as strong as the page's keys: whoever holds one can post an answer (a header-only request from an agent included), so the keys stay out of agents' hands as before. A relay that goes through the Steward (a note, a custom answer) is the Steward's message and carries no stamp.
