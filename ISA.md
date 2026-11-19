@@ -1,6 +1,6 @@
 ---
 phase: climbing
-progress: 7/9
+progress: 8/10
 ---
 
 # Provider-independent model selection
@@ -35,6 +35,7 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 - [x] ISC-7: A recovered thread does not cause stale provider-failure wake cascades. Falsifier: replaying Claude failure, Grok recovery, then delayed Claude failure produces a new failure wake or retries obsolete work.
 - [x] ISC-8: The final source and setup audit contains no active hard-coded model binding. Falsifier: a supported execution or setup path bypasses the documented central selection.
 - [ ] ISC-9: The reviewed change ships through the normal release path, with compatible processes installed before live model configuration. Falsifier: a live process rejects the migrated schema or the deployed revision differs from the reviewed release.
+- [x] ISC-10: The overhead monitor never holds more than `investigator.maxOpen` investigations or opens more than one per cooldown, even when a launch's outcome is lost, across a restart, a stale thread or a clock jump; an unreadable, missing or non-finite input crosses no limit; and its investigator launches only on the operator's explicit `overhead.investigator.model`. Falsifier: a lost response, a TTL expiry with a live thread, retention under repeated failures, a missing baseline or fleet host, or a `constructor` model name yields a second launch or a crossing; or a launch uses a model the operator did not select. Evidence: tick.reservation.test.ts, tick.test.ts, trigger.test.ts, metrics.fail-closed.test.ts, prices.test.ts, collect.test.ts, investigator.test.ts; `bun run checks`.
 
 ## Anti-criteria
 
@@ -55,6 +56,7 @@ No new keys written into the live config before the pinned daemon supports them.
 | ISC-7 | bun-test | Reordered failure/recovery event and queued delivery regressions | bun test src/adapters/t3 src/core/delivery |
 | ISC-8 | manual | Source and setup audit with independent review | rg source audit and Sol review |
 | ISC-9 | manual | Release revision and service/config compatibility read-back | Normal release/cutover probes |
+| ISC-10 | bun-test | Lost-outcome, restart, stale-thread, clock-jump, retention and fail-closed scenarios, plus launch idempotence against the fake T3 | bun test src/core/overhead src/adapters/t3/investigator.test.ts |
 
 ## Decisions
 
@@ -73,6 +75,7 @@ No new keys written into the live config before the pinned daemon supports them.
 - Reconciliation with current main found that migration 18 now belongs to prepare-pr links. The classifier migration must be 19, preserving both classifier history and prepare-pr links when upgrading an existing version-18 database.
 - The CLI-sender architecture assertion is approved to require zero CLI senders; its single RPC sender assertion is unchanged.
 - The overhead monitor (`overhead` section, src/core/overhead/) adds no hard-coded model binding: the Steward's tokens are priced for the model `models.steward` names, from the operator's own `overhead.prices` (none shipped), and the investigator thread launches only on `overhead.investigator.model`, an explicit T3 selection parsed by the same `threadModel` check and preflighted by the same `launchSelectionFor` as every pinned thread, with no default and no fallback.
+- Audit round 1 of the overhead monitor (PR #109): an investigation is a reservation (`pending`, `open`, `closed`) recorded with its brief before any command goes out, with every id derived from its id so a repeat is the same commands. Only a launch that sent nothing releases it; an unknown outcome counts as launched and is reconciled against T3 (`getThreadProjection`, absent only on T3's "No orchestration projection exists" reply). A stale reservation (past `ttlHours`) stays held until T3 shows the thread idle, archived or gone; no clock alone frees a slot. Closed history is capped, held reservations never are. A missing baseline, a missing fleet host or a non-finite value is unavailable and crosses nothing, price lookup is by own key, and failed reads show an error class, never tool text. This is ISC-10.
 
 ## Status
 
