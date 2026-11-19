@@ -344,8 +344,12 @@ What is measured, over a rolling window (default 24 h):
 - **Cost per merged PR** = Steward spend + Chamberlain's classifier spend, divided by the PRs merged in the window. Merged PRs are the proxy for
   work done, for now. Zero PRs never divides: the number is shown as "no PR merged", and `zeroPrFloorUsd` says what spend then crosses.
 - **No-op wake rate** = wakes that made no tool call / wakes measured with tool counts. Not judged on fewer than `minWakes` wakes.
-- **Overhead share** (the headline) = Chamberlain-caused spend (the Steward, Chamberlain's own model calls, the threads it launches, the
-  investigator) / the whole fleet's Claude spend, over the window. **Experiments are in neither side** (`excludeProjects`, `excludeLabels`).
+- **Chamberlain-caused spend** = the Steward's tokens, Chamberlain's own model calls, and what the **butlers and investigators it launched** spent.
+  Those threads are named by **Chamberlain's own launch records** (the butler ledger and the investigations in its state), never by a project or a
+  title, which any other session could share: LifeOS gives the spend of the sessions that ran for those thread ids
+  (`metadata->>'t3_thread_id'`). A launched thread with no session is said so and adds nothing (its spend is unknown, not $0); if the read
+  fails the caused spend is unavailable.
+- **Overhead share** (the headline) = Chamberlain-caused spend / the whole fleet's Claude spend, over the window. **Experiments are in neither side** (`excludeProjects`, `excludeLabels`).
   The **Steward-only share**, the Steward's own spend / the same fleet spend, is shown beside it. Its key is `triggers.spendShare`.
 - **Managed overhead ratio** = Chamberlain-caused spend (the numerator of the overhead share) / the spend of the T3 threads Chamberlain
   **supervised** in the window, experiments excluded. Also shown: the count of managed threads, the cost per managed thread (caused spend /
@@ -396,12 +400,11 @@ panel) and in the brief the investigator is given.
 | `github.rollupTitle` | `^Rollup of \d+ pull requests?` | The pattern (case-insensitive) that marks a PR as a rollup. |
 | `prices` | none | USD **per million tokens**, per model: `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, all required, each zero or more. Chamberlain ships no rates; copy the ones you pay from your vendor's price list and keep them current. The Steward's model is the one `models.steward` names, and is looked up here. |
 | `cacheWrite` | `"1h"` | Which cache-write rate the usage rows are priced at, `"5m"` or `"1h"` (the rows do not say which TTL wrote them). Check it once against your provider's billing. |
-| `excludeProjects` | none | Session projects that are experiments, not work (an eval project, say): their spend is in **neither** the fleet total **nor** any Chamberlain-caused figure, and is shown apart as "EXCLUDED experiments". Empty by default; nothing is excluded unless you say so. An excluded project that is also in `fleet.spawnedProjects` is excluded. |
+| `excludeProjects` | none | Session projects that are experiments, not work (an eval project, say): their spend is in **neither** the fleet total **nor** any Chamberlain-caused figure, and is shown apart as "EXCLUDED experiments". Empty by default; nothing is excluded unless you say so. |
 | `excludeLabels` | none | The same, for sessions that carry any of these labels (what a runner such as an eval harness stamps on the sessions it launches). A request with no session row cannot be told to be an experiment, so it stays in the total. |
 | `fleet.source` | `"off"` | Where the whole fleet's spend comes from, for the overhead share: `"off"` (no share), or `"lifeos"`: a read-only `SELECT` through the LifeOS query tool over its `otel_api_requests` and `sessions` tables. |
 | `fleet.command` | `"lifeos-axi"` | The query command for source `"lifeos"`; it is run as `<command> query --sql <SELECT>`. |
 | `fleet.hosts` | none | Hosts the fleet total should include. One with no rows in the window is named in the report. |
-| `fleet.spawnedProjects` | none | Session projects whose spend counts as threads Chamberlain's Steward launches (butlers, say), added to the overhead. Experiments are not among them: `excludeProjects` wins. |
 | `triggers.costPerPr` | `mode: "report"` | `mode` is `"report"` (shown only) or `"trigger"`. Crosses when the window's cost per PR is above `fixedUsd`, or above `baselineMultiplier` x the baseline's cost per PR (whichever are given; the lower applies). `zeroPrFloorUsd`: with no PR merged, spend above it crosses. A trigger needs at least one of the three, and `github.owners` or `github.repos`. |
 | `triggers.noopRate` | `mode: "report"`, `minWakes: 20` | Crosses when the share of wakes with no tool call is above `threshold` (above 0, up to 1; `0.1` is 10%), on at least `minWakes` measured wakes. |
 | `triggers.managedRatio` | `mode: "report"`, `minCoverage: 0.9` | Judges the managed overhead ratio. `"trigger"` needs a `threshold` (above 0) and `fleet.source` `"lifeos"`, and crosses when the ratio is above it **and** at least `minCoverage` (above 0, up to 1) of the managed threads are mapped; below that coverage it never crosses, whatever `mode` says. `"report"` with a `threshold` shows it as a target. |
@@ -409,7 +412,7 @@ panel) and in the brief the investigator is given.
 | `investigator.enabled` | `false` | Open an investigator thread on a crossing. Needs `model` and `projectId`. |
 | `investigator.model` | none | The provider, model and effort of the thread: a T3 selection, `{ adapter, server, instanceId, model, options }`, the same shape `models.<role>` takes and checked the same way against the server's catalog before anything starts (no default, no fallback to another provider). |
 | `investigator.projectId` | none | The T3 project the thread is created in. |
-| `investigator.title` | `"Overhead investigation"` | The thread's title starts with this; its own spend is found by it and shown as its own line. |
+| `investigator.title` | `"Overhead investigation"` | The thread's title starts with this. Its own spend is found by the thread id Chamberlain recorded for it, not by the title, and shown as its own line. |
 | `investigator.cooldownHours` | `24` | One investigation per this long, counted from when the last one was **reserved**, a launch with an unknown outcome included. A wall clock that jumps forward cannot shorten it (the monotonic clock is also consulted). |
 | `investigator.maxOpen` | `1` | Investigations that may be held at once, held meaning pending or open. One is released when the investigator runs `chamberlain overhead close <id>`, or when `ttlHours` has passed **and** T3 shows its thread idle, archived or gone. |
 | `investigator.ttlHours` | `72` | After this long an investigation is **stale**: reported in the numbers, and still held. The clock alone never frees a slot, so a thread that is still working cannot be joined by a second investigator. |

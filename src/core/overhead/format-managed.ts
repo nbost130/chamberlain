@@ -37,6 +37,23 @@ function judged(t: OverheadReport["limits"]["managedRatio"]): string {
 	return `report only${t.threshold === undefined ? "" : `, target at most ${pct(t.threshold)}`}; judged only at coverage ${pct(t.minCoverage)} or more`;
 }
 
+/** The fleet total by host, what Chamberlain's launched butlers and investigators spent (by its launch records), and what was left out as experiments. */
+export function fleetLines(r: OverheadReport): string[] {
+	const out: string[] = [];
+	if (r.fleet) {
+		const hosts = Object.entries(r.fleet.byHost).map(([h, v]) => `${h} ${usd(v)}`);
+		const excluded = r.fleet.excludedUsd > 0 ? `; EXCLUDED experiments ${usd(r.fleet.excludedUsd)} (in no figure)` : "";
+		out.push(`    fleet ${usd(r.fleet.totalUsd)} (${hosts.join(", ")})${excluded}`);
+	}
+	if (r.launched) {
+		const l = r.launched;
+		out.push(
+			`    launched by Chamberlain (its own records): butlers ${usd(l.butlersUsd)} (${l.butlers} threads), investigators ${usd(l.investigatorsUsd)} (${l.investigators})${l.unmapped ? `, ${l.unmapped} with no session` : ""}`,
+		);
+	}
+	return out;
+}
+
 /** The lines of the table: the ratio, the thread count and cost per thread, and the coverage by host. */
 export function managedLines(r: OverheadReport, W: string): string[] {
 	const m = summarizeManaged(r);

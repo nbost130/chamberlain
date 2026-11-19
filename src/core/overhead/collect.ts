@@ -12,9 +12,10 @@ import { SENDS_TEXT } from "../classifier/config.ts";
 import type { GhRead } from "../decide/hold-lookup.ts";
 import { errClass } from "../obs/fields.ts";
 import type { Store } from "../store/store.ts";
-import { causedUsdOf, type ManagedSection, readManaged } from "./collect-managed.ts";
+import { type LaunchedSpend, type ManagedSection, readSupervision } from "./collect-managed.ts";
 import { DAY_MS, HOUR_MS, type OverheadConfig, perPrConfigured } from "./config.ts";
 import { type FleetSpend, fleetSpend, type RunQuery } from "./fleet-spend.ts";
+import type { OwnThreads } from "./managed.ts";
 import { mergedPrs } from "./merged-prs.ts";
 import {
 	type Crossing,
@@ -54,6 +55,8 @@ export type OverheadReport = {
 	spendShare?: number;
 	/** The Steward's own spend / the same fleet spend, shown beside the headline. */
 	stewardShare?: number;
+	/** What the butlers and investigators Chamberlain launched spent in the window, found by its own launch records. Undefined when it could not be read. */
+	launched?: LaunchedSpend;
 	/**
 	 * The MANAGED overhead ratio: Chamberlain-caused spend / the spend of the T3 threads Chamberlain supervised in the window, with the count, the cost
 	 * per managed thread and the COVERAGE (how many managed threads had a LifeOS session to take spend from). Below full coverage the ratio is partial.
@@ -81,7 +84,7 @@ export type CollectDeps = {
 	/** The Steward's model from the central selection. */
 	model?: string;
 	/** The threads Chamberlain runs itself (pinned, butlers, investigators): never counted as managed. */
-	own?: readonly string[];
+	own?: Partial<OwnThreads>;
 	gh: GhRead;
 	query?: RunQuery;
 	now: number;
@@ -137,17 +140,21 @@ function stewardPrice(d: CollectDeps, unavailable: string[]) {
 }
 
 /**
- * The overhead share, (Steward + Chamberlain's own calls + spawned threads + the investigator) / the fleet's spend, and the Steward's own share of
- * the same fleet; each undefined when either side is unknown. Experiments are already out of the fleet and spawned figures (fleet-spend.ts). A
- * configured host with no rows makes the denominator short by what it spent, so both are unavailable then, never a partial figure.
+ * The overhead share, Chamberlain-caused spend (the Steward, its own calls, the butlers and investigators it launched) / the fleet's spend, and the
+ * Steward's own share of the same fleet; each undefined when either side is unknown. Experiments are out of the fleet and of the launched threads'
+ * spend. A configured host with no rows makes the denominator short by what it spent, so both are unavailable then, never a partial figure.
  */
-function sharesOf(fleet: FleetSpend | undefined, day: WindowMetrics): { overhead?: number; steward?: number } {
+function sharesOf(
+	fleet: FleetSpend | undefined,
+	day: WindowMetrics,
+	causedUsd: number | undefined,
+): { overhead?: number; steward?: number } {
 	if (!fleet || fleet.missingHosts.length || !usable(fleet.totalUsd) || fleet.totalUsd <= 0) return {};
 	const ratio = (n: number | undefined) => {
 		const r = n === undefined ? undefined : n / fleet.totalUsd;
 		return usable(r) ? r : undefined;
 	};
-	const overhead = usable(day.basisUsd) ? ratio(day.basisUsd + fleet.spawnedUsd + fleet.investigatorUsd) : undefined;
+	const overhead = ratio(causedUsd);
 	const steward = ratio(day.stewardUsd);
 	return { ...(overhead !== undefined ? { overhead } : {}), ...(steward !== undefined ? { steward } : {}) };
 }
@@ -190,13 +197,10 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 	const window = windowsOf(d, price, pr.prs);
 	const day = window(d.now - W, d.now);
 	const baseline = window(d.now - W - B, d.now - W);
-	const { overhead: spendShare, steward: stewardShare } = sharesOf(fl.fleet, day);
-	const managed = await readManaged(
-		{ store: d.store, cfg: d.cfg, own: d.own ?? [], ...(d.query ? { query: d.query } : {}) },
-		{ from: d.now - W, to: d.now },
-		causedUsdOf(day, fl.fleet),
-		notes,
-	);
+	const own = { pinned: [], butlers: [], investigators: [], ...d.own };
+	const source = { store: d.store, cfg: d.cfg, own, ...(d.query ? { query: d.query } : {}) };
+	const { launched, causedUsd, managed } = await readSupervision(source, { from: d.now - W, to: d.now }, day, notes);
+	const { overhead: spendShare, steward: stewardShare } = sharesOf(fl.fleet, day, causedUsd);
 	if (fl.fleet?.missingHosts.length)
 		notes.unavailable.push(
 			`spend share: no fleet rows for ${fl.fleet.missingHosts.join(", ")} in the window, so the total is short`,
@@ -216,6 +220,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 		...(fl.fleet ? { fleet: fl.fleet } : {}),
 		...(spendShare !== undefined ? { spendShare } : {}),
 		...(stewardShare !== undefined ? { stewardShare } : {}),
+		...(launched ? { launched } : {}),
 		managed,
 		crossings: crossings({
 			day,

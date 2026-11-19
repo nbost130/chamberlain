@@ -4,6 +4,7 @@ import { THREADS } from "../config/layout-schema.ts";
 import { parseModels } from "../llm/selection.ts";
 import type { Store } from "../store/store.ts";
 import { type OverheadConfig, parseOverhead } from "./config.ts";
+import type { OwnThreads } from "./managed.ts";
 import { readOverheadState } from "./trigger.ts";
 
 /** The Steward's model when `models.steward` is a T3 selection: the model whose rates price the Steward's tokens. */
@@ -18,15 +19,19 @@ export function overheadSettings(conf: string): { cfg: OverheadConfig; model?: s
 	return { cfg: parseOverhead(cfg(conf, "overhead"), model), ...(model ? { model } : {}) };
 }
 
+const ids = (list: readonly (string | undefined)[]): string[] => [
+	...new Set(list.filter((t): t is string => typeof t === "string" && !!t)),
+];
+
 /**
- * The T3 threads Chamberlain runs itself, which are never counted as managed: the pinned Steward, Decisions and Desk threads, every butler it has
- * launched (the butler ledger) and every investigator it has opened. A past Steward is not listed here; its `compact` events are skipped by kind.
+ * The T3 threads Chamberlain runs itself, from its own records: the pinned Steward, Decisions and Desk threads (config.json `threads`), every
+ * butler it launched (the butler ledger) and every investigator it opened (the overhead state). None is counted as managed; the butlers and
+ * investigators are the threads it launched, whose spend is Chamberlain-caused. A past Steward is not listed; its `compact` events are skipped by kind.
  */
-export function ownThreads(conf: string, store: Pick<Store, "butlers" | "state">): string[] {
-	const pinned = THREADS.map((role) => thread(conf, role));
-	const butlers = store.butlers.list().map((b) => b.thread);
-	const investigators = readOverheadState(store).investigations.map((i) => i.threadId);
-	return [
-		...new Set([...pinned, ...butlers, ...investigators].filter((t): t is string => typeof t === "string" && !!t)),
-	];
+export function ownThreads(conf: string, store: Pick<Store, "butlers" | "state">): OwnThreads {
+	return {
+		pinned: ids(THREADS.map((role) => thread(conf, role))),
+		butlers: ids(store.butlers.list().map((b) => b.thread)),
+		investigators: ids(readOverheadState(store).investigations.map((i) => i.threadId)),
+	};
 }

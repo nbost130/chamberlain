@@ -23,6 +23,7 @@ import { HOUR_MS, type OverheadConfig } from "./config.ts";
 import type { RunQuery } from "./fleet-spend.ts";
 import { summarize } from "./format.ts";
 import { type Investigator, LaunchRefused } from "./investigator.ts";
+import type { OwnThreads } from "./managed.ts";
 import { priceOf } from "./prices.ts";
 import {
 	decide,
@@ -49,7 +50,7 @@ export type OverheadTickDeps = {
 	gh: GhRead;
 	query?: RunQuery;
 	/** The threads Chamberlain runs itself, read at each measurement: never counted as managed (settings.ts `ownThreads`). */
-	own?: () => readonly string[];
+	own?: () => OwnThreads;
 	/** Absent: no investigator can be launched (not configured), and a crossing is only recorded. */
 	investigator?: Investigator;
 	commands: BriefCommands;

@@ -40,21 +40,69 @@ describe("the headline: Chamberlain-caused spend over the spend of the threads i
 		expect(formatOverhead(r)).not.toContain("PARTIAL");
 	});
 
-	test("the caused spend counts the threads Chamberlain launches and the investigator, as the overhead share does", async () => {
+	test("the caused spend counts the butlers and investigators Chamberlain launched, found by the thread ids in its own records", async () => {
 		const { s, sessions } = supervised(10);
-		const cfg = lifeosCfg({}, { fleet: { source: "lifeos", spawnedProjects: ["helpers"] } });
-		const query = async (c: string, a: string[]) =>
-			(a[2] ?? "").includes("'mthread'")
-				? lifeos(sessions)(c, a)
-				: "k,name,micros\nfleet,h1,300000000\nspawned,helpers,6000000\ninvestigator,investigator,4000000";
-		const r = await managedReport(s, cfg, query);
+		const all: Sessions = {
+			...sessions,
+			b1: { host: "mac", micros: 4_000_000 },
+			b2: { host: "omar", micros: 2_000_000 },
+			inv: { host: "mithrandir", micros: 4_000_000 },
+		};
+		const r = await managedReport(s, lifeosCfg(), lifeos(all), { butlers: ["b1", "b2"], investigators: ["inv"] });
+		expect(r.launched).toEqual({ butlers: 2, investigators: 1, butlersUsd: 6, investigatorsUsd: 4, unmapped: 0 });
 		expect(r.managed.causedUsd).toBeCloseTo(100, 6);
 		expect(r.managed.ratio).toBeCloseTo(100 / 300, 9);
+		expect(r.spendShare).toBeCloseTo(100 / 300, 9);
+		expect(formatOverhead(r)).toContain(
+			"launched by Chamberlain (its own records): butlers $6.00 (2 threads), investigators $4.00 (1)",
+		);
 	});
 
-	test("threads Chamberlain runs itself are not counted among the managed ones", async () => {
+	test("a session that merely sits in a project or has a title like a butler's is not a launched thread: only the records count", async () => {
 		const { s, sessions } = supervised(10);
-		const r = await managedReport(s, lifeosCfg(), lifeos(sessions), ["t0", "t1"]);
+		const r = await managedReport(
+			s,
+			lifeosCfg(),
+			lifeos({ ...sessions, lookalike: { host: "mac", micros: 50_000_000 } }),
+		);
+		expect(r.launched).toEqual({ butlers: 0, investigators: 0, butlersUsd: 0, investigatorsUsd: 0, unmapped: 0 });
+		expect(r.managed.causedUsd).toBeCloseTo(90, 6);
+	});
+
+	test("a launched thread with no LifeOS session is said so and adds nothing: its spend is unknown, never $0 that looks measured", async () => {
+		const { s, sessions } = supervised(10);
+		const r = await managedReport(s, lifeosCfg(), lifeos({ ...sessions, b1: { host: "mac", micros: 4_000_000 } }), {
+			butlers: ["b1", "b2"],
+		});
+		expect(r.launched).toMatchObject({ butlers: 2, butlersUsd: 4, unmapped: 1 });
+		expect(r.unavailable.join(" ")).toContain("Chamberlain-launched threads: 1 of 2 have no LifeOS session");
+		expect(formatOverhead(r)).toContain("1 with no session");
+	});
+
+	test("when the launched threads' spend cannot be read, the caused spend and the shares are unavailable, never short", async () => {
+		const { s } = supervised(10);
+		const query = async (_c: string, a: string[]) => {
+			if ((a[2] ?? "").includes("'b1'")) throw Error("LifeOS query failed: no route");
+			return (a[2] ?? "").includes("'mthread'")
+				? "k,name,micros"
+				: "k,name,micros\nfleet,h1,200000000\nfleet,h2,100000000";
+		};
+		const r = await managedReport(s, lifeosCfg(), query, { butlers: ["b1"] });
+		expect(r.launched).toBeUndefined();
+		expect(r.managed.causedUsd).toBeUndefined();
+		expect(r.fleetStatus).toBe("ok");
+		expect(r.spendShare).toBeUndefined();
+		expect(r.unavailable.join(" ")).toContain("Chamberlain-launched threads: unavailable (other)");
+	});
+
+	test("threads Chamberlain runs itself (pinned, butlers, investigators) are not counted among the managed ones, even when they fire", async () => {
+		const { s, sessions } = supervised(10);
+		fire(s, "b1", "mac");
+		const r = await managedReport(s, lifeosCfg(), lifeos(sessions), {
+			pinned: ["t0"],
+			butlers: ["b1"],
+			investigators: ["t1"],
+		});
 		expect(r.managed.report?.threads).toBe(8);
 	});
 

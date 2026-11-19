@@ -73,7 +73,10 @@ describe("the threads Chamberlain runs itself", () => {
 			});
 			recordOpened(store, { id: "OV-1", openedAt: 1, status: "open", threadId: "T-inv", crossings: [] });
 			recordOpened(store, { id: "OV-2", openedAt: 2, status: "pending", crossings: [] });
-			expect(ownThreads(dir, store).sort()).toEqual(["T-butler", "T-decisions", "T-inv", "T-steward"]);
+			const own = ownThreads(dir, store);
+			expect(own.pinned).toEqual(["T-steward", "T-decisions"]);
+			expect(own.butlers).toEqual(["T-butler", "T-steward"]);
+			expect(own.investigators).toEqual(["T-inv"]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

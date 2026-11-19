@@ -5,7 +5,7 @@
  */
 import type { OverheadReport, Status } from "./collect.ts";
 import { DAY_MS, HOUR_MS } from "./config.ts";
-import { managedLine, managedLines, pct, summarizeManaged, usd } from "./format-managed.ts";
+import { fleetLines, managedLine, managedLines, pct, summarizeManaged, usd } from "./format-managed.ts";
 import type { WindowMetrics } from "./metrics.ts";
 import { isHeld, type OverheadState, type OverheadSummary } from "./trigger.ts";
 
@@ -95,14 +95,7 @@ export function formatOverhead(r: OverheadReport): string {
 		`  overhead share       ${W} ${shareText(r.fleetStatus, r.spendShare, r.stewardShare)}  (${shareMode(r.limits.spendShare)})`,
 	];
 	out.push(...managedLines(r, W));
-	if (r.fleet)
-		out.push(
-			`    fleet ${usd(r.fleet.totalUsd)} (${Object.entries(r.fleet.byHost)
-				.map(([h, v]) => `${h} ${usd(v)}`)
-				.join(
-					", ",
-				)}); spawned threads ${usd(r.fleet.spawnedUsd)}; investigator ${usd(r.fleet.investigatorUsd)}${r.fleet.excludedUsd > 0 ? `; EXCLUDED experiments ${usd(r.fleet.excludedUsd)} (in no figure)` : ""}`,
-		);
+	out.push(...fleetLines(r));
 	out.push("", `  trend (${W} windows)    day     PRs   $/PR      no-op   Steward`);
 	for (const w of r.trend)
 		out.push(

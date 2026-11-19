@@ -25,6 +25,13 @@ export type ManagedThread = { id: string; server?: string };
 /** One mapped thread's sessions on one host, and what they spent in the window (experiments excluded). */
 export type ThreadSpend = { id: string; host: string; usd: number };
 
+/**
+ * The T3 threads Chamberlain runs itself, as ITS OWN RECORDS name them, never by a project or a title: the pinned Steward, Decisions and Desk
+ * threads, the butlers of the butler ledger, and the investigators it opened. None is a managed thread. The butlers and investigators are the
+ * threads Chamberlain LAUNCHED, so their spend is Chamberlain-caused; the pinned Steward's is already counted from its own transcript.
+ */
+export type OwnThreads = { pinned: readonly string[]; butlers: readonly string[]; investigators: readonly string[] };
+
 export type ManagedReport = {
 	threads: number;
 	mapped: number;

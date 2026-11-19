@@ -198,24 +198,21 @@ describe("fails closed", () => {
 
 describe("the fleet share", () => {
 	const cfg = cfgWith({
-		fleet: { source: "lifeos", hosts: ["h1", "h2"], spawnedProjects: ["evals"] },
+		fleet: { source: "lifeos", hosts: ["h1", "h2"] },
 		triggers: { spendShare: { mode: "trigger", threshold: 0.3 } },
 	});
 
-	test("is (Steward + spawned threads + investigator) / fleet, a share over the window, with a trigger the operator set", async () => {
-		const query = async () =>
-			answer([
-				"fleet,h1,200000000",
-				"fleet,h2,100000000",
-				"spawned,evals,6000000",
-				"investigator,investigator,4000000",
-			]);
-		const r = await run(cfg, storeWith(rows()), { query });
+	test("is (Steward + the butlers and investigators in Chamberlain's records) / fleet, a share over the window, with a trigger the operator set", async () => {
+		const query = async (_c: string, a: string[]) =>
+			(a[2] ?? "").includes("'mthread'")
+				? answer(["mthread,mac b1,6000000", "mthread,mac inv,4000000"])
+				: answer(["fleet,h1,200000000", "fleet,h2,100000000"]);
+		const r = await run(cfg, storeWith(rows()), { query, own: { butlers: ["b1"], investigators: ["inv"] } });
 		expect(r.fleetStatus).toBe("ok");
 		expect(r.spendShare).toBeCloseTo((90 + 6 + 4) / 300, 6);
 		expect(r.crossings).toHaveLength(1);
 		expect(r.crossings[0]).toMatchObject({ metric: "spendShare" });
-		expect(formatOverhead(r)).toContain("investigator $4.00");
+		expect(formatOverhead(r)).toContain("investigators $4.00");
 	});
 
 	test("a configured host with no rows is named and makes the share unavailable: a short total is never a smaller denominator that can trigger", async () => {

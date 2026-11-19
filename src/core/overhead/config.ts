@@ -38,8 +38,7 @@ export type OverheadConfig = {
 	cacheWrite: CacheWrite;
 	/**
 	 * Sessions that are experiments, not work, left out of the fleet total AND out of every Chamberlain-caused figure: a session whose project
-	 * is in `excludeProjects`, or that carries any of `excludeLabels`. Empty by default; nothing is excluded unless the operator says so. An
-	 * excluded spawned project (`fleet.spawnedProjects`) is excluded, the exclusion winning.
+	 * is in `excludeProjects`, or that carries any of `excludeLabels`. Empty by default; nothing is excluded unless the operator says so.
 	 */
 	excludeProjects: string[];
 	excludeLabels: string[];
@@ -49,8 +48,6 @@ export type OverheadConfig = {
 		command: string;
 		/** Hosts the fleet total should cover; one with no rows in the window is named in the report. */
 		hosts: string[];
-		/** Session projects whose spend is reported as Chamberlain-spawned eval and butler threads. */
-		spawnedProjects: string[];
 	};
 	triggers: {
 		/** Spend per merged PR. Crosses above `fixedUsd`, or above `baselineMultiplier` x the baseline period's cost per PR (the lower of those given). `zeroPrFloorUsd`: with no PR merged, spend above this crosses. */
@@ -103,7 +100,7 @@ export const OVERHEAD_DEFAULTS: OverheadConfig = {
 	cacheWrite: "1h",
 	excludeProjects: [],
 	excludeLabels: [],
-	fleet: { source: "off", command: "lifeos-axi", hosts: [], spawnedProjects: [] },
+	fleet: { source: "off", command: "lifeos-axi", hosts: [] },
 	triggers: {
 		costPerPr: { mode: "report" },
 		noopRate: { mode: "report", minWakes: 20 },
@@ -162,12 +159,11 @@ function parseGithub(raw: unknown, where: string): OverheadConfig["github"] {
 function parseFleet(raw: unknown, where: string): OverheadConfig["fleet"] {
 	const d = OVERHEAD_DEFAULTS.fleet;
 	if (raw === undefined) return structuredClone(d);
-	const o = object(raw, where, ["source", "command", "hosts", "spawnedProjects"]);
+	const o = object(raw, where, ["source", "command", "hosts"]);
 	return {
 		source: oneOf(o, "source", where, { allowed: ["off", "lifeos"], d: d.source }),
 		command: plain(o, "command", where, d.command),
 		hosts: names(o, "hosts", where),
-		spawnedProjects: names(o, "spawnedProjects", where),
 	};
 }
 

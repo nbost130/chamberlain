@@ -10,7 +10,7 @@ import { formatOverhead, summarize, summaryLine } from "./format.ts";
 const cfg = cfgWith({
 	excludeProjects: ["lab"],
 	excludeLabels: ["assay"],
-	fleet: { source: "lifeos", hosts: ["h1", "h2"], spawnedProjects: ["helpers", "lab"] },
+	fleet: { source: "lifeos", hosts: ["h1", "h2"] },
 	triggers: { spendShare: { mode: "report", threshold: 0.2 } },
 });
 const csv = (...rows: string[]) => ["k,name,micros", ...rows].join("\n");
@@ -35,20 +35,14 @@ describe("the exclusion is configuration, empty by default", () => {
 	});
 });
 
-describe("the query leaves experiments out of every slice and reports them apart", () => {
+describe("the query leaves experiments out of the fleet total and reports them apart", () => {
 	const sql = fleetSql(cfg, NOW - 1000, NOW);
 
-	test("the fleet total, the spawned slice and the investigator slice all carry the same exclusion", () => {
+	test("the fleet total carries the exclusion, through a LEFT JOIN so a request with no session row stays in", () => {
 		const excluded =
 			"NOT (coalesce(s.project IN ('lab'), false) OR coalesce(s.labels && ARRAY['assay']::text[], false))";
-		expect(sql.split(excluded)).toHaveLength(4);
+		expect(sql.split(excluded)).toHaveLength(2);
 		expect(sql).toContain("LEFT JOIN sessions");
-	});
-
-	test("an excluded project that is also a spawned project is excluded: the exclusion wins", () => {
-		const spawned = sql.split(" UNION ALL ").find((s) => s.startsWith("SELECT 'spawned'")) ?? "";
-		expect(spawned).toContain("s.project IN ('helpers', 'lab')");
-		expect(spawned).toContain("AND NOT (coalesce(s.project IN ('lab')");
 	});
 
 	test("their own spend is one more slice, selected by the opposite condition", () => {
@@ -67,14 +61,11 @@ describe("the query leaves experiments out of every slice and reports them apart
 });
 
 describe("the headline overhead share, and the Steward-only share beside it", () => {
-	const answer = (excluded: number) =>
-		csv(
-			"fleet,h1,200000000",
-			"fleet,h2,100000000",
-			"spawned,helpers,6000000",
-			"investigator,investigator,4000000",
-			`excluded,excluded,${excluded}`,
-		);
+	const answer = (excluded: number) => csv("fleet,h1,200000000", "fleet,h2,100000000", `excluded,excluded,${excluded}`);
+	/** The thread ids in Chamberlain's own records, and what their sessions spent: a butler $6, an investigator $4. */
+	const launched = { butlers: ["b1"], investigators: ["inv"] };
+	const query = (excluded: number) => async (_c: string, a: string[]) =>
+		(a[2] ?? "").includes("'mthread'") ? csv("mthread,mac b1,6000000", "mthread,mac inv,4000000") : answer(excluded);
 	const report = async (excluded: number) => {
 		const store = memStore();
 		store.usage.upsert(stewardDay());
@@ -82,13 +73,14 @@ describe("the headline overhead share, and the Steward-only share beside it", ()
 			store,
 			cfg,
 			model: MODEL,
+			own: launched,
 			gh: async () => ({ total: 0, incomplete: false, items: [] }),
-			query: async () => answer(excluded),
+			query: query(excluded),
 			now: NOW,
 		});
 	};
 
-	test("overhead share is (Steward + spawned + investigator) / fleet, experiments out of both; Steward-only is Steward / the same fleet", async () => {
+	test("overhead share is (Steward + launched butlers and investigators) / fleet, experiments out of both; Steward-only is Steward / the same fleet", async () => {
 		const r = await report(40_000_000);
 		expect(r.spendShare).toBeCloseTo((90 + 6 + 4) / 300, 9);
 		expect(r.stewardShare).toBeCloseTo(90 / 300, 9);
@@ -147,6 +139,6 @@ describe("the headline overhead share, and the Steward-only share beside it", ()
 			now: NOW,
 		});
 		expect(r.crossings.map((c) => c.metric)).toEqual(["spendShare"]);
-		expect(r.crossings[0]?.detail).toContain("33.3%");
+		expect(r.crossings[0]?.detail).toContain("30.0%");
 	});
 });

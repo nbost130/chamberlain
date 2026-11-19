@@ -1,6 +1,7 @@
 /** A rig for the managed overhead ratio's tests: threads Chamberlain supervised (fire events and wake members), and a fake LifeOS that knows which sessions ran for which thread. */
 import { collect } from "../core/overhead/collect.ts";
 import type { OverheadConfig } from "../core/overhead/config.ts";
+import type { OwnThreads } from "../core/overhead/managed.ts";
 import { HOUR, MODEL, NOW, wake } from "./overhead-fixtures.ts";
 import { memStore } from "./store.ts";
 
@@ -46,7 +47,13 @@ export function lifeos(sessions: Sessions, calls: string[] = []) {
 	};
 }
 
-export const managedReport = (s: Store, cfg: OverheadConfig, query: ReturnType<typeof lifeos>, own: string[] = []) =>
+/** `own` names the threads Chamberlain runs itself: `pinned`, the ledger's `butlers`, and its `investigators`. */
+export const managedReport = (
+	s: Store,
+	cfg: OverheadConfig,
+	query: ReturnType<typeof lifeos>,
+	own: Partial<OwnThreads> = {},
+) =>
 	collect({
 		store: s,
 		cfg,

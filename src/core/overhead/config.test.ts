@@ -56,7 +56,7 @@ describe("a full section is read", () => {
 			},
 			prices,
 			cacheWrite: "5m",
-			fleet: { source: "lifeos", command: "fleet-query", hosts: ["h1"], spawnedProjects: ["evals"] },
+			fleet: { source: "lifeos", command: "fleet-query", hosts: ["h1"] },
 			triggers: {
 				costPerPr: { mode: "trigger", baselineMultiplier: 2, fixedUsd: 9, zeroPrFloorUsd: 3 },
 				noopRate: { mode: "trigger", threshold: 0.2, minWakes: 5 },
@@ -143,7 +143,7 @@ describe("bad values are refused with the key named", () => {
 		refuses({ github: { repos: ["not-a-repo"] } }, /repos must be a list of owner\/name repositories/);
 		refuses({ github: { excludeRepos: ["x/y z"] } }, /excludeRepos must be a list of owner\/name repositories/);
 		refuses({ fleet: { hosts: ["h'; --"] } }, /hosts must be a list of plain names/);
-		refuses({ fleet: { spawnedProjects: ["p'"] } }, /spawnedProjects must be a list of plain names/);
+		refuses({ fleet: { spawnedProjects: ["p"] } }, /overhead.fleet: unknown key "spawnedProjects"/);
 		refuses({ fleet: { command: "x; y" } }, /command must be a plain name/);
 		refuses({ investigator: { title: "a'" } }, /title must be a plain name/);
 	});
