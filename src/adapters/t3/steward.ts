@@ -7,42 +7,63 @@ import { existsSync } from "node:fs";
 import type { StewardProbe } from "../../core/adapter/adapter-inspect.ts";
 import { compactBlocked, queueStalled, readStewardQueue, stallAlarm } from "./queue.ts";
 
+/** What T3's own record says about the Steward's context and its compactions. Every field is absent when it could not be read. */
+type StewardRecord = { used?: number; contextTurn?: number; compactions?: number; compactionTurn?: number };
+
+const NEWEST_TURN =
+	"select ordinal, json_extract(payload_json, '$.tokenUsage.usedTokens') as used from orchestration_v2_projection_provider_turns where thread_id = ? order by ordinal desc limit 1";
+/** A compaction is a `compaction` turn item, completed, on the provider turn that ran it; that turn's own usage is the size AFTER it. */
+const COMPACTIONS =
+	"select count(*) as n, max(t.ordinal) as turn from orchestration_v2_projection_turn_items i left join orchestration_v2_projection_provider_turns t on t.provider_turn_id = i.provider_turn_id where i.thread_id = ? and i.type = 'compaction' and i.status = 'completed'";
+
 /**
- * The Steward's context from T3's own record, read-only: the NEWEST turn's size, and nothing older. A turn that has just begun carries no usage
- * yet, and then the size is unknown (undefined). An older turn's sample is never offered in its place: after a compaction, native or manual,
- * it would still read as the large pre-compaction size and prove that the rights survived it. An unknown size is handled by the callers
- * (the rights record is kept, but a wake sent while it is unknown carries the rights in full).
- * Undefined when there is no Steward here or its newest turn has no size.
+ * The Steward's context from T3's own record, read-only: the NEWEST turn's size and which turn that is, and nothing older. A turn that has just
+ * begun carries no usage yet, and then the size is unknown (undefined). An older turn's sample is never offered in its place: after a
+ * compaction it would still read as the large pre-compaction size. A merely unknown size proves nothing either way: the rights record is judged
+ * by the compactions counted here (`compactions`: how many have completed; `compactionTurn`: the turn that ran the newest, whose own size is
+ * the size after it), by a session or hash change, and by a large drop in size.
  */
-function stewardTokens(dbPath: string, threadId: string): number | undefined {
-	if (!existsSync(dbPath)) return undefined;
+function readSteward(dbPath: string, threadId: string): StewardRecord {
+	if (!existsSync(dbPath)) return {};
 	let db: Database;
 	try {
 		db = new Database(dbPath, { readonly: true });
 	} catch {
-		return undefined;
+		return {};
+	}
+	const out: StewardRecord = {};
+	try {
+		const turn = db.query(NEWEST_TURN).get(threadId) as { ordinal: number; used: number | null } | null;
+		if (turn) {
+			out.contextTurn = turn.ordinal;
+			if (turn.used !== null) out.used = turn.used;
+		}
+	} catch {
+		// An unreadable size only means the callers have nothing to judge a shrink by; it must never cost a wake.
 	}
 	try {
-		const row = db
-			.query(
-				"select json_extract(payload_json, '$.tokenUsage.usedTokens') as used from orchestration_v2_projection_provider_turns where thread_id = ? order by ordinal desc limit 1",
-			)
-			.get(threadId) as { used: number | null } | null;
-		return row?.used ?? undefined;
+		const c = db.query(COMPACTIONS).get(threadId) as { n: number; turn: number | null } | null;
+		if (c) {
+			out.compactions = c.n;
+			if (c.turn !== null) out.compactionTurn = c.turn;
+		}
 	} catch {
-		// An unknown size only means the full rights go again; it must never cost a wake.
-		return undefined;
+		// No compaction record readable: no evidence, which is not evidence of none.
 	} finally {
 		db.close();
 	}
+	return out;
 }
 
 /** The once-a-minute look at the Steward: size, whether the queue reads, whether it has stalled, and whether a compaction may go. */
 export function t3Probe(dbPath: string, threadId: string, now = Date.now()): StewardProbe {
-	const used = stewardTokens(dbPath, threadId);
+	const rec = readSteward(dbPath, threadId);
 	const queue = readStewardQueue(dbPath, threadId);
 	return {
-		...(used !== undefined ? { contextTokens: used } : {}),
+		...(rec.used !== undefined ? { contextTokens: rec.used } : {}),
+		...(rec.contextTurn !== undefined ? { contextTurn: rec.contextTurn } : {}),
+		...(rec.compactions !== undefined ? { compactions: rec.compactions } : {}),
+		...(rec.compactionTurn !== undefined ? { compactionTurn: rec.compactionTurn } : {}),
 		readable: Boolean(queue),
 		...(queue && queueStalled(queue, now) ? { stalled: stallAlarm(queue, now) } : {}),
 		compactBlocked: queue ? compactBlocked(queue, now) : "its queue could not be read",

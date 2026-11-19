@@ -71,20 +71,25 @@ describe("stewardInstruction", () => {
 });
 
 describe("rightsInFull", () => {
-	const sent = { hash: "a", used: 80_000 };
+	const sent = { hash: "a", used: 80_000, compactions: 3 };
 	test("the first wake after a start carries them", () => expect(rightsInFull(undefined, "a", 80_000)).toBe(true));
 	test("a change to the rights carries them", () => expect(rightsInFull(sent, "b", 90_000)).toBe(true));
-	test("a compaction carries them, because the context shrank", () =>
+	test("a collapse of the context (under 80% of the mark) carries them: a compaction", () =>
 		expect(rightsInFull(sent, "a", 50_000)).toBe(true));
-	test("an unknown context size carries them: a compaction may have happened and the newest turn has no usage yet", () =>
-		expect(rightsInFull(sent, "a", undefined)).toBe(true));
-	test("a record with no size mark has nothing to tell a shrink by, so doubt carries them", () =>
-		expect(rightsInFull({ hash: "a" }, "a", 80_000)).toBe(true));
-	test("any drop under the mark is a compaction, however small", () =>
-		expect(rightsInFull(sent, "a", 79_999)).toBe(true));
+	test("a compaction counted since the record was written carries them, whatever the size says", () =>
+		expect(rightsInFull(sent, "a", 95_000, 4)).toBe(true));
+	test("must skip: a size that could not be read just now is no evidence, so the pointer goes", () =>
+		expect(rightsInFull(sent, "a", undefined, 3)).toBe(false));
+	test("must skip: a compaction count that could not be read, or a record with no baseline, is no evidence", () => {
+		expect(rightsInFull(sent, "a", 80_000, undefined)).toBe(false);
+		expect(rightsInFull({ hash: "a", used: 80_000 }, "a", 80_000, 9)).toBe(false);
+		expect(rightsInFull({ hash: "a" }, "a", undefined)).toBe(false);
+	});
+	test("must skip: a small dip under the mark (the reading wobbling) is not a compaction", () =>
+		expect(rightsInFull(sent, "a", 70_000, 3)).toBe(false));
 	test("an ordinary next wake sends the short line", () => {
-		expect(rightsInFull(sent, "a", 80_000)).toBe(false);
-		expect(rightsInFull(sent, "a", 95_000)).toBe(false);
+		expect(rightsInFull(sent, "a", 80_000, 3)).toBe(false);
+		expect(rightsInFull(sent, "a", 95_000, 3)).toBe(false);
 	});
 });
 

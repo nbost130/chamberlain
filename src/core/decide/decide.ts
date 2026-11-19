@@ -263,6 +263,8 @@ export type RightsSent = {
 	steward?: string;
 	session?: string /** The rights epoch it was written under (rights-sent.ts, `rightsEpoch`); absent is 0. */;
 	epoch?: number;
+	/** How many compactions of the Steward's thread had completed when the full text went out: a later count is evidence they may have dropped it. */
+	compactions?: number;
 };
 /** The one line a wake carries when the rights and rulings have not changed since the full text went out at `at`. The hand-off holds them. */
 export const rightsUnchanged = (at?: string) =>
@@ -271,18 +273,42 @@ export const rightsUnreadable = () =>
 	`Decision rights: the daemon could not read them on this wake. Take no action on anything on the ASK list: put it on ${principalPoss()} queue with ask, and hold it only with --item.`;
 /** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
-/** Pure: did the context shrink from `mark`, the largest size seen since the full rights went? Any drop is one: a compaction (the daemon's, the harness's own, or a manual one) is the only thing that makes it smaller. */
-export const shrank = (mark: number, used: number): boolean => used < mark;
+/**
+ * A context that fell below this share of its high-water mark is a compaction or a new thread: a summary is a fraction of what it replaces.
+ * A smaller dip is the reading wobbling (T3 reports the latest request's size), never a lost record.
+ */
+const SHRINK_RATIO = 0.8;
+/** Pure: did the context collapse from `mark`, the largest size seen since the full rights went? */
+export const shrank = (mark: number, used: number): boolean => used < mark * SHRINK_RATIO;
 
 /**
- * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they changed, there is no size mark
- * to tell a shrink by, its size cannot be read just now (a compaction may have happened and the newest turn has no usage yet: doubt carries
- * them, inside this wake, never as a wake of their own), or its context shrank, which means a compaction or a new thread.
+ * Pure: the EVIDENCE that the Steward may have lost the rights a record says it holds, or undefined. A compaction counted since the record was
+ * written (the daemon's, the harness's own or a manual one: T3 stores each as a turn item), or a collapse of the context under 80% of its
+ * high-water mark. A size that could not be read, or a record with no baseline to compare, is NOT evidence: it proves nothing either way.
  */
-export function rightsInFull(sent: RightsSent | undefined, hash: string, used: number | undefined): boolean {
+export function rightsLost(
+	sent: Pick<RightsSent, "used" | "compactions"> | undefined,
+	now: { used?: number | undefined; compactions?: number | undefined },
+): "compaction" | "shrink" | undefined {
+	if (!sent) return undefined;
+	if (now.compactions !== undefined && sent.compactions !== undefined && now.compactions > sent.compactions)
+		return "compaction";
+	if (now.used !== undefined && sent.used !== undefined && shrank(sent.used, now.used)) return "shrink";
+	return undefined;
+}
+
+/**
+ * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they changed, or there is evidence
+ * they were lost (`rightsLost`). An unreadable context size alone is not: a wake sent mid-turn carries the one-line pointer.
+ */
+export function rightsInFull(
+	sent: RightsSent | undefined,
+	hash: string,
+	used: number | undefined,
+	compactions?: number,
+): boolean {
 	if (!sent || sent.hash !== hash) return true;
-	if (used === undefined || sent.used === undefined) return true;
-	return shrank(sent.used, used);
+	return rightsLost(sent, { used, compactions }) !== undefined;
 }
 
 /** The waiting questions and their options as plain text, clipped to what a wake should carry. */
