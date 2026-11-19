@@ -1,5 +1,7 @@
 /** The rights a wake needs ahead of it: finding the prerequisite wake, queueing it, and sending it first. */
 import { crashPoint } from "../crash.ts";
+import type { RightsSent } from "../decide/decide.ts";
+import { shrank } from "../decide/decide.ts";
 import { rightsInlineHead } from "../messages.ts";
 import { loadRightsSent, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
@@ -7,6 +9,20 @@ import type { OutboxRow } from "../store/store-wakes.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
 import { readRightsNow } from "./relay-compose.ts";
 import type { Ctx, InlineRights, RelayDeps, RightsNow } from "./relay-ctx.ts";
+
+/**
+ * Pure: why a record that matches in everything else still does not show the Steward holds the rights, from its context size. Unknown size: the
+ * newest turn has no usage, which is also what a compaction (the daemon's, the harness's own or a manual one) looks like until the next reply, so
+ * the record cannot prove anything and doubt sends them. A size under the record's high-water mark: it shrank, which only a compaction does.
+ */
+function sizeDoubt(record: RightsSent | undefined, now: RightsNow): string | undefined {
+	if (!record) return undefined;
+	if (now.used === undefined)
+		return "the Steward's context size cannot be read now, so it cannot be shown that the rights survived a compaction";
+	if (record.used !== undefined && shrank(record.used, now.used))
+		return `the context shrank (${record.used} to ${now.used}) since the rights were last delivered: a compaction`;
+	return undefined;
+}
 
 /**
  * `rightsInline`: what a Steward row that depends on the rights carries in its own POST. Nothing (undefined) when the durable record shows the
@@ -21,7 +37,8 @@ export async function inlineRights(
 ): Promise<InlineRights | null | undefined> {
 	const now = await readRightsNow(r, row, () => rightsNow(steward ? { steward } : undefined));
 	if (!now) return null;
-	const reason = rightsGap(loadRightsSent(r.store), now);
+	const record = loadRightsSent(r.store);
+	const reason = rightsGap(record, now) ?? sizeDoubt(record, now);
 	if (!reason) return undefined;
 	const w = now.wake(row.deliveryId);
 	r.d.log("rights-inlined", { deliveryId: row.deliveryId, reason });

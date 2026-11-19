@@ -69,10 +69,13 @@ export abstract class CoreRights extends CoreBase {
 			session = await this.stewardSession(),
 			rules = this.rightsRules();
 		const hash = rules === undefined ? undefined : rightsHash(steward, rules);
+		// The size as the compose path reads it (the newest turn's, never an older sample): the relay doubts a record when it is unknown or has shrunk.
+		const used = steward ? this.probe()?.contextTokens : undefined;
 		return {
 			...(steward ? { steward } : {}),
 			...(session ? { session } : {}),
 			...(hash ? { hash } : {}),
+			...(used !== undefined ? { used } : {}),
 			wake: (forId: string) => {
 				const full = this.wakeRights("", { full: true, session, ...(steward ? { steward } : {}) });
 				return {

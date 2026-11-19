@@ -76,12 +76,12 @@ describe("rightsInFull", () => {
 	test("a change to the rights carries them", () => expect(rightsInFull(sent, "b", 90_000)).toBe(true));
 	test("a compaction carries them, because the context shrank", () =>
 		expect(rightsInFull(sent, "a", 50_000)).toBe(true));
-	test("must skip: a size that could not be read just now is not a shrink; the minute check owns that", () =>
-		expect(rightsInFull(sent, "a", undefined)).toBe(false));
+	test("an unknown context size carries them: a compaction may have happened and the newest turn has no usage yet", () =>
+		expect(rightsInFull(sent, "a", undefined)).toBe(true));
 	test("a record with no size mark has nothing to tell a shrink by, so doubt carries them", () =>
 		expect(rightsInFull({ hash: "a" }, "a", 80_000)).toBe(true));
-	test("a small dip under the mark (the reading wobbling) is not a compaction", () =>
-		expect(rightsInFull(sent, "a", 70_000)).toBe(false));
+	test("any drop under the mark is a compaction, however small", () =>
+		expect(rightsInFull(sent, "a", 79_999)).toBe(true));
 	test("an ordinary next wake sends the short line", () => {
 		expect(rightsInFull(sent, "a", 80_000)).toBe(false);
 		expect(rightsInFull(sent, "a", 95_000)).toBe(false);

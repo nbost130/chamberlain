@@ -34,8 +34,9 @@ test("the context size is the newest turn's", () => {
 	).toBe(120_000);
 });
 
-test("a turn that has just begun and has no usage yet does not hide the size: the newest turn WITH one is read", () => {
-	// Reading only the newest row gave no size for the first minutes of every wake, and the missing size used to drop the rights record.
+test("a turn that has just begun and has no usage yet gives NO size, never an older turn's sample", () => {
+	// After a native or manual compaction the newest turn has no usage yet; an older turn's 120k would still read as the large pre-compaction
+	// size and prove that the rights survived it.
 	expect(
 		t3Probe(
 			t3Db([
@@ -45,7 +46,7 @@ test("a turn that has just begun and has no usage yet does not hide the size: th
 			]),
 			"th",
 		).contextTokens,
-	).toBe(120_000);
+	).toBeUndefined();
 });
 
 test("no turn with a size is no size, never zero", () => {

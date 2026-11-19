@@ -108,8 +108,9 @@ export function openRightsSent(store: Store, onError: (e: unknown) => void = () 
 }
 
 /**
- * Pure: the record after the minute's size check. A real shrink (a compaction or a new thread: `shrank`) drops it; a size that could not be
- * read keeps it as it is (nothing to raise, nothing shown); the first size seen becomes the mark; otherwise the high-water mark rises.
+ * Pure: the record after the minute's size check. Any shrink under the mark (a compaction or a new thread: `shrank`) drops it; a size that could
+ * not be read keeps it as it is (nothing to raise, nothing shown: it is no evidence either way, and a wake sent while it is unknown carries the
+ * rights in full, `rightsInFull`); the first size seen becomes the mark; otherwise the high-water mark rises.
  */
 export function rightsHighWater(sent: RightsSent | undefined, used: number | undefined): RightsSent | undefined {
 	if (!sent) return undefined;
@@ -202,7 +203,7 @@ export const recordOf = (st: RightsStamp): RightsSent => ({
 export const needsRights = (stamps: readonly RightsStamp[] | undefined) => Boolean(stamps?.some((s) => !s.full));
 
 /** The Steward and the rights now: the state a rights prerequisite is keyed by. `hash` is absent when the rights cannot be read; `epoch` absent is 0. */
-export type RightsState = { steward?: string; session?: string; hash?: string; epoch?: number };
+export type RightsState = { steward?: string; session?: string; hash?: string; epoch?: number; used?: number };
 
 /**
  * Pure: why the durable record does not show that the Steward there now holds the rights in force now, or undefined when it does. It shows it

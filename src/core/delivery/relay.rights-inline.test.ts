@@ -16,13 +16,26 @@ const { rig, H1, H2, stamp, BLOCK } = useCoreRelayFixtures(createRelay);
 /** One Steward whose rights, session and thread the test moves; the full stamp carries the epoch it is composed under, as the engine's does. */
 function inlineWorld(o: { inline?: boolean } = {}) {
 	const store = memStore();
-	const st = { steward: "steward-1", session: "s1", hash: H1 };
+	const st: { steward: string; session: string; hash: string; used?: number } = {
+		steward: "steward-1",
+		session: "s1",
+		hash: H1,
+		used: 100_000,
+	};
 	const rightsNow = async () => ({
 		...st,
 		wake: (forId: string) => ({
 			message: `[chamberlain] rights for ${forId}\n${BLOCK}`,
 			text: `${BLOCK} (${st.hash.slice(0, 4)})`,
-			stamp: { ...st, at: "now", used: 10, full: true as const, epoch: rightsEpoch(store) },
+			stamp: {
+				steward: st.steward,
+				session: st.session,
+				hash: st.hash,
+				at: "now",
+				...(st.used !== undefined ? { used: st.used } : {}),
+				full: true as const,
+				epoch: rightsEpoch(store),
+			},
 		}),
 	});
 	const r = rig({ store, rightsNow, rightsInline: o.inline ?? true });
@@ -115,6 +128,28 @@ describe("rightsInline", () => {
 		expect(r.ids()).toEqual(["w1", "w1"]);
 		expect(r.posts[1]!.message).toContain(rightsInlineHead);
 		expect(r.record()).toMatchObject({ hash: H1 });
+	});
+
+	test("must send: a size that cannot be read now (the newest turn has no usage: what a native or manual compaction looks like) carries the block", async () => {
+		const r = inlineWorld();
+		r.pointer("w1");
+		await r.relay().pass();
+		delete r.st.used;
+		r.pointer("w2");
+		await r.relay().pass();
+		expect(r.posts[1]!.message).toContain(rightsInlineHead);
+		expect(r.events.filter((e) => e.event === "rights-inlined").at(-1)?.data?.reason).toContain("cannot be read");
+	});
+
+	test("must send: a context under the record's high-water mark (a compaction the daemon did not make) carries the block, whatever session, hash and epoch say", async () => {
+		const r = inlineWorld();
+		r.pointer("w1");
+		await r.relay().pass();
+		r.st.used = 99_999;
+		r.pointer("w2");
+		await r.relay().pass();
+		expect(r.posts[1]!.message).toContain(rightsInlineHead);
+		expect(r.events.filter((e) => e.event === "rights-inlined").at(-1)?.data?.reason).toContain("shrank");
 	});
 
 	test("with the flag off the standalone prerequisite is sent first, as before", async () => {

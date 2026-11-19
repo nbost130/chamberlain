@@ -95,10 +95,13 @@ describe("the Steward check: the rights high-water mark", () => {
 		await unknown.check();
 		expect(unknown.calls.slice(1)).toEqual([["rights-set", { hash: HASH, used: 500 }]]);
 	});
-	test("must keep: a small dip under the mark keeps the record and leaves the mark where it was", async () => {
-		const dip = rig({}, { sent: { hash: HASH, used: 120 } });
+	test("must drop: ANY drop under the mark (a native or manual compaction too) drops the record", async () => {
+		const dip = rig({}, { sent: { hash: HASH, used: 101 } });
 		await dip.check();
-		expect(dip.calls.slice(1)).toEqual([["rights-set", { hash: HASH, used: 120 }]]);
+		expect(dip.calls.slice(1)).toEqual([
+			["rights-set", undefined],
+			["log", "rights-invalidated", { reason: "context shrink", used: 100 }],
+		]);
 	});
 	test("with no record there is nothing to raise or drop", async () => {
 		const r = rig();

@@ -271,24 +271,18 @@ export const rightsUnreadable = () =>
 	`Decision rights: the daemon could not read them on this wake. Take no action on anything on the ASK list: put it on ${principalPoss()} queue with ask, and hold it only with --item.`;
 /** The marker that starts the full rights block in a wake. Nothing searches for it in a composed message. */
 export const RIGHTS_MARKER = "Decision rights (standing rules):";
-/**
- * A context that fell below this share of its high-water mark is a compaction (or a new thread): a summary is a fraction of what it replaces.
- * A smaller dip is the reading wobbling (T3 reports the latest request's size, and a new turn's first request is smaller), never a lost record.
- */
-const SHRINK_RATIO = 0.8;
-/** Pure: did the context shrink from `mark`, the largest size seen since the full rights went? */
-export const shrank = (mark: number, used: number): boolean => used < mark * SHRINK_RATIO;
+/** Pure: did the context shrink from `mark`, the largest size seen since the full rights went? Any drop is one: a compaction (the daemon's, the harness's own, or a manual one) is the only thing that makes it smaller. */
+export const shrank = (mark: number, used: number): boolean => used < mark;
 
 /**
  * Pure: does this wake carry the full rights? Only when the Steward might not hold them: nothing recorded, they changed, there is no size mark
- * to tell a shrink by, or its context shrank, which means a compaction or a new thread. A size that could not be read just now is NOT a shrink:
- * the record is kept and the once-a-minute check (rightsHighWater) is the one that drops it on a real one. (Reading it as one dropped the record
- * every time a new turn had no usage yet, and sent a whole standalone rights turn each time.)
+ * to tell a shrink by, its size cannot be read just now (a compaction may have happened and the newest turn has no usage yet: doubt carries
+ * them, inside this wake, never as a wake of their own), or its context shrank, which means a compaction or a new thread.
  */
 export function rightsInFull(sent: RightsSent | undefined, hash: string, used: number | undefined): boolean {
 	if (!sent || sent.hash !== hash) return true;
-	if (sent.used === undefined) return true;
-	return used !== undefined && shrank(sent.used, used);
+	if (used === undefined || sent.used === undefined) return true;
+	return shrank(sent.used, used);
 }
 
 /** The waiting questions and their options as plain text, clipped to what a wake should carry. */
