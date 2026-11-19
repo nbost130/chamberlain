@@ -99,19 +99,31 @@ describe("the Steward check: the rights high-water mark", () => {
 			["log", "rights-invalidated", { reason: "context shrink", used: 100 }],
 		]);
 	});
-	test("must keep: a size that could not be read (a turn with no usage yet) never drops the record", async () => {
-		const unknown = rig({}, { sent: { hash: HASH, used: 500 } });
-		unknown.state.probe = { readable: true };
-		await unknown.check();
-		expect(unknown.calls.slice(1)).toEqual([["rights-set", { hash: HASH, used: 500 }]]);
-	});
-	test("must drop: ANY drop under the mark (a native or manual compaction too) drops the record", async () => {
-		const dip = rig({}, { sent: { hash: HASH, used: 101 } });
+	test("must drop: a collapse of the context (a large drop) drops the record, and says so", async () => {
+		const dip = rig({}, { sent: { hash: HASH, used: 500 } });
+		dip.state.probe = over(399);
 		await dip.check();
 		expect(dip.calls.slice(1)).toEqual([
 			["rights-set", undefined],
-			["log", "rights-invalidated", { reason: "context shrink", used: 100 }],
+			["log", "rights-invalidated", { reason: "context shrink", used: 399 }],
 		]);
+	});
+	test("must drop: a compaction counted since the record was written (native or manual too) drops it, size unreadable or not", async () => {
+		const r = rig({}, { sent: { hash: HASH, used: 500, compactions: 2 } });
+		r.state.probe = { readable: true, compactions: 3 };
+		await r.check();
+		expect(r.calls.slice(1)).toEqual([
+			["rights-set", undefined],
+			["log", "rights-invalidated", { reason: "compaction", used: undefined }],
+		]);
+	});
+	test("must keep: an unreadable size or count (a turn with no usage yet), and a small dip, never drop it", async () => {
+		for (const probe of [{ readable: true }, { readable: true, contextTokens: 450, compactions: 2 }]) {
+			const kept = rig({}, { sent: { hash: HASH, used: 500, compactions: 2 } });
+			kept.state.probe = probe;
+			await kept.check();
+			expect(kept.calls.map((c) => c[0])).not.toContain("log");
+		}
 	});
 	test("with no record there is nothing to raise or drop", async () => {
 		const r = rig();
