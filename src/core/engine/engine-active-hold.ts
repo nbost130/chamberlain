@@ -149,3 +149,29 @@ export function createActiveHold(d: ActiveHoldDeps) {
 	};
 }
 export type ActiveHold = ReturnType<typeof createActiveHold>;
+
+/** The engine's core, as far as the active hold reads it: its store and log, its watchers and its relay. */
+type HoldCore = { store: Store; log: Log; watchers: readonly Watcher[]; relay: { pass(): Promise<unknown> } };
+/** The engine's deps the hold reads: its config and read deadline, and the clock tests inject. */
+type HoldDeps = {
+	activeHold?: ActiveHoldConfig | undefined;
+	activeHoldReadMs?: number | undefined;
+	relay?: { now?: (() => number) | undefined } | undefined;
+};
+
+/**
+ * The engine's active hold: off (an engine given no `activeHold` never holds a card), on the relay's clock, reading the watchers by server
+ * name. `skip` names Chamberlain's own threads; the Steward's current thread is added here.
+ */
+export function activeHoldFor(core: HoldCore, d: HoldDeps, skip: () => ReadonlySet<string>): ActiveHold {
+	return createActiveHold({
+		store: core.store,
+		log: core.log,
+		config: d.activeHold ?? { enabled: false, windowMs: 0 },
+		now: () => d.relay?.now?.() ?? Date.now(),
+		skip: () => new Set([...skip(), core.store.steward.current()?.thread ?? ""]),
+		watcher: (server) => core.watchers.find((x) => x.srv.name === server),
+		nudge: () => void core.relay.pass(),
+		readMs: d.activeHoldReadMs,
+	});
+}

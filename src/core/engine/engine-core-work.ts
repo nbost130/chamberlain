@@ -12,7 +12,7 @@ import { type Health, handoffDeliveryId, handoffWakeMessage, liveHealth } from "
 import { HEALTH_CONFIG } from "../steward/steward-health-config.ts";
 import { healthTicker } from "../steward/steward-health-ticker.ts";
 import { usageTicker } from "../steward/steward-tokens.ts";
-import { createActiveHold } from "./engine-active-hold.ts";
+import { activeHoldFor } from "./engine-active-hold.ts";
 import { CoreRights } from "./engine-core-rights.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createIdleParents } from "./engine-idle.ts";
@@ -24,15 +24,7 @@ import { createUndelivered } from "./engine-undelivered.ts";
 export abstract class CoreWork extends CoreRights {
 	/** Question cards held for the principal (engine-active-hold.ts); an engine given no `activeHold` never holds one. */
 	protected makeActiveHold() {
-		const { d } = this;
-		return createActiveHold({
-			...{ store: this.store, log: this.log, config: d.activeHold ?? { enabled: false, windowMs: 0 } },
-			now: () => d.relay?.now?.() ?? Date.now(),
-			skip: () => new Set([...this.chamberlainSkip(), this.store.steward.current()?.thread ?? ""]),
-			watcher: (server) => this.watchers.find((w) => w.srv.name === server),
-			nudge: () => void this.relay.pass(),
-			readMs: d.activeHoldReadMs,
-		});
+		return activeHoldFor(this, this.d, () => this.chamberlainSkip());
 	}
 
 	protected makeStewardCheck() {
