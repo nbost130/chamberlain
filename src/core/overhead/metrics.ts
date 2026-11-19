@@ -78,13 +78,21 @@ export type WindowInput = {
 	prs?: number;
 };
 
-/** The Steward's spend over the rows, or undefined when it has no price. */
+/** A number a limit may be judged on: present and finite. Anything else (undefined, NaN, Infinity) crosses nothing. */
+export const usable = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n);
+
+/**
+ * The Steward's spend over the rows, or undefined when it cannot be known: no price for its model, no usage rows in the window (nothing was
+ * measured, which is not a Steward that cost nothing: a $0 here would become a $0 baseline), or a sum that is not a finite number.
+ */
 function stewardSpend(
 	rows: readonly WakeUsage[],
 	price: Price | undefined,
 	cacheWrite: CacheWrite,
 ): number | undefined {
-	return price ? rows.reduce((sum, r) => sum + tokensUsd(r, price, cacheWrite), 0) : undefined;
+	if (!price || !rows.length) return undefined;
+	const sum = rows.reduce((s, r) => s + tokensUsd(r, price, cacheWrite), 0);
+	return Number.isFinite(sum) ? sum : undefined;
 }
 
 /** Pure: one window's numbers. */
@@ -110,8 +118,8 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 	if (stewardUsd !== undefined) m.stewardUsd = stewardUsd;
 	if (basisUsd !== undefined) m.basisUsd = basisUsd;
 	if (i.prs !== undefined) m.prs = i.prs;
-	if (basisUsd !== undefined && i.prs) m.costPerPr = basisUsd / i.prs;
-	if (stewardUsd !== undefined && useful) m.costPerUsefulWake = stewardUsd / useful;
+	if (usable(basisUsd) && i.prs) m.costPerPr = basisUsd / i.prs;
+	if (usable(stewardUsd) && useful) m.costPerUsefulWake = stewardUsd / useful;
 	return m;
 }
 
@@ -127,14 +135,17 @@ export type Crossing = {
 const usd = (n: number) => `$${n.toFixed(2)}`;
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-/** The cost per PR above which the cost trigger crosses: the lower of the fixed amount and the multiple of the baseline's cost per PR, whichever are configured and known. */
+/**
+ * The cost per PR above which the cost trigger crosses: the lower of the fixed amount and the multiple of the baseline's cost per PR, whichever
+ * are configured and known. A baseline with no cost per PR, or one that is not above zero, is unavailable: a $0 baseline would put the limit at
+ * $0 and let any PR cross, so it gives no limit at all.
+ */
 export function costLimit(t: OverheadConfig["triggers"]["costPerPr"], baseline: WindowMetrics): number | undefined {
-	const limits = [
-		t.fixedUsd,
-		t.baselineMultiplier !== undefined && baseline.costPerPr !== undefined
+	const fromBaseline =
+		t.baselineMultiplier !== undefined && usable(baseline.costPerPr) && baseline.costPerPr > 0
 			? t.baselineMultiplier * baseline.costPerPr
-			: undefined,
-	].filter((x): x is number => x !== undefined);
+			: undefined;
+	const limits = [t.fixedUsd, fromBaseline].filter(usable);
 	return limits.length ? Math.min(...limits) : undefined;
 }
 
@@ -143,7 +154,7 @@ type Inputs = { day: WindowMetrics; baseline: WindowMetrics; spendShare?: number
 function noopCrossing({ day, cfg }: Inputs): Crossing[] {
 	const t = cfg.triggers.noopRate;
 	if (t.mode !== "trigger" || t.threshold === undefined) return [];
-	if (day.noopRate === undefined || day.measured < t.minWakes || day.noopRate <= t.threshold) return [];
+	if (!usable(day.noopRate) || day.measured < t.minWakes || day.noopRate <= t.threshold) return [];
 	return [
 		{
 			metric: "noopRate",
@@ -156,7 +167,7 @@ function noopCrossing({ day, cfg }: Inputs): Crossing[] {
 
 function costCrossing({ day, baseline, cfg }: Inputs): Crossing[] {
 	const t = cfg.triggers.costPerPr;
-	if (t.mode !== "trigger" || day.basisUsd === undefined || day.prs === undefined) return [];
+	if (t.mode !== "trigger" || !usable(day.basisUsd) || day.prs === undefined) return [];
 	if (day.prs === 0)
 		return t.zeroPrFloorUsd !== undefined && day.basisUsd > t.zeroPrFloorUsd
 			? [
@@ -169,7 +180,7 @@ function costCrossing({ day, baseline, cfg }: Inputs): Crossing[] {
 				]
 			: [];
 	const limit = costLimit(t, baseline);
-	if (day.costPerPr === undefined || limit === undefined || day.costPerPr <= limit) return [];
+	if (!usable(day.costPerPr) || !usable(limit) || day.costPerPr <= limit) return [];
 	return [
 		{
 			metric: "costPerPr",
@@ -182,8 +193,7 @@ function costCrossing({ day, baseline, cfg }: Inputs): Crossing[] {
 
 function shareCrossing({ spendShare, cfg }: Inputs): Crossing[] {
 	const t = cfg.triggers.spendShare;
-	if (t.mode !== "trigger" || t.threshold === undefined || spendShare === undefined || spendShare <= t.threshold)
-		return [];
+	if (t.mode !== "trigger" || t.threshold === undefined || !usable(spendShare) || spendShare <= t.threshold) return [];
 	return [
 		{
 			metric: "spendShare",

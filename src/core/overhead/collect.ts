@@ -9,11 +9,20 @@
  */
 import { SENDS_TEXT } from "../classifier/config.ts";
 import type { GhRead } from "../decide/hold-lookup.ts";
+import { errClass } from "../obs/fields.ts";
 import type { Store } from "../store/store.ts";
 import { DAY_MS, HOUR_MS, type OverheadConfig, perPrConfigured } from "./config.ts";
 import { type FleetSpend, fleetSpend, type RunQuery } from "./fleet-spend.ts";
 import { mergedPrs } from "./merged-prs.ts";
-import { type Crossing, costLimit, countedPrs, crossings, type WindowMetrics, windowMetrics } from "./metrics.ts";
+import {
+	type Crossing,
+	costLimit,
+	countedPrs,
+	crossings,
+	usable,
+	type WindowMetrics,
+	windowMetrics,
+} from "./metrics.ts";
 import { priceOf } from "./prices.ts";
 
 export type Status = "ok" | "not-configured" | "unavailable";
@@ -66,7 +75,11 @@ function classifierUsd(store: CollectDeps["store"], from: number, to: number): n
 	return store.dispositions.usage(from, providers).usd - store.dispositions.usage(to, providers).usd;
 }
 
-const why = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 160);
+/**
+ * Why a read failed, as it may be shown: a fixed class, never the error's text. The text of a failed `gh` or LifeOS call is a tool's own stderr,
+ * which can echo a header or a token, and this line goes into the report, the Decisions view, the state and the investigator's brief.
+ */
+const why = (e: unknown) => `unavailable (${errClass(e)})`;
 
 async function readPrs(d: CollectDeps, since: number, r: Pick<OverheadReport, "unavailable" | "notConfigured">) {
 	if (!perPrConfigured(d.cfg)) {
@@ -103,10 +116,15 @@ function stewardPrice(d: CollectDeps, unavailable: string[]) {
 	return d.model ? priceOf(d.cfg.prices, d.model) : undefined;
 }
 
-/** (Steward + Chamberlain spend + spawned threads + the investigator) / the fleet's spend; undefined when either side is unknown. */
+/**
+ * (Steward + Chamberlain spend + spawned threads + the investigator) / the fleet's spend; undefined when either side is unknown. A configured
+ * host with no rows makes the denominator short by what it spent, so the share is unavailable then, never a partial figure.
+ */
 function shareOf(fleet: FleetSpend | undefined, day: WindowMetrics): number | undefined {
-	if (!fleet || day.basisUsd === undefined || fleet.totalUsd <= 0) return undefined;
-	return (day.basisUsd + fleet.spawnedUsd + fleet.investigatorUsd) / fleet.totalUsd;
+	if (!fleet || fleet.missingHosts.length || !usable(day.basisUsd) || !usable(fleet.totalUsd) || fleet.totalUsd <= 0)
+		return undefined;
+	const share = (day.basisUsd + fleet.spawnedUsd + fleet.investigatorUsd) / fleet.totalUsd;
+	return usable(share) ? share : undefined;
 }
 
 /** Each trigger as configured, with the cost limit it resolved to against this baseline. */
@@ -146,7 +164,9 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 	const baseline = window(d.now - W - B, d.now - W);
 	const spendShare = shareOf(fl.fleet, day);
 	if (fl.fleet?.missingHosts.length)
-		unavailable.push(`fleet spend is short: no rows for ${fl.fleet.missingHosts.join(", ")} in the window`);
+		unavailable.push(
+			`spend share: no fleet rows for ${fl.fleet.missingHosts.join(", ")} in the window, so the total is short`,
+		);
 	return {
 		at: d.now,
 		...(d.model ? { model: d.model } : {}),
@@ -158,7 +178,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 		trailing: window(d.now - B, d.now),
 		trend: [2, 1, 0].map((n) => window(d.now - (n + 1) * W, d.now - n * W)),
 		prStatus: pr.status,
-		fleetStatus: fl.status,
+		fleetStatus: fl.fleet?.missingHosts.length ? "unavailable" : fl.status,
 		...(fl.fleet ? { fleet: fl.fleet } : {}),
 		...(spendShare !== undefined ? { spendShare } : {}),
 		crossings: crossings({ day, baseline, ...(spendShare !== undefined ? { spendShare } : {}), cfg: d.cfg }),

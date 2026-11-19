@@ -26,20 +26,28 @@ export function parsePrices(raw: unknown, where: string): PriceTable {
 		const o = object(row, `${where}.${model}`, RATES);
 		for (const r of RATES) if (o[r] === undefined) throw Error(`${where}.${model}: ${r} is required`);
 		const rate = (k: (typeof RATES)[number]) => num(o, k, `${where}.${model}`, { d: 0, whole: false, zeroOk: true });
-		out[model] = {
-			input: rate("input"),
-			cacheWrite5m: rate("cacheWrite5m"),
-			cacheWrite1h: rate("cacheWrite1h"),
-			cacheRead: rate("cacheRead"),
-			output: rate("output"),
-		};
+		// defineProperty, not assignment: a model named "__proto__" must become a key, never the table's prototype.
+		Object.defineProperty(out, model, {
+			enumerable: true,
+			configurable: true,
+			writable: true,
+			value: {
+				input: rate("input"),
+				cacheWrite5m: rate("cacheWrite5m"),
+				cacheWrite1h: rate("cacheWrite1h"),
+				cacheRead: rate("cacheRead"),
+				output: rate("output"),
+			},
+		});
 	}
 	return out;
 }
 
-/** The price of a model id (a `[1m]` suffix accepted), or undefined for a model the table does not list. */
-export const priceOf = (table: PriceTable, model: string): Price | undefined =>
-	table[model.trim().replace(/\[[^\]]*\]$/, "")];
+/** The price of a model id (a `[1m]` suffix accepted), or undefined for a model the table does not list. Own keys only: "constructor" is not a price. */
+export function priceOf(table: PriceTable, model: string): Price | undefined {
+	const key = model.trim().replace(/\[[^\]]*\]$/, "");
+	return Object.hasOwn(table, key) ? table[key] : undefined;
+}
 
 export type TokenCounts = Pick<
 	WakeUsage,

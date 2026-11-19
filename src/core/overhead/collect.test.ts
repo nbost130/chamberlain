@@ -147,7 +147,8 @@ describe("fails closed", () => {
 		});
 		const r = await run(cfg, storeWith(rows()), { gh: ghWith(Error("GitHub read failed: down")) });
 		expect(r.prStatus).toBe("unavailable");
-		expect(r.unavailable.join(" ")).toContain("merged PRs: GitHub read failed: down");
+		expect(r.unavailable.join(" ")).toContain("merged PRs: unavailable (other)");
+		expect(r.unavailable.join(" ")).not.toContain("GitHub read failed");
 		expect(r.day.costPerPr).toBeUndefined();
 		expect(r.crossings.map((c) => c.metric)).toEqual(["noopRate"]);
 	});
@@ -164,7 +165,8 @@ describe("fails closed", () => {
 		});
 		expect(r.fleetStatus).toBe("unavailable");
 		expect(r.spendShare).toBeUndefined();
-		expect(r.unavailable.join(" ")).toContain("fleet spend: LifeOS query failed: no route");
+		expect(r.unavailable.join(" ")).toContain("fleet spend: unavailable (other)");
+		expect(r.unavailable.join(" ")).not.toContain("no route");
 		expect(r.crossings).toEqual([]);
 		expect(formatOverhead(r)).toContain("UNAVAILABLE: fleet spend");
 	});
@@ -175,6 +177,16 @@ describe("fails closed", () => {
 		expect(r.day.stewardUsd).toBeUndefined();
 		expect(r.unavailable.join(" ")).toContain('no price for "other-model" in overhead.prices');
 		expect(r.crossings).toEqual([]);
+	});
+
+	test("a model named like an Object property has no price: the spend is unavailable, never NaN", async () => {
+		const cfg = cfgWith({ triggers: { costPerPr: { mode: "trigger", fixedUsd: 0.01 } } });
+		for (const model of ["constructor", "toString", "__proto__"]) {
+			const r = await run(cfg, storeWith(rows()), { model, gh: ghWith(prsAt(5, 1)) });
+			expect(r.day.stewardUsd).toBeUndefined();
+			expect(Number.isNaN(r.day.basisUsd)).toBe(false);
+			expect(r.crossings).toEqual([]);
+		}
 	});
 
 	test("no models.steward at all says so", async () => {
@@ -206,9 +218,12 @@ describe("the fleet share", () => {
 		expect(formatOverhead(r)).toContain("investigator $4.00");
 	});
 
-	test("a host with no rows is named, and the share is still reported", async () => {
+	test("a configured host with no rows is named and makes the share unavailable: a short total is never a smaller denominator that can trigger", async () => {
 		const r = await run(cfg, storeWith(rows()), { query: async () => answer(["fleet,h1,400000000"]) });
-		expect(r.spendShare).toBeDefined();
-		expect(r.unavailable.join(" ")).toContain("no rows for h2");
+		expect(r.spendShare).toBeUndefined();
+		expect(r.fleetStatus).toBe("unavailable");
+		expect(r.unavailable.join(" ")).toContain("no fleet rows for h2");
+		expect(r.crossings).toEqual([]);
+		expect(summaryLine(summarize(r))).toContain("share unavailable");
 	});
 });

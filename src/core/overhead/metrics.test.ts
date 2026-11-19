@@ -73,13 +73,21 @@ describe("window metrics", () => {
 		expect(m.noopRate).toBeCloseTo(0.5, 9);
 	});
 
-	test("an empty window has no rates, only zero counts", () => {
+	test("a window with no usage rows was not measured: counts are zero and every spend figure is unavailable, never $0", () => {
 		const m = day({ usage: [], prs: 2 });
-		expect([m.wakes, m.measured, m.noop, m.useful]).toEqual([0, 0, 0, 0]);
+		expect([m.turns, m.wakes, m.measured, m.noop, m.useful]).toEqual([0, 0, 0, 0, 0]);
 		expect(m.noopRate).toBeUndefined();
 		expect(m.costPerUsefulWake).toBeUndefined();
-		expect(m.stewardUsd).toBe(0);
-		expect(m.costPerPr).toBe(0);
+		expect(m.stewardUsd).toBeUndefined();
+		expect(m.basisUsd).toBeUndefined();
+		expect(m.costPerPr).toBeUndefined();
+	});
+
+	test("a spend that is not a finite number is unavailable", () => {
+		const bad = { ...wake({ hoursAgo: 1, usd: 1, tools: 1 }), outputTokens: Number.NaN };
+		const m = day({ usage: [bad], prs: 2 });
+		expect(m.stewardUsd).toBeUndefined();
+		expect(m.costPerPr).toBeUndefined();
 	});
 });
 
