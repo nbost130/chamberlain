@@ -30,6 +30,8 @@ relay-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|
 gate-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 gate-error.receiver: known(receiver) <- receiver
 rights-first-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+wake-debounced.held: int
+wake-debounced.forMs: int
 rights-full-stale.epoch: int
 rights-full-stale.current: int
 rights-invalidated.reason: enum(compaction|context shrink)

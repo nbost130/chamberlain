@@ -61,6 +61,8 @@ export const EVENTS = {
 	"rights-first-skipped": e("info"),
 	"rights-first-waiting": e("info"),
 	"rights-first-obsolete": e("info"),
+	"rights-inlined": e("info"),
+	"wake-debounced": e("info", { held: int(), forMs: int() }),
 	"rights-full-stale": e("warn", { epoch: int(), current: int() }),
 	"rights-invalidated": e("info", { reason: f(T.enm("compaction", "context shrink")), epoch: int(), used: int() }),
 	"rights-sent-unsaved": failure(),

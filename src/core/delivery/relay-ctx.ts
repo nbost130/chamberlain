@@ -52,9 +52,22 @@ export type RelayDeps = {
 	 * `full` stamp, so its delivery writes the record in the transaction that marks it delivered. Absent: such rows are sent as they are.
 	 * Optional `steward` is the generation snapshot's thread (B1); otherwise the reader uses MAX(gen).
 	 */
-	rightsNow?: (o?: {
-		steward?: string;
-	}) => Promise<RightsState & { wake: (forId: string) => { message: string; stamp?: RightsStamp } }>;
+	rightsNow?: (o?: { steward?: string }) => Promise<
+		RightsState & {
+			wake: (forId: string) => {
+				message: string /** The block alone, for `rightsInline`. */;
+				text?: string;
+				stamp?: RightsStamp;
+			};
+		}
+	>;
+	/**
+	 * Send the full rights INSIDE the row that needs them, in one wake, instead of as a standalone prerequisite wake ahead of it (default off
+	 * here; the daemon turns it on from `rightsInline`, default true). Every standalone rights wake cost a whole Steward turn (about 215k tokens
+	 * of context read) to receive text the next wake could carry. The row's stored text is still never rewritten: the block is appended to what
+	 * is POSTed, and the delivered commit writes the rights record from its full stamp, in the same transaction as before.
+	 */
+	rightsInline?: boolean;
 	/** Config dir: used with store to resolve a generation's wake URL when `genSnapshot` is absent. */
 	conf?: string;
 	/** One-generation snapshot for rights/CAS/transport; default reads store (+ conf). */
@@ -65,6 +78,12 @@ export type RelayDeps = {
 	maxAttempts?: number;
 	retryAfterMs?: (attempts: number) => number;
 	ceilingMs?: number;
+	/**
+	 * How long held turn ends, notes and sweeps wait for company before they go as one digest, when the Steward is idle (0 or absent: they go at
+	 * once, as they always did). A wake of any other kind held beside them (an answer, a transfer) sends the whole batch now, and a wake
+	 * that is not holdable (needs_input, a failure, a message) never waits at all. The daemon turns it on from `wakeDebounceMs` (default 3 minutes).
+	 */
+	debounceMs?: number;
 	staleAfterMs?: number;
 	now?: () => number;
 };
@@ -83,6 +102,9 @@ export type Lane = {
 	desk: boolean;
 	akey: (k: string) => string;
 };
+
+/** The full rights block that rides inside a row's POST (`rightsInline`), and the stamp whose delivery proves the Steward holds it. */
+export type InlineRights = { text: string; stamp?: RightsStamp };
 
 /** The Steward and the rights in force now, as `rightsNow` answers them, with the epoch read from the database. */
 export type RightsNow = Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
@@ -109,7 +131,7 @@ export type Ctx = {
 	/** Alerts and notices already raised or logged once, by key. */
 	reported: Set<string>;
 	/** The one POST of a row to its lane's transport. Optional target pins the generation snapshot's wake URL (B1). */
-	post: (l: Lane, row: OutboxRow, target?: string) => Promise<WakeResult>;
+	post: (l: Lane, row: OutboxRow, target?: string, message?: string) => Promise<WakeResult>;
 	run: {
 		lockLost: boolean;
 		/** The serial queue's tail: each POST job starts when the one before has settled. */

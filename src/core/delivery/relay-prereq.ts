@@ -1,10 +1,39 @@
 /** The rights a wake needs ahead of it: finding the prerequisite wake, queueing it, and sending it first. */
 import { crashPoint } from "../crash.ts";
-import { rightsFirstId, rightsFirstKey, rightsStateKey } from "../steward/rights-sent.ts";
+import { rightsInlineHead } from "../messages.ts";
+import { loadRightsSent, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
+import { DELIVERY_ID_LINE } from "./deliver.ts";
 import { readRightsNow } from "./relay-compose.ts";
-import type { Ctx, RelayDeps, RightsNow } from "./relay-ctx.ts";
+import type { Ctx, InlineRights, RelayDeps, RightsNow } from "./relay-ctx.ts";
+
+/**
+ * `rightsInline`: what a Steward row that depends on the rights carries in its own POST. Nothing (undefined) when the durable record shows the
+ * Steward holds the rights in force; the full block (and its stamp) when it does not, with the reason logged (`rights-inlined`); null when the
+ * rights cannot be read at all now, so the row waits for the next pass. No standalone wake is queued, so no Steward turn is spent receiving text.
+ */
+export async function inlineRights(
+	r: Ctx,
+	row: OutboxRow,
+	rightsNow: NonNullable<RelayDeps["rightsNow"]>,
+	steward: string | undefined,
+): Promise<InlineRights | null | undefined> {
+	const now = await readRightsNow(r, row, () => rightsNow(steward ? { steward } : undefined));
+	if (!now) return null;
+	const reason = rightsGap(loadRightsSent(r.store), now);
+	if (!reason) return undefined;
+	const w = now.wake(row.deliveryId);
+	r.d.log("rights-inlined", { deliveryId: row.deliveryId, reason });
+	return { text: w.text ?? w.message, ...(w.stamp ? { stamp: w.stamp } : {}) };
+}
+
+/** The text a row is POSTed with when the full rights ride in it: its own text exactly as queued, then the block under its heading, the delivery-id line last. */
+export function withInlineRights(row: OutboxRow, inline: InlineRights): string {
+	const line = DELIVERY_ID_LINE(row.deliveryId);
+	const body = row.message.replace(line, "").trimEnd();
+	return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
+}
 
 /** The ids `:1`, `:2`, ... of the prerequisite for a state, where each stands: delivered, cancelled, or not ended (or unknown). */
 function prerequisiteStatus(store: Store, id: string): string | undefined {

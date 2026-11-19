@@ -77,6 +77,7 @@ export abstract class CoreRights extends CoreBase {
 				const full = this.wakeRights("", { full: true, session, ...(steward ? { steward } : {}) });
 				return {
 					message: rightsFirstMessage(forId, full.text),
+					text: full.text,
 					...(full.record ? { stamp: fullStamp(full.record, steward, session) } : {}),
 				};
 			},

@@ -8,8 +8,15 @@ import type { OutboxRow } from "../store/store-wakes.ts";
 import type { WakeResult } from "./deliver.ts";
 import type { Posted } from "./relay.ts";
 import { deadLetter, land, readRightsNow } from "./relay-compose.ts";
-import { type Ctx, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.ts";
-import { current, findPrerequisite, prerequisiteBlocked, queuePrerequisite } from "./relay-prereq.ts";
+import { type Ctx, type InlineRights, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.ts";
+import {
+	current,
+	findPrerequisite,
+	inlineRights,
+	prerequisiteBlocked,
+	queuePrerequisite,
+	withInlineRights,
+} from "./relay-prereq.ts";
 
 /**
  * One attempt of one row: counted and committed first, then the POST. The rows delivered: any prerequisite sent ahead of it, then the
@@ -35,7 +42,7 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 		return [];
 	}
 	// Sample once before any awaited rights work so CAS and POST share the same generation.
-	const { before, go } = await sendPrerequisites({ r, l, row, prerequisite, snap });
+	const { before, go, inline } = await sendPrerequisites({ r, l, row, prerequisite, snap });
 	if (!go) return before;
 	// Generation moved during rights: do not POST under a stale rights decision; next pass rechecks.
 	if (snap && !sameGen(snap, readSnap(r))) return before;
@@ -47,9 +54,25 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	});
 	if (n === undefined) return before;
 	crashPoint("attempt-counted");
-	const result = await r.post(l, row, target);
-	const posted: Posted = { l, row, n, res: result, before };
-	return result.ok ? accepted(r, posted) : refused(r, posted);
+	return posted(r, { l, row, n, before, target, inline });
+}
+
+/** The one POST of an attempt (the full rights riding in it, when `rightsInline` found a gap), and what follows its answer. */
+async function posted(
+	r: Ctx,
+	a: {
+		l: Lane;
+		row: OutboxRow;
+		n: number;
+		before: OutboxRow[];
+		target: string | undefined;
+		inline: InlineRights | undefined;
+	},
+): Promise<OutboxRow[]> {
+	const { l, row, n, before, target, inline } = a;
+	const res = await r.post(l, row, target, inline ? withInlineRights(row, inline) : undefined);
+	const p: Posted = { l, row, n, res, before, ...(inline ? { inline } : {}) };
+	return res.ok ? accepted(r, p) : refused(r, p);
 }
 
 async function prepared(
@@ -113,14 +136,14 @@ function sameGen(a: GenSnapshot | undefined, b: GenSnapshot | undefined): boolea
 }
 
 /** The transport accepted the POST: the row is owed its delivered commit, which lands now (the rows delivered include it only if it did). */
-function accepted(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
+function accepted(r: Ctx, { l, row, n, res, before, inline }: Posted): OutboxRow[] {
 	crashPoint("accepted");
 	r.owed.set(row.id, row);
 	l.look.lastPostAt = r.clock();
 	l.failures = 0;
 	r.notBefore.delete(row.id);
 	r.d.log("delivered", deliveredLog(l, row, n, res));
-	return land(r, row) ? [...before, row] : before;
+	return land(r, row, inline?.stamp) ? [...before, row] : before;
 }
 
 /** Pure: what the `delivered` log line says about a row: its attempt, kind, thread and receiver, and each member of a digest. */
@@ -174,13 +197,17 @@ type PrereqArgs = {
 };
 
 /** What goes before a row's own POST: `before` the prerequisite rows already delivered, and whether the row may go on. */
-async function sendPrerequisites(a: PrereqArgs): Promise<{ before: OutboxRow[]; go: boolean }> {
+async function sendPrerequisites(a: PrereqArgs): Promise<{ before: OutboxRow[]; go: boolean; inline?: InlineRights }> {
 	const { r, l, row, prerequisite, snap } = a;
 	const { rightsNow } = r.d;
 	if (prerequisite || l.desk || !rightsNow) return { before: [], go: true };
 	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow)))
 		return { before: [], go: false };
 	if (!needsRights(row.rights)) return { before: [], go: true };
+	if (r.d.rightsInline) {
+		const inline = await inlineRights(r, row, rightsNow, snap?.thread);
+		return inline === null ? { before: [], go: false } : { before: [], go: true, ...(inline ? { inline } : {}) };
+	}
 	const went = await ahead({ r, l, row, rightsNow, snap });
 	if (went === null) return { before: [], go: false };
 	return { before: went, go: r.d.lock.held() };

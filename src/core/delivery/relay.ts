@@ -38,6 +38,7 @@ import { audit } from "./relay-audit.ts";
 import { serially } from "./relay-compose.ts";
 import {
 	type Ctx,
+	type InlineRights,
 	type Lane,
 	laneOf,
 	makeLane,
@@ -134,10 +135,10 @@ function sanitizeResult(res: WakeResult): WakeResult {
 }
 
 /** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its text URL-redacted. */
-async function post(l: Lane, row: OutboxRow, target?: string): Promise<WakeResult> {
+async function post(l: Lane, row: OutboxRow, target?: string, message = row.message): Promise<WakeResult> {
 	try {
 		return sanitizeResult(
-			await l.wake.send(row.deliveryId, finalSendMessage(row.message, row.deliveryId), target ? { target } : undefined),
+			await l.wake.send(row.deliveryId, finalSendMessage(message, row.deliveryId), target ? { target } : undefined),
 		);
 	} catch (e) {
 		return { ok: false, error: redactUrls(e instanceof Error ? e.message : String(e)) };
@@ -145,7 +146,15 @@ async function post(l: Lane, row: OutboxRow, target?: string): Promise<WakeResul
 }
 
 /** One attempt's outcome: the lane and row, which attempt it was, what the transport answered, and the rows already delivered ahead of it. */
-export type Posted = { l: Lane; row: OutboxRow; n: number; res: WakeResult; before: OutboxRow[] };
+export type Posted = {
+	l: Lane;
+	row: OutboxRow;
+	n: number;
+	res: WakeResult;
+	before: OutboxRow[];
+	/** The full rights that rode in this POST (`rightsInline`): the delivered commit writes the record from its stamp. */
+	inline?: InlineRights;
+};
 
 /**
  * One compaction request to the Steward's compaction task: a single attempt, no row (the task's prompt is /compact, so it takes no message),

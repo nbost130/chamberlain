@@ -151,6 +151,13 @@ export const handoffWake = (instruction: string, report: string) =>
 export const rightsWake = (forId: string, full: string) =>
 	`[chamberlain] rights: your decision rights and the rulings in force, in full. The next wake (${forId}) was queued for a Steward that may not hold them; where it says they are unchanged, these are the ones it means, and they replace any older copy it carries.\n${full}`;
 
+/**
+ * The heading of the full rights block that rides inside the wake of a row that depends on them (relay-prereq.ts `inlineRights`), instead of a
+ * standalone wake of their own: the Steward gets them in the same turn, and one request is not spent reading its whole context just to receive them.
+ */
+export const rightsInlineHead =
+	"[chamberlain] rights, in full: this wake was queued for a Steward that may not hold your decision rights and the rulings in force, so the full copy rides with it. Where the text above says they are unchanged, these are the ones it means, and they replace any older copy you carry.";
+
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>
 	`[chamberlain] ${kind}: thread "${title}" ${what}.`;

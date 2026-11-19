@@ -1,6 +1,6 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "../crash.ts";
-import { type composeWake, observe, overdue, type ThreadNews } from "../decide/hold.ts";
+import { type composeWake, debouncing, observe, overdue, type ThreadNews } from "../decide/hold.ts";
 import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
 import { scrubSecretHeldMessages } from "../items/questions-claim.ts";
 import { alarms } from "../messages.ts";
@@ -22,10 +22,11 @@ import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./re
  * Only while the stamp's epoch is still the current one: a full block composed before a compaction or a shrink bumped the epoch (a wake in
  * flight when the compaction was asked for, or one owed across it) is marked delivered and writes nothing, so it can never restore a record
  * the compaction took away (`rights-full-stale`).
+ * `inline` is the full stamp of the block that rode inside this row's POST (`rightsInline`): it writes the record exactly as a standalone full wake would.
  */
-export function land(r: Ctx, row: OutboxRow): boolean {
+export function land(r: Ctx, row: OutboxRow, inline?: RightsStamp): boolean {
 	const { d, store } = r;
-	const full = row.receiver ? undefined : row.rights?.filter((s) => s.full).at(-1);
+	const full = row.receiver ? undefined : (inline ?? row.rights?.filter((s) => s.full).at(-1));
 	let stale: number | undefined;
 	try {
 		const done = store.tx(() => {
@@ -77,6 +78,27 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 const usesWindow = (ceiling: boolean, due: boolean, held: HeldItem[]): boolean =>
 	ceiling || (due && !held.some((h) => h.kind === "transfer"));
 
+/**
+ * Idle news (turn ends, notes, sweeps) waits a few minutes for company (hold.ts `debouncing`), so several go as one digest, one Steward turn
+ * instead of several. Logged once per batch (`wake-debounced`). Never the ceiling's own pass or an answer's deadline: the caller only asks otherwise.
+ */
+function waitForCompany(
+	r: Ctx,
+	held: HeldItem[],
+	now: number,
+	{ look, due }: { look: { post: boolean; forced: boolean }; due: boolean },
+): boolean {
+	const ms = r.d.debounceMs ?? 0;
+	const ordinary = look.post && !look.forced && !due;
+	if (!ordinary || !debouncing(held, now, ms)) return false;
+	const first = held.reduce((a, h) => (h.queuedAt < a.queuedAt ? h : a));
+	if (!r.reported.has(`debounce:${first.deliveryId}`)) {
+		r.reported.add(`debounce:${first.deliveryId}`);
+		r.d.log("wake-debounced", { held: held.length, oldest: first.deliveryId, forMs: ms });
+	}
+	return true;
+}
+
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
@@ -96,6 +118,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	// A held answer past its own short ceiling goes now, with everything held beside it, however busy the receiver is.
 	const due = !look.post && overdue(heldNow, now);
 	if (!look.post && !due) return;
+	if (waitForCompany(r, heldNow, now, { look, due })) return;
 	let kept: string[] = [];
 	const row = store.wakes.compose(
 		now,

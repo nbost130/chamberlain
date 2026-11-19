@@ -40,6 +40,8 @@ export const SCALARS = {
 	gh: "string",
 	healthFormatPattern: "string",
 	stewardTokens: "boolean",
+	rightsInline: "boolean",
+	wakeDebounceMs: "nonneg",
 } as const satisfies Record<string, ScalarKind>;
 export type ScalarKey = keyof typeof SCALARS;
 export type ScalarValue<K extends ScalarKey> = (typeof SCALARS)[K] extends "boolean"

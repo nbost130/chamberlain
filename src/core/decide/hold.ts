@@ -28,6 +28,16 @@ export const holdable = (meta: WakeMeta | undefined): boolean => Boolean(meta &&
  */
 const NEVER_FOLDED: ReadonlySet<string> = new Set(["answer", "note"]);
 
+/**
+ * The held kinds that are news, not a request: a thread's turn end, its note, a routine sweep. None has a person waiting on it, so when the Steward is idle
+ * they wait `debounceMs` for company (`debouncing`) and go as one digest, one Steward turn instead of several. An answer (the principal is waiting),
+ * a transfer (a switch is in progress) or any wake of another kind held beside them sends the whole batch at once; a wake that is not holdable at all
+ * (needs_input, a failure, a message) is never held and never waits.
+ */
+const DEBOUNCED_KINDS: ReadonlySet<string> = new Set(["turn_ended", "note", "sweep"]);
+/** How long the daemon lets idle news wait for company (`wakeDebounceMs`; 0 turns it off). */
+export const DEFAULT_WAKE_DEBOUNCE_MS = 3 * 60_000;
+
 /** A give-up row's id, from its members: two batches never share one, whatever the clock does. */
 export const memberHash = (ids: readonly string[]) =>
 	createHash("sha1")
@@ -54,6 +64,17 @@ export const overdue = (held: readonly HeldItem[], now: number): boolean =>
 		const age = now - h.queuedAt;
 		return ceiling !== undefined && (age >= ceiling || age < -CLOCK_SKEW_MS);
 	});
+/**
+ * Pure: should these held wakes keep waiting for company? Only when every one is news (`DEBOUNCED_KINDS`) and the oldest is younger than
+ * `debounceMs`. So the wait is at most `debounceMs` from the first of them, whatever arrives after. Never for an empty or mixed batch,
+ * and an item stamped in the future (a clock set back) does not wait.
+ */
+export const debouncing = (held: readonly HeldItem[], now: number, debounceMs: number): boolean => {
+	if (!(debounceMs > 0) || !held.length) return false;
+	if (!held.every((h) => h.kind !== undefined && DEBOUNCED_KINDS.has(h.kind))) return false;
+	const age = now - Math.min(...held.map((h) => h.queuedAt));
+	return age >= -CLOCK_SKEW_MS && age < debounceMs;
+};
 /** Pure: whether a held item has a ceiling of its own, so it is admitted to a size-capped digest ahead of the rest. */
 export const hasOwnCeiling = (h: HeldItem): boolean => h.kind !== undefined && ITEM_CEILING_MS[h.kind] !== undefined;
 /** T3 takes a moment to show a wake it just accepted as a queued turn. Until it does, a fresh post counts as busy. */
