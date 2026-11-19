@@ -20,6 +20,7 @@ const last: OverheadSummary = {
 	stewardUsdDay: 85,
 	noopRate: 0.287,
 	spendShare: 0.476,
+	stewardShare: 0.3,
 	crossings: ["no-op wake rate 28.7% (149 of 520 wakes made no tool call), above 10.0%"],
 	unavailable: [],
 };
@@ -32,7 +33,9 @@ describe("the view's payload", () => {
 
 	test("carries the line with cost per PR (window and trailing), PRs merged, Steward spend, no-op rate and share, and what crossed", () => {
 		const v = overheadView(state());
-		expect(v?.line).toBe("$4.25/PR 24 h · $3.50/PR 7 d · 20 PRs merged · Steward $85.00 · no-op 28.7% · share 47.6%");
+		expect(v?.line).toBe(
+			"$4.25/PR 24 h · $3.50/PR 7 d · 20 PRs merged · Steward $85.00 · no-op 28.7% · overhead share 47.6% (Steward only 30.0%)",
+		);
 		expect(v?.crossed).toHaveLength(1);
 		expect(v?.open).toBeNull();
 	});

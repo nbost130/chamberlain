@@ -42,8 +42,14 @@ export type OverheadReport = {
 	prStatus: Status;
 	fleetStatus: Status;
 	fleet?: FleetSpend;
-	/** (Steward + Chamberlain spend + spawned eval/butler threads + the investigator) / the fleet's spend, over the window. */
+	/**
+	 * The HEADLINE overhead share: Chamberlain-caused spend (the Steward, Chamberlain's own model calls, the threads it launches and the
+	 * investigator) / the fleet's spend, over the window, experiments (`excludeProjects`, `excludeLabels`) out of both. Named `spendShare` because
+	 * that is the trigger key (`triggers.spendShare`) that judges it.
+	 */
 	spendShare?: number;
+	/** The Steward's own spend / the same fleet spend, shown beside the headline. */
+	stewardShare?: number;
 	crossings: Crossing[];
 	/** What was asked for and could not be read, one line each. */
 	unavailable: string[];
@@ -117,14 +123,19 @@ function stewardPrice(d: CollectDeps, unavailable: string[]) {
 }
 
 /**
- * (Steward + Chamberlain spend + spawned threads + the investigator) / the fleet's spend; undefined when either side is unknown. A configured
- * host with no rows makes the denominator short by what it spent, so the share is unavailable then, never a partial figure.
+ * The overhead share, (Steward + Chamberlain's own calls + spawned threads + the investigator) / the fleet's spend, and the Steward's own share of
+ * the same fleet; each undefined when either side is unknown. Experiments are already out of the fleet and spawned figures (fleet-spend.ts). A
+ * configured host with no rows makes the denominator short by what it spent, so both are unavailable then, never a partial figure.
  */
-function shareOf(fleet: FleetSpend | undefined, day: WindowMetrics): number | undefined {
-	if (!fleet || fleet.missingHosts.length || !usable(day.basisUsd) || !usable(fleet.totalUsd) || fleet.totalUsd <= 0)
-		return undefined;
-	const share = (day.basisUsd + fleet.spawnedUsd + fleet.investigatorUsd) / fleet.totalUsd;
-	return usable(share) ? share : undefined;
+function sharesOf(fleet: FleetSpend | undefined, day: WindowMetrics): { overhead?: number; steward?: number } {
+	if (!fleet || fleet.missingHosts.length || !usable(fleet.totalUsd) || fleet.totalUsd <= 0) return {};
+	const ratio = (n: number | undefined) => {
+		const r = n === undefined ? undefined : n / fleet.totalUsd;
+		return usable(r) ? r : undefined;
+	};
+	const overhead = usable(day.basisUsd) ? ratio(day.basisUsd + fleet.spawnedUsd + fleet.investigatorUsd) : undefined;
+	const steward = ratio(day.stewardUsd);
+	return { ...(overhead !== undefined ? { overhead } : {}), ...(steward !== undefined ? { steward } : {}) };
 }
 
 /** Each trigger as configured, with the cost limit it resolved to against this baseline. */
@@ -162,7 +173,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 		});
 	const day = window(d.now - W, d.now);
 	const baseline = window(d.now - W - B, d.now - W);
-	const spendShare = shareOf(fl.fleet, day);
+	const { overhead: spendShare, steward: stewardShare } = sharesOf(fl.fleet, day);
 	if (fl.fleet?.missingHosts.length)
 		unavailable.push(
 			`spend share: no fleet rows for ${fl.fleet.missingHosts.join(", ")} in the window, so the total is short`,
@@ -181,6 +192,7 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 		fleetStatus: fl.fleet?.missingHosts.length ? "unavailable" : fl.status,
 		...(fl.fleet ? { fleet: fl.fleet } : {}),
 		...(spendShare !== undefined ? { spendShare } : {}),
+		...(stewardShare !== undefined ? { stewardShare } : {}),
 		crossings: crossings({ day, baseline, ...(spendShare !== undefined ? { spendShare } : {}), cfg: d.cfg }),
 		unavailable,
 		notConfigured,

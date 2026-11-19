@@ -37,8 +37,16 @@ export function summarize(r: OverheadReport): OverheadSummary {
 	if (r.day.stewardUsd !== undefined) s.stewardUsdDay = r.day.stewardUsd;
 	if (r.day.noopRate !== undefined) s.noopRate = r.day.noopRate;
 	if (r.spendShare !== undefined) s.spendShare = r.spendShare;
+	if (r.stewardShare !== undefined) s.stewardShare = r.stewardShare;
 	return s;
 }
+
+/** The headline overhead share with the Steward-only share beside it, or why there is none. */
+const shareText = (status: Status, overhead: number | undefined, steward: number | undefined): string => {
+	if (status === "not-configured") return "not configured";
+	if (overhead === undefined) return "unavailable";
+	return `${pct(overhead)} (Steward only ${pct(steward)})`;
+};
 
 /** The one line the Decisions view shows. */
 export function summaryLine(s: OverheadSummary): string {
@@ -49,7 +57,7 @@ export function summaryLine(s: OverheadSummary): string {
 		`${prValue(s.prStatus, s.prsDay === undefined ? undefined : String(s.prsDay))} PRs merged`,
 		`Steward ${usd(s.stewardUsdDay)}`,
 		`no-op ${pct(s.noopRate)}`,
-		`share ${s.fleetStatus === "not-configured" ? "not configured" : pct(s.spendShare)}`,
+		`overhead share ${shareText(s.fleetStatus, s.spendShare, s.stewardShare)}`,
 	].join(" · ");
 }
 
@@ -60,6 +68,12 @@ const perPr = (w: WindowMetrics, status: Status) => {
 	return w.prs === 0 ? "no PR merged" : usd(w.costPerPr);
 };
 const mode = (m: string) => (m === "trigger" ? "triggers" : "report only");
+
+/** How the share is judged: a limit when it triggers, a target when it is only reported with one set. */
+const shareMode = (t: { mode: string; threshold?: number }): string =>
+	t.mode === "trigger"
+		? `triggers, limit ${pct(t.threshold)}`
+		: `report only${t.threshold === undefined ? "" : `, target at most ${pct(t.threshold)}`}`;
 
 /** What `chamberlain overhead` prints. */
 export function formatOverhead(r: OverheadReport): string {
@@ -77,7 +91,7 @@ export function formatOverhead(r: OverheadReport): string {
 		`  Steward spend        ${W} ${usd(d.stewardUsd).padEnd(14)} ${B} ${usd(r.trailing.stewardUsd)}   (classifier ${usd(d.classifierUsd)} in ${W})`,
 		`  no-op wake rate      ${W} ${pct(d.noopRate).padEnd(14)} ${B} ${pct(r.trailing.noopRate).padEnd(14)} ${mode(nr.mode)}${nr.threshold === undefined ? "" : `, limit ${pct(nr.threshold)}`}  (${d.noop} of ${d.measured} wakes measured, ${d.wakes} wakes)`,
 		`  cost per useful wake ${W} ${usd(d.costPerUsefulWake).padEnd(14)} ${B} ${usd(r.trailing.costPerUsefulWake)}`,
-		`  spend share          ${W} ${r.fleetStatus === "not-configured" ? "not configured" : pct(r.spendShare)}  (${mode(r.limits.spendShare.mode)})`,
+		`  overhead share       ${W} ${shareText(r.fleetStatus, r.spendShare, r.stewardShare)}  (${shareMode(r.limits.spendShare)})`,
 	];
 	if (r.fleet)
 		out.push(
@@ -85,7 +99,7 @@ export function formatOverhead(r: OverheadReport): string {
 				.map(([h, v]) => `${h} ${usd(v)}`)
 				.join(
 					", ",
-				)}); eval and butler threads ${usd(r.fleet.spawnedUsd)}; investigator ${usd(r.fleet.investigatorUsd)}`,
+				)}); spawned threads ${usd(r.fleet.spawnedUsd)}; investigator ${usd(r.fleet.investigatorUsd)}${r.fleet.excludedUsd > 0 ? `; EXCLUDED experiments ${usd(r.fleet.excludedUsd)} (in no figure)` : ""}`,
 		);
 	out.push("", `  trend (${W} windows)    day     PRs   $/PR      no-op   Steward`);
 	for (const w of r.trend)

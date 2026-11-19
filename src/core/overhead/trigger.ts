@@ -52,7 +52,9 @@ export type OverheadSummary = {
 	prsDay?: number;
 	stewardUsdDay?: number;
 	noopRate?: number;
+	/** The headline overhead share, and the Steward's own share beside it. */
 	spendShare?: number;
+	stewardShare?: number;
 	crossings: string[];
 	unavailable: string[];
 };

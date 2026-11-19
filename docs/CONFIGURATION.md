@@ -344,7 +344,9 @@ What is measured, over a rolling window (default 24 h):
 - **Cost per merged PR** = Steward spend + Chamberlain's classifier spend, divided by the PRs merged in the window. Merged PRs are the proxy for
   work done, for now. Zero PRs never divides: the number is shown as "no PR merged", and `zeroPrFloorUsd` says what spend then crosses.
 - **No-op wake rate** = wakes that made no tool call / wakes measured with tool counts. Not judged on fewer than `minWakes` wakes.
-- **Spend share** = (Steward + Chamberlain spend + spawned eval and butler threads + the investigator) / the whole fleet's Claude spend.
+- **Overhead share** (the headline) = Chamberlain-caused spend (the Steward, Chamberlain's own model calls, the threads it launches, the
+  investigator) / the whole fleet's Claude spend, over the window. **Experiments are in neither side** (`excludeProjects`, `excludeLabels`).
+  The **Steward-only share**, the Steward's own spend / the same fleet spend, is shown beside it. Its key is `triggers.spendShare`.
 - **Cost per useful wake** = Steward spend / wakes that made at least one tool call. Reported only.
 
 Each number is one of three things, and says which: a value, **not configured** (you have not asked for it) or **unavailable** (you asked, and the
@@ -384,13 +386,15 @@ panel) and in the brief the investigator is given.
 | `github.rollupTitle` | `^Rollup of \d+ pull requests?` | The pattern (case-insensitive) that marks a PR as a rollup. |
 | `prices` | none | USD **per million tokens**, per model: `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, all required, each zero or more. Chamberlain ships no rates; copy the ones you pay from your vendor's price list and keep them current. The Steward's model is the one `models.steward` names, and is looked up here. |
 | `cacheWrite` | `"1h"` | Which cache-write rate the usage rows are priced at, `"5m"` or `"1h"` (the rows do not say which TTL wrote them). Check it once against your provider's billing. |
-| `fleet.source` | `"off"` | Where the whole fleet's spend comes from, for the spend share: `"off"` (no share), or `"lifeos"`: a read-only `SELECT` through the LifeOS query tool over its `otel_api_requests` and `sessions` tables. |
+| `excludeProjects` | none | Session projects that are experiments, not work (an eval project, say): their spend is in **neither** the fleet total **nor** any Chamberlain-caused figure, and is shown apart as "EXCLUDED experiments". Empty by default; nothing is excluded unless you say so. An excluded project that is also in `fleet.spawnedProjects` is excluded. |
+| `excludeLabels` | none | The same, for sessions that carry any of these labels (what a runner such as an eval harness stamps on the sessions it launches). A request with no session row cannot be told to be an experiment, so it stays in the total. |
+| `fleet.source` | `"off"` | Where the whole fleet's spend comes from, for the overhead share: `"off"` (no share), or `"lifeos"`: a read-only `SELECT` through the LifeOS query tool over its `otel_api_requests` and `sessions` tables. |
 | `fleet.command` | `"lifeos-axi"` | The query command for source `"lifeos"`; it is run as `<command> query --sql <SELECT>`. |
 | `fleet.hosts` | none | Hosts the fleet total should include. One with no rows in the window is named in the report. |
-| `fleet.spawnedProjects` | none | Session projects whose spend counts as Chamberlain-spawned eval and butler threads. |
+| `fleet.spawnedProjects` | none | Session projects whose spend counts as threads Chamberlain's Steward launches (butlers, say), added to the overhead. Experiments are not among them: `excludeProjects` wins. |
 | `triggers.costPerPr` | `mode: "report"` | `mode` is `"report"` (shown only) or `"trigger"`. Crosses when the window's cost per PR is above `fixedUsd`, or above `baselineMultiplier` x the baseline's cost per PR (whichever are given; the lower applies). `zeroPrFloorUsd`: with no PR merged, spend above it crosses. A trigger needs at least one of the three, and `github.owners` or `github.repos`. |
 | `triggers.noopRate` | `mode: "report"`, `minWakes: 20` | Crosses when the share of wakes with no tool call is above `threshold` (above 0, up to 1; `0.1` is 10%), on at least `minWakes` measured wakes. |
-| `triggers.spendShare` | `mode: "report"` | Crosses above `threshold`. A trigger needs `fleet.source` other than `"off"`. |
+| `triggers.spendShare` | `mode: "report"` | Judges the headline overhead share. `"trigger"`: crosses above `threshold`, and needs `fleet.source` other than `"off"`. `"report"` with a `threshold`: the threshold is shown as the target ("target at most 20.0%") and nothing opens. |
 | `investigator.enabled` | `false` | Open an investigator thread on a crossing. Needs `model` and `projectId`. |
 | `investigator.model` | none | The provider, model and effort of the thread: a T3 selection, `{ adapter, server, instanceId, model, options }`, the same shape `models.<role>` takes and checked the same way against the server's catalog before anything starts (no default, no fallback to another provider). |
 | `investigator.projectId` | none | The T3 project the thread is created in. |

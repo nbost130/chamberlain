@@ -3,16 +3,9 @@
  * and the defaults are neutral: nothing about a person, a repository, a model or a price is built in. With nothing configured the monitor
  * measures what it can from Chamberlain's own database (the Steward's no-op wake rate), reports the rest as "not configured", and triggers nothing.
  *
- *   enabled              false   the daemon measures once per `checkEveryHours` and may open an investigator. `chamberlain overhead` works either way.
- *   windowHours          24      the rolling window every number covers
- *   baselineDays         7       the period before the window that a cost-per-PR limit given as a multiplier is measured against
- *   checkEveryHours      24      how often the daemon measures
- *   github               which merged PRs count as work done: owners and/or repos, repos to exclude, whether a rollup PR counts
- *   prices               USD per million tokens, per model: the rates the Steward's tokens are priced at (none shipped)
- *   cacheWrite           "1h"    which cache-write rate the usage rows are priced at ("5m" or "1h")
- *   fleet                where the whole fleet's spend comes from: "off" or "lifeos" (a read-only LifeOS query), for the spend share
- *   triggers             per metric (costPerPr, noopRate, spendShare): `mode` "report" (shown only, the default) or "trigger", and its limits
- *   investigator         the thread opened on a crossing: its provider, model and effort, project, cooldown and how many may be open
+ * Every key, its default and its meaning is in docs/CONFIGURATION.md, "Overhead monitor". In short: `enabled` (false), the window and baseline,
+ * `github` (which merged PRs count), `prices` (none shipped), `excludeProjects` and `excludeLabels` (experiments left out of every figure),
+ * `fleet` (the fleet-spend source), `triggers` (per metric, "report" or "trigger") and `investigator` (the thread opened on a crossing).
  *
  * Validation fails closed and early (`chamberlain config show`, every daemon start): a negative or non-numeric limit, an unknown key, a trigger
  * with no limit, or an enabled monitor with PR counting on and no price for the Steward's model is refused with a message naming the key.
@@ -20,7 +13,9 @@
  * The Steward's model comes from `models.steward`, the central selection (ISA.md, ISC-2): it is looked up in `prices`, never named here.
  */
 import { bool, num, object, oneOf, str } from "../config/config-fields.ts";
-import { type ThreadModel, threadModel } from "../llm/selection.ts";
+import type { ThreadModel } from "../llm/selection.ts";
+import { parseInvestigator } from "./config-investigator.ts";
+import { hours, names, type Obj, plain, SAFE_REPO } from "./config-names.ts";
 import { type CacheWrite, type PriceTable, parsePrices, priceOf } from "./prices.ts";
 
 type Mode = "trigger" | "report";
@@ -41,6 +36,13 @@ export type OverheadConfig = {
 	};
 	prices: PriceTable;
 	cacheWrite: CacheWrite;
+	/**
+	 * Sessions that are experiments, not work, left out of the fleet total AND out of every Chamberlain-caused figure: a session whose project
+	 * is in `excludeProjects`, or that carries any of `excludeLabels`. Empty by default; nothing is excluded unless the operator says so. An
+	 * excluded spawned project (`fleet.spawnedProjects`) is excluded, the exclusion winning.
+	 */
+	excludeProjects: string[];
+	excludeLabels: string[];
 	fleet: {
 		source: "off" | "lifeos";
 		/** The query command for source "lifeos", read-only. */
@@ -94,6 +96,8 @@ export const OVERHEAD_DEFAULTS: OverheadConfig = {
 	},
 	prices: {},
 	cacheWrite: "1h",
+	excludeProjects: [],
+	excludeLabels: [],
 	fleet: { source: "off", command: "lifeos-axi", hosts: [], spawnedProjects: [] },
 	triggers: {
 		costPerPr: { mode: "report" },
@@ -111,33 +115,6 @@ export const OVERHEAD_DEFAULTS: OverheadConfig = {
 		instructions: "",
 	},
 };
-
-type Obj = Record<string, unknown>;
-
-/** The keys of a T3 thread selection, as `models.<role>` takes them. */
-const MODEL_KEYS = ["adapter", "server", "instanceId", "model", "options"];
-
-/** A name that goes into a GitHub search or a database query: letters, digits and a few separators, so nothing in it can change the statement. */
-const SAFE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,80}$/;
-const SAFE_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
-
-function names(o: Obj, k: string, where: string, ok: RegExp = SAFE): string[] {
-	const v = o[k];
-	if (v === undefined) return [];
-	if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !ok.test(x)))
-		throw Error(
-			`${where}: ${k} must be a list of ${ok === SAFE_REPO ? "owner/name repositories" : "plain names (letters, digits, space . _ -)"}`,
-		);
-	return v as string[];
-}
-
-const plain = (o: Obj, k: string, where: string, d: string): string => {
-	const v = str(o, k, where, d);
-	if (!SAFE.test(v)) throw Error(`${where}: ${k} must be a plain name (letters, digits, space . _ -)`);
-	return v;
-};
-
-const hours = (o: Obj, k: string, where: string, d: number) => num(o, k, where, { d, whole: false });
 
 const optNum = (o: Obj, k: string, where: string, zeroOk: boolean): number | undefined =>
 	o[k] === undefined ? undefined : num(o, k, where, { d: 0, whole: false, zeroOk });
@@ -217,34 +194,6 @@ function parseTriggers(raw: unknown, where: string): OverheadConfig["triggers"] 
 	};
 }
 
-/** A T3 project id: a UUID, or `mcp:` and a UUID for a project an agent created. It goes only into a T3 command, never a query. */
-function projectId(o: Obj, where: string): string {
-	const v = str(o, "projectId", where, "");
-	if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,100}$/.test(v)) throw Error(`${where}: projectId must be a T3 project id`);
-	return v;
-}
-
-function parseInvestigator(raw: unknown, where: string): OverheadConfig["investigator"] {
-	const d = OVERHEAD_DEFAULTS.investigator;
-	if (raw === undefined) return structuredClone(d);
-	const keys = ["enabled", "model", "projectId", "title", "cooldownHours", "maxOpen", "ttlHours", "instructions"];
-	const o = object(raw, where, keys);
-	const model =
-		o.model === undefined || o.model === null
-			? null
-			: threadModel(object(o.model, `${where}.model`, MODEL_KEYS), `${where}.model`);
-	return {
-		enabled: bool(o, "enabled", where, d.enabled),
-		model,
-		projectId: o.projectId === undefined || o.projectId === null ? null : projectId(o, where),
-		title: plain(o, "title", where, d.title),
-		cooldownHours: num(o, "cooldownHours", where, { d: d.cooldownHours, whole: false, zeroOk: true }),
-		maxOpen: num(o, "maxOpen", where, { d: d.maxOpen, whole: true }),
-		ttlHours: hours(o, "ttlHours", where, d.ttlHours),
-		instructions: o.instructions === undefined ? d.instructions : str(o, "instructions", where, ""),
-	};
-}
-
 /** Whether the per-PR metric has anything to count: an owner or a repo named. */
 export const perPrConfigured = (c: OverheadConfig): boolean => c.github.owners.length + c.github.repos.length > 0;
 
@@ -297,6 +246,8 @@ export function parseOverhead(raw: unknown, stewardModel?: string): OverheadConf
 		"github",
 		"prices",
 		"cacheWrite",
+		"excludeProjects",
+		"excludeLabels",
 		"fleet",
 		"triggers",
 		"investigator",
@@ -310,9 +261,11 @@ export function parseOverhead(raw: unknown, stewardModel?: string): OverheadConf
 		github: parseGithub(o.github, `${where}.github`),
 		prices: parsePrices(o.prices, `${where}.prices`),
 		cacheWrite: oneOf(o, "cacheWrite", where, { allowed: ["5m", "1h"], d: d.cacheWrite }),
+		excludeProjects: names(o, "excludeProjects", where),
+		excludeLabels: names(o, "excludeLabels", where),
 		fleet: parseFleet(o.fleet, `${where}.fleet`),
 		triggers: parseTriggers(o.triggers, `${where}.triggers`),
-		investigator: parseInvestigator(o.investigator, `${where}.investigator`),
+		investigator: parseInvestigator(o.investigator, `${where}.investigator`, d.investigator),
 	};
 	triggerChecks(c, where);
 	enabledChecks(c, where, stewardModel);

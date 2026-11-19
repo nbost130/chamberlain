@@ -1,7 +1,11 @@
 /**
  * What the whole fleet spent on Claude, read from the LifeOS database (`otel_api_requests`, one row per API request, from every host), plus
- * the two slices Chamberlain started itself that the Steward's own transcript does not hold: eval and butler threads (by the project their
- * session ran in) and the overhead investigator (by its thread title).
+ * the two slices Chamberlain started itself that the Steward's own transcript does not hold: spawned threads such as butlers (by the project
+ * their session ran in) and the overhead investigator (by its thread title).
+ *
+ * EXPERIMENTS ARE LEFT OUT OF ALL OF IT. A session whose project is in `excludeProjects`, or that carries a label in `excludeLabels`, is in
+ * neither the fleet total nor a spawned or investigator slice; its spend is returned apart (`excludedUsd`) so the report can show what was left out.
+ * A request with no session row cannot be told to be an experiment, so it stays in the total.
  *
  * Read-only by construction: the only door is `lifeos-axi query --sql <SELECT>`, whose role can read and cannot write. The statement is built here
  * from numbers and from names config.ts has already restricted to plain characters, so nothing a config says can change its shape.
@@ -19,6 +23,8 @@ export type FleetSpend = {
 	missingHosts: string[];
 	spawnedUsd: number;
 	investigatorUsd: number;
+	/** What the excluded sessions (experiments) spent in the window: in none of the figures above. Zero when nothing is excluded. */
+	excludedUsd: number;
 };
 
 /** Runs the query command with its arguments and returns what it printed. A test gives its own. */
@@ -43,29 +49,36 @@ export function fleetSql(cfg: OverheadConfig, from: number, to: number): string 
 	const sum = "coalesce(round(sum(o.cost_usd_micros)), 0)::bigint";
 	const join = "FROM otel_api_requests o JOIN sessions s ON s.id = o.session_id";
 	const projects = cfg.fleet.spawnedProjects;
+	const excluded = [
+		...(cfg.excludeProjects.length ? [`coalesce(s.project IN (${quoted(cfg.excludeProjects)}), false)`] : []),
+		...(cfg.excludeLabels.length ? [`coalesce(s.labels && ARRAY[${quoted(cfg.excludeLabels)}]::text[], false)`] : []),
+	].join(" OR ");
+	const keep = excluded ? ` AND NOT (${excluded})` : "";
+	const fleet = excluded
+		? `FROM otel_api_requests o LEFT JOIN sessions s ON s.id = o.session_id WHERE ${span}${keep}`
+		: `FROM otel_api_requests o WHERE ${span}`;
 	return [
-		`SELECT 'fleet' AS k, o.host AS name, ${sum} AS micros FROM otel_api_requests o WHERE ${span} GROUP BY o.host`,
+		`SELECT 'fleet' AS k, o.host AS name, ${sum} AS micros ${fleet} GROUP BY o.host`,
 		...(projects.length
 			? [
-					`SELECT 'spawned', s.project, ${sum} ${join} WHERE ${span} AND s.project IN (${quoted(projects)}) GROUP BY s.project`,
+					`SELECT 'spawned', s.project, ${sum} ${join} WHERE ${span}${keep} AND s.project IN (${quoted(projects)}) GROUP BY s.project`,
 				]
 			: []),
-		`SELECT 'investigator', 'investigator', ${sum} ${join} WHERE ${span} AND s.title LIKE '${cfg.investigator.title.replace(/'/g, "''")}%'`,
+		`SELECT 'investigator', 'investigator', ${sum} ${join} WHERE ${span}${keep} AND s.title LIKE '${cfg.investigator.title.replace(/'/g, "''")}%'`,
+		...(excluded ? [`SELECT 'excluded', 'excluded', ${sum} ${join} WHERE ${span} AND (${excluded})`] : []),
 	].join(" UNION ALL ");
 }
 
 /** Pure: the rows of the query's CSV answer, from the lines of the form `fleet,mac,1234`. The tool's own header and help lines are ignored. */
 export function parseFleet(output: string, cfg: OverheadConfig): FleetSpend {
 	const byHost: Record<string, number> = {};
-	let spawned = 0;
-	let investigator = 0;
+	const slice = { spawned: 0, investigator: 0, excluded: 0 };
 	for (const line of output.split("\n")) {
-		const m = /^(fleet|spawned|investigator),([^,]*),(-?\d+)$/.exec(line.trim());
+		const m = /^(fleet|spawned|investigator|excluded),([^,]*),(-?\d+)$/.exec(line.trim());
 		if (!m) continue;
 		const usd = Number(m[3]) / 1_000_000;
 		if (m[1] === "fleet") byHost[m[2] as string] = usd;
-		else if (m[1] === "spawned") spawned += usd;
-		else investigator += usd;
+		else slice[m[1] as keyof typeof slice] += usd;
 	}
 	if (!Object.keys(byHost).length) throw Error("the LifeOS query returned no fleet rows");
 	const totalUsd = Object.values(byHost).reduce((a, b) => a + b, 0);
@@ -73,8 +86,9 @@ export function parseFleet(output: string, cfg: OverheadConfig): FleetSpend {
 		totalUsd,
 		byHost,
 		missingHosts: cfg.fleet.hosts.filter((h) => byHost[h] === undefined),
-		spawnedUsd: spawned,
-		investigatorUsd: investigator,
+		spawnedUsd: slice.spawned,
+		investigatorUsd: slice.investigator,
+		excludedUsd: slice.excluded,
 	};
 }
 
