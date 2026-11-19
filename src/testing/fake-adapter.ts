@@ -101,6 +101,7 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		principalLastWrite: async (id, since) => {
 			const at = fake.threads.get(id)?.principalAt;
 			if (at === "error") throw Error("the history could not be read");
+			if (at === "hang") return new Promise<number | undefined>(() => {});
 			return at !== undefined && at >= since ? at : undefined;
 		},
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,

@@ -22,12 +22,12 @@ type Page = {
 export const isPrincipalMessage = (i: TurnItem): boolean =>
 	i.type === "user_message" && i.createdBy === "user" && !MACHINE_SOURCES.has(String(i.creationSource ?? ""));
 
-/** Pure: the time of the newest message of the principal's among `items`, in epoch milliseconds, or undefined. */
-export function lastPrincipalWrite(items: readonly TurnItem[]): number | undefined {
+/** Pure: the time of the newest message of the principal's among `items` (none after `until`, when given), in epoch milliseconds, or undefined. */
+export function lastPrincipalWrite(items: readonly TurnItem[], until = Number.POSITIVE_INFINITY): number | undefined {
 	let last: number | undefined;
 	for (const i of items) {
 		const t = Date.parse(i.updatedAt ?? "");
-		if (isPrincipalMessage(i) && Number.isFinite(t) && (last === undefined || t > last)) last = t;
+		if (isPrincipalMessage(i) && Number.isFinite(t) && t <= until && (last === undefined || t > last)) last = t;
 	}
 	return last;
 }
@@ -53,12 +53,14 @@ function localItems(page: Page, threadId: string): TurnItem[] {
  * The principal's last message in the thread at or after `since`, or undefined when there is none since then. The newest items come first
  * (`/bounded`); history pages (the conversation view, without tool noise) are read back only while the oldest item seen is still newer than `since`
  * and the thread has more. Throws when it cannot tell: a read that fails, a page that is not a page, or a thread so busy that `PAGES_MAX` pages
- * never reach back past `since`.
+ * never reach back past `since`. `until` ignores messages after it and `pagesMax` raises the page budget: both are for replaying the past (the dry run
+ * of what this would have held); the live read gives neither.
  */
 export async function readPrincipalLastWrite(
 	threadId: string,
 	get: HistoryGet,
 	since: number,
+	opts: { until?: number; pagesMax?: number } = {},
 ): Promise<number | undefined> {
 	const base = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
 	const bounded = (await get(`${base}/bounded`)) as Bounded;
@@ -66,11 +68,12 @@ export async function readPrincipalLastWrite(
 	let items = bounded.projection.turnItems;
 	let { hasMoreHistory: more, historyCursor: cursor } = bounded;
 	for (let pages = 0; ; pages++) {
-		const found = lastPrincipalWrite(items);
+		const found = lastPrincipalWrite(items, opts.until);
 		if (found !== undefined) return found >= since ? found : undefined;
 		const first = oldest(items);
 		if (!more || (first !== undefined && first < since)) return undefined;
-		if (!cursor || pages === PAGES_MAX) throw Error("the thread's history did not reach back past the window");
+		if (!cursor || pages === (opts.pagesMax ?? PAGES_MAX))
+			throw Error("the thread's history did not reach back past the window");
 		const page = (await get(`${base}/history?cursor=${encodeURIComponent(cursor)}&view=conversation`)) as Page;
 		items = [...localItems(page, threadId), ...items];
 		more = page.hasMoreHistory;

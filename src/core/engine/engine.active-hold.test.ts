@@ -117,12 +117,42 @@ describe("a card in a thread the principal is writing in", () => {
 		}
 	});
 
-	test("a read that fails is not activity: the card wakes at once, and the failure is logged", async () => {
+	test("fail open: a read that errors (server down, auth) wakes the Steward at once and logs why", async () => {
 		const r = rig({ steward: "steward-1", activeHold: ON });
 		r.fake.threads.set("t1", { waiting: [{ ...question, requestId: "req-1" }], principalAt: "error" });
 		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1" }) });
 		await r.until("the wake", () => posts(r).length === 1);
-		expect(logged(r, "read-failed").some((e) => e.what === "principal activity")).toBe(true);
+		expect(posts(r)[0]!.message).not.toContain("Held for");
+		expect(r.store.wakes.parked()).toEqual([]);
+		expect(logged(r, "active-hold-unavailable")).toHaveLength(1);
+		expect(logged(r, "active-hold-unavailable")[0]!.server).toBe("fake");
+	});
+
+	test("fail open: a read that never answers is given up on after the read deadline, and the card wakes at once", async () => {
+		const r = rig({ steward: "steward-1", activeHold: ON, activeHoldReadMs: 30 });
+		r.fake.threads.set("t1", { waiting: [{ ...question, requestId: "req-1" }], principalAt: "hang" });
+		const t0 = Date.now();
+		r.fake.emit({ kind: "needs_input", thread: thread("t1", "waiting", { pendingRequestId: "req-1" }) });
+		await r.until("the wake", () => posts(r).length === 1);
+		expect(Date.now() - t0).toBeLessThan(2000);
+		expect(r.store.wakes.parked()).toEqual([]);
+		expect(logged(r, "active-hold-unavailable")).toHaveLength(1);
+		expect(String(logged(r, "active-hold-unavailable")[0]!.error)).toContain("timeout");
+	});
+
+	test("answered before its due time: dropped at the next tick, not at the due time", async () => {
+		const r = rig({ steward: "steward-1", activeHold: ON });
+		card(r, "t1", 1);
+		await r.until("the card is parked", () => r.store.wakes.parked().length === 1);
+		// Unanswered and not due: the tick leaves it parked.
+		await r.engine.tick();
+		expect(r.store.wakes.parked()).toHaveLength(1);
+		answer(r, "t1");
+		await r.engine.tick();
+		await r.until("the early drop", () => logged(r, "active-hold-dropped").length === 1);
+		expect(logged(r, "active-hold-dropped")[0]!.reason).toBe("answered");
+		expect(r.store.wakes.parked()).toEqual([]);
+		expect(r.fake.wakes).toEqual([]);
 	});
 
 	test("a card whose thread was settled while it waited is dropped, not sent", async () => {

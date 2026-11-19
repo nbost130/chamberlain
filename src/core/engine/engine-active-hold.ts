@@ -30,7 +30,21 @@ export type ActiveHoldDeps = {
 	watcher: (server: string) => Watcher | undefined;
 	/** Tells the relay a row is pending. */
 	nudge: () => void;
+	/** How long the principal-activity read may take before the card goes out as if the principal were not there. Default 5 seconds. */
+	readMs?: number | undefined;
 };
+
+/** The longest the activity read is waited for: a card that waits on a slow server is a wake that is late, which is what this feature must never cost. */
+const READ_MS = 5000;
+
+/** The read, or a rejection of `timeout` text when it takes longer than `ms`. The read itself is left to finish or fail on its own. */
+function within<T>(read: Promise<T>, ms: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(Error(`timeout: no answer in ${ms} ms`)), ms);
+	});
+	return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
 
 /** The longest a timer is set for: a nudge to tick near a card's time, never the thing that releases it. */
 const NUDGE_MAX_MS = 15 * 60_000;
@@ -49,9 +63,10 @@ async function plan(
 	const now = d.now();
 	let last: number | undefined;
 	try {
-		last = await adapter.inspect.principalLastWrite(thread, now - config.windowMs);
+		last = await within(adapter.inspect.principalLastWrite(thread, now - config.windowMs), d.readMs ?? READ_MS);
 	} catch (e) {
-		d.log("read-failed", { server, threadId: thread, what: "principal activity", error: String(e).slice(0, 200) });
+		// Fail open: with no word on the principal the card wakes the Steward at once, exactly as it did before this feature existed.
+		d.log("active-hold-unavailable", { server, threadId: thread, error: String(e).slice(0, 200) });
 		return undefined;
 	}
 	const releaseAt = holdUntil(last, now, config.windowMs);
@@ -60,8 +75,8 @@ async function plan(
 		: { releaseAt, lastWriteAt: last, server, requestIds };
 }
 
-/** One parked card whose time has come: dropped when it is answered or its thread is gone, else released as an ordinary wake with the note. */
-async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, away: boolean) {
+/** One parked card: dropped when it is answered or its thread is gone; else, when due, released as an ordinary wake with the note. */
+async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, away: boolean, due: boolean) {
 	const p = item.parked;
 	const w = d.watcher(p.server);
 	const live = item.thread ? w?.states.get(item.thread) : undefined;
@@ -76,20 +91,24 @@ async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, aw
 		if (d.store.wakes.dropParked(item.deliveryId)) d.log("active-hold-dropped", { ...held, reason: verdict.reason });
 		return;
 	}
+	// Not yet due and still waiting: it stays parked until its time.
+	if (!due) return;
 	const text = withNote(item.message, activeHoldNote(p.lastWriteAt, now));
 	if (!d.store.wakes.unpark(item.deliveryId, now, text)) return;
 	d.log("active-hold-released", { ...held, reason: away ? "away" : "due" });
 	d.nudge();
 }
 
-/** Settles every parked card whose time has come: all of them while the principal is away. A failure is logged and the next tick tries again. */
+/**
+ * Settles the parked cards: those whose time has come (all of them while the principal is away) are released or dropped; one not yet due is
+ * dropped as soon as it is answered or its thread is gone, and otherwise left alone. A failure is logged and the next tick tries again.
+ */
 async function settleDue(d: ActiveHoldDeps) {
 	try {
 		const away = Boolean(d.store.away.current());
 		const now = d.now();
 		for (const item of d.store.wakes.parked(null))
-			if (item.parked && (away || now >= item.parked.releaseAt))
-				await settle(d, { ...item, parked: item.parked }, away);
+			if (item.parked) await settle(d, { ...item, parked: item.parked }, away, away || now >= item.parked.releaseAt);
 	} catch (e) {
 		d.log("active-hold-error", { error: String(e).slice(0, 200) });
 	}

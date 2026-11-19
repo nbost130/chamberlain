@@ -91,6 +91,8 @@ export type EngineDeps = {
 	housekeeping?: boolean;
 	/** Whether a question card in a thread the principal is writing in waits for them before it wakes the Steward, and for how long (engine-active-hold.ts). Absent: never. The daemon passes `activeHold` from config.json (default on, 5 minutes). */
 	activeHold?: ActiveHoldConfig;
+	/** A test knob: how long the principal-activity read may take before the card wakes the Steward at once (default 5 seconds). */
+	activeHoldReadMs?: number;
 	/** Stalled-thread recovery (src/core/ops/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
 	recover?: boolean | Partial<RecoverTiming>;
 	/** The Steward's token usage per wake (src/core/steward/steward-tokens.ts). OFF unless asked (`stewardTokens`): when on, the daemon re-reads the Steward's transcript hourly and upserts its per-wake rows. */

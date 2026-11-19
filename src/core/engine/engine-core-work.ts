@@ -26,13 +26,12 @@ export abstract class CoreWork extends CoreRights {
 	protected makeActiveHold() {
 		const { d } = this;
 		return createActiveHold({
-			store: this.store,
-			log: this.log,
-			config: d.activeHold ?? { enabled: false, windowMs: 0 },
+			...{ store: this.store, log: this.log, config: d.activeHold ?? { enabled: false, windowMs: 0 } },
 			now: () => d.relay?.now?.() ?? Date.now(),
 			skip: () => new Set([...this.chamberlainSkip(), this.store.steward.current()?.thread ?? ""]),
 			watcher: (server) => this.watchers.find((w) => w.srv.name === server),
 			nudge: () => void this.relay.pass(),
+			readMs: d.activeHoldReadMs,
 		});
 	}
 
