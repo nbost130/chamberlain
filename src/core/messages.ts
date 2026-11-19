@@ -194,6 +194,16 @@ export const rightsStaleCopyNote =
 export const threadWakeHead = (kind: string, title: string, what: string) =>
 	`[chamberlain] ${kind}: thread "${title}" ${what}.`;
 
+/**
+ * The line a held question card carries when it is released: the principal was writing in the thread, gave it a window to answer the card
+ * themselves, and the card is still open. It tells the Steward what to do with it. `lastWriteAt` and `now` are epoch milliseconds.
+ */
+export const activeHoldNote = (lastWriteAt: number, now: number): string => {
+	const at = new Date(lastWriteAt).toISOString().slice(11, 16);
+	const mins = Math.max(0, Math.round((now - lastWriteAt) / 60_000));
+	return `Held for ${principal()}: they wrote in this thread at ${at} UTC (${mins} min ago) and had a window to answer this card themselves; it is still unanswered. Answer it under your decision rights, or queue it as a Decision for ${principalPoss()} queue.`;
+};
+
 /** What happened to a thread, in a wake's first line. */
 export const threadHappened = {
 	needsInput: "is waiting for your answer or approval",

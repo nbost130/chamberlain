@@ -3,6 +3,7 @@
 import { parseModels } from "../llm/selection.ts";
 import { configDir } from "../state-dir.ts";
 import { SchemaTooNewError } from "../store/schema.ts";
+import { parseActiveHold } from "./active-hold-config.ts";
 import { parseSettledMatch } from "./settings-parse.ts";
 
 export const CONFIG_FILE = "config.json";
@@ -66,6 +67,7 @@ export const SECTIONS = [
 	"judge",
 	"mail",
 	"models",
+	"activeHold",
 ] as const;
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
@@ -124,12 +126,11 @@ function checkSection(k: string, val: unknown): void {
 	if (val === null) return;
 	if (k === "servers" ? !Array.isArray(val) : !isObject(val))
 		throw new ConfigFileError(`config.json: "${k}" must be ${k === "servers" ? "a list" : "an object"}`);
-	if (k === "settledMatch") {
-		try {
-			parseSettledMatch(val, "config.json");
-		} catch (e) {
-			throw new ConfigFileError((e as Error).message);
-		}
+	try {
+		if (k === "settledMatch") parseSettledMatch(val, "config.json");
+		if (k === "activeHold") parseActiveHold(val);
+	} catch (e) {
+		throw new ConfigFileError((e as Error).message);
 	}
 }
 
