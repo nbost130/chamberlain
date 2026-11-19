@@ -65,6 +65,30 @@ describe("a released card and round 4's rights notice", () => {
 		expect(r.alarms).toContain("rights-undelivered");
 	});
 
+	test("round 5: a released card near the size bound whose notice wake keeps failing is not held at 0 attempts: after 3 failures the notice is prepended, with an alarm", async () => {
+		const r = inlineWorld();
+		r.st.broken = true;
+		const text = "x".repeat(23_850);
+		parkedThenReleased(r, "w1", text);
+		r.w.answer = async (id) => (id.endsWith(":rights-notice") ? { ok: false, status: 503 } : { ok: true, status: 202 });
+		const relay = r.relay();
+		for (let i = 0; i < 3; i++) {
+			await relay.pass();
+			r.clock.t += 2000;
+			expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+		}
+		await relay.pass();
+		expect(
+			r.posts
+				.filter((p) => p.id === "w1")
+				.at(-1)!
+				.message.startsWith(rightsUnreadNotice),
+		).toBe(true);
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", attempts: 1 });
+		expect(r.alarms).toContain("rights-notice-undelivered");
+		expect(r.store.wakes.parked()).toEqual([]);
+	});
+
 	test("a card still parked is left alone by the notice and the fallback: nothing is sent for it", async () => {
 		const r = inlineWorld();
 		r.st.broken = true;
