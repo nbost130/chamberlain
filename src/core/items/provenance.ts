@@ -30,6 +30,17 @@ export type Provenance = {
 
 const none = (id: string, why: string): Provenance => ({ id, answeredBy: "none", why });
 
+/** Pure: is this stored answer a whole record of a choice made on the page: a key, a who, a time, and exactly one of the question's options? */
+function malformed(q: QuestionState, a: Answer): string | undefined {
+	if (a.key !== "page" && a.key !== "view")
+		return "the record names no key the answer was made with, so it is not the principal's";
+	if (a.by !== "page" && a.by !== "batch") return "the record does not say how the answer was made";
+	if (typeof a.t !== "string" || Number.isNaN(Date.parse(a.t))) return "the record has no time";
+	const chosen = Number.isInteger(a.choice) ? q.options[a.choice] : undefined;
+	if (!chosen || chosen.label !== a.label) return "the answer is not exactly one of the question's options";
+	return undefined;
+}
+
 /** Pure: what the record says about who answered. `owner` is the claim's owner, undefined when nothing claimed the item. */
 function provenanceOf(id: string, q: QuestionState | undefined, owner: string | undefined): Provenance {
 	if (!q) return none(id, "no such decision");
@@ -39,11 +50,13 @@ function provenanceOf(id: string, q: QuestionState | undefined, owner: string | 
 	if (!a || owner === undefined) return none(id, "not answered");
 	if (owner !== PAGE) return none(id, `the answer was made by "${owner}", not on the decision page`);
 	if (a.kind) return none(id, "a direction, not a chosen option");
+	const bad = malformed(q, a);
+	if (bad) return none(id, bad);
 	return {
 		id,
 		answeredBy: "principal",
 		via: "decision page",
-		key: a.key ?? "page",
+		key: a.key as "page" | "view",
 		by: a.by,
 		answeredAt: a.t,
 		choice: a.label,
@@ -58,16 +71,16 @@ function provenanceOf(id: string, q: QuestionState | undefined, owner: string | 
 export const readProvenance = (store: Store, id: string): Provenance =>
 	provenanceOf(id, getQuestion(store, id), readClaim(store, id)?.owner);
 
-/** What a thread says it was told, to check against the record. Every field it gives must match. */
-export type Expect = { choice?: string; threadId?: string };
+/** What a thread says it was told, to check against the record. Both are required: a check that names neither proves nothing. */
+export type Expect = { choice: string; threadId: string };
 
-/** Pure: does the record bear out the claim? ok only for a principal answer whose choice and thread match what was given. */
-export function verify(p: Provenance, expect: Expect = {}): { ok: boolean; line: string } {
+/** Pure: does the record bear out the claim? ok only for a principal answer whose choice and thread both match what was given. */
+export function verify(p: Provenance, expect: Expect): { ok: boolean; line: string } {
 	if (p.answeredBy !== "principal")
 		return { ok: false, line: `unverified: ${p.id}: ${p.why ?? "not the principal's answer"}` };
-	if (expect.choice !== undefined && expect.choice.trim() !== p.choice)
+	if (expect.choice !== p.choice)
 		return { ok: false, line: `unverified: ${p.id}: the record's choice is "${p.choice}", not "${expect.choice}"` };
-	if (expect.threadId !== undefined && expect.threadId !== p.threadId)
+	if (p.threadId === undefined || expect.threadId !== p.threadId)
 		return {
 			ok: false,
 			line: `unverified: ${p.id}: the record's thread is ${p.threadId ?? "none"}, not ${expect.threadId}`,

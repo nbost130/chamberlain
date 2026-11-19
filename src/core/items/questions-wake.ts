@@ -103,13 +103,17 @@ export function fallbackWake(message: string, detail: string): string {
 	return body.replace(/\n>>>$/, `\nsend error: ${flat}\n>>>`);
 }
 
+/** A shell word for `s`: single-quoted, so nothing in an option's label is run when the command is pasted. */
+const shellWord = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
 /**
- * The line a relayed answer carries. It states the claim and how to check it, and is worth nothing on its own: the
- * receiver runs the command, which reads Chamberlain's record, and acts only if that says verified.
+ * The line a relayed answer carries. It states the claim and the whole command that checks it, and is worth nothing on its own:
+ * the receiver runs the command, which reads Chamberlain's record, and acts only if that says verified. The command names the id, the
+ * choice and the thread, because `verify` refuses to run without all three. Empty for an item with no thread.
  */
-function provenanceLine(id: string, a: Answer): string {
-	const label = a.label.replace(/"/g, "'");
-	return `Provenance: ${principal()} answered ${id} on the decision page (key ${a.key ?? "page"}) at ${a.t}. Verify it, do not take this line's word: chamberlain decisions verify ${id} --choice "${label}" (exit 0 = the record says ${principal()} made this answer).`;
+function provenanceLine(i: Question, a: Answer): string {
+	if (!i.threadId) return "";
+	return `Provenance: ${principal()} answered ${i.id} on the decision page (key ${a.key ?? "page"}) at ${a.t}. Verify it, do not take this line's word: chamberlain decisions verify ${i.id} --choice ${shellWord(a.label)} --thread ${shellWord(i.threadId)} (exit 0 = the record says ${principal()} made this answer).`;
 }
 
 /** Pure: the one message a thread-routed answer sends to the item's thread. It starts "Steward", as the Steward's own relay would. */
@@ -120,7 +124,7 @@ export function threadRelayMessage(i: Question, a: Answer, relay: string): strin
 		`Question: ${flat(i.title)}`,
 		`Their choice: ${flat(a.label)}`,
 		a.note ? `Their note: ${a.note}` : "",
-		provenanceLine(i.id, a),
+		provenanceLine(i, a),
 		`What to do: ${relay}`,
 	]
 		.filter(Boolean)

@@ -9,7 +9,7 @@
  * says what to throw, and the file is refused before anything is read or written.
  */
 import { type Changes, Database } from "bun:sqlite";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { DIR_MODE, enforceMode, FILE_MODE } from "../private.ts";
 import { applyMigrations } from "./apply-migrations.ts";
@@ -69,6 +69,40 @@ export function openDatabase(path: string, o: OpenOptions, schema: Schema): Data
 		throw e;
 	}
 	return db;
+}
+
+/** A copy of a database file's bytes with its file-format versions (header bytes 18 and 19) set to 1, rollback-journal: a WAL-mode file with no log is read that way in memory. */
+function rollbackImage(file: Uint8Array): Uint8Array {
+	const image = Uint8Array.from(file);
+	if (image.length >= 20) image.fill(1, 18, 20);
+	return image;
+}
+
+/**
+ * The database at `path` opened read-only, for a tool that must change nothing: the file must already exist and its newest migration must be
+ * this build's last (an older or newer file is refused, never migrated). No directory or file is created, no mode is set, no pragma that writes
+ * is run, and every write the connection attempts fails. A database that is missing, unreadable or not a Chamberlain one throws.
+ */
+export function openDatabaseReadOnly(path: string, schema: Schema): Database {
+	// With no write-ahead log or its shared-memory file beside it, no process has the database open for writing and the main file holds
+	// everything: it is read as bytes into memory, so SQLite creates no -wal or -shm and takes no lock. With either present (the daemon or the
+	// page is running) it is read through them, as any reader does, so an answer still in the log is seen.
+	const idle = !existsSync(`${path}-wal`) && !existsSync(`${path}-shm`);
+	const db = idle
+		? Database.deserialize(rollbackImage(readFileSync(path)), { readonly: true })
+		: new Database(path, { readonly: true });
+	try {
+		db.exec("PRAGMA query_only = ON");
+		const found = (db.query("SELECT MAX(version) AS v FROM migrations").get() as { v: number | null }).v ?? 0;
+		const last = schema.migrations.at(-1)?.version ?? 0;
+		if (found > last) throw schema.tooNew(path, found);
+		if (found < last)
+			throw new Error(`the database ${path} is at migration ${found}, this build expects ${last}: it is not read`);
+		return db;
+	} catch (e) {
+		db.close();
+		throw e;
+	}
 }
 
 /**

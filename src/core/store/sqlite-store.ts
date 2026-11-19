@@ -13,7 +13,7 @@
  * `decideNotification`.
  */
 import { Database } from "bun:sqlite";
-import { type OpenOptions, openDatabase, queries } from "./database.ts";
+import { type OpenOptions, openDatabase, openDatabaseReadOnly, queries } from "./database.ts";
 import { LATEST_MIGRATION, MIGRATIONS } from "./migrations.ts";
 import { SchemaTooNewError } from "./schema.ts";
 import { makeClaims, makeEvidence, makeSequence, makeState } from "./sqlite-claims.ts";
@@ -39,6 +39,19 @@ export class DatabaseTooNewError extends SchemaTooNewError {
 /** Opens (creating and migrating) the database at `path`, or `:memory:`. */
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o, { migrations: MIGRATIONS, tooNew: (p, found) => new DatabaseTooNewError(p, found) });
+	return storeOver(db, path, o);
+}
+
+/** Opens the existing database at `path` read-only (database.ts `openDatabaseReadOnly`): nothing is created, migrated, chmodded or written. */
+export function openStoreReadOnly(path: string): Store {
+	const db = openDatabaseReadOnly(path, {
+		migrations: MIGRATIONS,
+		tooNew: (p, found) => new DatabaseTooNewError(p, found),
+	});
+	return storeOver(db, path, {});
+}
+
+function storeOver(db: Database, path: string, o: OpenOptions): Store {
 	const c = queries(db, o);
 	const closers: (() => void)[] = [];
 	return {
