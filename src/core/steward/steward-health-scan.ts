@@ -11,7 +11,7 @@ type Row = {
 	uuid: string;
 	rendered?: unknown;
 	attachment?: { type?: string; hookEvent?: string };
-	message?: { usage?: Usage; content?: unknown };
+	message?: { role?: string; usage?: Usage; content?: unknown };
 };
 type Usage = { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown };
 type ToolUse = { type?: string; id?: string; name?: unknown; input?: Record<string, unknown> };
@@ -29,7 +29,20 @@ export type Scan = {
 	hooks: Set<string>;
 	threads: Map<string, number>;
 	unknown: Set<string>;
+	/** The turn the next assistant rows belong to (set by each user prompt): what its self-reads are for. */
+	turn: Turn;
+	/** User turns still counted as recovery after the last compaction boundary. */
+	recoveryLeft: number;
 };
+
+/**
+ * What the turn being read was started by. A self-read made for the hand-off itself, to recover after a compaction, or to check a wake's
+ * delivery id for a repeat is the Steward doing what it was told: never a sign of wear (the hand-off verdict used to fire on its own work).
+ */
+export type Turn = { handoff: boolean; recovery: boolean; deliveryIds: string[] };
+export const ORDINARY_TURN: Turn = { handoff: false, recovery: false, deliveryIds: [] };
+/** The user turns after a compaction boundary (the continuation summary, then the first wake) in which the Steward rebuilds what the summary dropped. */
+export const RECOVERY_TURNS = 2;
 
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 
@@ -46,6 +59,35 @@ function resetAtBoundary(scan: Scan, timestamp: string) {
 	scan.hooks.clear();
 	scan.threads.clear();
 	scan.unknown.clear();
+	scan.turn = ORDINARY_TURN;
+	scan.recoveryLeft = RECOVERY_TURNS;
+}
+
+/** The text of a user prompt row: its string, or its text blocks. A row of tool results is not a new turn and gives undefined. */
+function promptText(r: Row): string | undefined {
+	const c = r.message?.content;
+	if (typeof c === "string") return c;
+	if (!Array.isArray(c)) return undefined;
+	const blocks = c as { type?: string; text?: unknown }[];
+	if (blocks.some((b) => b.type === "tool_result")) return undefined;
+	return blocks.map((b) => (b.type === "text" && typeof b.text === "string" ? b.text : "")).join("\n");
+}
+
+/** A hand-off turn: the `steward-handoff` skill, its wake, or the instruction that starts it. */
+const HANDOFF_TURN = /steward-handoff|Hand the Steward role to a fresh thread/;
+/** The delivery id a wake ends with (`delivery id: <id> (the same id again is a repeat...)`). */
+const DELIVERY_ID = /delivery id: (\S+)/g;
+
+/** A user prompt starts a turn: what it is for decides which of its own-transcript reads are the Steward's wear and which are its work. */
+function noteUserTurn(scan: Scan, r: Row) {
+	const text = promptText(r);
+	if (text === undefined) return;
+	scan.turn = {
+		handoff: HANDOFF_TURN.test(text),
+		recovery: scan.recoveryLeft > 0,
+		deliveryIds: [...text.matchAll(DELIVERY_ID)].map((m) => m[1] as string),
+	};
+	if (scan.recoveryLeft > 0) scan.recoveryLeft--;
 }
 
 /** A UserPromptSubmit hook's text that matches the format pattern is one graded reply, counted once per hook row. */
@@ -75,6 +117,12 @@ function noteUsage(scan: Scan, r: Row) {
 	scan.usageAt = r.timestamp;
 }
 
+/** Does this tool call look a wake's delivery id up, to find out whether it is a repeat? (The wake text itself tells the Steward to.) */
+function checksDeliveryId(name: string, input: Record<string, unknown>, ids: string[]): boolean {
+	const text = name === "Bash" ? String(input.command ?? "") : String(input.pattern ?? "");
+	return ids.some((id) => id.length > 0 && text.includes(id));
+}
+
 /** Does this tool call read the Steward's own transcript file? */
 function readsOwnTranscript(name: string, input: Record<string, unknown>, session: string): boolean {
 	if (name === "Read") return String(input.file_path ?? "").endsWith(`/${session}.jsonl`);
@@ -95,6 +143,11 @@ function noteThreadRead(scan: Scan, key: string, timestamp: string) {
 	scan.threads.set(key, time);
 }
 
+/** A self-read counts toward the rereading limit only when it is neither the hand-off's, a recovery after a compaction, nor a repeat check of a wake's delivery id. */
+function countsAsWear(turn: Turn, name: string, input: Record<string, unknown>): boolean {
+	return !turn.handoff && !turn.recovery && !checksDeliveryId(name, input, turn.deliveryIds);
+}
+
 /** Each tool call once (by its id): whether it rereads the transcript, and whether it rereads another thread. */
 function noteToolUses(scan: Scan, r: Row, session: string, opts: MeasureOptions) {
 	const content = r.message?.content;
@@ -103,7 +156,7 @@ function noteToolUses(scan: Scan, r: Row, session: string, opts: MeasureOptions)
 		scan.tools.add(c.id);
 		const input = c.input ?? {},
 			name = String(c.name);
-		if (readsOwnTranscript(name, input, session)) scan.selfReads++;
+		if (readsOwnTranscript(name, input, session) && countsAsWear(scan.turn, name, input)) scan.selfReads++;
 		const key = opts.threadReadKey?.(name, input);
 		if (key) noteThreadRead(scan, key, r.timestamp);
 	}
@@ -125,6 +178,7 @@ export function scanLine(scan: Scan, line: string, session: string, opts: Measur
 		return;
 	}
 	noteReplyHook(scan, r, opts.formatPattern);
+	if (r.type === "user" || r.message?.role === "user") noteUserTurn(scan, r);
 	if (r.type !== "assistant") return;
 	noteUsage(scan, r);
 	noteToolUses(scan, r, session, opts);

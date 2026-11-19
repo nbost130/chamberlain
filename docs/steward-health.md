@@ -22,6 +22,8 @@ unavailable and the verdict stays WATCH; nothing else in Chamberlain depends on 
 | --- | --- | --- |
 | context | tokens in the latest assistant usage snapshot (never a sum) | watch at 200 000, compact above 350 000 |
 | rereading | the Steward reads its own transcript, or re-reads the same thread within ten minutes | 3 self-reads, or 4 repeat thread reads |
+
+A self-read made for the hand-off itself, in the two turns after a compaction (recovering what the summary dropped), or to look a wake's own delivery id up for a repeat is the Steward doing what it was told, and does not count. An ordinary lookup of its own transcript does.
 | format (optional) | replies a prompt hook graded as slipped | 3 slips in the last 20 replies |
 
 All counters reset at the latest compaction. Verdicts:
