@@ -395,16 +395,22 @@ panel) and in the brief the investigator is given.
 | `investigator.model` | none | The provider, model and effort of the thread: a T3 selection, `{ adapter, server, instanceId, model, options }`, the same shape `models.<role>` takes and checked the same way against the server's catalog before anything starts (no default, no fallback to another provider). |
 | `investigator.projectId` | none | The T3 project the thread is created in. |
 | `investigator.title` | `"Overhead investigation"` | The thread's title starts with this; its own spend is found by it and shown as its own line. |
-| `investigator.cooldownHours` | `24` | One investigation per this long, counted from when the last one opened. |
-| `investigator.maxOpen` | `1` | Investigations that may be open at once. One stays open until the investigator runs `chamberlain overhead close <id>`, or `ttlHours` passes. |
-| `investigator.ttlHours` | `72` | An investigation open this long is closed by the clock, so a lost thread cannot block the next forever. |
+| `investigator.cooldownHours` | `24` | One investigation per this long, counted from when the last one was **reserved**, a launch with an unknown outcome included. A wall clock that jumps forward cannot shorten it (the monotonic clock is also consulted). |
+| `investigator.maxOpen` | `1` | Investigations that may be held at once, held meaning pending or open. One is released when the investigator runs `chamberlain overhead close <id>`, or when `ttlHours` has passed **and** T3 shows its thread idle, archived or gone. |
+| `investigator.ttlHours` | `72` | After this long an investigation is **stale**: reported in the numbers, and still held. The clock alone never frees a slot, so a thread that is still working cannot be joined by a second investigator. |
 | `investigator.instructions` | none | Your own rules for the investigator (workspace conventions, where to report), appended to its brief. |
 
 The investigator's brief carries what crossed, the numbers and their trend, the no-op wakes grouped by kind with example delivery ids, and the
 dearest turns. It asks for the cause in code (file and line) and a draft fix PR, never a deploy, and a report to the Steward with
-`chamberlain note`. A launch that fails records itself as closed and holds neither the cooldown nor the open slot, so the next interval tries
-again. The investigator's own spend is a separate line and is kept out of the cost the trigger divides, so an investigation cannot cause the
-next one. A bad value is refused with its key named, at `chamberlain config show` and at every daemon start: a negative or zero limit, an
+`chamberlain note`. The launch is reserved in the state as `pending`, with its brief, before any command goes out, and every id it sends comes from
+that reservation, so repeating it is safe. Only a launch that sent nothing (the selection, server or connection was refused) releases the
+reservation; a response that is lost after T3 accepted the thread leaves it pending, and the daemon, after a restart too, asks T3 what the
+reservation became and either opens it or repeats the same launch. An outcome nobody knows counts as launched. The record keeps every held
+reservation and only the newest 20 closed ones. The investigator's own spend is a separate line and is kept out of the cost the trigger divides,
+so an investigation cannot cause the next one. A failed GitHub or fleet read is shown as a fixed class (`unavailable (http-4xx)`), never as the
+tool's own text, because that text can echo a credential and the line reaches the investigator. A baseline period with no usage rows is
+unavailable, never a $0 baseline; a configured fleet host with no rows makes the spend share unavailable; a value that is not a finite number
+crosses nothing. A bad value is refused with its key named, at `chamberlain config show` and at every daemon start: a negative or zero limit, an
 unknown key, a trigger with no limit, a missing price for the Steward's model while `enabled`, an empty price table while `enabled` with PRs
 counted.
 
