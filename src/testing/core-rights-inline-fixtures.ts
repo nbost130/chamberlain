@@ -11,34 +11,46 @@ type Fixtures = ReturnType<typeof useCoreRelayFixtures>;
 export function inlineWorldOf({ rig, H1, stamp, BLOCK }: Fixtures) {
 	return function inlineWorld(o: { inline?: boolean; block?: string } = {}) {
 		const store = memStore();
-		const st: { steward: string; session: string; hash?: string; used?: number; compactions?: number } = {
+		const st: {
+			steward: string;
+			session: string;
+			hash?: string;
+			used?: number;
+			compactions?: number;
+			/** The read of the rights throws (a transcript or database that cannot be read). */
+			broken?: true;
+		} = {
 			steward: "steward-1",
 			session: "s1",
 			hash: H1,
 			used: 100_000,
 			compactions: 4,
 		};
-		const rightsNow = async () => ({
-			...st,
-			wake: (forId: string) => ({
-				message: `[chamberlain] rights for ${forId}\n${BLOCK}`,
-				text: st.hash === undefined ? "the rights cannot be read" : `${o.block ?? BLOCK} (${st.hash.slice(0, 4)})`,
-				...(st.hash === undefined
-					? {}
-					: {
-							stamp: {
-								steward: st.steward,
-								session: st.session,
-								hash: st.hash,
-								at: "now",
-								...(st.used !== undefined ? { used: st.used } : {}),
-								...(st.compactions !== undefined ? { compactions: st.compactions } : {}),
-								full: true as const,
-								epoch: rightsEpoch(store),
-							},
-						}),
-			}),
-		});
+		const rightsNow = async () => {
+			if (st.broken) throw new Error("transcript unreadable");
+			const { broken: _broken, ...now } = st;
+			return {
+				...now,
+				wake: (forId: string) => ({
+					message: `[chamberlain] rights for ${forId}\n${BLOCK}`,
+					text: st.hash === undefined ? "the rights cannot be read" : `${o.block ?? BLOCK} (${st.hash.slice(0, 4)})`,
+					...(st.hash === undefined
+						? {}
+						: {
+								stamp: {
+									steward: st.steward,
+									session: st.session,
+									hash: st.hash,
+									at: "now",
+									...(st.used !== undefined ? { used: st.used } : {}),
+									...(st.compactions !== undefined ? { compactions: st.compactions } : {}),
+									full: true as const,
+									epoch: rightsEpoch(store),
+								},
+							}),
+				}),
+			};
+		};
 		const r = rig({ store, rightsNow, rightsInline: o.inline ?? true });
 		const record = () => store.state.get(RIGHTS_SENT_KEY) as Record<string, unknown> | undefined;
 		const pointer = (id: string) => r.outbox.deliver(`text of ${id}`, id, { kind: "needs_input", rights: [stamp] });

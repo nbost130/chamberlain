@@ -19,8 +19,8 @@
  *   attempt-counted  the attempt is committed and the POST has not been made.
  *   accepted         the transport accepted the POST and the row is not yet delivered: the documented window.
  *   delivered        the row is committed delivered and the answer it carries has not yet been marked delivered.
- *   compact-invalidated  inside the relay's compaction job: the rights epoch is bumped and the record dropped (committed), and the
- *                    compaction request has not been sent.
+ *   compact-invalidated  inside the relay's compaction job: T3 accepted the compaction request, and the rights epoch is bumped and the
+ *                    record dropped (committed).
  */
 export const CRASH_STEPS = [
 	"before-commit",

@@ -54,23 +54,46 @@ describe("a compaction bumps the rights epoch inside its serial job: a full bloc
 			expect(r.ids()).toEqual(["F", "compact:steward-1:1", r.prereq("P", 1), "P"]);
 		});
 
-		test("after the epoch bump, before the compaction POST (crash step compact-invalidated): the record stays dropped, and P gets a prerequisite", async () => {
+		test("a compaction that T3 never accepted (the process died, or the POST failed) leaves the record alone: P is sent as the pointer it was, with no prerequisite", async () => {
 			const fails = { value: true };
 			const r = compactWorld({ store: fileStore(), compactFails: fails });
 			const f = r.fullInFlight();
 			const dying = r.relay();
 			const passing = dying.pass();
 			await r.until(f.started);
-			// The compaction is asked for while F is open; its job bumps the epoch, then the process dies before the POST.
+			// The compaction is asked for while F is open; the process dies before the request is accepted.
 			const compacting = dying.compact("compact:steward-1:1").catch(() => "killed");
 			f.release();
 			expect(await compacting).toBe("killed");
 			await passing;
-			expect(r.record()).toEqual({ epoch: 1 });
+			expect(r.record()).toMatchObject({ epoch: 0, hash: H1 });
 			fails.value = false;
 			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
 			await r.relay().pass();
-			expect(r.ids()).toEqual(["F", r.prereq("P", 1), "P"]);
+			expect(r.ids()).toEqual(["F", "P"]);
+		});
+
+		test("a compaction T3 REFUSES (the POST answers not-ok) leaves the record, the epoch and the next wake alone; an accepted one drops it after its POST", async () => {
+			const r = compactWorld({ store: fileStore() });
+			r.outbox.deliver("full block", "F", { kind: "needs_input", rights: [fullAt(0)] });
+			await r.relay().pass();
+			const refusing = createRelay({
+				store: r.store,
+				lock: testRelayLock(r.store),
+				gate: () => "idle",
+				log: () => {},
+				alarm: () => {},
+				maxAttempts: 3,
+				wake: { ready: () => true, send: async () => ({ ok: true, status: 202 }) },
+				compact: { ready: () => true, send: async () => ({ ok: false, status: 503 }) },
+			});
+			expect((await refusing.compact("compact:steward-1:1")).ok).toBe(false);
+			expect(r.record()).toMatchObject({ epoch: 0, hash: H1 });
+			r.outbox.deliver("pointer", "P", { kind: "needs_input", rights: [pointer] });
+			await r.relay().pass();
+			expect(r.ids()).toEqual(["F", "P"]);
+			expect((await r.relay().compact("compact:steward-1:2")).ok).toBe(true);
+			expect(r.record()).toEqual({ epoch: 1 });
 		});
 
 		test("after the bump, with F's delivered commit still owed (crash before it landed): the restart re-sends F, which writes nothing, and P gets a prerequisite", async () => {

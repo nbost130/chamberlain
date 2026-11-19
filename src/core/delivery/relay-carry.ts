@@ -5,18 +5,15 @@
  */
 import { scrubSecretHeldMessages } from "../items/questions-claim.ts";
 import { encodedSendBytes, TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
-import type { OutboxRow, RightsStamp } from "../store/store-wakes.ts";
+import type { OutboxRow } from "../store/store-wakes.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
 import { digestOf, land } from "./relay-compose.ts";
-import type { Ctx, InlineRights, Lane } from "./relay-ctx.ts";
+import type { Carried, Ctx, Landing, Lane } from "./relay-ctx.ts";
 
 /** Room kept in the POST for the full rights, which may ride in it too (the largest block in use was 9 KB). */
 const RIGHTS_RESERVE_BYTES = 10_000;
 /** Rows that are themselves a batch or a prerequisite: nothing rides in them. */
 const NOT_CARRYING: ReadonlySet<string> = new Set(["rights", "digest", "transfer"]);
-
-/** The held news chosen to ride, as it was composed (`now` fixes its "held N min" notes, so the row bound later reads like what was sent). */
-export type Carried = { now: number; members: string[]; text: string; rights: RightsStamp[]; maxBytes: number };
 
 /** A wake that is its own one member: sent at once, not composed from held items. */
 const immediate = (row: OutboxRow) => row.members.length === 1 && row.members[0]?.deliveryId === row.deliveryId;
@@ -56,8 +53,11 @@ export function withNews(row: OutboxRow, c: Carried): OutboxRow {
 	};
 }
 
-/** After the row is delivered: binds the news that rode in its POST as one delivered row (`news-carried`), so it is never sent again. */
-export function landCarried(r: Ctx, l: Lane, c: Carried, inline: InlineRights | undefined): void {
+/**
+ * Binds the news that rode in the row's POST as one DELIVERED row (`news-carried`), so it is never sent again. It runs inside the wake's own
+ * delivered commit (`land`'s `alongside`), so the two are one commit. Throws when the news cannot be bound: nothing commits and the wake stays owed.
+ */
+export function bindCarried(r: Ctx, l: Lane, c: Carried): OutboxRow | undefined {
 	const ids = new Set(c.members);
 	const row = r.store.wakes.compose(
 		c.now,
@@ -78,5 +78,20 @@ export function landCarried(r: Ctx, l: Lane, c: Carried, inline: InlineRights | 
 			),
 		l.name,
 	);
-	if (row && land(r, row, inline)) r.d.log("news-carried", { deliveryId: row.deliveryId, members: c.members });
+	if (!row) return undefined;
+	if (!r.store.wakes.finish(row.id, "delivered", r.clock())) throw new Error("the carried news row was not pending");
+	if (!row.receiver) {
+		const gen = r.store.steward.maxGen();
+		if (gen >= 1) r.store.steward.insertLedger({ outboxId: row.id, gen, origin: "live" });
+	}
+	r.d.log("news-carried", { deliveryId: row.deliveryId, members: c.members });
+	return row;
+}
+
+/**
+ * The row's delivered commit with everything that rode in its POST: the rights record from the block that rode in it, and the news bound
+ * delivered in the same transaction. The first try and every retry of an owed commit (`relay-pass.ts`) go through here, so none loses either.
+ */
+export function landWith(r: Ctx, row: OutboxRow, g: Landing): boolean {
+	return land(r, row, g.inline, g.carried ? () => bindCarried(r, g.l, g.carried as Carried) : undefined);
 }

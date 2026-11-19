@@ -6,9 +6,18 @@ import { type GenSnapshot, snapshotGen } from "../steward/steward-gens.ts";
 import { encodedSendBytes, exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import type { Posted } from "./relay.ts";
-import { type Carried, landCarried, previewCarry, withNews } from "./relay-carry.ts";
-import { deadLetter, land, readRightsNow } from "./relay-compose.ts";
-import { type Ctx, type InlineRights, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.ts";
+import { landWith, previewCarry, withNews } from "./relay-carry.ts";
+import { deadLetter, readRightsNow } from "./relay-compose.ts";
+import {
+	type Carried,
+	type Ctx,
+	type InlineRights,
+	type Landing,
+	type Lane,
+	type RelayDeps,
+	ROUNDS,
+	raise,
+} from "./relay-ctx.ts";
 import { deliveredLog } from "./relay-delivered-log.ts";
 import {
 	current,
@@ -16,6 +25,7 @@ import {
 	inlineRights,
 	prerequisiteBlocked,
 	queuePrerequisite,
+	unreadableRights,
 	withInlineRights,
 } from "./relay-prereq.ts";
 
@@ -148,9 +158,10 @@ function accepted(r: Ctx, { l, row, n, res, before, inline, carried }: Posted): 
 	l.failures = 0;
 	r.notBefore.delete(row.id);
 	r.d.log("delivered", deliveredLog(l, row, n, res));
-	if (!land(r, row, inline)) return before;
-	if (carried) landCarried(r, l, carried, inline);
-	return [...before, row];
+	// The rights and the held news that rode in this POST are recorded in the SAME commit as the wake (relay-carry.ts `landWith`), and on every retry of it.
+	const landing: Landing = { l, ...(inline ? { inline } : {}), ...(carried ? { carried } : {}) };
+	r.landing.set(row.id, landing);
+	return landWith(r, row, landing) ? [...before, row] : before;
 }
 
 /** The POST failed: the attempt stays counted, attempt_gen is cleared, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
@@ -189,12 +200,13 @@ async function sendPrerequisites(a: PrereqArgs): Promise<Prereq> {
 	const { rightsNow } = r.d;
 	if (prerequisite || l.desk || !rightsNow) return GO;
 	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow))) return STOP;
-	const dependent = needsRights(row.rights),
+	// A Steward row with NO stamp depends on the Steward holding the rights too: it is composed without them, whichever producer made it (a note,
+	// an answer, a sweep, a hand-off), so none has to stamp. Only the prerequisite itself and the other receivers' rows (returned above) are exempt.
+	const dependent = !row.rights?.length || needsRights(row.rights),
 		hasFull = Boolean(row.rights?.some((s) => s.full));
 	if (!dependent && !hasFull) return GO;
 	const gaps = dependent && Boolean(r.d.rightsInline);
 	const inline = gaps || hasFull ? await inlineRights(r, row, rightsNow, { steward: a.snap?.thread, gaps }) : undefined;
-	if (inline === null) return STOP;
 	if (inline) return withinCap(a, inline);
 	return dependent && !r.d.rightsInline ? viaPrerequisite(a) : GO;
 }
@@ -203,6 +215,7 @@ async function sendPrerequisites(a: PrereqArgs): Promise<Prereq> {
 async function viaPrerequisite(a: PrereqArgs): Promise<Prereq> {
 	const { r, l, row, snap } = a;
 	const went = await ahead({ r, l, row, rightsNow: r.d.rightsNow as NonNullable<RelayDeps["rightsNow"]>, snap });
+	if (went === "unreadable") return { ...GO, inline: unreadableRights(r, row) };
 	return went === null ? STOP : { before: went, go: r.d.lock.held() };
 }
 
@@ -213,8 +226,15 @@ async function viaPrerequisite(a: PrereqArgs): Promise<Prereq> {
  */
 async function withinCap(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
 	const { r, row } = a;
-	if (!exceedsEncodedCap(withInlineRights(row, inline), row.deliveryId)) return { ...GO, inline };
-	r.d.log("rights-inline-oversized", { deliveryId: row.deliveryId, stale: Boolean(inline.stale) });
+	// With rightsInline off, a stale full block is replaced by the standalone prerequisite, the one way that mode has.
+	const replaceAlone = Boolean(inline.stale) && !r.d.rightsInline;
+	if (inline.unreadable || (!replaceAlone && !exceedsEncodedCap(withInlineRights(row, inline), row.deliveryId)))
+		return { ...GO, inline };
+	r.d.log("rights-inline-oversized", {
+		deliveryId: row.deliveryId,
+		stale: Boolean(inline.stale),
+		...(replaceAlone ? { inlineOff: true } : {}),
+	});
 	const first = await standalone(a);
 	return inline.stale && first.go ? { ...first, inline: { text: "", stale: true } } : first;
 }
@@ -224,8 +244,9 @@ async function standalone(a: PrereqArgs): Promise<Prereq> {
 	const { r, l, row, snap } = a;
 	const rightsNow = r.d.rightsNow as NonNullable<RelayDeps["rightsNow"]>;
 	const now = await readRightsNow(r, row, () => rightsNow(snap ? { steward: snap.thread } : undefined));
-	const found = now && findPrerequisite(r, row, rightsStateKey(now));
-	if (!now || !found) return STOP;
+	if (!now) return { ...GO, inline: unreadableRights(r, row) };
+	const found = findPrerequisite(r, row, rightsStateKey(now));
+	if (!found) return STOP;
 	const first =
 		r.store.wakes.find(found.id) ??
 		queuePrerequisite(r, row, now, { id: found.id, reason: "the rights do not fit inside this row's own wake" });
@@ -251,11 +272,11 @@ type AheadArgs = {
 };
 
 /** One round of `ahead`: "ready" (nothing more is owed), "stop" (the row must not go now), or the prerequisite rows delivered in this round. */
-async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | OutboxRow[]> {
+async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | "unreadable" | OutboxRow[]> {
 	const { r, l, row, rightsNow, snap } = a;
 	const { store } = r;
 	const now = await readRightsNow(r, row, () => rightsNow(snap ? { steward: snap.thread } : undefined));
-	if (!now) return "stop";
+	if (!now) return "unreadable";
 	const reason = rightsGap(loadRightsSent(store), now);
 	if (!reason) {
 		r.waitingOn.delete(row.deliveryId);
@@ -273,11 +294,12 @@ async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | OutboxRow[]>
 /**
  * What must be delivered before an attempt of a Steward row that depends on the Steward holding the rights (`needsRights`).
  */
-async function ahead(a: AheadArgs): Promise<OutboxRow[] | null> {
+async function ahead(a: AheadArgs): Promise<OutboxRow[] | null | "unreadable"> {
 	const before: OutboxRow[] = [];
 	for (let round = 0; round < ROUNDS; round++) {
 		const out = await aheadRound(a);
 		if (out === "ready") return before;
+		if (out === "unreadable") return out;
 		if (out === "stop") return null;
 		before.push(...out);
 		if (!a.r.d.lock.held()) return null;

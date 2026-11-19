@@ -33,13 +33,17 @@ describe("a queued row that holds a full block is not delivered as current when 
 		expect(r.store.wakes.find("f1")).toMatchObject({ message: "old block text", status: "delivered" });
 	});
 
-	test("the same holds with rightsInline off: a stale block is never delivered bare", async () => {
+	test("with rightsInline off a stale block is replaced by the STANDALONE prerequisite, never inline, and the row goes unchanged after it", async () => {
 		const r = inlineWorld({ inline: false });
 		queue(r);
 		r.st.hash = H2;
 		await r.relay().pass();
-		expect(r.ids()).toEqual(["f1"]);
-		expect(r.posts[0]!.message).toContain(`(${H2.slice(0, 4)})`);
+		const ids = r.ids();
+		expect(ids).toHaveLength(2);
+		expect(ids[0]).toContain("f1:rights-first:");
+		expect(ids[1]).toBe("f1");
+		expect(r.posts[1]!.message.startsWith("old block text")).toBe(true);
+		expect(r.posts[1]!.message).not.toContain(rightsInlineHead);
 		expect(r.record()).toMatchObject({ hash: H2 });
 	});
 

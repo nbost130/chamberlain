@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { useCoreRelayFixtures } from "../../testing/core-relay-fixtures.ts";
+import { memStore } from "../../testing/store.ts";
 import { exceedsEncodedCap } from "../steward/steward-types.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
 import { createRelay } from "./relay.ts";
@@ -107,6 +108,43 @@ describe("an immediate wake carries or flushes the held news in the same wake", 
 		await relay.pass();
 		expect(r.posts.at(-1)!.message).toContain("note from t1");
 		expect(r.store.wakes.held(null)).toEqual([]);
+	});
+
+	test("the wake and its news are ONE commit (audit round 3): if the news cannot be bound, the wake is not recorded delivered either, and nothing goes twice", async () => {
+		const base = memStore();
+		const fail = { on: false };
+		const store = {
+			...base,
+			wakes: {
+				...base.wakes,
+				compose: (...a: Parameters<typeof base.wakes.compose>) => {
+					if (fail.on) throw new Error("SQLITE_FULL: database or disk is full");
+					return base.wakes.compose(...a);
+				},
+			},
+		};
+		const r = rig({ store, debounceMs: MS });
+		const relay = r.relay();
+		r.outbox.deliver("note from t1", "note:a", { kind: "note", thread: "t1" });
+		await relay.pass();
+		r.outbox.deliver("a thread needs your answer", "t2:input:q1", { kind: "needs_input", thread: "t2" });
+		fail.on = true;
+		await relay.pass();
+		// POSTed once, with the news; neither the wake nor the news is recorded: one commit, both or neither.
+		expect(r.posts).toHaveLength(1);
+		expect(base.wakes.find("t2:input:q1")).toMatchObject({ status: "pending" });
+		expect(base.wakes.held(null).map((h) => h.deliveryId)).toEqual(["note:a"]);
+		expect(r.events.some((e) => e.event === "delivered-record-failed")).toBe(true);
+		fail.on = false;
+		await relay.pass();
+		// The commit retries without a second POST, and now both are recorded.
+		expect(r.posts).toHaveLength(1);
+		expect(base.wakes.find("t2:input:q1")).toMatchObject({ status: "delivered" });
+		expect(base.wakes.held(null)).toEqual([]);
+		expect(base.wakes.find("note:a")).toMatchObject({ status: "delivered" });
+		r.clock.t += MS * 2;
+		await relay.pass();
+		expect(r.posts).toHaveLength(1);
 	});
 
 	test("must skip: with nothing held an immediate wake goes exactly as queued", async () => {

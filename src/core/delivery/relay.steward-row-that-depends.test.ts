@@ -83,17 +83,32 @@ describe("a Steward row that depends on the rights goes only when the durable re
 		expect(await r.relay().pass()).toEqual(["w1"]);
 	});
 
-	test("a check that throws sends nothing on this pass and uses no attempt", async () => {
+	test("a check that throws does not hold a principal-facing row: it goes with a notice and an alarm, and the next row reads the rights again", async () => {
+		let broken = true;
 		const r = rig({
 			rightsNow: async () => {
-				throw Error("transcript unreadable");
+				if (broken) throw Error("transcript unreadable");
+				return {
+					steward: "steward-1",
+					session: "s1",
+					hash: H1,
+					wake: (id: string) => ({ message: `[chamberlain] rights for ${id}`, stamp: fullAt(0) }),
+				};
 			},
 		});
 		r.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [stamp] });
 		await r.relay().pass();
-		expect(r.posts).toEqual([]);
-		expect(r.store.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
-		expect(r.store.wakes.rows("all")).toHaveLength(1);
+		expect(r.ids()).toEqual(["w1"]);
+		expect(r.posts[0]!.message).toContain("could not be read for this wake");
+		expect(r.store.wakes.find("w1")).toMatchObject({ status: "delivered", attempts: 1 });
+		expect(r.alarms).toContain("rights-unreadable");
+		expect(r.store.state.get(RIGHTS_SENT_KEY)).toBeUndefined();
+		broken = false;
+		r.outbox.deliver("pointer 2", "w2", { kind: "needs_input", rights: [stamp] });
+		await r.relay().pass();
+		expect(r.ids()).toHaveLength(3);
+		expect(r.ids()[1]).toContain("w2:rights-first:");
+		expect(r.ids()[2]).toBe("w2");
 	});
 
 	test("the stamps are frozen with the row, like its text", () => {

@@ -1,27 +1,27 @@
 /** The rights a wake needs ahead of it: finding the prerequisite wake, queueing it, and sending it first. */
 import { crashPoint } from "../crash.ts";
-import { rightsInlineHead, rightsStaleNote } from "../messages.ts";
+import { alarms, rightsInlineHead, rightsStaleNote, rightsUnreadNotice } from "../messages.ts";
 import { loadRightsSent, rightsFirstId, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
 import { exceedsEncodedCap } from "../steward/steward-types.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import { DELIVERY_ID_LINE } from "./deliver.ts";
 import { readRightsNow } from "./relay-compose.ts";
-import type { Ctx, InlineRights, RelayDeps, RightsNow } from "./relay-ctx.ts";
+import { type Ctx, type InlineRights, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
 /**
  * `rightsInline`: what a Steward row that depends on the rights carries in its own POST. Nothing (undefined) when the durable record shows the
- * Steward holds the rights in force; the full block (and its stamp) when it does not, with the reason logged (`rights-inlined`); null when the
- * rights cannot be read at all now, so the row waits for the next pass. No standalone wake is queued, so no Steward turn is spent receiving text.
+ * Steward holds the rights in force; the full block (and its stamp) when it does not, with the reason logged (`rights-inlined`); a short notice
+ * (`unreadableRights`) when the rights cannot be read now. No standalone wake is queued, so no Steward turn is spent receiving text.
  */
 export async function inlineRights(
 	r: Ctx,
 	row: OutboxRow,
 	rightsNow: NonNullable<RelayDeps["rightsNow"]>,
 	{ steward, gaps }: { steward: string | undefined; gaps: boolean },
-): Promise<InlineRights | null | undefined> {
+): Promise<InlineRights | undefined> {
 	const now = await readRightsNow(r, row, () => rightsNow(steward ? { steward } : undefined));
-	if (!now) return null;
+	if (!now) return unreadableRights(r, row);
 	const record = loadRightsSent(r.store);
 	const stale = staleFull(row, now);
 	const reason = stale ?? (gaps ? rightsGap(record, now) : undefined);
@@ -33,6 +33,19 @@ export async function inlineRights(
 		...(w.stamp ? { stamp: w.stamp } : {}),
 		...(stale ? { stale: true as const } : {}),
 	};
+}
+
+/**
+ * The rights could not be read (the read threw): the row still goes, with a short notice, because a principal-facing row must never be held
+ * back on this. The next row reads them again; the alarm is raised, and logged once per row.
+ */
+export function unreadableRights(r: Ctx, row: OutboxRow): InlineRights {
+	if (!r.reported.has(`rights-unreadable:${row.deliveryId}`)) {
+		r.reported.add(`rights-unreadable:${row.deliveryId}`);
+		r.d.log("rights-unreadable", { deliveryId: row.deliveryId });
+		raise(r, "rights-unreadable", alarms.rightsUnreadable());
+	}
+	return { text: rightsUnreadNotice, unreadable: true };
 }
 
 /**
@@ -51,9 +64,10 @@ function staleFull(row: OutboxRow, now: RightsNow): string | undefined {
 export function withInlineRights(row: OutboxRow, inline: InlineRights): string {
 	const line = DELIVERY_ID_LINE(row.deliveryId);
 	const body = row.message.replace(line, "").trimEnd();
-	if (inline.text) return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
-	// Nothing rides inside (the current rights went as a wake of their own): the stale block's row goes as it is, with a one-line note when that fits.
-	const noted = `${body}\n\n${rightsStaleNote}\n${line}`;
+	if (inline.text && !inline.unreadable) return `${body}\n\n${rightsInlineHead}\n${inline.text}\n${line}`;
+	// No block rides inside: the rights could not be read, or the current ones went as a wake of their own before this stale one. The row goes as
+	// it is, with a one-line note when that fits.
+	const noted = `${body}\n\n${inline.unreadable ? rightsUnreadNotice : rightsStaleNote}\n${line}`;
 	return exceedsEncodedCap(noted, row.deliveryId) ? `${body}\n${line}` : noted;
 }
 

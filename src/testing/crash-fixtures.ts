@@ -116,7 +116,7 @@ export async function world(id: string) {
 		// These suites pin the crash points of the send path itself: a held wake goes at once (no debounce), and the standalone rights-first
 		// prerequisite (the `rightsInline` off path) is the one whose points they kill. The new defaults have their own tests.
 		CHAMBERLAIN_WAKE_DEBOUNCE_MS: "0",
-		CHAMBERLAIN_RIGHTS_INLINE: "0",
+		CHAMBERLAIN_RIGHTS_INLINE: "1",
 		CHAMBERLAIN_VERBOSE: "",
 	};
 	const events = () =>

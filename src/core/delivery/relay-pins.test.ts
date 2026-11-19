@@ -62,7 +62,7 @@ function world(
 }
 
 describe("a Steward row that waits on the rights: what stops it, and what is left behind", () => {
-	test("a rights state that cannot be read from the database sends nothing, uses no attempt, and logs it", async () => {
+	test("a rights state that cannot be read from the database does not hold the row: it goes with a notice, the error is logged, and the next row reads again", async () => {
 		const w = world({
 			over: (s) => ({
 				...s,
@@ -75,9 +75,10 @@ describe("a Steward row that waits on the rights: what stops it, and what is lef
 			}),
 		});
 		w.outbox.deliver("pointer", "w1", { kind: "needs_input", rights: [POINTER] });
-		expect(await w.relay.pass()).toEqual([]);
-		expect(w.posts).toEqual([]);
-		expect(w.base.wakes.find("w1")).toMatchObject({ status: "pending", attempts: 0 });
+		await w.relay.pass();
+		expect(w.posts).toEqual(["w1"]);
+		expect(w.base.wakes.find("w1")).toMatchObject({ status: "delivered", attempts: 1 });
+		expect(w.event("rights-unreadable")?.data).toMatchObject({ deliveryId: "w1" });
 		expect(w.event("rights-first-error")?.data).toMatchObject({ deliveryId: "w1" });
 		expect(String(w.event("rights-first-error")?.data?.error)).toContain("db locked");
 	});

@@ -23,12 +23,16 @@ import { type Ctx, type InlineRights, type Lane, type RelayDeps, type RightsNow,
  * flight when the compaction was asked for, or one owed across it) is marked delivered and writes nothing, so it can never restore a record
  * the compaction took away (`rights-full-stale`).
  * `inline` is the block that rode inside this row's POST (`rightsInline`, or a stale full block replaced): its stamp writes the record exactly as a standalone full wake would, and without one nothing is written.
+ * `alongside` runs inside the same transaction and returns the row of held news that rode in the same POST (relay-carry.ts `bindCarried`): it is
+ * bound delivered in the same commit as the wake, so a crash can never leave the wake recorded and its news still held (to go again), or the
+ * reverse. If it throws, nothing commits and the row stays owed.
  */
-export function land(r: Ctx, row: OutboxRow, inline?: InlineRights): boolean {
+export function land(r: Ctx, row: OutboxRow, inline?: InlineRights, alongside?: () => OutboxRow | undefined): boolean {
 	const { d, store } = r;
 	// The block that rode inside the POST is the one the Steward holds now (none at all when the rights could not be read): never the row's own, older one.
 	const full = row.receiver ? undefined : inline ? inline.stamp : row.rights?.filter((s) => s.full).at(-1);
 	let stale: number | undefined;
+	let carried: OutboxRow | undefined;
 	try {
 		const done = store.tx(() => {
 			// Read attempt_gen before finish: the in-memory row is often the pre-attempt snapshot (A1).
@@ -43,6 +47,7 @@ export function land(r: Ctx, row: OutboxRow, inline?: InlineRights): boolean {
 				if (epochOf(full) === current) store.state.set(RIGHTS_SENT_KEY, { ...recordOf(full), epoch: current });
 				else stale = current;
 			}
+			carried = alongside?.();
 			return done;
 		});
 		if (!done) d.log("delivered-after-cancel", { deliveryId: row.deliveryId });
@@ -53,8 +58,9 @@ export function land(r: Ctx, row: OutboxRow, inline?: InlineRights): boolean {
 		return false;
 	}
 	r.owed.delete(row.id);
+	r.landing.delete(row.id);
 	crashPoint("delivered");
-	for (const m of row.members) {
+	for (const m of [...row.members, ...((carried as OutboxRow | undefined)?.members ?? [])]) {
 		try {
 			d.onDelivered?.(m.deliveryId);
 		} catch (e) {
@@ -100,6 +106,12 @@ function waitForCompany(
 	return true;
 }
 
+/** The lane's held wakes, none at all while news that rode in a wake whose delivered commit is still owed is among them: it is bound when that lands, never composed again meanwhile. */
+function heldToCompose(r: Ctx, l: Lane): HeldItem[] {
+	const held = r.store.wakes.held(l.name);
+	return held.some((h) => [...r.landing.values()].some((g) => g.carried?.members.includes(h.deliveryId))) ? [] : held;
+}
+
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
@@ -108,7 +120,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	deadLetterOversizedTransfers(r, l, now);
 	// Oversized solo held wakes never enter a digest batch: dead-letter before compose.
 	deadLetterOversizedDigests(r, l, now);
-	const heldNow = store.wakes.held(l.name);
+	const heldNow = heldToCompose(r, l);
 	if (!heldNow.length) return;
 	// Only unbatchable (oversized) transfers remain: wait — never compose an empty digest.
 	const transfers = heldNow.filter((h) => h.kind === "transfer");

@@ -165,6 +165,13 @@ export const rightsInlineHead =
 export const rightsStaleNote =
 	"[chamberlain] note: the full rights block in the text above was composed before the rights or rulings changed. The rights wake delivered just before this one is current; where they differ, it wins.";
 
+/**
+ * Said after a Steward row that goes without the rights it depends on because they could not be read just now (the read threw): the row is not
+ * held back, since a principal-facing wake must not wait on this, and the read is tried again with the next one.
+ */
+export const rightsUnreadNotice =
+	"[chamberlain] note: the current decision rights and rulings could not be read for this wake. Hold any action that needs them (anything on the ASK list) until a later wake carries them.";
+
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>
 	`[chamberlain] ${kind}: thread "${title}" ${what}.`;

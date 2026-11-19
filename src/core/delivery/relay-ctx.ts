@@ -106,9 +106,18 @@ export type Lane = {
 /** The full rights block that rides inside a row's POST (`rightsInline`), and the stamp whose delivery proves the Steward holds it. */
 export type InlineRights = {
 	text: string;
-	stamp?: RightsStamp /** The row's own full block is not the rights in force now: this one replaces it. */;
+	stamp?: RightsStamp;
+	/** The row's own full block is not the rights in force now: this one replaces it. */
 	stale?: true;
+	/** The rights could not be read: `text` is the notice that goes instead, and no record is written. */
+	unreadable?: true;
 };
+
+/** The held news chosen to ride in an immediate wake's POST (relay-carry.ts); `now` fixes its "held N min" notes, so the row bound later reads like what was sent. */
+export type Carried = { now: number; members: string[]; text: string; rights: RightsStamp[]; maxBytes: number };
+
+/** What a POSTed row's delivered commit needs besides the row: the lane, the rights that rode in it, and the news that rode in it. Kept while the commit is owed. */
+export type Landing = { l: Lane; inline?: InlineRights; carried?: Carried };
 
 /** The Steward and the rights in force now, as `rightsNow` answers them, with the epoch read from the database. */
 export type RightsNow = Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
@@ -126,6 +135,8 @@ export type Ctx = {
 	news?: (thread: string) => ThreadNews | undefined;
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
 	owed: Map<number, OutboxRow>;
+	/** For each owed row, what its delivered commit must also record (`Landing`): the same retry as the first try, so the record and the news are never lost on it. */
+	landing: Map<number, Landing>;
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */
 	notBefore: Map<number, number>;
 	/** Rows whose receiver this relay has no transport for, already logged. */

@@ -170,7 +170,7 @@ describe("the relay never has two POSTs in flight", () => {
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: () => {},
 			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
-			relay: { retryAfterMs: () => 0 },
+			relay: { retryAfterMs: () => 0, rightsInline: true },
 		});
 		cleanups.push(async () => {
 			await engine.stop();

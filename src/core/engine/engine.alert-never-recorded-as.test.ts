@@ -4,7 +4,10 @@ import { describe, expect, test } from "bun:test";
 import { useCoreEngineExtraFixtures } from "../../testing/core-engine-extra-fixtures.ts";
 import { createEngine } from "./engine.ts";
 
-const { thread, idleRig } = useCoreEngineExtraFixtures(createEngine);
+const { thread, idleRig } = useCoreEngineExtraFixtures(
+	// The daemon's default: the rights ride inside an unstamped sweep, so it is still one wake (these tests count wakes).
+	(d) => createEngine({ ...d, relay: { ...d.relay, rightsInline: true } }),
+);
 
 describe("an alert is never recorded as sent without its wake (a crash between the two loses nothing)", () => {
 	describe("the idle-parents timer: its own schedule, apart from the routine sweep", () => {
