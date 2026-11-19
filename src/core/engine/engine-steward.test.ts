@@ -2,6 +2,7 @@ import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import type { StewardProbe } from "../adapter/adapter-inspect.ts";
 import type { RightsSent } from "../decide/decide.ts";
 import { alarms } from "../messages.ts";
+import { HEALTH_CONFIG } from "../steward/steward-health-config.ts";
 import { createStewardCheck, type StewardCheckDeps } from "./engine-steward.ts";
 
 const HASH = "a".repeat(64);
@@ -151,6 +152,18 @@ describe("the Steward check: compaction", () => {
 			["compact", id],
 			["log", "delivered", { deliveryId: id, http: 202, attempt: 1 }],
 		]);
+	});
+	test("the shipped limit (130k) fires a compaction at 131k and leaves 129k alone", async () => {
+		setSystemTime(new Date(NOW));
+		expect(HEALTH_CONFIG.compactContext).toBe(130_000);
+		const quiet = rig({ compactAt: HEALTH_CONFIG.compactContext });
+		quiet.state.probe = over(129_000);
+		await quiet.check();
+		expect(quiet.calls.filter((c) => c[0] === "compact")).toEqual([]);
+		const fires = rig({ compactAt: HEALTH_CONFIG.compactContext });
+		fires.state.probe = over(131_000);
+		await fires.check();
+		expect(fires.calls.filter((c) => c[0] === "compact")).toEqual([["compact", `compact:th-steward:${NOW}`]]);
 	});
 	test("a delivery with no status logs none; a failure (thrown or returned) logs deliver-error, never delivered", async () => {
 		setSystemTime(new Date(NOW));

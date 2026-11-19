@@ -69,7 +69,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `t3StateDb` | `CHAMBERLAIN_T3_STATE_DB` | `<t3Dir>/userdata/statev2.sqlite` | T3's state database, opened read-only. |
 | `t3Origin` | `CHAMBERLAIN_T3_ORIGIN` | `http://127.0.0.1:3773` | The origin of the one default server when there is no `servers` list. |
 | `alertCmd` | `CHAMBERLAIN_ALERT_CMD` | none | Run for each alarm as `<command> warning <title> <summary>`, with `CHAMBERLAIN_ALARM_KEY` (the alarm's stable key, to de-duplicate on) in its environment. Without one, alarms are only logged. |
-| `compactTokens` | `CHAMBERLAIN_COMPACT_TOKENS` | `350000` | Steward context size above which the daemon sends `/compact`. |
+| `compactTokens` | `CHAMBERLAIN_COMPACT_TOKENS` | `130000` | Steward context size above which the daemon sends `/compact`. |
 | `recover` | `CHAMBERLAIN_RECOVER` | off | `true` (`1` in the variable): turn on stalled-thread recovery. The daemon classifies a failed run in code, retries a transient one once after a 3-minute grace, and sends a second failure to the judge (`judge`; without one, to the Steward unjudged). Needs the server's operate token. See [GLOSSARY.md](GLOSSARY.md#recovering-a-failed-thread). |
 | `exclude` | `CHAMBERLAIN_EXCLUDE` | none | Thread ids to never wake about (a list; comma-separated in the variable). |
 | `reportQuietMs` | `CHAMBERLAIN_REPORT_QUIET_MS` | `180000` | How long a finished turn with outstanding children or background work must stay quiet before it is reported (a PR update often follows). A clean completion (nothing still running) skips this window. |
