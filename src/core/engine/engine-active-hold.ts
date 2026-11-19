@@ -116,7 +116,7 @@ function cardFate(
  * fresh card would be); every other card, a card missing from the bounded snapshot included, stays with the Steward, whose wake carries the group.
  * Nothing is held or dropped for a card on another card's evidence. A wake with no card ids is the thread's own.
  */
-export function planRelease(
+function planRelease(
 	p: Pick<Parked, "requestIds">,
 	live: ThreadState | undefined,
 	read: WaitingRead | undefined,
