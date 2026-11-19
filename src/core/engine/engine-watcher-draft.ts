@@ -183,7 +183,7 @@ export class WatcherDrafts extends WatcherReads {
 	}
 
 	/** Holds one card for the operator's return, and files the pointer question that leads to it. */
-	protected async holdCard(live: ThreadState, i: WaitingItem) {
+	async holdCard(live: ThreadState, i: WaitingItem) {
 		const { store } = this.core;
 		// The record that it was seen, the question that points to the card and the hold the operator will read are one
 		// transaction: a crash between them would leave the request marked seen with nothing on the queue or held.

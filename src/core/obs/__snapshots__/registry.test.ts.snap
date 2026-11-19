@@ -39,7 +39,7 @@ active-hold-released.held_ms: ms <- heldMs
 active-hold-released.reason: enum(due|away)
 active-hold-dropped.server: known(server) <- server
 active-hold-dropped.held_ms: ms <- heldMs
-active-hold-dropped.reason: enum(answered|left)
+active-hold-dropped.reason: enum(answered|left|held-for-return)
 active-hold-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 active-hold-unavailable.server: known(server) <- server
 active-hold-unavailable.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)

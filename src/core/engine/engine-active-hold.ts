@@ -10,10 +10,12 @@
  * or gone, it is dropped and logged. Away mode releases every parked card at once (nobody is typing now). Never held: anything in the
  * Steward's own thread, the Decisions thread or the Alert Desk's, a card raised while the principal is away, and every message or answer.
  */
-import type { Adapter } from "../adapter/adapter.ts";
+import type { Adapter, ThreadState } from "../adapter/adapter.ts";
 import { has } from "../adapter/adapter-conformance.ts";
+import type { WaitingRead } from "../adapter/adapter-waiting.ts";
 import type { ActiveHoldConfig } from "../config/active-hold-config.ts";
 import { holdUntil, releaseVerdict, withNote } from "../decide/active-hold.ts";
+import { routeNeedsInput } from "../decide/decide.ts";
 import type { Log } from "../log.ts";
 import { activeHoldNote } from "../messages.ts";
 import type { Store } from "../store/store.ts";
@@ -75,6 +77,42 @@ async function plan(
 		: { releaseAt, lastWriteAt: last, server, requestIds };
 }
 
+/**
+ * A released card goes through the routing a fresh card gets (`routeNeedsInput`): while the principal is away, a card only they can clear
+ * (an approval, a secret, a machine link) is held for their return by the daemon and never handed to the Steward, so a card parked before they
+ * went away follows away routing too. True when it was held and its parked wake is gone. A hold that cannot be made (a read that hangs, a write that
+ * throws) is logged and the card wakes the Steward as it would have without this routing.
+ */
+async function heldForReturn(
+	d: ActiveHoldDeps,
+	{
+		w,
+		live,
+		read,
+		p,
+		item,
+		held,
+	}: {
+		w: Watcher | undefined;
+		live: ThreadState | undefined;
+		read: WaitingRead | undefined;
+		p: Parked;
+		item: HeldItem;
+		held: { server: string; held_ms: number };
+	},
+): Promise<boolean> {
+	const items = read?.ok ? read.cards.filter((c) => !p.requestIds.length || p.requestIds.includes(c.requestId)) : [];
+	if (!w || !live || routeNeedsInput(items, true, Boolean(d.store.away.current())) !== "hold") return false;
+	try {
+		for (const i of items) await within(w.holdCard(live, i), d.readMs ?? READ_MS);
+	} catch (e) {
+		d.log("active-hold-error", { error: String(e).slice(0, 200) });
+		return false;
+	}
+	if (d.store.wakes.dropParked(item.deliveryId)) d.log("active-hold-dropped", { ...held, reason: "held-for-return" });
+	return true;
+}
+
 /** One parked card: dropped when it is answered or its thread is gone; else, when due, released as an ordinary wake with the note. */
 async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, away: boolean, due: boolean) {
 	const p = item.parked;
@@ -97,6 +135,7 @@ async function settle(d: ActiveHoldDeps, item: HeldItem & { parked: Parked }, aw
 	}
 	// Not yet due and still waiting: it stays parked until its time.
 	if (!due) return;
+	if (await heldForReturn(d, { w, live, read, p, item, held })) return;
 	const text = withNote(item.message, activeHoldNote(p.lastWriteAt, now));
 	if (!d.store.wakes.unpark(item.deliveryId, now, text)) return;
 	d.log("active-hold-released", { ...held, reason: away ? "away" : "due" });

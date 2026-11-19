@@ -72,7 +72,11 @@ export const EVENTS = {
 	// A question card in a thread the principal is writing in, held for them before the Steward is woken (engine-active-hold.ts).
 	"active-hold-held": e("info", { server: SRV, for_ms: ms("forMs") }),
 	"active-hold-released": e("info", { server: SRV, held_ms: ms("heldMs"), reason: f(T.enm("due", "away")) }),
-	"active-hold-dropped": e("info", { server: SRV, held_ms: ms("heldMs"), reason: f(T.enm("answered", "left")) }),
+	"active-hold-dropped": e("info", {
+		server: SRV,
+		held_ms: ms("heldMs"),
+		reason: f(T.enm("answered", "left", "held-for-return")),
+	}),
 	"active-hold-error": failure(),
 	// The principal-activity read failed or timed out: the card went out at once, as before the feature (fail open).
 	"active-hold-unavailable": serverFailure(),
