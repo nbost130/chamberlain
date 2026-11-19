@@ -194,6 +194,50 @@ describe("a compaction is judged only once it has run", () => {
 	});
 });
 
+describe("an unreadable compaction count is not a lost compaction (audit round 3, item 8)", () => {
+	test("must not re-send: with the count unreadable, a compaction unseen after half an hour is judged by the context size, over the line is a failure, once", async () => {
+		const box: { state?: CompactState } = { state: sent(31) };
+		const w = world(box);
+		w.at(NOW, { contextTokens: 140_000 });
+		await w.check();
+		await w.check();
+		expect(w.compacts()).toBe(0);
+		expect(box.state?.failed).toBe(true);
+		expect(w.calls.filter((c) => c[1] === "compact-ineffective")).toHaveLength(1);
+	});
+
+	test("must stay pending inside the half hour even with the count unreadable", async () => {
+		const box: { state?: CompactState } = { state: sent(11) };
+		const w = world(box);
+		w.at(NOW, { contextTokens: 140_000 });
+		await w.check();
+		expect(w.compacts()).toBe(0);
+		expect(box.state?.failed).toBeUndefined();
+	});
+
+	test("a record that never had a count (written while it was unreadable) is judged the same way: never re-sent", async () => {
+		const box: { state?: CompactState } = { state: sent(31, { compactions: undefined }) };
+		const w = world(box);
+		w.at(NOW, { contextTokens: 140_000, compactions: 4 });
+		await w.check();
+		expect(w.compacts()).toBe(0);
+		expect(box.state?.failed).toBe(true);
+	});
+
+	test("with the count readable a lost compaction is sent again ONCE, and a second that never ran is a failure: never a third", async () => {
+		const box: { state?: CompactState } = { state: sent(31) };
+		const w = world(box);
+		w.at(NOW, { contextTokens: 140_000, compactions: 4, contextTurn: 8 });
+		await w.check();
+		expect(w.compacts()).toBe(1);
+		expect(box.state).toMatchObject({ at: NOW, resends: 1 });
+		w.at(NOW + 31 * MIN, { contextTokens: 140_000, compactions: 4, contextTurn: 8 });
+		await w.check();
+		expect(w.compacts()).toBe(1);
+		expect(box.state?.failed).toBe(true);
+	});
+});
+
 describe("the health check says HAND OFF for a failed compaction", () => {
 	const compacting = (): Health => ({
 		at: new Date(NOW).toISOString(),

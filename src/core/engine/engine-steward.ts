@@ -62,6 +62,8 @@ export type CompactState = {
 	cleared: boolean;
 	failed?: boolean;
 	compactions?: number;
+	/** How many times this compaction has been sent again because it never ran: at most one, then it is called failed. */
+	resends?: number;
 };
 export const COMPACT_STATE_KEY = "steward-compact";
 
@@ -135,11 +137,21 @@ function lastCompaction(c: StewardCheckDeps, p: StewardProbe, id: string): Compa
 	return last;
 }
 
+/** Marks the last compaction failed (once, logged): compacting again would only repeat it, and the health check says HAND OFF. */
+function failCompaction(c: StewardCheckDeps, p: StewardProbe, last: CompactState, id: string): "ineffective" {
+	if (!last.failed) {
+		c.compactState.set({ ...last, failed: true });
+		c.log("compact-ineffective", { threadId: id, used: p.contextTokens, was: last.used });
+	}
+	return "ineffective";
+}
+
 /**
- * Whether the last accepted compaction can be called a failure, is still on its way, or was lost. It FAILED only when it has actually run (a
+ * Whether the last accepted compaction can be called a failure, is still on its way, or was lost. It FAILED when it has actually run (a
  * completed compaction is counted since it was sent, and the context was measured at or after that compaction's turn) with none queued or
- * blocked and the context still over the line. Otherwise it is pending (queued behind a long turn, or run but not yet measured), until nothing
- * has been seen of it for half an hour and nothing is queued: lost, and sent again.
+ * blocked and the context still over the line. Otherwise it is pending, until nothing has been seen of it for half an hour with nothing queued.
+ * Then, if the compaction count can be read, it is lost and is sent again, ONCE; a second one that never ran is a failure. If the count cannot
+ * be read an unseen compaction is not a lost one: the context size judges instead, and it is still over the line, so it is a failure, never a re-send.
  */
 function judgeLast(
 	c: StewardCheckDeps,
@@ -147,16 +159,13 @@ function judgeLast(
 	last: CompactState,
 	id: string,
 ): "pending" | "ineffective" | "lost" {
-	const ran = p.compactions !== undefined && last.compactions !== undefined && p.compactions > last.compactions;
+	const readable = p.compactions !== undefined && last.compactions !== undefined;
+	const ran = readable && (p.compactions as number) > (last.compactions as number);
 	const measured = p.contextTurn !== undefined && p.compactionTurn !== undefined && p.contextTurn >= p.compactionTurn;
-	if (ran && measured && p.compactBlocked === undefined) {
-		if (!last.failed) {
-			c.compactState.set({ ...last, failed: true });
-			c.log("compact-ineffective", { threadId: id, used: p.contextTokens, was: last.used });
-		}
-		return "ineffective";
-	}
-	return !ran && p.compactBlocked === undefined && Date.now() - last.at >= COMPACT_LOST_AFTER_MS ? "lost" : "pending";
+	if (ran && measured && p.compactBlocked === undefined) return failCompaction(c, p, last, id);
+	const aged = !ran && p.compactBlocked === undefined && Date.now() - last.at >= COMPACT_LOST_AFTER_MS;
+	if (!aged) return "pending";
+	return !readable || (last.resends ?? 0) >= 1 ? failCompaction(c, p, last, id) : "lost";
 }
 
 /** Compacts the Steward `id` when its context has outgrown the limit, unless one went in the cooldown or the backend says one must not go now. */
@@ -165,7 +174,8 @@ async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: Steward
 	const last = lastCompaction(c, p, id);
 	const since = (t: number | undefined) => t !== undefined && Date.now() - t < COMPACT_COOLDOWN_MS;
 	if (!needsCompact(used, c.compactAt, since(st.attemptAt) || since(last?.at))) return;
-	if (last && !last.cleared && judgeLast(c, p, last, id) !== "lost") return;
+	const lost = last && !last.cleared ? last : undefined;
+	if (lost && judgeLast(c, p, lost, id) !== "lost") return;
 	const blocked = p.compactBlocked;
 	if (blocked !== st.compactHeldFor) c.log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
 	st.compactHeldFor = blocked;
@@ -175,19 +185,23 @@ async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: Steward
 		c.raiseAlarm("steward-compact", alarms.compactUnavailable(used));
 		return;
 	}
-	// The rights record is invalidated by the relay, inside the compaction's serial job and before its POST (relay.ts, `compact`): clearing it
-	// here, before the job runs, let a full block already in flight land after and restore it.
+	// The rights record is invalidated by the relay, inside the compaction's serial job and once T3 has accepted the request (relay.ts, `compact`).
 	c.log("fire", { server: "steward", kind: "compact", threadId: id, used });
 	if (c.dry) return;
 	// The request goes out through the relay, the only code that calls a transport. It is recorded only once T3 has accepted it.
-	if (await sendCompact(c, id))
-		c.compactState.set({
-			thread: id,
-			at: Date.now(),
-			used: used ?? 0,
-			cleared: false,
-			...(p.compactions !== undefined ? { compactions: p.compactions } : {}),
-		});
+	if (await sendCompact(c, id)) c.compactState.set(acceptedCompaction(p, id, lost));
+}
+
+/** The record of a compaction T3 accepted: the size and the completed-compaction count then, and how often it has been sent again. */
+function acceptedCompaction(p: StewardProbe, id: string, lost: CompactState | undefined): CompactState {
+	return {
+		thread: id,
+		at: Date.now(),
+		used: p.contextTokens ?? 0,
+		cleared: false,
+		...(p.compactions !== undefined ? { compactions: p.compactions } : {}),
+		...(lost ? { resends: (lost.resends ?? 0) + 1 } : {}),
+	};
 }
 
 export function createStewardCheck(c: StewardCheckDeps) {
