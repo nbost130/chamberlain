@@ -13,15 +13,26 @@ import { useWebWebFixtures } from "../testing/web-web-fixtures.ts";
 
 const { dirs, item, setup } = useWebWebFixtures(fetchWake);
 
+/**
+ * A port nothing holds right now, asked of the OS. The tests used to draw one at random from 40000-60000, which is inside the range the OS hands
+ * out to outgoing connections: when the draw landed on a port in use the server exited at once with nothing on stdout (the CI failure, "Received:
+ * \"\"" after 78 ms).
+ */
+function freePort(): number {
+	const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+	const port = probe.port;
+	probe.stop(true);
+	return port;
+}
+
 describe("schema versions at server start", () => {
-	const start = (setupFiles: (conf: string, state: string) => void) => {
+	const start = (setupFiles: (conf: string, state: string) => void, port = freePort()) => {
 		const root = mkdtempSync(`${tmpdir()}/chamberlain-srv-`);
 		dirs.push(root);
 		const conf = `${root}/conf`,
 			state = `${root}/state`;
 		mkdirSync(conf, { mode: 0o700 });
 		mkdirSync(state);
-		const port = 40000 + Math.floor(Math.random() * 20000);
 		writeFileSync(`${conf}/web.json`, JSON.stringify({ host: "127.0.0.1", port }), { mode: 0o600 });
 		setupFiles(conf, state);
 		const p = Bun.spawn([process.execPath, new URL("./server.ts", import.meta.url).pathname, "--test"], {
@@ -36,22 +47,43 @@ describe("schema versions at server start", () => {
 		});
 		return { p, conf, state };
 	};
+	/** Reads the server's stdout until it says it is up, the deadline passes, or it exits. */
+	const untilUp = async (p: ReturnType<typeof start>["p"]) => {
+		const reader = p.stdout.getReader();
+		let out = "";
+		const deadline = Date.now() + 10_000;
+		while (!out.includes("decision queue on") && Date.now() < deadline) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			out += new TextDecoder().decode(value);
+		}
+		return out;
+	};
 	test("a new install creates its database and starts", async () => {
-		const { p, state } = start(() => {});
+		// Another process can take the free port between asking for it and the server binding it; a server that exits at once with nothing printed
+		// is that, and is tried again on a new port. Any other output, or a hang, is a real failure and is not retried.
+		let started = start(() => {});
+		let out = await untilUp(started.p);
+		for (let again = 0; again < 2 && out === "" && (await started.p.exited) !== 0; again++) {
+			started = start(() => {});
+			out = await untilUp(started.p);
+		}
 		try {
-			const reader = p.stdout.getReader();
-			let out = "";
-			const deadline = Date.now() + 10_000;
-			while (!out.includes("decision queue on") && Date.now() < deadline) {
-				const { value, done } = await reader.read();
-				if (done) break;
-				out += new TextDecoder().decode(value);
-			}
 			expect(out).toContain("decision queue on");
-			expect(existsSync(dbPath(state))).toBe(true);
+			expect(existsSync(dbPath(started.state))).toBe(true);
 		} finally {
-			p.kill();
-			await p.exited;
+			started.p.kill();
+			await started.p.exited;
+		}
+	});
+	test("a port that is already taken makes the server exit at once with nothing on stdout (the premise of the retry above)", async () => {
+		const hog = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+		try {
+			const { p } = start(() => {}, hog.port);
+			expect(await new Response(p.stdout).text()).toBe("");
+			expect(await p.exited).not.toBe(0);
+		} finally {
+			hog.stop(true);
 		}
 	});
 	test("a config file from a newer Chamberlain stops the server with exit code 3 and a clear reason", async () => {
