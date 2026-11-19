@@ -72,6 +72,7 @@ No new keys written into the live config before the pinned daemon supports them.
 - Related code, fixture and contract fixes are authorized as a batch; preserve all safety assertions.
 - Reconciliation with current main found that migration 18 now belongs to prepare-pr links. The classifier migration must be 19, preserving both classifier history and prepare-pr links when upgrading an existing version-18 database.
 - The CLI-sender architecture assertion is approved to require zero CLI senders; its single RPC sender assertion is unchanged.
+- The overhead monitor (`overhead` section, src/core/overhead/) adds no hard-coded model binding: the Steward's tokens are priced for the model `models.steward` names, from the operator's own `overhead.prices` (none shipped), and the investigator thread launches only on `overhead.investigator.model`, an explicit T3 selection parsed by the same `threadModel` check and preflighted by the same `launchSelectionFor` as every pinned thread, with no default and no fallback.
 
 ## Status
 
