@@ -24,7 +24,7 @@ import { HOUR_MS } from "./config.ts";
 import { summarize } from "./format.ts";
 import type { Investigator } from "./investigator.ts";
 import { priceOf } from "./prices.ts";
-import { type At, elapsedOf, inspect, newBudget, reconcile, release, send } from "./reconcile.ts";
+import { type At, elapsedOf, inspect, newBudget, readClocks, reconcile, release, send } from "./reconcile.ts";
 import type { OverheadTickDeps } from "./tick-deps.ts";
 import {
 	decide,
@@ -121,12 +121,7 @@ export function overheadTicker(d: OverheadTickDeps) {
 		if (busy) return;
 		busy = true;
 		try {
-			const at: At = {
-				now: (d.now ?? Date.now)(),
-				mono: (d.mono ?? (() => performance.now()))(),
-				since,
-				budget: newBudget(),
-			};
+			const at: At = { ...readClocks(d), since, budget: newBudget() };
 			const elapsed = elapsedOf(at);
 			if (reconciledAt === undefined || at.now < reconciledAt || at.now - reconciledAt >= RECONCILE_MS) {
 				reconciledAt = at.now;

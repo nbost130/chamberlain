@@ -25,6 +25,12 @@ export type At = { now: number; mono: number; since: Monos; budget: { left: numb
 
 export const newBudget = () => ({ left: LAUNCHES_PER_TICK });
 
+/** Both clocks, read at this moment: the wall clock and the monotonic one (default `performance.now`). */
+export const readClocks = (d: Pick<OverheadTickDeps, "now" | "mono">) => ({
+	now: (d.now ?? Date.now)(),
+	mono: (d.mono ?? (() => performance.now()))(),
+});
+
 /**
  * How long a reservation has been held (since it was reserved), or with `"launch"` since the later of that and its last launch call. Across
  * restarts: the wall-clock time since the STORED time, with no credit for a restart. Inside the process that made it: the larger of that and the
@@ -62,8 +68,8 @@ export const release = (d: OverheadTickDeps, i: Investigation, now: number, note
 
 /**
  * Sends (or repeats) the launch of a reservation, under its own key, never a new one. The time of the call is stored BEFORE it goes out, so the
- * cooldown counts it even if the process dies mid-call. It records only a launch that completed; what the outcome means for the reservation is
- * the caller's.
+ * cooldown counts it even if the process dies mid-call. Both clocks are read here, at the call, not at the start of the tick: a slow measurement
+ * before it must not shorten the cooldown. It records only a launch that completed; what the outcome means for the reservation is the caller's.
  */
 export async function send(d: OverheadTickDeps, inv: Investigator, i: Investigation, at: At): Promise<Sent> {
 	if (!i.title || !i.brief) {
@@ -72,8 +78,9 @@ export async function send(d: OverheadTickDeps, inv: Investigator, i: Investigat
 	}
 	if (at.budget.left < 1) return "deferred";
 	at.budget.left--;
-	updateInvestigation(d.store, i.id, { launchedAt: at.now });
-	at.since.launched.set(i.id, at.mono);
+	const call = readClocks(d);
+	updateInvestigation(d.store, i.id, { launchedAt: call.now });
+	at.since.launched.set(i.id, call.mono);
 	try {
 		const { threadId } = await inv.launch({ seed: i.id, title: i.title, brief: i.brief });
 		markOpen(d, i, threadId);

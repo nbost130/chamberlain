@@ -75,6 +75,35 @@ describe("a clock that reads before the stored launch means the cooldown is not 
 	});
 });
 
+describe("the launch time is read at the launch call, not at the start of the tick", () => {
+	test("a measurement that takes 2 h before the launch does not shorten the cooldown, in this process or after a restart", async () => {
+		let slow = true;
+		const r: Rig = rig({
+			cfg: crossing({ checkEveryHours: 1 }),
+			gh: async () => {
+				if (slow) r.advance(2 * HOUR); // the collection is slow: both clocks move before the launch call
+				slow = false;
+				return { total: 0, incomplete: false, items: [] };
+			},
+		});
+		await r.tick();
+		expect(r.t3.launched).toHaveLength(1);
+		const first = stateOf(r).investigations[0];
+		expect(first?.launchedAt).toBe(r.at());
+		closeInvestigation(r.store, first?.id as string, { by: "investigator", now: r.at() });
+		r.advance(23 * HOUR); // 25 h after the tick started, 23 h after the launch
+		await r.tick();
+		expect(r.t3.launched).toHaveLength(1);
+		expect(lastLog(r)).toMatchObject({ skipped: "cooldown" });
+		r.restart();
+		await r.tick();
+		expect(r.t3.launched).toHaveLength(1);
+		r.advance(HOUR + 60_000);
+		await r.tick();
+		expect(r.t3.launched).toHaveLength(2);
+	});
+});
+
 describe("inside one process, the larger of the monotonic and wall-clock time is taken", () => {
 	test("a wall clock that stepped back after the launch does not hide the time the monotonic clock saw", async () => {
 		const r = await closed(9);
