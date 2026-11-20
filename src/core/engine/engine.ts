@@ -21,6 +21,7 @@ import { DEFAULT_RECOVER_TIMING, type RecoverTiming } from "../ops/recover-class
 import type { RecoverState } from "../ops/recover-state.ts";
 import { openRightsSent } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
+import type { ActiveHold } from "./engine-active-hold.ts";
 import { CoreWork } from "./engine-core-work.ts";
 import type { createIdleParents } from "./engine-idle.ts";
 import type { createPreparePr } from "./engine-prepare-pr.ts";
@@ -51,6 +52,7 @@ export class Core extends CoreWork {
 	readonly outbox: ReturnType<typeof createOutbox>;
 	readonly deliver: ReturnType<typeof createOutbox>["deliver"];
 	readonly watchers: Watcher[];
+	readonly activeHold: ActiveHold;
 	readonly timing: RecoverTiming;
 	protected readonly judge: Judge;
 	protected readonly rightsSent: ReturnType<typeof openRightsSent>;
@@ -85,6 +87,7 @@ export class Core extends CoreWork {
 		this.outbox = this.makeOutbox();
 		this.deliver = this.outbox.deliver;
 		this.watchers = d.servers.map((x) => new Watcher(this, x.server, x.adapter));
+		this.activeHold = this.makeActiveHold();
 		this.timing = { ...DEFAULT_RECOVER_TIMING, ...(typeof d.recover === "object" ? d.recover : {}) };
 		this.judge = this.makeJudge();
 		this.recovery = this.makeRecovery();
@@ -240,6 +243,7 @@ export class Core extends CoreWork {
 		// The relay polls on its own; a pass here too costs nothing (passes are one at a time) and makes the heartbeat a full look.
 		const checks: Promise<unknown>[] = [
 			this.relay.pass(),
+			this.activeHold.tick(),
 			this.stewardCheck().catch((e) => this.log("steward-check-error", { error: String(e) })),
 			this.cardReconcileTick(),
 			this.snoozeReturnTick(),
@@ -261,6 +265,7 @@ export class Core extends CoreWork {
 		}, this.t.tickMs);
 		// The relay starts beside the watchers: its first pass sends whatever a dead process left pending.
 		this.relay.start().then(() => this.log("startup-recovered"));
+		void this.activeHold.tick(); // a parked card whose time passed while the daemon was down is settled now
 		this.recovery?.restore();
 		this.started = Promise.all(this.watchers.map((w) => w.run())).then(() => undefined);
 		return this.started;
@@ -268,6 +273,7 @@ export class Core extends CoreWork {
 
 	async stop() {
 		clearInterval(this.interval);
+		this.activeHold.stop();
 		await this.relay.stop();
 		for (const w of this.watchers) w.stop();
 		this.recovery?.stop();

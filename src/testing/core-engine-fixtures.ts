@@ -41,6 +41,8 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			gh?: EngineDeps["gh"];
 			ask?: EngineDeps["ask"];
 			classifierProvider?: EngineDeps["classifierProvider"];
+			activeHold?: EngineDeps["activeHold"];
+			activeHoldReadMs?: number;
 			/** Override the report quiet window (default 5 ms). Incident tests use the production 180_000. */
 			quietMs?: number;
 		} = {},
@@ -69,6 +71,8 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			gh: o.gh,
 			ask: o.ask,
 			...(o.classifierProvider ? { classifierProvider: o.classifierProvider } : {}),
+			...(o.activeHold ? { activeHold: o.activeHold } : {}),
+			...(o.activeHoldReadMs ? { activeHoldReadMs: o.activeHoldReadMs } : {}),
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => events.push({ event, ...data }),
 			timing: { debounceMs: 5, lagMs: 5, quietMs: o.quietMs ?? 5, tickMs: 3_600_000 },

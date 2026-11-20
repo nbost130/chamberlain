@@ -51,6 +51,8 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		deskWakes: [] as { deliveryId: string; message: string }[],
 		deskAttempts: 0,
 		posted: [] as { item: Question; opts: PostOptions }[],
+		/** The next this many `post` calls never answer. */
+		postHangs: 0,
 		titles: [] as string[],
 		answers: [] as { card: WaitingCard; choice: number; sig: string }[],
 		sends: [] as { threadId: string; text: string; seed: string; identity?: string }[],
@@ -94,9 +96,16 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		waiting: async (id): Promise<WaitingRead> => {
 			const th = fake.threads.get(id);
 			if (th?.waitingError) throw Error(th.waitingError);
+			if (th?.waitingHang) return new Promise<WaitingRead>(() => {});
 			if (th?.waitingRead) return typeof th.waitingRead === "function" ? th.waitingRead() : th.waitingRead;
 			if (!fake.connected) return { ok: false, reason: "fake is not connected" };
 			return { ok: true, cards: th?.waiting ?? [], resolved: th?.resolved ?? [] };
+		},
+		principalLastWrite: async (id, since) => {
+			const at = fake.threads.get(id)?.principalAt;
+			if (at === "error") throw Error("the history could not be read");
+			if (at === "hang") return new Promise<number | undefined>(() => {});
+			return at !== undefined && at >= since ? at : undefined;
 		},
 		runningSubagents: async (id) => fake.threads.get(id)?.subagents ?? 0,
 		instruction: async (id, runId) => {
@@ -148,6 +157,11 @@ export function createFakeAdapter(opts: FakeOptions = {}): FakeAdapter {
 		wake,
 		isBusy: () => busy,
 		post: async (item, o): Promise<PostResult> => {
+			// A server that does not answer: this many posts hang and are not recorded (a test sets `postHangs`).
+			if (fake.postHangs > 0) {
+				fake.postHangs--;
+				return new Promise<PostResult>(() => {});
+			}
 			handles.posted.push({ item, opts: o });
 			return { ok: true, detail: "posted in memory", where: o.queueUrl ? "view" : "notice" };
 		},

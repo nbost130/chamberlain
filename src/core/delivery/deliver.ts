@@ -101,7 +101,9 @@ export function createOutbox(d: OutboxDeps) {
 				...wake.meta,
 			};
 			return {
-				kind: (holdable(wake.meta) ? store.wakes.hold(row) : store.wakes.enqueue(row)) ? "queued" : "known",
+				kind: (holdable(wake.meta) || wake.meta?.parked ? store.wakes.hold(row) : store.wakes.enqueue(row))
+					? "queued"
+					: "known",
 				wake,
 			};
 		});
@@ -111,8 +113,11 @@ export function createOutbox(d: OutboxDeps) {
 		else if (out.kind === "known") d.log("deliver-already-queued", { deliveryId });
 		else {
 			crashPoint("enqueued");
-			d.log(holdable(meta) ? "deliver-held" : "deliver-queued", { deliveryId });
-			d.queued?.();
+			// A card held for the principal is logged by the engine (`active-hold-held`) and has nothing for the relay to look at yet.
+			if (!meta?.parked) {
+				d.log(holdable(meta) ? "deliver-held" : "deliver-queued", { deliveryId });
+				d.queued?.();
+			}
 		}
 		return out.kind;
 	}

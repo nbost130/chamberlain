@@ -12,6 +12,7 @@ import { type Health, handoffDeliveryId, handoffWakeMessage, liveHealth } from "
 import { HEALTH_CONFIG } from "../steward/steward-health-config.ts";
 import { healthTicker } from "../steward/steward-health-ticker.ts";
 import { usageTicker } from "../steward/steward-tokens.ts";
+import { activeHoldFor } from "./engine-active-hold.ts";
 import { CoreRights } from "./engine-core-rights.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createIdleParents } from "./engine-idle.ts";
@@ -21,6 +22,11 @@ import { clip, closeCardCommand } from "./engine-support.ts";
 import { createUndelivered } from "./engine-undelivered.ts";
 
 export abstract class CoreWork extends CoreRights {
+	/** Question cards held for the principal (engine-active-hold.ts); an engine given no `activeHold` never holds one. */
+	protected makeActiveHold() {
+		return activeHoldFor(this, this.d, () => this.chamberlainSkip());
+	}
+
 	protected makeStewardCheck() {
 		return createStewardCheck({
 			privateFile: this.privateFile,
@@ -279,25 +285,19 @@ export abstract class CoreWork extends CoreRights {
 	/** The checks of one housekeeping pass that run only when housekeeping is on, added to the pass's list in order. */
 	protected housekeepingChecks(checks: Promise<unknown>[]) {
 		const { log, healthTick, usageTick } = this;
+		/** A check's failure, logged under its event with the error clipped to 200 characters. */
+		const failed = (event: Parameters<typeof log>[0], extra?: Record<string, unknown>) => (e: unknown) =>
+			log(event, { ...extra, error: String(e).slice(0, 200) });
 		checks.push(this.holdReconcileTick());
 		this.drainDesk();
 		if (!this.DRY && healthTick)
 			checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
-		if (usageTick)
-			checks.push(usageTick().catch((e) => log("steward-usage-error", { error: String(e).slice(0, 200) })));
+		if (usageTick) checks.push(usageTick().catch(failed("steward-usage-error")));
 		if (!this.DRY && this.d.overheadTick)
-			checks.push(
-				this.d.overheadTick().catch((e) => log("overhead-error", { stage: "tick", error: String(e).slice(0, 200) })),
-			);
-		checks.push(this.idleParents.tick().catch((e) => log("idle-parents-error", { error: String(e).slice(0, 200) })));
-		checks.push(
-			this.undelivered
-				.tick()
-				.catch((e: unknown) => log("undelivered-message-error", { error: String(e).slice(0, 200) })),
-		);
-		checks.push(
-			this.preparePr.tick().catch((e: unknown) => log("prepare-pr-error", { error: String(e).slice(0, 200) })),
-		);
+			checks.push(this.d.overheadTick().catch(failed("overhead-error", { stage: "tick" })));
+		checks.push(this.idleParents.tick().catch(failed("idle-parents-error")));
+		checks.push(this.undelivered.tick().catch(failed("undelivered-message-error")));
+		checks.push(this.preparePr.tick().catch(failed("prepare-pr-error")));
 		checks.push(
 			this.sweep.tick().catch((e) => {
 				log("sweep-error", { error: String(e) });

@@ -14,6 +14,7 @@ import { failedRead } from "../../core/ops/history.ts";
 import { compatWarning, readEnvironment, T3_TESTED } from "./compat.ts";
 import { failureOf, lookOf } from "./failure.ts";
 import { historyGet, lastCompletedText, readWhenConnected } from "./history.ts";
+import { readPrincipalLastWrite } from "./principal.ts";
 import { checkProjection, isObject, type Projection, readCards } from "./projection.ts";
 import { connect, fetchShellSnapshot, type Rpc } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
@@ -270,6 +271,15 @@ export class T3Link {
 			if (!this.rpc) throw Error(`${this.srv.name} is not connected`);
 			const p = await this.projection(threadId);
 			return { runs: p.runs ?? [], items: p.turnItems ?? [] };
+		},
+		/** The principal's last message in the thread, read over HTTP like `instruction`; no socket is a failed read. */
+		principalLastWrite: (threadId, since) => {
+			if (!this.rpc) return Promise.reject(Error(`${this.srv.name} is not connected`));
+			return readPrincipalLastWrite(
+				threadId,
+				historyGet(this.srv.origin, () => this.token()),
+				since,
+			);
 		},
 		instruction: (threadId, runId) =>
 			readWhenConnected(

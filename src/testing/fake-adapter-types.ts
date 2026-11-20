@@ -38,12 +38,16 @@ export type FakeThread = {
 	resolved?: string[];
 	waitingRead?: WaitingRead | (() => WaitingRead);
 	waitingError?: string;
+	/** The waiting read never answers, as a request to a hung server does. */
+	waitingHang?: boolean;
 	subagents?: number;
 	instruction?: InstructionRead;
 	/** Runs for the handoff gate (completed-only, human-successor suppress). */
 	runs?: { id?: string; ordinal?: number; status?: string }[];
 	failure?: RunFailure;
 	look?: RunLook;
+	/** When the principal last wrote in the thread, in epoch ms: what `principalLastWrite` reports if it is not before the window asked for. `"error"` makes the read throw, `"hang"` never answers. Unset: they never did. */
+	principalAt?: number | "error" | "hang";
 };
 
 export type FakeOptions = {
@@ -64,6 +68,8 @@ export type FakeAdapter = Adapter & {
 	deskWakes: { deliveryId: string; message: string }[];
 	deskAttempts: number;
 	posted: { item: Question; opts: PostOptions }[];
+	/** The next this many `post` calls never answer (a server that hangs). */
+	postHangs: number;
 	titles: string[];
 	answers: { card: WaitingCard; choice: number; sig: string }[];
 	sends: { threadId: string; text: string; seed: string; identity?: string }[];

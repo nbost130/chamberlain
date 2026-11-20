@@ -3,17 +3,7 @@
 import { exceedsEncodedCap } from "../steward/steward-types.ts";
 import { type Db, type Row, required } from "./sqlite-db.ts";
 import type { Store } from "./store.ts";
-import type {
-	Challenge,
-	ChallengeVerdict,
-	Composed,
-	HeldItem,
-	Lane,
-	OutboxRow,
-	OutboxStatus,
-	RightsStamp,
-	WakeRow,
-} from "./store-wakes.ts";
+import type { Composed, HeldItem, Lane, OutboxRow, OutboxStatus, Parked, RightsStamp, WakeRow } from "./store-wakes.ts";
 
 // ---- wakes --------------------------------------------------------------------------------------
 /** The stamps a row or held item carries (migration 9): a JSON array, or nothing. Unreadable is treated as a stamp nothing matches, so the relay sends the full rights ahead of it: doubt sends them again. */
@@ -32,12 +22,33 @@ const wakeTags = (r: Row): { kind?: string; thread?: string; receiver?: string }
 	...(r.thread ? { thread: r.thread as string } : {}),
 	...(r.receiver ? { receiver: r.receiver as string } : {}),
 });
+/**
+ * A parked wake's record (migration 21). `held()` leaves out every row whose column is set, so a record that cannot be read must not
+ * become "no record" (the wake would be in neither list and never sent): it is a record due at once, which the next tick releases.
+ */
+const parkedOf = (r: Row): { parked?: Parked } => {
+	if (r.parked === null || r.parked === undefined) return {};
+	let v: Partial<Parked> | null = null;
+	try {
+		v = JSON.parse(r.parked as string) as Partial<Parked> | null;
+	} catch {}
+	const at = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : undefined);
+	return {
+		parked: {
+			releaseAt: at(v?.releaseAt) ?? 0,
+			lastWriteAt: at(v?.lastWriteAt) ?? (r.queued_at as number),
+			server: typeof v?.server === "string" ? v.server : "",
+			requestIds: Array.isArray(v?.requestIds) ? v.requestIds.filter((x): x is string => typeof x === "string") : [],
+		},
+	};
+};
 const toHeld = (r: Row): HeldItem => ({
 	deliveryId: r.delivery_id as string,
 	message: (r.message as string | undefined) ?? "",
 	queuedAt: r.queued_at as number,
 	...wakeTags(r),
 	...stampsOf(r),
+	...parkedOf(r),
 });
 const toOutboxRow = (c: Db, r: Row): OutboxRow => ({
 	id: r.id as number,
@@ -95,17 +106,32 @@ function insertRow(c: Db, w: WakeRow & { folded?: number }, members: HeldItem[])
 	return id;
 }
 
-const heldWakes = (c: Db, lane?: Lane): HeldItem[] =>
-	(lane === undefined
-		? c.all("SELECT * FROM held_wakes ORDER BY seq")
-		: c.all("SELECT * FROM held_wakes WHERE receiver IS ? ORDER BY seq", lane)
+/** The held wakes the relay composes (`parked` is NULL), or, with `parked`, the question cards held for the principal. */
+const heldWakes = (c: Db, lane?: Lane, parked = false): HeldItem[] => {
+	const only = parked ? "parked IS NOT NULL" : "parked IS NULL";
+	return (
+		lane === undefined
+			? c.all(`SELECT * FROM held_wakes WHERE ${only} ORDER BY seq`)
+			: c.all(`SELECT * FROM held_wakes WHERE ${only} AND receiver IS ? ORDER BY seq`, lane)
 	).map(toHeld);
+};
+
+function unparkWake(c: Db, id: string, now: number, message: string): OutboxRow | undefined {
+	return c.tx(() => {
+		const item = heldWakes(c, undefined, true).find((h) => h.deliveryId === id);
+		if (!item) return undefined;
+		const { parked: _parked, ...plain } = item;
+		const rowId = insertRow(c, { ...plain, message, queuedAt: now }, [{ ...plain, message }]);
+		c.run("DELETE FROM held_wakes WHERE delivery_id = ?", id);
+		return toOutboxRow(c, required(c.one("SELECT * FROM outbox WHERE id = ?", rowId), `outbox row ${rowId}`));
+	});
+}
 
 function holdWake(c: Db, w: HeldItem): boolean {
 	return c.tx(() => {
 		if (knownWake(c, w.deliveryId)) return false;
 		c.run(
-			"INSERT INTO held_wakes (delivery_id, message, queued_at, kind, thread, receiver, rights_for) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO held_wakes (delivery_id, message, queued_at, kind, thread, receiver, rights_for, parked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 			w.deliveryId,
 			w.message,
 			w.queuedAt,
@@ -113,6 +139,7 @@ function holdWake(c: Db, w: HeldItem): boolean {
 			w.thread ?? null,
 			w.receiver ?? null,
 			stampText(w),
+			w.parked ? JSON.stringify(w.parked) : null,
 		);
 		return true;
 	});
@@ -175,6 +202,9 @@ export const makeWakes = (c: Db): Store["wakes"] => ({
 		}),
 	hold: (w) => holdWake(c, w),
 	held: (lane) => heldWakes(c, lane),
+	parked: (lane) => heldWakes(c, lane, true),
+	unpark: (id, now, message) => unparkWake(c, id, now, message),
+	dropParked: (id) => c.run("DELETE FROM held_wakes WHERE delivery_id = ? AND parked IS NOT NULL", id).changes === 1,
 	compose: (now, compose, lane) => composeHeld(c, now, compose, lane),
 	rows: (status, lane) => outboxRows(c, status, lane),
 	find: (id) => findWake(c, id),
@@ -254,62 +284,3 @@ function pruneWakes(c: Db, before: number): number {
 		return n;
 	});
 }
-
-// ---- confirmation challenges --------------------------------------------------------------------
-function issueChallenge(c: Db, ch: Challenge): void {
-	c.tx(() => {
-		c.run(
-			"DELETE FROM confirmation_challenges WHERE card_id = ? AND session_hash = ? AND consumed_at IS NULL",
-			ch.cardId,
-			ch.sessionHash,
-		);
-		c.run(
-			"INSERT INTO confirmation_challenges (token_hash, card_id, sig, choice, session_hash, issued_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			ch.tokenHash,
-			ch.cardId,
-			ch.sig,
-			ch.choice,
-			ch.sessionHash,
-			ch.issuedAt,
-			ch.expiresAt,
-		);
-	});
-}
-
-function consumeChallenge(
-	c: Db,
-	tokenHash: string,
-	expect: { cardId: string; sig: string; choice: number; sessionHash: string },
-	now: number,
-): ChallengeVerdict {
-	return c.tx(() => {
-		const r = c.one("SELECT * FROM confirmation_challenges WHERE token_hash = ?", tokenHash);
-		if (!r) return "unknown";
-		if (r.consumed_at !== null) return "used";
-		if ((r.expires_at as number) <= now) return "expired";
-		if (
-			r.card_id !== expect.cardId ||
-			r.sig !== expect.sig ||
-			r.choice !== expect.choice ||
-			r.session_hash !== expect.sessionHash
-		)
-			return "mismatch";
-		c.run(
-			"UPDATE confirmation_challenges SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL",
-			now,
-			tokenHash,
-		);
-		return "ok";
-	});
-}
-
-export const makeChallenges = (c: Db): Store["challenges"] => ({
-	issue: (ch) => issueChallenge(c, ch),
-	consume: (tokenHash, expect, now) => consumeChallenge(c, tokenHash, expect, now),
-	prune: (before) =>
-		c.run(
-			"DELETE FROM confirmation_challenges WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)",
-			before,
-			before,
-		).changes,
-});

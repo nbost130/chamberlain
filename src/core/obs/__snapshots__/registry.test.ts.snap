@@ -32,6 +32,17 @@ gate-error.receiver: known(receiver) <- receiver
 rights-first-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 wake-debounced.held: int
 wake-debounced.forMs: int
+active-hold-held.server: known(server) <- server
+active-hold-held.for_ms: ms <- forMs
+active-hold-released.server: known(server) <- server
+active-hold-released.held_ms: ms <- heldMs
+active-hold-released.reason: enum(due|away)
+active-hold-dropped.server: known(server) <- server
+active-hold-dropped.held_ms: ms <- heldMs
+active-hold-dropped.reason: enum(answered|left|held-for-return)
+active-hold-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+active-hold-unavailable.server: known(server) <- server
+active-hold-unavailable.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 rights-full-stale.epoch: int
 rights-full-stale.current: int
 rights-invalidated.reason: enum(compaction|context shrink)
