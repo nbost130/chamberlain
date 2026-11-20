@@ -91,7 +91,7 @@
 .dq-health-track{height:7px;background:var(--muted);border-radius:99px;margin:8px 0;position:relative;overflow:hidden}.dq-health-fill{height:100%;background:var(--health-tone);border-radius:99px}.dq-health-mark{position:absolute;top:0;height:100%;border-left:2px solid var(--foreground);opacity:.6}
 .dq-health-scale{display:flex;justify-content:space-between;color:var(--muted-foreground);font-size:10px;gap:12px}.dq-health-signals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}.dq-health-signal{background:var(--muted);border-radius:8px;padding:10px;min-width:0}.dq-health-signal strong{display:block;font-family:var(--font-mono);font-size:16px;color:var(--foreground);margin:4px 0}.dq-health-label{font-size:11px;color:var(--muted-foreground)}.dq-health-note{font-size:10px;color:var(--muted-foreground);line-height:1.4}.dq-health-evidence{margin-top:12px;font-size:11px;color:var(--muted-foreground)}.dq-health-evidence summary{cursor:pointer;padding:4px 0}.dq-health-evidence pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.6}.dq-health-warning{margin-top:10px;color:var(--warning);font-size:12px}`;
 	const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-	function paintHealth(root, h, limits) {
+	function paintHealth(root, h, limits, ov) {
 		const expanded = root.querySelector(".dq-health-evidence")?.open;
 		root.style.setProperty("--health-tone", !h || h.unknown?.length || h.verdict === "WATCH" || h.verdict === "COMPACT" ? "var(--warning)" : h.verdict === "HAND OFF" ? "var(--destructive)" : "var(--success)");
 		const minutes = h ? Math.max(0, Math.floor((Date.now() - Date.parse(h.at)) / 60000)) : NaN;
@@ -133,6 +133,7 @@
 			["Repeat reads", h.tokens == null ? "—" : h.threadRereads, "since compaction", limits && h.threadRereads >= limits.threadRereads],
 		]) { const tile = el("div", "dq-health-signal"); tile.append(el("span", "dq-health-label", label), el("strong", "", value), el("span", "dq-health-note", elevated ? "↑ Above threshold" : note)); signals.append(tile); }
 		root.append(signals);
+		if (ov) { const o = el("div", "dq-health-context", "Overhead (24 h)"); o.append(el("span", "dq-health-value", ov.line)); root.append(o); for (const c of ov.crossed || []) root.append(el("div", "dq-health-warning", `Over threshold: ${c}`)); if (ov.open) root.append(el("div", "dq-health-note", `Investigation ${ov.open} is open.`)); for (const u of ov.unavailable || []) root.append(el("div", "dq-health-note", `Unavailable: ${u}`)); }
 		if (h.unknown?.length) root.append(el("div", "dq-health-warning", "Some measurements are unavailable."));
 		// The check's own time, as the full page's health line shows it; the summary above gives it as an age.
 		const details = el("details", "dq-health-evidence"); details.open = Boolean(expanded); details.append(el("summary", "", "Measurement details"), el("div", "dq-health-age", `Checked at ${h.at}`), el("pre", "", h.report)); root.append(details);
@@ -164,7 +165,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			testMode(q);
 			// The Steward's health, as the full page's header shows it.
 			if (!plainHealth.parent) wrap.insertBefore(plainHealth, list);
-			paintHealth(plainHealth, q.health, q.healthLimits);
+			paintHealth(plainHealth, q.health, q.healthLimits, q.overhead);
 			// The questions, then the cards waiting in other threads, as the full page lists them.
 			const items = [...(q.items || []), ...(q.cards || []).map(fromCard)];
 			const later = q.snoozed || [];
@@ -634,7 +635,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		const away = el("div", "dq-msg dq-away");
 		panes.Waiting.append(away);
 		const cards = new Map(); // item ID -> its card; kept while he is choosing, so a refresh never resets his pick
-		let lastHealth, lastHealthLimits;
+		let lastHealth, lastHealthLimits, lastOverhead;
 		let focused = false;
 		const bad = (pane, e) => pane.replaceChildren(el("div", "dq-msg dq-bad", `Could not reach the queue: ${e?.message ?? e}`));
 		const snoozedCards = new Map(); // item ID -> its card
@@ -656,8 +657,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 				const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 				testMode(q);
 				const h = q.health;
-				lastHealth = h; lastHealthLimits = q.healthLimits;
-				paintHealth(health, h, q.healthLimits);
+				lastHealth = h; lastHealthLimits = q.healthLimits; lastOverhead = q.overhead;
+				paintHealth(health, h, q.healthLimits, q.overhead);
 				const hm = (t) => { const d = new Date(t); return isNaN(d) ? "a while" : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
 				const gone = q.unreachable || [];
 				away.style.display = gone.length ? "" : "none";
@@ -687,7 +688,7 @@ count.textContent = items.length ? `${items.length} waiting` : "clear";
 				paintSnoozed(q.snoozed || []);
 				if (ITEM && !focused && cards.has(ITEM)) { focused = true; cards.get(ITEM).classList.add("dq-focus"); }
 			} catch (e) {
-				paintHealth(health, lastHealth ? { ...lastHealth, unknown: [...(lastHealth.unknown || []), "Queue refresh unavailable"] } : null, lastHealthLimits);
+				paintHealth(health, lastHealth ? { ...lastHealth, unknown: [...(lastHealth.unknown || []), "Queue refresh unavailable"] } : null, lastHealthLimits, lastOverhead);
 				count.textContent = "?"; if (!cards.size) bad(panes.Waiting, e);
 			}
 		}

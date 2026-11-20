@@ -204,6 +204,7 @@ relay-audit-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|E
 steward-check-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 steward-health-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 steward-usage-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
+overhead-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 watch-error.server: known(server) <- server
 watch-error.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)
 relay-lock-unavailable.err: enum(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EACCES|ENOENT|EPIPE|timeout|abort|http-4xx|http-5xx|busy|parse|type|other) <- error (err)

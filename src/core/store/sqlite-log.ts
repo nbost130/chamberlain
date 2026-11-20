@@ -142,6 +142,22 @@ function dispositionUsage(c: Db, since: number, providers: readonly string[]): {
 	return { calls: r.n as number, usd: r.usd as number };
 }
 
+function dispositionSpend(
+	c: Db,
+	since: number,
+	providers: readonly string[],
+): ReturnType<Store["dispositions"]["spend"]> {
+	if (!providers.length) return [];
+	return c
+		.all(
+			`SELECT thread_id, classified_at, COALESCE(cost_usd, 0) AS usd FROM thread_dispositions
+					WHERE classified_at >= ? AND provider IN (${providers.map(() => "?").join(",")})`,
+			since,
+			...providers,
+		)
+		.map((r) => ({ threadId: r.thread_id as string, at: r.classified_at as number, usd: r.usd as number }));
+}
+
 export const makeDispositions = (c: Db): Store["dispositions"] => ({
 	get: (k) => {
 		const r = c.one(`SELECT * FROM thread_dispositions WHERE ${KEY_WHERE}`, ...keyArgs(k));
@@ -159,6 +175,7 @@ export const makeDispositions = (c: Db): Store["dispositions"] => ({
 		);
 	},
 	usage: (since, providers) => dispositionUsage(c, since, providers),
+	spend: (since, providers) => dispositionSpend(c, since, providers),
 	feedback: (k, feedback, corrected) =>
 		c.run(
 			`UPDATE thread_dispositions SET feedback = ?, corrected_action = ? WHERE ${KEY_WHERE}`,

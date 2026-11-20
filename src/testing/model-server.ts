@@ -11,7 +11,10 @@ export function modelServer() {
 	const tasks: any[] = [];
 	const posts: string[] = [];
 	let selection: any = { instanceId: "old", model: "old", options: [] };
+	/** Threads created by `thread.create`, with the messages dispatched into them: what strict mode's projection reads. */
+	const made = new Map<string, { id: string }[]>();
 	const state = {
+		strictThreads: false,
 		driver: "claudeAgent",
 		instanceId: "other-provider",
 		busy: false,
@@ -84,17 +87,27 @@ export function modelServer() {
 					ws.send(JSON.stringify({ _tag: "Chunk", requestId: r.id, values: [snapshot] }));
 					return;
 				}
-				if (r.tag === "orchestration.getThreadProjection")
+				if (r.tag === "orchestration.getThreadProjection") {
+					// Strict mode answers as T3 does: a thread nobody created has no projection; one that was has the messages sent into it.
+					if (state.strictThreads && !made.has(r.payload.threadId)) {
+						const cause = `No orchestration projection exists for thread ${r.payload.threadId}.`;
+						ws.send(JSON.stringify({ _tag: "Exit", requestId: r.id, exit: { _tag: "Failure", cause } }));
+						return;
+					}
 					value = {
-						thread: { modelSelection: selection },
+						thread: { modelSelection: selection, archivedAt: null },
 						runs: state.busy ? [{ id: "running", status: "running" }] : [],
+						messages: made.get(r.payload.threadId) ?? [],
 					};
+				}
+				if (r.payload.type === "thread.create") made.set(r.payload.threadId, []);
 				if (r.payload.type === "thread.model-selection.set" && !state.ignoreSelection)
 					selection = r.payload.modelSelection;
 				if (r.payload.type === dispatchType && state.failSend) {
 					ws.send(JSON.stringify({ _tag: "Exit", requestId: r.id, exit: { _tag: "Failure", cause: state.error } }));
 					return;
 				}
+				if (r.payload.type === dispatchType) made.get(r.payload.threadId)?.push({ id: r.payload.messageId });
 				ws.send(JSON.stringify({ _tag: "Exit", requestId: r.id, exit: { _tag: "Success", value } }));
 			},
 		},
