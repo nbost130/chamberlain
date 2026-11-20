@@ -64,7 +64,19 @@ export type EngineDeps = {
 	log?: Log;
 	timing?: Partial<EngineTiming>;
 	/** Extra relay options (tests: the pause between attempts, the attempts, the hold ceiling, a clock). */
-	relay?: Partial<Pick<RelayDeps, "retryAfterMs" | "maxAttempts" | "staleAfterMs" | "now" | "ceilingMs">>;
+	relay?: Partial<
+		Pick<
+			RelayDeps,
+			| "retryAfterMs"
+			| "maxAttempts"
+			| "staleAfterMs"
+			| "now"
+			| "ceilingMs"
+			| "rightsInline"
+			| "debounceMs"
+			| "noticeRetries"
+		>
+	>;
 	/** Runs `ask.ts` for the Steward-health hand-off question, asked only when the adapter cannot start the hand-off itself (no `handoffInstruction`). Undefined: that question is not asked. */
 	ask?: (raw: object) => Promise<void>;
 	/** Shows a question where the operator reads, for a snoozed urgent one that returned. Default: the adapter's one-line notice; the daemon passes the pinned view (ask.ts `postQuestion`). */

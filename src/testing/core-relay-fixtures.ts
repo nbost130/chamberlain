@@ -11,7 +11,15 @@ import type { Store } from "../core/store/store.ts";
 import { testRelayLock } from "./lock.ts";
 import { memStore } from "./store.ts";
 
-type RigOptions = { store?: Store; max?: number; rightsNow?: RelayDeps["rightsNow"]; compact?: WakeTransport };
+type RigOptions = {
+	store?: Store;
+	max?: number;
+	rightsNow?: RelayDeps["rightsNow"];
+	compact?: WakeTransport;
+	rightsInline?: boolean;
+	debounceMs?: number;
+	noticeRetries?: number;
+};
 
 /** Registers this suite's scratch cleanup for the test file that calls it, and returns its fixtures. */
 export function useCoreRelayFixtures(makeRelay: (d: RelayDeps) => Relay) {
@@ -51,6 +59,9 @@ export function useCoreRelayFixtures(makeRelay: (d: RelayDeps) => Relay) {
 				retryAfterMs: () => 1000,
 				...(o.rightsNow ? { rightsNow: o.rightsNow } : {}),
 				...(o.compact ? { compact: o.compact } : {}),
+				...(o.rightsInline ? { rightsInline: true } : {}),
+				...(o.noticeRetries !== undefined ? { noticeRetries: o.noticeRetries } : {}),
+				...(o.debounceMs !== undefined ? { debounceMs: o.debounceMs } : {}),
 				wake: {
 					ready: () => w.ready,
 					send: async (id, message) => {

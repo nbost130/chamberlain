@@ -4,7 +4,7 @@
  * trusted, means the next wake sends them in full: doubt always sends them again.
  */
 import { createHash } from "node:crypto";
-import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsUnchanged } from "../decide/decide.ts";
+import { RIGHTS_MARKER, type RightsSent, rightsInFull, rightsLost, rightsUnchanged } from "../decide/decide.ts";
 import { rightsWake } from "../messages.ts";
 import type { Store } from "../store/store.ts";
 import type { RightsStamp } from "../store/store-wakes.ts";
@@ -14,18 +14,20 @@ export const RIGHTS_SENT_KEY = "rights-sent";
 /** Pure: the record a stored value holds, or undefined when it is anything but a well-formed record. */
 export function parseRightsSent(raw: unknown): RightsSent | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-	const { hash, used, at, steward, session, epoch } = raw as Record<string, unknown>;
+	const o = raw as Record<string, unknown>;
+	const { hash, at, steward, session, epoch, used, compactions } = o;
 	if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) return undefined;
 	if (epoch !== undefined && !isEpoch(epoch)) return undefined;
-	if (!isAbsentOrText(at) || !isAbsentOrText(steward) || !isAbsentOrText(session)) return undefined;
-	if (used !== undefined && !isCount(used)) return undefined;
+	if (![at, steward, session].every(isAbsentOrText)) return undefined;
+	if (![used, compactions].every((n) => n === undefined || isCount(n))) return undefined;
 	return {
 		hash,
-		...(used !== undefined ? { used } : {}),
-		...(at ? { at } : {}),
-		...(steward ? { steward } : {}),
-		...(session ? { session } : {}),
+		...(used !== undefined ? { used: used as number } : {}),
+		...(at ? { at: at as string } : {}),
+		...(steward ? { steward: steward as string } : {}),
+		...(session ? { session: session as string } : {}),
 		...(epoch !== undefined ? { epoch: epoch as number } : {}),
+		...(compactions !== undefined ? { compactions: compactions as number } : {}),
 	};
 }
 
@@ -107,10 +109,25 @@ export function openRightsSent(store: Store, onError: (e: unknown) => void = () 
 	};
 }
 
-/** Pure: the record after the minute's size check. A shrink (a compaction) drops it; otherwise the high-water mark rises. */
-export function rightsHighWater(sent: RightsSent | undefined, used: number | undefined): RightsSent | undefined {
-	if (!sent) return undefined;
-	return rightsInFull(sent, sent.hash, used) ? undefined : { ...sent, used };
+/**
+ * Pure: the record after the minute's look. EVIDENCE that the rights may be gone (`rightsLost`: a compaction counted since the record was
+ * written, or a collapse of the context) drops it. Without evidence it is kept, whatever else could not be read: an unread size, or an unread
+ * compaction count, changes nothing. The first size and the first count seen become the baselines; the high-water mark rises.
+ */
+export function rightsHighWater(
+	sent: RightsSent | undefined,
+	used: number | undefined,
+	compactions?: number,
+): RightsSent | undefined {
+	if (!sent || rightsLost(sent, { used, compactions })) return undefined;
+	const mark = used !== undefined ? Math.max(sent.used ?? 0, used) : sent.used;
+	const count = sent.compactions ?? compactions;
+	if (mark === sent.used && count === sent.compactions) return sent;
+	return {
+		...sent,
+		...(mark !== undefined ? { used: mark } : {}),
+		...(count !== undefined ? { compactions: count } : {}),
+	};
 }
 
 /** Pure: what this wake records as sent: the Steward thread and its rights and rulings. The away mandate rides every wake, so it is not part of the hash: toggling away mode never re-sends the block. */
@@ -134,6 +151,7 @@ export function rightsFor(
 		now = new Date().toISOString(),
 		epoch,
 		forcePointer,
+		compactions,
 	}: {
 		stewardId: string | undefined;
 		rules: string;
@@ -142,14 +160,24 @@ export function rightsFor(
 		now?: string;
 		epoch?: number;
 		forcePointer?: boolean;
+		/** How many compactions of the Steward's thread have completed now (the probe's), when readable. */
+		compactions?: number;
 	},
 ): { text: string; record: RightsSent; full: boolean } {
 	const hash = rightsHash(stewardId, rules),
-		full = !forcePointer && rightsInFull(sent, hash, used);
+		full = !forcePointer && rightsInFull(sent, hash, used, compactions);
 	const body = full ? `${RIGHTS_MARKER}\n${rules}` : rightsUnchanged(sent?.at);
 	return {
 		text: [body, mandate].filter(Boolean).join("\n"),
-		record: { hash, used, at: full ? now : sent?.at, ...(epoch !== undefined ? { epoch } : {}) },
+		record: {
+			hash,
+			used,
+			at: full ? now : sent?.at,
+			...(epoch !== undefined ? { epoch } : {}),
+			...((full ? compactions : (sent?.compactions ?? compactions)) !== undefined
+				? { compactions: full ? compactions : (sent?.compactions ?? compactions) }
+				: {}),
+		},
 		full,
 	};
 }
@@ -165,6 +193,7 @@ export const rightsStamp = (
 	hash: record.hash,
 	...(record.at ? { at: record.at } : {}),
 	...(record.epoch !== undefined ? { epoch: record.epoch } : {}),
+	...(record.compactions !== undefined ? { compactions: record.compactions } : {}),
 });
 
 /**
@@ -190,13 +219,21 @@ export const recordOf = (st: RightsStamp): RightsSent => ({
 	...(st.steward ? { steward: st.steward } : {}),
 	...(st.session ? { session: st.session } : {}),
 	...(st.epoch !== undefined ? { epoch: st.epoch } : {}),
+	...(st.compactions !== undefined ? { compactions: st.compactions } : {}),
 });
 
 /** Pure: does a row depend on the Steward already holding the rights? It does when it carries any stamp that is not a full block: a pointer, or a legacy stamp. */
 export const needsRights = (stamps: readonly RightsStamp[] | undefined) => Boolean(stamps?.some((s) => !s.full));
 
 /** The Steward and the rights now: the state a rights prerequisite is keyed by. `hash` is absent when the rights cannot be read; `epoch` absent is 0. */
-export type RightsState = { steward?: string; session?: string; hash?: string; epoch?: number };
+export type RightsState = {
+	steward?: string;
+	session?: string;
+	hash?: string;
+	epoch?: number;
+	used?: number;
+	compactions?: number;
+};
 
 /**
  * Pure: why the durable record does not show that the Steward there now holds the rights in force now, or undefined when it does. It shows it
@@ -212,6 +249,11 @@ export function rightsGap(record: RightsSent | undefined, now: RightsState): str
 	if (record.hash !== now.hash) return "the rights or rulings changed since they were last delivered";
 	if (epochOf(record) !== epochOf(now))
 		return `a compaction or context shrink since the rights were last delivered (epoch ${epochOf(record)} to ${epochOf(now)})`;
+	const lost = rightsLost(record, now);
+	if (lost === "compaction")
+		return `a compaction (the daemon's, the harness's own or a manual one) since the rights were last delivered (${record.compactions} to ${now.compactions} completed)`;
+	if (lost === "shrink")
+		return `the context collapsed (${record.used} to ${now.used}) since the rights were last delivered: a compaction`;
 	return undefined;
 }
 

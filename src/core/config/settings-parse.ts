@@ -15,7 +15,7 @@ export type Settings = {
 	t3StateDb?: string;
 	/** A command run for each alarm as `<command> <severity> <title> <summary>`. Without one, alarms are only logged. */
 	alertCommand?: string;
-	/** The Steward's context size, in tokens, past which the daemon sends a compact. Default 350000. */
+	/** The Steward's context size, in tokens, past which the daemon sends a compact. Default 130000. */
 	compactTokens?: number;
 	/** How ask.ts and `afk.ts hold` decide a question is already settled (src/core/items/settled.ts). */
 	settledMatch?: SettledMatch;

@@ -1,6 +1,6 @@
 /** Landing a delivered row, dead-lettering one, composing the held wakes into a digest, and the serial queue every send runs in. */
 import { crashPoint } from "../crash.ts";
-import { type composeWake, observe, overdue, type ThreadNews } from "../decide/hold.ts";
+import { type composeWake, debouncing, observe, overdue, type ThreadNews } from "../decide/hold.ts";
 import { composeDigestBatch } from "../decide/hold-digest-batch.ts";
 import { scrubSecretHeldMessages } from "../items/questions-claim.ts";
 import { alarms } from "../messages.ts";
@@ -12,7 +12,7 @@ import {
 } from "../steward/steward-transfer.ts";
 import { TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { Composed, HeldItem, OutboxRow, RightsStamp } from "../store/store-wakes.ts";
-import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
+import { type Ctx, type InlineRights, type Lane, type RelayDeps, type RightsNow, raise } from "./relay-ctx.ts";
 
 /**
  * The row's delivered commit. False while it cannot commit (the row stays owed). A Steward row with a `full` stamp (it carried the whole
@@ -22,11 +22,17 @@ import { type Ctx, type Lane, type RelayDeps, type RightsNow, raise } from "./re
  * Only while the stamp's epoch is still the current one: a full block composed before a compaction or a shrink bumped the epoch (a wake in
  * flight when the compaction was asked for, or one owed across it) is marked delivered and writes nothing, so it can never restore a record
  * the compaction took away (`rights-full-stale`).
+ * `inline` is the block that rode inside this row's POST (`rightsInline`, or a stale full block replaced): its stamp writes the record exactly as a standalone full wake would, and without one nothing is written.
+ * `alongside` runs inside the same transaction and returns the row of held news that rode in the same POST (relay-carry.ts `bindCarried`): it is
+ * bound delivered in the same commit as the wake, so a crash can never leave the wake recorded and its news still held (to go again), or the
+ * reverse. If it throws, nothing commits and the row stays owed.
  */
-export function land(r: Ctx, row: OutboxRow): boolean {
+export function land(r: Ctx, row: OutboxRow, inline?: InlineRights, alongside?: () => OutboxRow | undefined): boolean {
 	const { d, store } = r;
-	const full = row.receiver ? undefined : row.rights?.filter((s) => s.full).at(-1);
+	// The block that rode inside the POST is the one the Steward holds now (none at all when the rights could not be read): never the row's own, older one.
+	const full = row.receiver ? undefined : inline ? inline.stamp : row.rights?.filter((s) => s.full).at(-1);
 	let stale: number | undefined;
+	let carried: OutboxRow | undefined;
 	try {
 		const done = store.tx(() => {
 			// Read attempt_gen before finish: the in-memory row is often the pre-attempt snapshot (A1).
@@ -41,6 +47,7 @@ export function land(r: Ctx, row: OutboxRow): boolean {
 				if (epochOf(full) === current) store.state.set(RIGHTS_SENT_KEY, { ...recordOf(full), epoch: current });
 				else stale = current;
 			}
+			carried = alongside?.();
 			return done;
 		});
 		if (!done) d.log("delivered-after-cancel", { deliveryId: row.deliveryId });
@@ -51,8 +58,10 @@ export function land(r: Ctx, row: OutboxRow): boolean {
 		return false;
 	}
 	r.owed.delete(row.id);
+	r.landing.delete(row.id);
+	r.noticeFails.delete(row.deliveryId);
 	crashPoint("delivered");
-	for (const m of row.members) {
+	for (const m of [...row.members, ...((carried as OutboxRow | undefined)?.members ?? [])]) {
 		try {
 			d.onDelivered?.(m.deliveryId);
 		} catch (e) {
@@ -77,6 +86,33 @@ export function deadLetter(r: Ctx, l: Lane, row: OutboxRow, attempts: number) {
 const usesWindow = (ceiling: boolean, due: boolean, held: HeldItem[]): boolean =>
 	ceiling || (due && !held.some((h) => h.kind === "transfer"));
 
+/**
+ * Idle news (turn ends, notes, sweeps) waits a few minutes for company (hold.ts `debouncing`), so several go as one digest, one Steward turn
+ * instead of several. Logged once per batch (`wake-debounced`). Never the ceiling's own pass or an answer's deadline: the caller only asks otherwise.
+ */
+function waitForCompany(
+	r: Ctx,
+	held: HeldItem[],
+	now: number,
+	{ look, due }: { look: { post: boolean; forced: boolean }; due: boolean },
+): boolean {
+	const ms = r.d.debounceMs ?? 0;
+	const ordinary = look.post && !look.forced && !due;
+	if (!ordinary || !debouncing(held, now, ms)) return false;
+	const first = held.reduce((a, h) => (h.queuedAt < a.queuedAt ? h : a));
+	if (!r.reported.has(`debounce:${first.deliveryId}`)) {
+		r.reported.add(`debounce:${first.deliveryId}`);
+		r.d.log("wake-debounced", { held: held.length, oldest: first.deliveryId, forMs: ms });
+	}
+	return true;
+}
+
+/** The lane's held wakes, none at all while news that rode in a wake whose delivered commit is still owed is among them: it is bound when that lands, never composed again meanwhile. */
+function heldToCompose(r: Ctx, l: Lane): HeldItem[] {
+	const held = r.store.wakes.held(l.name);
+	return held.some((h) => [...r.landing.values()].some((g) => g.carried?.members.includes(h.deliveryId))) ? [] : held;
+}
+
 /** A receiver's held wakes become ONE row when that receiver may take a wake. */
 export function compose(r: Ctx, l: Lane, now: number) {
 	const { d, store } = r;
@@ -85,7 +121,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	deadLetterOversizedTransfers(r, l, now);
 	// Oversized solo held wakes never enter a digest batch: dead-letter before compose.
 	deadLetterOversizedDigests(r, l, now);
-	const heldNow = store.wakes.held(l.name);
+	const heldNow = heldToCompose(r, l);
 	if (!heldNow.length) return;
 	// Only unbatchable (oversized) transfers remain: wait — never compose an empty digest.
 	const transfers = heldNow.filter((h) => h.kind === "transfer");
@@ -96,6 +132,7 @@ export function compose(r: Ctx, l: Lane, now: number) {
 	// A held answer past its own short ceiling goes now, with everything held beside it, however busy the receiver is.
 	const due = !look.post && overdue(heldNow, now);
 	if (!look.post && !due) return;
+	if (waitForCompany(r, heldNow, now, { look, due })) return;
 	let kept: string[] = [];
 	const row = store.wakes.compose(
 		now,
@@ -143,7 +180,7 @@ function withMeta(
  * Transfer items compose alone under the encoded-byte cap (V2-M1/M1); mixed ordinary traffic never expands a replay digest.
  * Overflow transfers and ordinary held wakes stay held for later passes.
  */
-function digestOf(
+export function digestOf(
 	l: Lane,
 	held: HeldItem[],
 	now: number,
@@ -151,14 +188,19 @@ function digestOf(
 		onKept,
 		answerDue,
 		news,
-	}: { onKept: (kept: string[]) => void; answerDue: boolean; news?: (thread: string) => ThreadNews | undefined },
+		maxBytes = TRANSFER_DIGEST_MAX_BYTES,
+	}: {
+		onKept: (kept: string[]) => void;
+		answerDue: boolean;
+		news?: (thread: string) => ThreadNews | undefined;
+		/** The bound the digest must fit in: less than the full one when it shares a POST with an immediate wake. */
+		maxBytes?: number;
+	},
 ): Composed {
 	const transfers = held.filter((h) => h.kind === "transfer");
 	const others = held.filter((h) => h.kind !== "transfer");
 	const transferBatch = transfers.length ? composeTransferBatch(transfers, now) : undefined;
-	const digestBatch = others.length
-		? composeDigestBatch(others, now, TRANSFER_DIGEST_MAX_BYTES, news ? { news } : {})
-		: undefined;
+	const digestBatch = others.length ? composeDigestBatch(others, now, maxBytes, news ? { news } : {}) : undefined;
 	const useTransfers = transferBatch && (!digestBatch || transfersFirst(transfers, others, answerDue));
 	if (useTransfers) {
 		const use = transfers.filter((h) => transferBatch.members.includes(h.deliveryId));

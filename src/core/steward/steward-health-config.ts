@@ -1,8 +1,8 @@
 /** The Steward health thresholds. */
 
 export const HEALTH_CONFIG = {
-	context: 200_000, // Watch threshold, well below the compaction threshold.
-	compactContext: 350_000, // The Steward is one permanent thread that compacts past 350k; the daemon's compact threshold defaults to this too.
+	context: 100_000, // Watch threshold, well below the compaction threshold.
+	compactContext: 130_000, // The Steward is one permanent thread that compacts past 130k (every request re-reads the whole context, so a smaller context is cheaper); the daemon's compact threshold defaults to this too. `compactTokens` in config.json overrides it.
 	replies: 20, // Recent behavior, rather than lifetime mistakes.
 	formatBreaks: 3, // Three slips in the recent window filters isolated mistakes.
 	selfReads: 3, // Repeated reconstruction is a warning; one lookup is ordinary work.

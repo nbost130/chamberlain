@@ -22,6 +22,9 @@ import {
 
 registerCrashHooks();
 
+// These pin the standalone prerequisite path (`rightsInline` off, the kill switch), whose crash points are the ones they kill.
+const LEGACY = { CHAMBERLAIN_RIGHTS_INLINE: "0" };
+
 describe("rights first: the real daemon dies between a Steward row's full-rights wake and the row, and the restart sends each once", () => {
 	const ID = "Q-rite1",
 		ROW = "legacy:row:1",
@@ -72,7 +75,7 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 			kind: "needs_input",
 			rights: [LEGACY_STAMP],
 		});
-		await daemon(w, () => accepted.length >= 3);
+		await daemon(w, () => accepted.length >= 3, LEGACY);
 		expect(accepted.map((a) => a.deliveryId).slice(2)).toEqual([LATER]);
 		expect(w.store.wakes.rows("all").filter((r) => r.deliveryId.includes(":rights-first:"))).toHaveLength(1);
 	}
@@ -81,7 +84,7 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 		"killed right after the rights-first wake was queued: nothing was sent; the restart sends it, then the row, once each, and writes the record",
 		async () => {
 			const w = await legacyRow();
-			await diedAt(w.spawn(daemonArgs, "rights-first-queued"), "rights-first-queued");
+			await diedAt(w.spawn(daemonArgs, "rights-first-queued", LEGACY), "rights-first-queued");
 			const first = prerequisite(w);
 			expect(outbox(w)).toEqual([
 				{ delivery_id: ROW, status: "pending", attempts: 0 },
@@ -89,9 +92,9 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 			]);
 			expect(w.store.state.get("rights-sent")).toBeUndefined();
 			expect(accepted).toHaveLength(0);
-			await daemon(w, () => accepted.length >= 2);
+			await daemon(w, () => accepted.length >= 2, LEGACY);
 			oneOfEach(w);
-			await daemon(w);
+			await daemon(w, () => true, LEGACY);
 			oneOfEach(w);
 			await laterGoesAlone(w);
 		},
@@ -102,7 +105,7 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 		"killed right after the rights-first wake was delivered, before the row: the record was written with it; the restart sends only the row, once",
 		async () => {
 			const w = await legacyRow();
-			await diedAt(w.spawn(daemonArgs, "delivered"), "delivered");
+			await diedAt(w.spawn(daemonArgs, "delivered", LEGACY), "delivered");
 			const first = prerequisite(w);
 			expect(outbox(w)).toEqual([
 				{ delivery_id: ROW, status: "pending", attempts: 0 },
@@ -110,9 +113,9 @@ describe("rights first: the real daemon dies between a Steward row's full-rights
 			]);
 			expect(accepted.map((a) => a.deliveryId)).toEqual([first.deliveryId]);
 			expect(w.store.state.get("rights-sent")).toMatchObject({ hash: first.rights![0]!.hash });
-			await daemon(w, () => accepted.length >= 2);
+			await daemon(w, () => accepted.length >= 2, LEGACY);
 			oneOfEach(w);
-			await daemon(w);
+			await daemon(w, () => true, LEGACY);
 			oneOfEach(w);
 			await laterGoesAlone(w);
 		},

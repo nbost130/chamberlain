@@ -2,16 +2,21 @@ import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import type { StewardProbe } from "../adapter/adapter-inspect.ts";
 import type { RightsSent } from "../decide/decide.ts";
 import { alarms } from "../messages.ts";
-import { createStewardCheck, type StewardCheckDeps } from "./engine-steward.ts";
+import { HEALTH_CONFIG } from "../steward/steward-health-config.ts";
+import { type CompactState, createStewardCheck, type StewardCheckDeps } from "./engine-steward.ts";
 
 const HASH = "a".repeat(64);
 const NOW = Date.parse("2026-11-14T12:00:00.000Z");
 const MIN = 60_000;
 
 /** A steward check over fakes that record everything it is told, in order. */
-function rig(over: Partial<StewardCheckDeps> = {}, o: { files?: Record<string, string>; sent?: RightsSent } = {}) {
+function rig(
+	over: Partial<StewardCheckDeps> = {},
+	o: { files?: Record<string, string>; sent?: RightsSent; compacted?: CompactState } = {},
+) {
 	const calls: [string, ...unknown[]][] = [];
 	let sent = o.sent;
+	let compacted: CompactState | undefined = o.compacted;
 	const files: Record<string, string> = {
 		"steward-thread": "th-steward",
 		"decisions-thread": "th-decisions",
@@ -40,11 +45,17 @@ function rig(over: Partial<StewardCheckDeps> = {}, o: { files?: Record<string, s
 		raiseAlarm: (key, a) => calls.push(["raise", key, a]),
 		dry: false,
 		compactAt: 1000,
+		compactState: {
+			get: () => compacted,
+			set: (s) => {
+				compacted = s;
+			},
+		},
 		onDecisionsThread: (id) => calls.push(["decisions", id]),
 		...over,
 	};
 	const check = createStewardCheck(deps);
-	return { ...check, calls, state, deps, files };
+	return { ...check, calls, state, deps, files, compacted: () => compacted };
 }
 const over = (n: number): StewardProbe => ({ readable: true, contextTokens: n });
 
@@ -80,20 +91,39 @@ describe("the Steward check: the rights high-water mark", () => {
 			["rights-set", { hash: HASH, used: 100 }],
 		]);
 	});
-	test("a context that shrank, or whose size is unknown, drops the record and logs why", async () => {
+	test("must drop: a context that collapsed under the mark drops the record and logs why", async () => {
 		const shrunk = rig({}, { sent: { hash: HASH, used: 500 } });
 		await shrunk.check();
 		expect(shrunk.calls.slice(1)).toEqual([
 			["rights-set", undefined],
 			["log", "rights-invalidated", { reason: "context shrink", used: 100 }],
 		]);
-		const unknown = rig({}, { sent: { hash: HASH, used: 500 } });
-		unknown.state.probe = { readable: true };
-		await unknown.check();
-		expect(unknown.calls.slice(1)).toEqual([
+	});
+	test("must drop: a collapse of the context (a large drop) drops the record, and says so", async () => {
+		const dip = rig({}, { sent: { hash: HASH, used: 500 } });
+		dip.state.probe = over(399);
+		await dip.check();
+		expect(dip.calls.slice(1)).toEqual([
 			["rights-set", undefined],
-			["log", "rights-invalidated", { reason: "context shrink", used: undefined }],
+			["log", "rights-invalidated", { reason: "context shrink", used: 399 }],
 		]);
+	});
+	test("must drop: a compaction counted since the record was written (native or manual too) drops it, size unreadable or not", async () => {
+		const r = rig({}, { sent: { hash: HASH, used: 500, compactions: 2 } });
+		r.state.probe = { readable: true, compactions: 3 };
+		await r.check();
+		expect(r.calls.slice(1)).toEqual([
+			["rights-set", undefined],
+			["log", "rights-invalidated", { reason: "compaction", used: undefined }],
+		]);
+	});
+	test("must keep: an unreadable size or count (a turn with no usage yet), and a small dip, never drop it", async () => {
+		for (const probe of [{ readable: true }, { readable: true, contextTokens: 450, compactions: 2 }]) {
+			const kept = rig({}, { sent: { hash: HASH, used: 500, compactions: 2 } });
+			kept.state.probe = probe;
+			await kept.check();
+			expect(kept.calls.map((c) => c[0])).not.toContain("log");
+		}
 	});
 	test("with no record there is nothing to raise or drop", async () => {
 		const r = rig();
@@ -151,6 +181,18 @@ describe("the Steward check: compaction", () => {
 			["compact", id],
 			["log", "delivered", { deliveryId: id, http: 202, attempt: 1 }],
 		]);
+	});
+	test("the shipped limit (130k) fires a compaction at 131k and leaves 129k alone", async () => {
+		setSystemTime(new Date(NOW));
+		expect(HEALTH_CONFIG.compactContext).toBe(130_000);
+		const quiet = rig({ compactAt: HEALTH_CONFIG.compactContext });
+		quiet.state.probe = over(129_000);
+		await quiet.check();
+		expect(quiet.calls.filter((c) => c[0] === "compact")).toEqual([]);
+		const fires = rig({ compactAt: HEALTH_CONFIG.compactContext });
+		fires.state.probe = over(131_000);
+		await fires.check();
+		expect(fires.calls.filter((c) => c[0] === "compact")).toEqual([["compact", `compact:th-steward:${NOW}`]]);
 	});
 	test("a delivery with no status logs none; a failure (thrown or returned) logs deliver-error, never delivered", async () => {
 		setSystemTime(new Date(NOW));
@@ -219,6 +261,11 @@ describe("the Steward check: compaction", () => {
 		setSystemTime(new Date(NOW + 10 * MIN - 1));
 		await r.check();
 		expect(r.calls.filter((c) => c[0] === "compact")).toHaveLength(1);
+		// The compaction worked (the context was seen under the line), and it has grown past it again.
+		setSystemTime(new Date(NOW + 5 * MIN));
+		r.state.probe = over(500);
+		await r.check();
+		r.state.probe = over(2000);
 		setSystemTime(new Date(NOW + 10 * MIN));
 		await r.check();
 		expect(r.calls.filter((c) => c[0] === "compact")).toHaveLength(2);

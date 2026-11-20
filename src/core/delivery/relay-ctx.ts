@@ -52,9 +52,22 @@ export type RelayDeps = {
 	 * `full` stamp, so its delivery writes the record in the transaction that marks it delivered. Absent: such rows are sent as they are.
 	 * Optional `steward` is the generation snapshot's thread (B1); otherwise the reader uses MAX(gen).
 	 */
-	rightsNow?: (o?: {
-		steward?: string;
-	}) => Promise<RightsState & { wake: (forId: string) => { message: string; stamp?: RightsStamp } }>;
+	rightsNow?: (o?: { steward?: string }) => Promise<
+		RightsState & {
+			wake: (forId: string) => {
+				message: string /** The block alone, for `rightsInline`. */;
+				text?: string;
+				stamp?: RightsStamp;
+			};
+		}
+	>;
+	/**
+	 * Send the full rights INSIDE the row that needs them, in one wake, instead of as a standalone prerequisite wake ahead of it (default off
+	 * here; the daemon turns it on from `rightsInline`, default true). Every standalone rights wake cost a whole Steward turn (about 215k tokens
+	 * of context read) to receive text the next wake could carry. The row's stored text is still never rewritten: the block is appended to what
+	 * is POSTed, and the delivered commit writes the rights record from its full stamp, in the same transaction as before.
+	 */
+	rightsInline?: boolean;
 	/** Config dir: used with store to resolve a generation's wake URL when `genSnapshot` is absent. */
 	conf?: string;
 	/** One-generation snapshot for rights/CAS/transport; default reads store (+ conf). */
@@ -63,8 +76,16 @@ export type RelayDeps = {
 	onDelivered?: (deliveryId: string) => void;
 	/** Attempts per row before it is dead-lettered (default CHAMBERLAIN_MAX_ATTEMPTS, else 3). */
 	maxAttempts?: number;
+	/** Failures of the tiny no-rights notice wake after which the row goes with the notice prepended to its own text (default 3, or 15 minutes). */
+	noticeRetries?: number;
 	retryAfterMs?: (attempts: number) => number;
 	ceilingMs?: number;
+	/**
+	 * How long held turn ends, notes and sweeps wait for company before they go as one digest, when the Steward is idle (0 or absent: they go at
+	 * once, as they always did). A wake of any other kind held beside them (an answer, a transfer) sends the whole batch now, and a wake
+	 * that is not holdable (needs_input, a failure, a message) never waits at all. The daemon turns it on from `wakeDebounceMs` (default 3 minutes).
+	 */
+	debounceMs?: number;
 	staleAfterMs?: number;
 	now?: () => number;
 };
@@ -84,6 +105,30 @@ export type Lane = {
 	akey: (k: string) => string;
 };
 
+/** The full rights block that rides inside a row's POST (`rightsInline`), and the stamp whose delivery proves the Steward holds it. */
+export type InlineRights = {
+	text: string;
+	stamp?: RightsStamp;
+	/** The row's own full block is not the rights in force now: this one replaces it. */
+	stale?: true;
+	/** The rights could not be read: `text` is the notice that goes instead, and no record is written. */
+	unreadable?: true;
+	/** The wake that carries the current rights was dead-lettered: `text` is the notice that goes instead, and no record is written. */
+	undelivered?: true;
+	/** The notice did not fit beside the row, so it went as a tiny wake of its own just before it: the row goes as queued. */
+	sentAlone?: true;
+	/** The tiny notice wake kept failing: the notice goes FIRST in the row's own POST, even past the soft size bound. */
+	prepend?: true;
+	/** The row carries a full rights block of its own that cannot be confirmed as current: the notice says it is possibly out of date. */
+	staleCopy?: true;
+};
+
+/** The held news chosen to ride in an immediate wake's POST (relay-carry.ts); `now` fixes its "held N min" notes, so the row bound later reads like what was sent. */
+export type Carried = { now: number; members: string[]; text: string; rights: RightsStamp[]; maxBytes: number };
+
+/** What a POSTed row's delivered commit needs besides the row: the lane, the rights that rode in it, and the news that rode in it. Kept while the commit is owed. */
+export type Landing = { l: Lane; inline?: InlineRights; carried?: Carried };
+
 /** The Steward and the rights in force now, as `rightsNow` answers them, with the epoch read from the database. */
 export type RightsNow = Awaited<ReturnType<NonNullable<RelayDeps["rightsNow"]>>>;
 
@@ -100,6 +145,10 @@ export type Ctx = {
 	news?: (thread: string) => ThreadNews | undefined;
 	/** Rows the transport accepted whose delivered commit has not landed: never POSTed again, the commit is retried every pass. */
 	owed: Map<number, OutboxRow>;
+	/** For each owed row, what its delivered commit must also record (`Landing`): the same retry as the first try, so the record and the news are never lost on it. */
+	landing: Map<number, Landing>;
+	/** Rows whose tiny notice wake has failed: how often, and since when (relay-prereq.ts `noticeFor`). */
+	noticeFails: Map<string, { n: number; since: number }>;
 	/** When a failed row may be tried again. In memory: a restart tries every pending row at once (each try is still counted). */
 	notBefore: Map<number, number>;
 	/** Rows whose receiver this relay has no transport for, already logged. */
@@ -109,7 +158,7 @@ export type Ctx = {
 	/** Alerts and notices already raised or logged once, by key. */
 	reported: Set<string>;
 	/** The one POST of a row to its lane's transport. Optional target pins the generation snapshot's wake URL (B1). */
-	post: (l: Lane, row: OutboxRow, target?: string) => Promise<WakeResult>;
+	post: (l: Lane, row: OutboxRow, target?: string, message?: string) => Promise<WakeResult>;
 	run: {
 		lockLost: boolean;
 		/** The serial queue's tail: each POST job starts when the one before has settled. */

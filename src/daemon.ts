@@ -12,6 +12,7 @@ import { postQuestion } from "./ask.ts";
 import { CONF, STATE, selfArgv } from "./core/config/config.ts";
 import { setting } from "./core/config/layout.ts";
 import { startup } from "./core/config/migrate.ts";
+import { DEFAULT_WAKE_DEBOUNCE_MS } from "./core/decide/hold.ts";
 import {
 	holdRelayLock,
 	RelayDatabaseLinkedError,
@@ -134,6 +135,15 @@ function engineDeps(
 		// The Steward's token usage per wake is OFF until `stewardTokens` (CHAMBERLAIN_STEWARD_TOKENS=1 or config.json, src/core/steward/steward-tokens.ts).
 		stewardTokens: setting("stewardTokens", CONF) === true,
 		exclude: setting("exclude", CONF) ?? [],
+		// Fewer Steward turns, never fewer decisions: the full rights ride inside the next wake instead of a wake of their own (`rightsInline`),
+		// and idle turn ends, notes and sweeps wait `wakeDebounceMs` for company so they go as one digest. Each is off with false / 0.
+		relay: {
+			rightsInline: setting("rightsInline", CONF) !== false,
+			...(setting("rightsNoticeRetries", CONF) !== undefined
+				? { noticeRetries: setting("rightsNoticeRetries", CONF) as number }
+				: {}),
+			debounceMs: setting("wakeDebounceMs", CONF) ?? DEFAULT_WAKE_DEBOUNCE_MS,
+		},
 		log,
 		// A snoozed urgent question that returns is shown where the operator reads, in the pinned view like a new one (ask.ts).
 		post: postQuestion,

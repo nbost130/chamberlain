@@ -63,14 +63,17 @@ describe("a turn end waits for the Steward to be free", () => {
 		expect(r.fake.wakes).toEqual([]);
 	});
 
-	test("busy: a question or a failure still goes at once; only turn ends wait", async () => {
+	test("busy: a question or a failure still goes at once; a turn end waits, and rides in that wake when one goes (never a second turn)", async () => {
 		const r = rig({ steward: "steward-1" });
 		r.fake.setBusy("busy");
 		ended(r, "t2");
+		await r.until("the report held", () => r.held().length === 1);
+		expect(r.fake.wakes).toHaveLength(0);
 		r.fake.emit({ kind: "needs_input", thread: thread("t9", "waiting", { pendingRequestId: "q9" }) });
 		await r.until("the question wake", () => r.fake.wakes.length === 1);
 		expect(r.fake.wakes[0]!.message).toContain('thread "Thread t9" is waiting');
-		await r.until("the report held", () => r.held().length === 1);
+		expect(r.fake.wakes[0]!.message).toContain("Thread t2");
+		expect(r.held()).toHaveLength(0);
 		expect(r.fake.wakes).toHaveLength(1);
 	});
 

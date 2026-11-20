@@ -15,7 +15,7 @@ export const FULL = `Decision rights (standing rules):\n${RULES}`;
 export function daemonWake(
 	store: Store,
 	used: number | undefined,
-	o: { steward?: string; rules?: string; mandate?: string; now?: string } = {},
+	o: { steward?: string; rules?: string; mandate?: string; now?: string; compactions?: number } = {},
 ) {
 	const ledger = openRightsSent(store);
 	const r = rightsFor(ledger.get(), {
@@ -24,6 +24,7 @@ export function daemonWake(
 		mandate: o.mandate ?? MANDATE,
 		used,
 		now: o.now ?? AT,
+		...(o.compactions !== undefined ? { compactions: o.compactions } : {}),
 	});
 	ledger.set(r.record);
 	return r.text;
