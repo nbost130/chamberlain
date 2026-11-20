@@ -1,22 +1,40 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { CFG, idle, last, NOW, rec, sel, source, thread } from "../../testing/core-idle-parents-fixtures.ts";
 import { CLASSIFIER_DEFAULTS } from "../classifier/config.ts";
 import { parseSweepConfig } from "../sweep/sweep.ts";
-import { EXCERPT_CHARS, excerptOf, idleKey, idleParentFindings, parseIdleParents } from "./idle-parents.ts";
+import {
+	EXCERPT_CHARS,
+	excerptOf,
+	IDLE_PARENTS_DEFAULTS,
+	idleKey,
+	idleParentFindings,
+	parseIdleParents,
+} from "./idle-parents.ts";
 import { idleParentCandidate, messageHash, selectIdleThreads } from "./idle-select.ts";
 
 describe("the idle-parents config", () => {
-	test("defaults: on, every 15 minutes, idle for 30 minutes, 10 threads, re-raise every 2 hours", () => {
+	test("defaults: on, every 15 minutes, idle for 5 minutes, 10 threads, re-raise every 2 hours", () => {
 		const d = {
 			enabled: true,
 			intervalMinutes: 15,
-			thresholdMinutes: 30,
+			thresholdMinutes: 5,
 			maxThreads: 10,
 			repeatHours: 2,
 			classifier: CLASSIFIER_DEFAULTS,
 		};
 		expect(parseIdleParents(undefined)).toEqual(d);
 		expect(parseIdleParents({})).toEqual(d);
+	});
+	test("the idle threshold is about 5 minutes by default and config.json sets it, in the sweep section too", () => {
+		expect(IDLE_PARENTS_DEFAULTS.thresholdMinutes).toBe(5);
+		expect(parseSweepConfig({ checks: [] }).idleParents.thresholdMinutes).toBe(5);
+		expect(parseSweepConfig({ idleParents: { thresholdMinutes: 12.5 } }).idleParents.thresholdMinutes).toBe(12.5);
+		expect(() => parseSweepConfig({ idleParents: { thresholdMinutes: -5 } })).toThrow("thresholdMinutes");
+	});
+	test("the shipped example config states the default threshold", () => {
+		const ex = JSON.parse(readFileSync(new URL("../../../examples/config.json", import.meta.url), "utf8"));
+		expect(ex.sweep.idleParents.thresholdMinutes).toBe(IDLE_PARENTS_DEFAULTS.thresholdMinutes);
 	});
 	test("each setting can be given", () =>
 		expect(
