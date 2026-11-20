@@ -91,6 +91,8 @@ export type EngineDeps = {
 	recover?: boolean | Partial<RecoverTiming>;
 	/** The Steward's token usage per wake (src/core/steward/steward-tokens.ts). OFF unless asked (`stewardTokens`): when on, the daemon re-reads the Steward's transcript hourly and upserts its per-wake rows. */
 	stewardTokens?: boolean;
+	/** The overhead monitor's tick (src/core/overhead/tick.ts): measures once a day and may open an investigator. Absent: no measurement. */
+	overheadTick?: () => Promise<unknown>;
 	/** Runs the operator's alert command for an alarm. Default: executes it. A test passes `noAlert` (the `noAlert` helper in the testing directory) so it never reaches a real one. */
 	alert?: (cmd: string, args: string[], env: NodeJS.ProcessEnv) => void;
 	/** The one judge (src/core/ops/judge.ts). Default: judge.json in the config directory. */

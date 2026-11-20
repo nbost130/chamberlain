@@ -93,6 +93,19 @@ function httpSettings(o: Record<string, unknown>, where: string): Pick<ReaderMod
 	return { endpoint, ...(keyFile ? { keyFile } : {}) };
 }
 
+/** One T3 thread selection: a server, a provider instance, a model and its options, all required but the options. The same check every pinned thread and the overhead investigator use. */
+export function threadModel(o: Record<string, unknown>, where: string): ThreadModel {
+	object(o, where, ["adapter", "server", "instanceId", "model", "options"]);
+	if (o.adapter !== "t3") throw Error(`${where}: pinned threads require the t3 adapter`);
+	return {
+		adapter: "t3",
+		server: required(o, "server", where),
+		instanceId: required(o, "instanceId", where),
+		model: required(o, "model", where),
+		options: options(o.options, where),
+	};
+}
+
 export function parseModels(raw: unknown): ModelSelections {
 	if (raw === undefined || raw === null) return {};
 	const rows = object(raw, "models", MODEL_ROLES);
@@ -115,15 +128,7 @@ export function parseModels(raw: unknown): ModelSelections {
 		]);
 		const pinned = isLaunchRole(role);
 		if (pinned) {
-			object(o, where, ["adapter", "server", "instanceId", "model", "options"]);
-			if (o.adapter !== "t3") throw Error(`${where}: pinned threads require the t3 adapter`);
-			result[role as ModelRole] = {
-				adapter: "t3",
-				server: required(o, "server", where),
-				instanceId: required(o, "instanceId", where),
-				model: required(o, "model", where),
-				options: options(o.options, where),
-			};
+			result[role as ModelRole] = threadModel(o, where);
 		} else result[role as ModelRole] = reader(o, where);
 	}
 	return result;

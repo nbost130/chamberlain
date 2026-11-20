@@ -285,6 +285,10 @@ export abstract class CoreWork extends CoreRights {
 			checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
 		if (usageTick)
 			checks.push(usageTick().catch((e) => log("steward-usage-error", { error: String(e).slice(0, 200) })));
+		if (!this.DRY && this.d.overheadTick)
+			checks.push(
+				this.d.overheadTick().catch((e) => log("overhead-error", { stage: "tick", error: String(e).slice(0, 200) })),
+			);
 		checks.push(this.idleParents.tick().catch((e) => log("idle-parents-error", { error: String(e).slice(0, 200) })));
 		checks.push(
 			this.undelivered

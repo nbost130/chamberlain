@@ -1,6 +1,7 @@
 /** The config document's schema: the files and directories, the scalar and section keys, and the checks a config.json must pass. */
 
 import { parseModels } from "../llm/selection.ts";
+import { parseOverhead } from "../overhead/config.ts";
 import { configDir } from "../state-dir.ts";
 import { SchemaTooNewError } from "../store/schema.ts";
 import { parseSettledMatch } from "./settings-parse.ts";
@@ -66,6 +67,7 @@ export const SECTIONS = [
 	"judge",
 	"mail",
 	"models",
+	"overhead",
 ] as const;
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
@@ -160,6 +162,11 @@ export function parseConfigDoc(raw: unknown): Record<string, unknown> {
 	checkSchemaVersion(raw.schemaVersion);
 	for (const k of Object.keys(raw)) checkKey(raw, k);
 	checkThreads(raw.threads);
-	parseModels(raw.models);
+	const steward = parseModels(raw.models).steward;
+	try {
+		parseOverhead(raw.overhead, steward?.adapter === "t3" ? steward.model : undefined);
+	} catch (e) {
+		throw new ConfigFileError((e as Error).message);
+	}
 	return raw;
 }

@@ -14,6 +14,8 @@ import { readRulings } from "../core/ops/rulings.ts";
 import { confirmRuling, editRuling, retireRuling } from "../core/ops/rulings-change.ts";
 import { isExpired } from "../core/ops/rulings-expiry.ts";
 import { citations, inForceNow } from "../core/ops/rulings-read.ts";
+import { overheadView } from "../core/overhead/format.ts";
+import { readOverheadState } from "../core/overhead/trigger.ts";
 import { readHealth } from "../core/steward/steward-health.ts";
 import { HEALTH_CONFIG } from "../core/steward/steward-health-config.ts";
 import { type AnswerIn, acceptAll, answer } from "./app-answer.ts";
@@ -67,6 +69,7 @@ function queueResponse(ctx: Ctx): Response {
 		unreachable: d.mirror?.unreachable?.() ?? [],
 		health: readHealth(d.store) ?? null,
 		healthLimits: HEALTH_CONFIG,
+		overhead: overheadView(readOverheadState(d.store)),
 		inForce: inForceNow(list, ctx.clock()).length,
 		unconfirmed: list.filter((r) => r.status !== "retired" && !r.confirmed).length,
 		testMode: Boolean(d.testMode),
