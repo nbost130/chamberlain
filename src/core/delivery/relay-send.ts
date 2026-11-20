@@ -2,14 +2,36 @@
 import { crashPoint } from "../crash.ts";
 import { alarms } from "../messages.ts";
 import { loadRightsSent, needsRights, rightsFirstKey, rightsGap, rightsStateKey } from "../steward/rights-sent.ts";
-import { type GenSnapshot, snapshotGen } from "../steward/steward-gens.ts";
+import type { GenSnapshot } from "../steward/steward-gens.ts";
 import { encodedSendBytes, exceedsEncodedCap, TRANSFER_DIGEST_MAX_BYTES } from "../steward/steward-types.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
-import type { WakeResult } from "./deliver.ts";
 import type { Posted } from "./relay.ts";
-import { deadLetter, land, readRightsNow } from "./relay-compose.ts";
-import { type Ctx, type Lane, type RelayDeps, ROUNDS, raise } from "./relay-ctx.ts";
-import { current, findPrerequisite, prerequisiteBlocked, queuePrerequisite } from "./relay-prereq.ts";
+import { landWith, previewCarry, withNews } from "./relay-carry.ts";
+import { deadLetter, readRightsNow } from "./relay-compose.ts";
+import {
+	type Carried,
+	type Ctx,
+	type InlineRights,
+	type Landing,
+	type Lane,
+	type RelayDeps,
+	ROUNDS,
+	raise,
+} from "./relay-ctx.ts";
+import { deliveredLog } from "./relay-delivered-log.ts";
+import { prepared, readSnap, sameGen } from "./relay-gate.ts";
+import {
+	current,
+	findPrerequisite,
+	inlineRights,
+	noticeFits,
+	noticeFor,
+	prerequisiteBlocked,
+	queuePrerequisite,
+	undeliveredRights,
+	unreadableRights,
+	withInlineRights,
+} from "./relay-prereq.ts";
 
 /**
  * One attempt of one row: counted and committed first, then the POST. The rows delivered: any prerequisite sent ahead of it, then the
@@ -35,7 +57,7 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 		return [];
 	}
 	// Sample once before any awaited rights work so CAS and POST share the same generation.
-	const { before, go } = await sendPrerequisites({ r, l, row, prerequisite, snap });
+	const { before, go, inline, post, carried } = await readyToPost({ r, l, row, prerequisite, snap });
 	if (!go) return before;
 	// Generation moved during rights: do not POST under a stale rights decision; next pass rechecks.
 	if (snap && !sameGen(snap, readSnap(r))) return before;
@@ -47,37 +69,29 @@ export async function send(r: Ctx, l: Lane, row: OutboxRow, prerequisite = false
 	});
 	if (n === undefined) return before;
 	crashPoint("attempt-counted");
-	const result = await r.post(l, row, target);
-	const posted: Posted = { l, row, n, res: result, before };
-	return result.ok ? accepted(r, posted) : refused(r, posted);
+	return posted(r, { l, row, post, n, before, target, inline, carried });
 }
 
-async function prepared(
+/** The one POST of an attempt (the full rights riding in it, when `rightsInline` found a gap), and what follows its answer. */
+async function posted(
 	r: Ctx,
-	l: Lane,
-	row: OutboxRow,
-	destination: { threadId?: string; target?: string },
-): Promise<boolean> {
-	const state = await r.d.validateWake?.(row);
-	if (state === "cancel") {
-		r.store.wakes.cancel(row.deliveryId, r.clock());
-		return false;
-	}
-	if (state === "wait") return false;
-	if (!l.wake.prepare) return true;
-	try {
-		if (await l.wake.prepare(destination.threadId, destination.target)) return true;
-	} catch {
-		/* A preflight has sent no message; retain the row. */
-	}
-	r.notBefore.set(row.id, r.clock() + r.pause(1));
-	// Said once per row: a preflight that keeps failing holds the row for good, and silence hid that for a whole receiver once.
-	const key = `preflight:${row.id}`;
-	if (!r.reported.has(key)) {
-		r.reported.add(key);
-		r.d.log("deliver-preflight-failed", { deliveryId: row.deliveryId, ...(l.name ? { receiver: l.name } : {}) });
-	}
-	return false;
+	a: {
+		l: Lane;
+		row: OutboxRow;
+		/** The row as POSTed: with the held news that rides in it, when there is any. */
+		post: OutboxRow;
+		n: number;
+		before: OutboxRow[];
+		target: string | undefined;
+		inline: InlineRights | undefined;
+		carried: Carried | undefined;
+	},
+): Promise<OutboxRow[]> {
+	const { l, row, post, n, before, target, inline, carried } = a;
+	const text = inline ? withInlineRights(post, inline) : carried ? post.message : undefined;
+	const res = await r.post(l, row, target, text);
+	const p: Posted = { l, row, n, res, before, ...(inline ? { inline } : {}), ...(carried ? { carried } : {}) };
+	return res.ok ? accepted(r, p) : refused(r, p);
 }
 
 /** Dead-letter an oversized pending row without POSTing; raise the bound alarm once. */
@@ -104,49 +118,18 @@ function refuseOversized(r: Ctx, l: Lane, row: OutboxRow): void {
 	}
 }
 
-function readSnap(r: Ctx): GenSnapshot | undefined {
-	return r.d.genSnapshot ? r.d.genSnapshot() : snapshotGen(r.store, r.d.conf);
-}
-
-function sameGen(a: GenSnapshot | undefined, b: GenSnapshot | undefined): boolean {
-	return a?.gen === b?.gen;
-}
-
 /** The transport accepted the POST: the row is owed its delivered commit, which lands now (the rows delivered include it only if it did). */
-function accepted(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
+function accepted(r: Ctx, { l, row, n, res, before, inline, carried }: Posted): OutboxRow[] {
 	crashPoint("accepted");
 	r.owed.set(row.id, row);
 	l.look.lastPostAt = r.clock();
 	l.failures = 0;
 	r.notBefore.delete(row.id);
 	r.d.log("delivered", deliveredLog(l, row, n, res));
-	return land(r, row) ? [...before, row] : before;
-}
-
-/** Pure: what the `delivered` log line says about a row: its attempt, kind, thread and receiver, and each member of a digest. */
-function deliveredLog(l: Lane, row: OutboxRow, n: number, res: WakeResult): Record<string, unknown> {
-	const [only] = row.members;
-	const digest = row.members.length !== 1 || only?.deliveryId !== row.deliveryId;
-	return {
-		deliveryId: row.deliveryId,
-		...(res.status !== undefined ? { http: res.status } : {}),
-		attempt: n,
-		// A lone held wake keeps the time it was held, not the time it was composed, so its wait counts in queue-waits.
-		queuedAt: digest ? row.createdAt : (only?.queuedAt ?? row.createdAt),
-		...(row.kind ? { kind: row.kind } : {}),
-		...(row.thread ? { thread: row.thread } : {}),
-		...(l.name ? { receiver: l.name } : {}),
-		...(digest
-			? {
-					members: row.members.map((m) => ({
-						deliveryId: m.deliveryId,
-						queuedAt: m.queuedAt,
-						...(m.kind ? { kind: m.kind } : {}),
-						...(m.thread ? { thread: m.thread } : {}),
-					})),
-				}
-			: {}),
-	};
+	// The rights and the held news that rode in this POST are recorded in the SAME commit as the wake (relay-carry.ts `landWith`), and on every retry of it.
+	const landing: Landing = { l, ...(inline ? { inline } : {}), ...(carried ? { carried } : {}) };
+	r.landing.set(row.id, landing);
+	return landWith(r, row, landing) ? [...before, row] : before;
 }
 
 /** The POST failed: the attempt stays counted, attempt_gen is cleared, the failure may raise the alarm, and the row is dead-lettered at the cap or waits its pause. */
@@ -165,6 +148,93 @@ function refused(r: Ctx, { l, row, n, res, before }: Posted): OutboxRow[] {
 	return before;
 }
 
+/** The text a row goes with: held news rides in an immediate wake (relay-carry.ts), and the rights are settled for that whole text. `post` is the row as POSTed; the stored one is untouched. */
+async function readyToPost(a: PrereqArgs): Promise<Prereq & { post: OutboxRow; carried?: Carried }> {
+	const carried = a.prerequisite ? undefined : previewCarry(a.r, a.l, a.row);
+	const post = carried ? withNews(a.row, carried) : a.row;
+	return { ...(await sendPrerequisites({ ...a, row: post })), post, ...(carried ? { carried } : {}) };
+}
+
+const GO = { before: [] as OutboxRow[], go: true },
+	STOP = { before: [] as OutboxRow[], go: false };
+type Prereq = { before: OutboxRow[]; go: boolean; inline?: InlineRights };
+
+/**
+ * What goes before a row's own POST: `before` the prerequisite rows already delivered, whether the row may go on, and the full rights that ride
+ * inside its POST. A row holding a FULL stamp is checked too: its block may be older than the rights in force now (`staleFull`).
+ */
+async function sendPrerequisites(a: PrereqArgs): Promise<Prereq> {
+	const { r, l, row, prerequisite } = a;
+	const { rightsNow } = r.d;
+	if (prerequisite || l.desk || !rightsNow) return GO;
+	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow))) return STOP;
+	// A Steward row with NO stamp depends on the Steward holding the rights too: it is composed without them, whichever producer made it (a note,
+	// an answer, a sweep, a hand-off), so none has to stamp. Only the prerequisite itself and the other receivers' rows (returned above) are exempt.
+	const dependent = !row.rights?.length || needsRights(row.rights),
+		hasFull = Boolean(row.rights?.some((s) => s.full));
+	if (!dependent && !hasFull) return GO;
+	const gaps = dependent && Boolean(r.d.rightsInline);
+	const inline = gaps || hasFull ? await inlineRights(r, row, rightsNow, { steward: a.snap?.thread, gaps }) : undefined;
+	if (inline) return withinCap(a, inline);
+	return dependent && !r.d.rightsInline ? viaPrerequisite(a) : GO;
+}
+
+/** The legacy way: the standalone prerequisite rows the record calls for, delivered before the row. */
+async function viaPrerequisite(a: PrereqArgs): Promise<Prereq> {
+	const { r, l, row, snap } = a;
+	const went = await ahead({ r, l, row, rightsNow: r.d.rightsNow as NonNullable<RelayDeps["rightsNow"]>, snap });
+	if (went === "unreadable") return withinCap(a, unreadableRights(r, row));
+	if (went === "undelivered") return withinCap(a, undeliveredRights(r, row));
+	return went === null ? STOP : { before: went, go: r.d.lock.held() };
+}
+
+/**
+ * The size bound is checked on what is POSTed, the rights included. Over it, the current rights go as a standalone prerequisite first and the
+ * row goes after it exactly as queued, whatever its kind (it fit alone when it was queued: a row that does not is refused at the top of `send`).
+ * A row whose own full block was stale is then sent without writing that block into the record: the prerequisite wrote the current one.
+ */
+async function withinCap(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
+	const { r, row } = a;
+	// With rightsInline off, a stale full block is replaced by the standalone prerequisite, the one way that mode has.
+	const replaceAlone = Boolean(inline.stale) && !r.d.rightsInline;
+	if (inline.unreadable || inline.undelivered) return carryNotice(a, inline);
+	if (!replaceAlone && !exceedsEncodedCap(withInlineRights(row, inline), row.deliveryId)) return { ...GO, inline };
+	r.d.log("rights-inline-oversized", {
+		deliveryId: row.deliveryId,
+		stale: Boolean(inline.stale),
+		...(replaceAlone ? { inlineOff: true } : {}),
+	});
+	const first = await standalone(a);
+	// A stale copy is marked "replaced" only when the current rights really went before the row; a notice from the second read failing wins.
+	return inline.stale && first.go && !first.inline ? { ...first, inline: { text: "", stale: true } } : first;
+}
+
+/** A row that goes without the rights always carries the notice: in its own POST when it fits, else as a tiny wake of its own just before it (`noticeFor`). */
+async function carryNotice(a: PrereqArgs, inline: InlineRights): Promise<Prereq> {
+	if (noticeFits(a.row, inline)) return { ...GO, inline };
+	const target = a.snap ? a.snap.wakeUrl : a.l.wake.target?.();
+	const out = await noticeFor(a.r, a.row, inline, { l: a.l, target });
+	if (out === "refuse") deadLetter(a.r, a.l, a.row, a.row.attempts);
+	return out && out !== "refuse" ? { ...GO, inline: out } : STOP;
+}
+
+/** One standalone full-rights prerequisite for the state now, whatever the record says (it is what was doubted), then the row. */
+async function standalone(a: PrereqArgs): Promise<Prereq> {
+	const { r, l, row, snap } = a;
+	const rightsNow = r.d.rightsNow as NonNullable<RelayDeps["rightsNow"]>;
+	const now = await readRightsNow(r, row, () => rightsNow(snap ? { steward: snap.thread } : undefined));
+	if (!now) return withinCap(a, unreadableRights(r, row));
+	const found = findPrerequisite(r, row, rightsStateKey(now));
+	if (!found) return STOP;
+	const first =
+		r.store.wakes.find(found.id) ??
+		queuePrerequisite(r, row, now, { id: found.id, reason: "the rights do not fit inside this row's own wake" });
+	if (first?.status === "dead_letter") return withinCap(a, undeliveredRights(r, row));
+	if (!first || prerequisiteBlocked(r, row, first, found.id)) return STOP;
+	const sent = await send(r, l, first, true);
+	return sent.length ? { before: sent, go: r.d.lock.held() } : STOP;
+}
+
 type PrereqArgs = {
 	r: Ctx;
 	l: Lane;
@@ -172,19 +242,6 @@ type PrereqArgs = {
 	prerequisite: boolean;
 	snap: GenSnapshot | undefined;
 };
-
-/** What goes before a row's own POST: `before` the prerequisite rows already delivered, and whether the row may go on. */
-async function sendPrerequisites(a: PrereqArgs): Promise<{ before: OutboxRow[]; go: boolean }> {
-	const { r, l, row, prerequisite, snap } = a;
-	const { rightsNow } = r.d;
-	if (prerequisite || l.desk || !rightsNow) return { before: [], go: true };
-	if (rightsFirstKey(row.deliveryId) && row.kind === "rights" && !(await current(r, row, rightsNow)))
-		return { before: [], go: false };
-	if (!needsRights(row.rights)) return { before: [], go: true };
-	const went = await ahead({ r, l, row, rightsNow, snap });
-	if (went === null) return { before: [], go: false };
-	return { before: went, go: r.d.lock.held() };
-}
 
 type AheadArgs = {
 	r: Ctx;
@@ -195,11 +252,11 @@ type AheadArgs = {
 };
 
 /** One round of `ahead`: "ready" (nothing more is owed), "stop" (the row must not go now), or the prerequisite rows delivered in this round. */
-async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | OutboxRow[]> {
+async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | "unreadable" | "undelivered" | OutboxRow[]> {
 	const { r, l, row, rightsNow, snap } = a;
 	const { store } = r;
 	const now = await readRightsNow(r, row, () => rightsNow(snap ? { steward: snap.thread } : undefined));
-	if (!now) return "stop";
+	if (!now) return "unreadable";
 	const reason = rightsGap(loadRightsSent(store), now);
 	if (!reason) {
 		r.waitingOn.delete(row.deliveryId);
@@ -209,6 +266,7 @@ async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | OutboxRow[]>
 	if (!found) return "stop";
 	if (now.hash === undefined && found.delivered) return "ready";
 	const first = store.wakes.find(found.id) ?? queuePrerequisite(r, row, now, { id: found.id, reason });
+	if (first?.status === "dead_letter") return "undelivered";
 	if (!first || prerequisiteBlocked(r, row, first, found.id)) return "stop";
 	const sent = await send(r, l, first, true);
 	return sent.length ? sent : "stop";
@@ -217,11 +275,12 @@ async function aheadRound(a: AheadArgs): Promise<"ready" | "stop" | OutboxRow[]>
 /**
  * What must be delivered before an attempt of a Steward row that depends on the Steward holding the rights (`needsRights`).
  */
-async function ahead(a: AheadArgs): Promise<OutboxRow[] | null> {
+async function ahead(a: AheadArgs): Promise<OutboxRow[] | null | "unreadable" | "undelivered"> {
 	const before: OutboxRow[] = [];
 	for (let round = 0; round < ROUNDS; round++) {
 		const out = await aheadRound(a);
 		if (out === "ready") return before;
+		if (out === "unreadable" || out === "undelivered") return out;
 		if (out === "stop") return null;
 		before.push(...out);
 		if (!a.r.d.lock.held()) return null;

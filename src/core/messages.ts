@@ -15,6 +15,16 @@ export const alarms = {
 		title: `chamberlain: ${count} "${kind}" failures in ${windowMinutes} minutes`,
 		summary: "Automatic retries are stopped until ten quiet minutes pass.",
 	}),
+	rightsUndelivered: (): AlarmText => ({
+		title: "chamberlain could not deliver the decision rights",
+		summary:
+			"A wake went to the Steward without current rights because the wake that carries them was dead-lettered, so it was told to hold anything that needs them. Retry or cancel the dead-lettered rights wake (chamberlain wakes retry <id>); the next wake tries again.",
+	}),
+	rightsNoticeUndelivered: (): AlarmText => ({
+		title: "chamberlain could not send the no-rights notice on its own",
+		summary:
+			'A wake too large to carry the "hold any action that needs the rights" notice kept failing to be preceded by it, so it went with the notice prepended to its own text instead. Check that the Steward\'s webhook is reachable.',
+	}),
 	rightsUnreadable: (): AlarmText => ({
 		title: "chamberlain cannot read the decision rights",
 		summary: "A wake went to the Steward without its decision rights, so it was told to hold anything on the ASK list.",
@@ -150,6 +160,35 @@ export const handoffWake = (instruction: string, report: string) =>
 /** The standalone wake that carries the full rights ahead of a row that depends on them. */
 export const rightsWake = (forId: string, full: string) =>
 	`[chamberlain] rights: your decision rights and the rulings in force, in full. The next wake (${forId}) was queued for a Steward that may not hold them; where it says they are unchanged, these are the ones it means, and they replace any older copy it carries.\n${full}`;
+
+/**
+ * The heading of the full rights block that rides inside the wake of a row that depends on them (relay-prereq.ts `inlineRights`), instead of a
+ * standalone wake of their own: the Steward gets them in the same turn, and one request is not spent reading its whole context just to receive them.
+ */
+export const rightsInlineHead =
+	"[chamberlain] rights, in full: this wake was queued for a Steward that may not hold your decision rights and the rulings in force, so the full copy rides with it. Where the text above says they are unchanged, these are the ones it means, and they replace any older copy you carry, one in the text above included.";
+
+/**
+ * Said after a row whose own full rights block is older than the rights in force, when the current rights cannot ride inside the same wake
+ * (they would not fit the size bound) and went as a standalone wake just before it. The row's text is never edited; this only follows it.
+ */
+export const rightsStaleNote =
+	"[chamberlain] note: the full rights block in the text above was composed before the rights or rulings changed. The rights wake delivered just before this one is current; where they differ, it wins.";
+
+/**
+ * Said after a Steward row that goes without the rights it depends on because they could not be read just now (the read threw): the row is not
+ * held back, since a principal-facing wake must not wait on this, and the read is tried again with the next one.
+ */
+export const rightsUnreadNotice =
+	"[chamberlain] note: the current decision rights and rulings could not be read for this wake. Hold any action that needs them (anything on the ASK list) until a later wake carries them.";
+
+/** Said with a Steward row that goes because the wake carrying the current rights was dead-lettered: the row is not held back, and the next row tries the rights again. */
+export const rightsUndeliveredNotice =
+	"[chamberlain] note: the current decision rights and rulings could not be delivered for this wake. Hold any action that needs them (anything on the ASK list) until a later wake carries them.";
+
+/** Added to a notice when the row it rides with also carries a full rights block of its own, which can no longer be trusted as current. */
+export const rightsStaleCopyNote =
+	"Any rights block in the text above is possibly out of date and does not count as the current rights.";
 
 /** The first line of a thread wake: which kind, which thread, and what happened to it. */
 export const threadWakeHead = (kind: string, title: string, what: string) =>

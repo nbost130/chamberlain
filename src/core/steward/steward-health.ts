@@ -5,7 +5,7 @@ import { setting } from "../config/layout.ts";
 import { handoffWake } from "../messages.ts";
 import type { Store } from "../store/store.ts";
 import { HEALTH_CONFIG } from "./steward-health-config.ts";
-import { type Scan, scanLine } from "./steward-health-scan.ts";
+import { ORDINARY_TURN, type Scan, scanLine } from "./steward-health-scan.ts";
 
 export type Health = {
 	schemaVersion?: number;
@@ -72,6 +72,8 @@ export async function measure(
 		hooks: new Set(),
 		threads: new Map(),
 		unknown: new Set(),
+		turn: ORDINARY_TURN,
+		recoveryLeft: 0,
 	};
 	for await (const line of lines) scanLine(scan, line, session, opts);
 	const { tokens, slips, selfReads, threadRereads, unknown } = scan;

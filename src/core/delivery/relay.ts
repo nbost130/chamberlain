@@ -37,7 +37,9 @@ import { finalSendMessage, maxAttemptsFromEnv, type WakeResult, type WakeTranspo
 import { audit } from "./relay-audit.ts";
 import { serially } from "./relay-compose.ts";
 import {
+	type Carried,
 	type Ctx,
+	type InlineRights,
 	type Lane,
 	laneOf,
 	makeLane,
@@ -88,6 +90,8 @@ function relayContext(d: RelayDeps): Ctx {
 		...(d.threadNews ? { news: d.threadNews } : {}),
 		post,
 		owed: new Map(),
+		landing: new Map(),
+		noticeFails: new Map(),
 		notBefore: new Map(),
 		unrouted: new Set(),
 		waitingOn: new Set(),
@@ -134,10 +138,10 @@ function sanitizeResult(res: WakeResult): WakeResult {
 }
 
 /** The POST of one row under its frozen delivery id; a transport that throws is a failed attempt with its text URL-redacted. */
-async function post(l: Lane, row: OutboxRow, target?: string): Promise<WakeResult> {
+async function post(l: Lane, row: OutboxRow, target?: string, message = row.message): Promise<WakeResult> {
 	try {
 		return sanitizeResult(
-			await l.wake.send(row.deliveryId, finalSendMessage(row.message, row.deliveryId), target ? { target } : undefined),
+			await l.wake.send(row.deliveryId, finalSendMessage(message, row.deliveryId), target ? { target } : undefined),
 		);
 	} catch (e) {
 		return { ok: false, error: redactUrls(e instanceof Error ? e.message : String(e)) };
@@ -145,17 +149,28 @@ async function post(l: Lane, row: OutboxRow, target?: string): Promise<WakeResul
 }
 
 /** One attempt's outcome: the lane and row, which attempt it was, what the transport answered, and the rows already delivered ahead of it. */
-export type Posted = { l: Lane; row: OutboxRow; n: number; res: WakeResult; before: OutboxRow[] };
+export type Posted = {
+	l: Lane;
+	row: OutboxRow;
+	n: number;
+	res: WakeResult;
+	before: OutboxRow[];
+	/** The full rights that rode in this POST (`rightsInline`): the delivered commit writes the record from its stamp. */
+	inline?: InlineRights;
+	/** The held news that rode in this POST (relay-carry.ts): bound delivered with the row. */
+	carried?: Carried;
+};
 
 /**
  * One compaction request to the Steward's compaction task: a single attempt, no row (the task's prompt is /compact, so it takes no message),
  * and it throws when it cannot be sent. It lives here so that the relay is the only code that calls a transport, and it waits its turn in
  * the same serial queue as the wakes (a compaction is not a row, so it is not retried, but it is never beside another POST).
  *
- * The rights record is invalidated HERE, inside the serial job, before the POST: the epoch is bumped and the record dropped in one write
- * (`invalidateRights`). Every wake job queued before this one has settled by now, so a full block in flight when the compaction was asked for
- * has already landed (and is dropped by the bump), or lands later from `owed` under the old epoch (and writes nothing). Every full stamp
- * composed after the bump carries the new epoch and is POSTed in a later job, after the compaction. If the bump fails, nothing is sent.
+ * The rights record is invalidated HERE, inside the serial job, once T3 has ACCEPTED the request (a refused or failed one left the Steward's
+ * context alone, so it leaves the record alone too): the epoch is bumped and the record dropped in one write (`invalidateRights`). No other wake
+ * job runs between the POST and the bump, so a wake composed before it (carrying the old epoch) is POSTed in a later job: a full block writes
+ * nothing, and a pointer finds the record gone and is given the rights. A process that dies between the accepted POST and the bump leaves the
+ * record in place; the compaction T3 then counts is the evidence that drops it (`rightsLost`).
  */
 function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
 	const { d, store } = r;
@@ -165,12 +180,14 @@ function compact(r: Ctx, deliveryId: string): Promise<WakeResult> {
 		if (!d.compact) throw new Error("this adapter has no compaction target");
 		const prepared = await prepareCompact(r, d.compact);
 		if (!prepared.ok) return prepared;
+		const res = sanitizeResult(
+			await d.compact.send(deliveryId, "", prepared.target ? { target: prepared.target } : undefined),
+		);
+		if (!res.ok) return res;
 		const epoch = invalidateRights(store);
 		d.log("rights-invalidated", { reason: "compaction", deliveryId, epoch });
 		crashPoint("compact-invalidated");
-		return sanitizeResult(
-			await d.compact.send(deliveryId, "", prepared.target ? { target: prepared.target } : undefined),
-		);
+		return res;
 	});
 }
 

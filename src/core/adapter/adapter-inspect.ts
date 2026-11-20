@@ -106,8 +106,14 @@ export type Inspector = {
 
 /** What an adapter can tell about the Steward's own thread, read once a minute. */
 export type StewardProbe = {
-	/** The Steward's context size in tokens, when known. */
+	/** The Steward's context size in tokens, when known: the newest turn's, never an older sample. */
 	contextTokens?: number;
+	/** The ordinal of the turn `contextTokens` was read from. */
+	contextTurn?: number;
+	/** How many compactions of the Steward's thread have completed (the daemon's, the harness's own and manual ones alike), when readable. */
+	compactions?: number;
+	/** The ordinal of the turn that ran the newest compaction; that turn's own size is the size after it. */
+	compactionTurn?: number;
 	/** False when the backend's own record of the Steward could not be read this time. */
 	readable: boolean;
 	/** Set when wakes are queued and nothing in the Steward's thread has moved: the alarm to raise. */

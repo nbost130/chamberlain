@@ -18,6 +18,8 @@ export type RightsStamp = {
 	/** The wake carries the full block, composed for this state; `used` is the Steward's context size then (the record's high-water mark). */
 	full?: true;
 	used?: number;
+	/** How many compactions of the Steward's thread had completed when the wake was composed: the baseline a later count is judged against. */
+	compactions?: number;
 	/** The rights epoch the wake was composed under (rights-sent.ts): a delivered full stamp writes the record only while it is still current. Absent is 0. */
 	epoch?: number;
 	/**

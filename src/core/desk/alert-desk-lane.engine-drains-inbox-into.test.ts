@@ -49,7 +49,7 @@ describe("the engine drains the inbox into the desk", () => {
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter: fake }],
 			log: (event, data) => logged.push({ event, ...data }),
 			timing: { debounceMs: 5, lagMs: 5, quietMs: 5, tickMs: 3_600_000 },
-			relay: { retryAfterMs: () => 0, now: () => Date.parse("2026-11-13T11:00:00Z") },
+			relay: { retryAfterMs: () => 0, now: () => Date.parse("2026-11-13T11:00:00Z"), rightsInline: true },
 		});
 		engines.push(engine);
 		void engine.start();
@@ -150,7 +150,7 @@ describe("one relay, one serial queue, for every receiver", () => {
 			servers: [{ server: { name: "fake", adapter: "fake" }, adapter }],
 			log: () => {},
 			timing: { tickMs: 3_600_000 },
-			relay: { retryAfterMs: () => 0 },
+			relay: { retryAfterMs: () => 0, rightsInline: true },
 		});
 		for (let i = 0; i < 3; i++) {
 			store.wakes.enqueue(row(`s${i}`, { kind: "needs_input" }));

@@ -7,7 +7,10 @@ import { claimWake, pageClaim } from "../items/questions-claim.ts";
 import { appendHeld, heldOpen } from "../ops/afk-held.ts";
 import { createEngine } from "./engine.ts";
 
-const { rig, thread, stewardSigned, question, flaky } = useCoreEngineFixtures(createEngine);
+const { rig, thread, stewardSigned, question, flaky } = useCoreEngineFixtures(
+	// The daemon's default: the rights ride inside an unstamped sweep, so it is still one wake.
+	(d) => createEngine({ ...d, relay: { ...d.relay, rightsInline: true } }),
+);
 
 describe("the held ledger is reconciled on the heartbeat", () => {
 	test("a tick closes the holds of an answered question, a merged PR and a settled thread, and leaves the rest", async () => {

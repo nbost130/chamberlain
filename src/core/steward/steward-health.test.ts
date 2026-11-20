@@ -25,7 +25,8 @@ test("fixture: latest usage snapshot, compaction reset, hook and tool deduplicat
 	expect(h.replies).toBe(2);
 	expect(h.selfReads).toBe(1);
 	expect(h.threadRereads).toBe(1);
-	expect(h.verdict).toBe("WATCH");
+	// 202k is past the 130k compaction line; quality signals are all under their limits, so the verdict is COMPACT, not HAND OFF.
+	expect(h.verdict).toBe("COMPACT");
 });
 
 test("format counts only last N hook replies and never assistant quotes", async () => {
@@ -53,7 +54,7 @@ test("quoted format text in ordinary attachments never counts as hook evidence",
 	);
 	const h = await measure([...fixture, ...quoted], session);
 	expect(h.breaks).toBe(1);
-	expect(h.verdict).toBe("WATCH");
+	expect(h.verdict).toBe("COMPACT");
 });
 
 test("all signals reset at the latest compaction; unknown is WATCH", async () => {
@@ -111,7 +112,7 @@ test("verdict cases: size alone never hands off; quality signals do", async () =
 });
 
 test("compact threshold stays above the watch threshold", () => {
-	expect(C.compactContext).toBe(350_000);
+	expect(C.compactContext).toBe(130_000);
 	expect(C.context).toBeLessThan(C.compactContext);
 });
 

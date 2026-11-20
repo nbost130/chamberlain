@@ -9,7 +9,10 @@ import type { SentState } from "../classifier/state.ts";
 import { heldOpen } from "../ops/afk-held.ts";
 import { createEngine } from "./engine.ts";
 
-const { flaky, rig, thread, idleRig, STREAM, m1, make } = useCoreEngineExtraFixtures(createEngine);
+const { flaky, rig, thread, idleRig, STREAM, m1, make } = useCoreEngineExtraFixtures(
+	// The daemon's default: the rights ride inside an unstamped sweep, so it is still one wake (these tests count wakes).
+	(d) => createEngine({ ...d, relay: { ...d.relay, rightsInline: true } }),
+);
 
 describe("an alert is never recorded as sent without its wake (a crash between the two loses nothing)", () => {
 	describe("the idle-parents timer: its own schedule, apart from the routine sweep", () => {

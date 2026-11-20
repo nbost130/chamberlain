@@ -13,7 +13,16 @@ type HealthTickerDeps = {
 	ask?: (raw: object) => Promise<void>;
 	/** The server name shown on the hand-off question: the one the Steward runs on. */
 	server?: () => string;
+	/** True when the last compaction of this Steward did not bring its context under the line: compaction cannot help, so the verdict is HAND OFF. */
+	compactFailed?: (h: Health) => boolean;
 };
+
+/** A compaction that left the context above the line is a quality signal compaction cannot fix: the same verdict as any other, with its own line in the report. */
+function escalateFailedCompaction(h: Health): Health {
+	const next: Health = { ...h, verdict: "HAND OFF", elevated: [...new Set([...h.elevated, "compaction"])] };
+	next.report = `${formatHealth(next)}\nThe last compaction did not bring the context under the compaction line; compacting again would repeat it, so this Steward needs a hand-off.`;
+	return next;
+}
 
 /** The collected health, or a WATCH that says the transcript could not be read: a failure is never read as OK. */
 async function collectOrUnavailable(collect: () => Promise<Health>, now: number): Promise<Health> {
@@ -75,7 +84,8 @@ export function healthTicker(deps: HealthTickerDeps) {
 		if (busy || (prior && now - Date.parse(prior.at) < HEALTH_CONFIG.intervalMs)) return;
 		busy = true;
 		try {
-			const h = await collectOrUnavailable(deps.collect, now);
+			const collected = await collectOrUnavailable(deps.collect, now);
+			const h = deps.compactFailed?.(collected) ? escalateFailedCompaction(collected) : collected;
 			deps.store.state.set(HEALTH_KEY, h);
 			if (h.verdict !== "HAND OFF" || !h.session) return;
 			await startHandoff(deps, h, h.session);

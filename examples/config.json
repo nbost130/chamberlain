@@ -3,7 +3,7 @@
   "principal": "Ada",
   "t3Dir": "~/.t3",
   "alertCmd": "~/bin/notify-me",
-  "compactTokens": 350000,
+  "compactTokens": 130000,
   "threads": {
     "steward": "REPLACE-WITH-THE-STEWARD-THREAD-ID",
     "decisions": "REPLACE-WITH-THE-DECISIONS-THREAD-ID"

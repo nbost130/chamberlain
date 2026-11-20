@@ -1,7 +1,8 @@
 /** One pass of the relay over a lane: composing what is ready, sending it, and dead-lettering what cannot be sent. */
 import { alarms } from "../messages.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
-import { compose, land, serially } from "./relay-compose.ts";
+import { landWith } from "./relay-carry.ts";
+import { compose, serially } from "./relay-compose.ts";
 import { type Ctx, type Lane, laneOf, raise } from "./relay-ctx.ts";
 import { send } from "./relay-send.ts";
 
@@ -14,7 +15,8 @@ async function passOnce(r: Ctx): Promise<string[]> {
 		}
 		return [];
 	}
-	for (const row of [...r.owed.values()]) land(r, row);
+	for (const row of [...r.owed.values()])
+		landWith(r, row, r.landing.get(row.id) ?? { l: laneOf(r, row.receiver) as Lane });
 	const ready = composeReady(r, r.clock());
 	const out: string[] = [];
 	// Every receiver's pending rows, oldest first: each receiver's own rows keep their order, and each row goes to its receiver's transport.

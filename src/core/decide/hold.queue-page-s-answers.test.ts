@@ -213,7 +213,7 @@ describe("the queue page's answers", () => {
 		expect(c.kept).toEqual(held.map((h) => h.deliveryId));
 	});
 
-	test("needs_input, failed and any other kind are pending rows at once while the Steward is busy, never behind held turn ends", async () => {
+	test("needs_input, failed and any other kind are pending rows at once while the Steward is busy, never behind held turn ends, which ride in the first of them", async () => {
 		const x = world();
 		x.w.gate = "busy";
 		x.deliver("TEXT turn_ended A", "t:A:1", TE("A"));
@@ -224,7 +224,9 @@ describe("the queue page's answers", () => {
 		await x.relay().pass();
 		expect(x.w.accepted.map((a) => a.deliveryId)).toEqual(["n:B:1", "f:C:1", "z:1", "z:2"]);
 		for (const a of x.w.accepted) expect(a.message).not.toContain("digest");
-		expect(x.held()).toEqual(["t:A:1"]);
+		// Never behind the held turn end, and the turn end rides in the first of them rather than waiting for a second turn of its own.
+		expect(x.w.accepted[0]!.message).toContain("TEXT turn_ended A");
+		expect(x.held()).toEqual([]);
 	});
 });
 

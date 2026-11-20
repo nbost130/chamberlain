@@ -22,6 +22,8 @@ unavailable and the verdict stays WATCH; nothing else in Chamberlain depends on 
 | --- | --- | --- |
 | context | tokens in the latest assistant usage snapshot (never a sum) | watch at 200 000, compact above 350 000 |
 | rereading | the Steward reads its own transcript, or re-reads the same thread within ten minutes | 3 self-reads, or 4 repeat thread reads |
+
+A self-read made for the hand-off itself, in the two turns after a compaction (recovering what the summary dropped), or to look a wake's own delivery id up for a repeat is the Steward doing what it was told, and does not count. An ordinary lookup of its own transcript does.
 | format (optional) | replies a prompt hook graded as slipped | 3 slips in the last 20 replies |
 
 All counters reset at the latest compaction. Verdicts:
@@ -30,7 +32,7 @@ All counters reset at the latest compaction. Verdicts:
 - **WATCH**: something elevated, or something could not be measured (unknown is never OK).
 - **COMPACT**: context above the compaction threshold with healthy quality signals. The daemon sends a `/compact`
   to the Steward's compact webhook; no hand-off is needed.
-- **HAND OFF**: a quality signal (rereading or format) is past its limit. Compaction does not fix that. The daemon
+- **HAND OFF**: a quality signal (rereading or format) is past its limit, or the last compaction did not bring the context back under the compaction line (`compact-ineffective`; the daemon records its compactions in state `steward-compact`, so a restart keeps the cooldown, and never compacts again instead of handing off). Compaction does not fix that. The daemon
   starts the hand-off itself, at most once per native session: it queues one wake (kind `handoff`, delivery id
   `steward-handoff:<session>`) telling the Steward to run its hand-off now, with no question to you. The wake is an
   ordinary outbox row sent by the one relay, so a failed delivery is retried with the usual pause and, after the
