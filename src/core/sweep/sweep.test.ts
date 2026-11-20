@@ -163,7 +163,7 @@ describe("sweep.json", () => {
 			idleParents: {
 				enabled: true,
 				intervalMinutes: 15,
-				thresholdMinutes: 30,
+				thresholdMinutes: 5,
 				maxThreads: 10,
 				repeatHours: 2,
 				classifier: CLASSIFIER_DEFAULTS,

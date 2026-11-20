@@ -8,7 +8,8 @@
  * It is an item source (src/core/items/source.ts), named `check:idle-parents`. A finding repeats every `repeatHours` (default 2) while
  * the same last message still idles, so a long stall is not silent after the first wake. One digest per pass.
  *
- * Config (`sweep.idleParents`): `enabled`, `intervalMinutes`, `thresholdMinutes`, `maxThreads`, `repeatHours`, `classifier`.
+ * Config (`sweep.idleParents`): `enabled`, `intervalMinutes`, `thresholdMinutes` (default 5), `maxThreads`, `repeatHours`, `classifier`.
+ * The wake (`idleThreadsWake`, src/core/messages.ts) tells the Steward to handle every listed thread whoever started it.
  */
 import type { Classified } from "../classifier/classify.ts";
 import { CLASSIFIER_DEFAULTS, type ClassifierConfig, parseClassifier } from "../classifier/config.ts";
@@ -35,7 +36,7 @@ export type IdleParentsConfig = {
 export const IDLE_PARENTS_DEFAULTS: IdleParentsConfig = {
 	enabled: true,
 	intervalMinutes: 15,
-	thresholdMinutes: 30,
+	thresholdMinutes: 5,
 	maxThreads: 10,
 	repeatHours: 2,
 	classifier: CLASSIFIER_DEFAULTS,

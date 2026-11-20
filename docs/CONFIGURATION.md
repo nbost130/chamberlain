@@ -292,7 +292,7 @@ thread is settled but the run is still open. Linked run ids are always statused 
 the check keeps its own clock in the database, so the schedule survives a restart. Each run lists the top-level threads on every
 configured server that are not a child or subagent thread, not settled, snoozed or archived, have nothing running or open (no card,
 background task, running child, or running subagent the adapter reports), and are `idle` or `completed` with their last message finished more than `thresholdMinutes` ago
-(default 30), whoever started its last turn: a thread that answered the principal's own question and then sat on a half-answer is listed like any other. The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
+(default 5; the check runs every `intervalMinutes`, so a thread is reported within `thresholdMinutes` + `intervalMinutes`), whoever started its last turn: a thread that answered the principal's own question and then sat on a half-answer is listed like any other. The Steward's own thread, the decisions thread, the Alert Desk thread and the `exclude` list are never listed. The
 Steward gets one wake with a compact list: server, thread id, title, idle minutes and the last message cut to about 300 characters,
 with the threads whose last message asks something (`looksLikeAsk`, so "say go and I'll start it" counts) marked `[ASKING]` and
 first, and wait-closings ("holding until…", "waiting for…", "I'll adapt once…", "no reply needed while…") marked
@@ -302,15 +302,21 @@ multi-hour stall is not silent after the first wake. One digest per pass. It goe
 snoozed, or the Steward records a hold naming it. When `threads.steward` changes, every open idle finding is re-queued once to
 the new Steward. A new message makes a new finding. It calls no model: the selection is plain code (`selectIdleThreads`).
 
+The wake tells the Steward to handle every listed thread, whoever started it: no thread is hands-off because it is the operator's own. When the
+next action is clear and inside the decision rights, the Steward moves the thread forward. When a decision is pending, it files that decision
+on the operator's queue with `ask`, routed back to the thread when the pick is simple. When the thread is finished, it settles it. It leaves a
+thread untouched only when the thread already has an open queue item or a hold, is running, or is a child whose parent is working. The text is
+built in (`idleThreadsWake`, `src/core/messages.ts`); it is not a ruling and needs no decision-rights entry.
+
 ```json
-{ "sweep": { "idleParents": { "enabled": true, "intervalMinutes": 15, "thresholdMinutes": 30, "maxThreads": 10, "repeatHours": 2 } } }
+{ "sweep": { "idleParents": { "enabled": true, "intervalMinutes": 15, "thresholdMinutes": 5, "maxThreads": 10, "repeatHours": 2 } } }
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | `false` turns the check off. |
 | `intervalMinutes` | `15` | A positive number of minutes between runs. The housekeeping tick is once a minute, so a run starts within a minute of when it is due. |
-| `thresholdMinutes` | `30` | A positive number of minutes a thread must have been idle. |
+| `thresholdMinutes` | `5` | A positive number of minutes a thread must have been idle. The default was 30 before the Steward was told to move every idle thread forward; raise it to make the check quieter. |
 | `maxThreads` | `10` | The most NEW threads one wake lists, asks first, then the longest idle; the rest are listed on a later run. A thread already reported never counts as new. |
 | `repeatHours` | `2` | Hours between re-notifies of the same still-open idle finding (same last-message key). |
 
