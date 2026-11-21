@@ -11,6 +11,11 @@ export type AlarmText = { title: string; summary: string };
 // ---- alarms: the daemon's own failures ----------------------------------------------------------------------
 
 export const alarms = {
+	modelQuota: (role: string): AlarmText => ({
+		title: `Chamberlain is holding ${role} wakes`,
+		summary:
+			"The preferred provider exhausted its quota and no approved backup is eligible. Queued work retries automatically.",
+	}),
 	recoverBreaker: (kind: string, count: number, windowMinutes: number): AlarmText => ({
 		title: `chamberlain: ${count} "${kind}" failures in ${windowMinutes} minutes`,
 		summary: "Automatic retries are stopped until ten quiet minutes pass.",

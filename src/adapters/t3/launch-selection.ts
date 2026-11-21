@@ -1,6 +1,6 @@
 /** Initial launches use central selections too, while T3's tool retains its own launch/permission contract. */
 import type { LaunchRole, ThreadModel } from "../../core/llm/selection.ts";
-import { configuredThreadModel, modelConnection, validateThreadModel } from "./model.ts";
+import { configuredThreadModel, modelConnection, resolveThreadModel } from "./model.ts";
 import { readModelCatalog } from "./model-catalog.ts";
 import { openWithin } from "./ping.ts";
 import { connect } from "./rpc.ts";
@@ -16,7 +16,7 @@ export async function launchSelectionFor(conf: string, c: ThreadModel, where: st
 	const rpc = await openWithin(connect, origin, token, 15_000);
 	try {
 		const catalog = await readModelCatalog(rpc);
-		validateThreadModel(c, catalog, desk);
+		const selected = resolveThreadModel(c, catalog, desk);
 		const environmentId = catalog.environment?.environmentId;
 		if (typeof environmentId !== "string" || !environmentId.trim())
 			throw Error("configured server identity unavailable; nothing launched");
@@ -25,9 +25,9 @@ export async function launchSelectionFor(conf: string, c: ThreadModel, where: st
 			launch: {
 				environmentId,
 				modelSelection: {
-					instanceId: c.instanceId,
-					model: c.model,
-					options: Object.entries(c.options).map(([id, value]) => ({ id, value })),
+					instanceId: selected.instanceId,
+					model: selected.model,
+					options: Object.entries(selected.options).map(([id, value]) => ({ id, value })),
 				},
 			},
 		};

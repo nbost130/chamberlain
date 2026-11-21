@@ -7,7 +7,8 @@ export const isLaunchRole = (role: string): role is LaunchRole => LAUNCH_ROLES.s
 const MODEL_ROLES = [...LAUNCH_ROLES, "classifier", "mailDriver", "mailEscalate", "mailTop"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 type Options = Record<string, string | boolean>;
-export type ThreadModel = { adapter: "t3"; server: string; instanceId: string; model: string; options: Options };
+type Candidate = { instanceId: string; model: string; options: Options };
+export type ThreadModel = Candidate & { adapter: "t3"; server: string; fallbacks?: Candidate[] };
 export type ReaderModel = {
 	adapter: "claude-cli" | "openai-chat";
 	model: string;
@@ -125,10 +126,25 @@ export function parseModels(raw: unknown): ModelSelections {
 			"effort",
 			"timeoutMs",
 			"accountingUsdPerCall",
+			"fallbacks",
 		]);
 		const pinned = isLaunchRole(role);
 		if (pinned) {
-			result[role as ModelRole] = threadModel(o, where);
+			const { fallbacks, ...primary } = o;
+			const selection = threadModel(primary, where);
+			if (fallbacks !== undefined) {
+				if (!Array.isArray(fallbacks)) throw Error(`${where}.fallbacks: expected an array`);
+				selection.fallbacks = fallbacks.map((raw, index) => {
+					const path = `${where}.fallbacks[${index}]`;
+					const entry = object(raw, path, ["instanceId", "model", "options"]);
+					return {
+						instanceId: required(entry, "instanceId", path),
+						model: required(entry, "model", path),
+						options: options(entry.options, path),
+					};
+				});
+			}
+			result[role] = selection;
 		} else result[role as ModelRole] = reader(o, where);
 	}
 	return result;

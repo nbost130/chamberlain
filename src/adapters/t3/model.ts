@@ -2,16 +2,19 @@
 import { cfg, readSecret, thread } from "../../core/config/layout.ts";
 import type { ThreadKey } from "../../core/config/layout-schema.ts";
 import { readServers } from "../../core/config/servers.ts";
+import { QuotaExhausted } from "../../core/delivery/deliver.ts";
 import { type LaunchRole, parseModels, type ThreadModel } from "../../core/llm/selection.ts";
 import { withoutToken } from "../../core/ops/capability.ts";
 import { within } from "../../core/within.ts";
 import { type Catalog, readModelCatalog } from "./model-catalog.ts";
+import { modelQuotaExhausted } from "./model-quota.ts";
 import { activeRunOf, createRpcPing, openWithin, type PingResult } from "./ping.ts";
 import { connect, type Rpc } from "./rpc.ts";
 import { verifyWebhook } from "./webhook-binding.ts";
 
 type Projection = {
 	thread?: {
+		projectId?: string;
 		modelSelection?: { instanceId: string; model: string; options?: { id: string; value: string | boolean }[] };
 	};
 	runs?: { id?: string; status?: string }[];
@@ -26,12 +29,6 @@ export function validateThreadModel(c: ThreadModel, catalog: Catalog, desk = fal
 		throw Error("configured provider needs authentication or repair");
 	if (desk && provider.driver !== "claudeAgent")
 		throw Error("Alert Desk requires an adapter enforcing its tool allowlist; this provider is unsupported");
-	if (
-		provider.usageLimits?.windows.some(
-			(w) => w.usedPercent >= 100 && (!w.resetsAt || Date.parse(w.resetsAt) > Date.now()),
-		)
-	)
-		throw Error("configured provider quota is exhausted");
 	const model = provider.models.find((m) => m.slug === c.model);
 	if (!model) throw Error("configured model is not in the provider catalog");
 	for (const [id, value] of Object.entries(c.options)) {
@@ -39,6 +36,36 @@ export function validateThreadModel(c: ThreadModel, catalog: Catalog, desk = fal
 		if (!d || (d.type === "boolean" ? typeof value !== "boolean" : !d.options?.some((o) => o.id === value)))
 			throw Error(`configured model does not support option ${id}`);
 	}
+	if (modelQuotaExhausted(provider, c.model)) throw new QuotaExhausted("configured provider quota is exhausted");
+}
+
+export function resolveThreadModel(
+	selection: ThreadModel,
+	catalog: Catalog,
+	desk = false,
+	projectId?: string,
+): ThreadModel {
+	const { fallbacks = [], ...primary } = selection;
+	const overrides = projectId ? catalog.settings?.projectSettingsOverrides?.[projectId]?.providerInstances : undefined;
+	if (overrides?.[primary.instanceId]?.enabled === false)
+		throw Error("configured provider is disabled for this project");
+	try {
+		validateThreadModel(primary, catalog, desk);
+		return primary;
+	} catch (error) {
+		if (!(error instanceof QuotaExhausted) || !fallbacks.length) throw error;
+	}
+	for (const option of fallbacks) {
+		if (overrides?.[option.instanceId]?.enabled === false) continue;
+		const candidate = { ...primary, ...option };
+		try {
+			validateThreadModel(candidate, catalog, desk);
+			return candidate;
+		} catch {
+			// Rejected candidates cannot receive work. Continue only within the approved list.
+		}
+	}
+	throw new QuotaExhausted("configured provider quota is exhausted and no approved backup is eligible");
 }
 
 function matches(p: Projection, c: ThreadModel): boolean {
@@ -51,13 +78,18 @@ function matches(p: Projection, c: ThreadModel): boolean {
 	);
 }
 
-async function applyThreadModel(rpc: Client, threadId: string, c: ThreadModel, desk = false): Promise<void> {
+async function applyThreadModel(
+	rpc: Client,
+	threadId: string,
+	configured: ThreadModel,
+	desk: boolean,
+): Promise<ThreadModel> {
 	const request = (method: string, params: unknown) => within(rpc.request(method, params), 15_000, "model selection");
-	const catalog = await readModelCatalog(rpc);
-	validateThreadModel(c, catalog, desk);
 	const read = async () => (await request("orchestration.getThreadProjection", { threadId })) as Projection;
+	const catalog = await readModelCatalog(rpc);
 	const before = await read();
-	if (matches(before, c)) return;
+	const c = resolveThreadModel(configured, catalog, desk, before.thread?.projectId);
+	if (matches(before, c)) return c;
 	if (activeRunOf(before.runs)) throw Error("thread is busy; model switch deferred until it is idle");
 	await request("orchestration.dispatchCommand", {
 		type: "thread.model-selection.set",
@@ -70,6 +102,7 @@ async function applyThreadModel(rpc: Client, threadId: string, c: ThreadModel, d
 		},
 	});
 	if (!matches(await read(), c)) throw Error("thread model selection was not confirmed");
+	return c;
 }
 
 /** A configured server uses only its existing operate-token grant; no new credential store. */
@@ -103,14 +136,15 @@ export function configuredThreadModel(conf: string, role: LaunchRole): ThreadMod
 }
 
 export async function configureThread(conf: string, role: ThreadKey, targetThread?: string, targetUrl?: string) {
-	const c = configuredThreadModel(conf, role);
+	const configured = configuredThreadModel(conf, role);
 	const id = targetThread ?? thread(conf, role);
 	if (!id) throw Error(`threads.${role}: no thread configured`);
-	const { origin, token, operateTokenFile } = modelConnection(conf, c.server);
+	const { origin, token, operateTokenFile } = modelConnection(conf, configured.server);
 	const rpc = await openWithin(connect, origin, token, 15_000);
+	let c: ThreadModel;
 	try {
 		if (targetUrl !== undefined) await verifyWebhook(rpc, origin, id, targetUrl);
-		await applyThreadModel(rpc, id, c, role === "desk");
+		c = await applyThreadModel(rpc, id, configured, role === "desk");
 	} finally {
 		rpc.ws.close();
 	}

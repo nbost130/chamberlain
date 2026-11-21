@@ -18,12 +18,14 @@ export function modelServer() {
 		driver: "claudeAgent",
 		instanceId: "other-provider",
 		busy: false,
+		startDuringCatalog: false,
 		failSend: false,
 		error: "send failed",
 		unavailable: false,
 		ignoreSelection: false,
 		unauthenticated: false,
 		exhausted: false,
+		backupAvailable: false,
 		legacyCatalogHangs: false,
 		malformedCatalog: false,
 		emptyCatalog: false,
@@ -61,13 +63,22 @@ export function modelServer() {
 						environment: { environmentId: state.environmentId },
 						providers: [
 							{
+								instanceId: "backup",
+								driver: "alternative",
+								enabled: state.backupAvailable,
+								installed: true,
+								models: [{ slug: "backup-model" }],
+							},
+							{
 								instanceId: state.instanceId,
 								driver: state.driver,
 								enabled: !state.unavailable,
 								installed: true,
 								auth: { status: state.unauthenticated ? "unauthenticated" : "authenticated" },
 								usageLimits: {
-									windows: [{ usedPercent: state.exhausted ? 100 : 0, resetsAt: "2099-01-01T00:00:00Z" }],
+									windows: [
+										{ id: "seven_day", usedPercent: state.exhausted ? 100 : 0, resetsAt: "2099-01-01T00:00:00Z" },
+									],
 								},
 								models: [
 									{
@@ -81,6 +92,7 @@ export function modelServer() {
 						],
 					};
 				if (r.tag === "subscribeServerConfig" && !state.emptyCatalog) {
+					if (state.startDuringCatalog) state.busy = true;
 					const snapshot = state.malformedCatalog
 						? { type: "snapshot", config: {} }
 						: { type: "snapshot", config: value };

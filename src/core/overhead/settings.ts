@@ -10,7 +10,8 @@ import { readOverheadState } from "./trigger.ts";
 /** The Steward's model when `models.steward` is a T3 selection: the model whose rates price the Steward's tokens. */
 function stewardModelOf(models: unknown): string | undefined {
 	const steward = parseModels(models).steward;
-	return steward?.adapter === "t3" ? steward.model : undefined;
+	// Usage rows carry no executed model. Multiple approved choices cannot share a guessed price.
+	return steward?.adapter === "t3" && !steward.fallbacks?.length ? steward.model : undefined;
 }
 
 /** The section with its defaults filled in (validated against `models.steward`), and the Steward's model when there is one. */
