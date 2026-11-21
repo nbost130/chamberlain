@@ -1,6 +1,6 @@
 ---
 phase: climbing
-progress: 8/10
+progress: 9/11
 ---
 
 # Provider-independent model selection
@@ -25,6 +25,8 @@ The existing config document owns provider, model and supported options for ever
 Changing the configured provider restores Decisions without reconfiguring unrelated features or requiring Claude.
 
 ## Criteria
+
+- [x] ISC-11: A confirmed quota limit selects the first usable operator-approved backup for the same role and environment. A busy switch or exhausted list preserves the delivery for retry. Evidence: `src/adapters/t3/quota-failover.test.ts` replays 67 queued wakes across restart, including Desk confinement, quota recovery and one outage alarm.
 
 - [x] ISC-1: Every model-dependent surface, including shipped agent launch templates, is inventoried. Falsifier: an unlisted call site in source or hidden setup templates.
 - [x] ISC-2: Central configuration owns all supported model selections; unsupported Desk combinations are refused. Falsifier: a runtime provider/model default, an unsupported Desk send, or a webhook destination not verified against the selected server and thread.
@@ -57,6 +59,7 @@ No new keys written into the live config before the pinned daemon supports them.
 | ISC-8 | manual | Source and setup audit with independent review | rg source audit and Sol review |
 | ISC-9 | manual | Release revision and service/config compatibility read-back | Normal release/cutover probes |
 | ISC-10 | bun-test | Lost-outcome, restart, stale-thread, clock-jump, retention and fail-closed scenarios, plus launch idempotence against the fake T3 | bun test src/core/overhead src/adapters/t3/investigator.test.ts |
+| ISC-11 | bun-test | Role-specific quota pools, approved backup order, project restrictions, two outages and webhook deliveries on the active generation across restart | bun test src/adapters/t3/model-quota.test.ts src/adapters/t3/quota-failover.test.ts |
 
 ## Decisions
 

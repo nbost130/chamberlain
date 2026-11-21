@@ -1,5 +1,5 @@
 import type { ThreadKey } from "../../core/config/layout-schema.ts";
-import type { WakeTransport } from "../../core/delivery/deliver.ts";
+import { QuotaExhausted, type WakeTransport } from "../../core/delivery/deliver.ts";
 import { configureThread, deskHasGatherer } from "./model.ts";
 
 /**
@@ -14,7 +14,8 @@ export function modelWake(wake: WakeTransport, conf: string, role: ThreadKey): W
 			try {
 				if (!target) return false;
 				await configureThread(conf, role, threadId, target);
-			} catch {
+			} catch (error) {
+				if (error instanceof QuotaExhausted) throw error;
 				return false;
 			}
 			return true;

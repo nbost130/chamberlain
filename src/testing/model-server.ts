@@ -24,6 +24,7 @@ export function modelServer() {
 		ignoreSelection: false,
 		unauthenticated: false,
 		exhausted: false,
+		backupAvailable: false,
 		legacyCatalogHangs: false,
 		malformedCatalog: false,
 		emptyCatalog: false,
@@ -60,6 +61,13 @@ export function modelServer() {
 					value = {
 						environment: { environmentId: state.environmentId },
 						providers: [
+							{
+								instanceId: "backup",
+								driver: "alternative",
+								enabled: state.backupAvailable,
+								installed: true,
+								models: [{ slug: "backup-model" }],
+							},
 							{
 								instanceId: state.instanceId,
 								driver: state.driver,

@@ -5,6 +5,9 @@ import { firstValue } from "./rpc-first.ts";
 type Descriptor = { id: string; type: string; options?: { id: string }[] };
 export type Catalog = {
 	environment?: { environmentId?: string };
+	settings?: {
+		projectSettingsOverrides?: Record<string, { providerInstances?: Record<string, { enabled?: boolean }> }>;
+	};
 	providers: {
 		instanceId: string;
 		driver?: string;
@@ -13,7 +16,11 @@ export type Catalog = {
 		availability?: string;
 		auth?: { status?: string };
 		status?: string;
-		usageLimits?: { windows: { usedPercent: number; resetsAt?: string }[] };
+		usageLimits?: {
+			checkedAt?: string;
+			unavailable?: unknown;
+			windows: { id?: string; usedPercent: number; resetsAt?: string }[];
+		};
 		models: { slug: string; capabilities?: { optionDescriptors?: Descriptor[] } | null }[];
 	}[];
 };

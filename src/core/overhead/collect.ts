@@ -156,7 +156,7 @@ async function readFleet(d: CollectDeps, r: Notes) {
 
 /** The Steward's price, or the reason it has none. */
 function stewardPrice(d: CollectDeps, unavailable: string[]) {
-	if (!d.model) unavailable.push("Steward spend: no models.steward in config.json, so its tokens cannot be priced");
+	if (!d.model) unavailable.push("Steward spend: no models.steward selection with a single attributable model price");
 	else if (!priceOf(d.cfg.prices, d.model))
 		unavailable.push(`Steward spend: no price for "${d.model}" in overhead.prices`);
 	return d.model ? priceOf(d.cfg.prices, d.model) : undefined;
