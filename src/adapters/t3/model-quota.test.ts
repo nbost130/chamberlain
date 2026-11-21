@@ -25,6 +25,10 @@ test("usage windows apply only to the selected model's available pools", () => {
 	expect(modelQuotaExhausted(api, "gpt-6", now + 3_600_000)).toBe(false);
 });
 test("a backup disabled in the destination project is skipped", () => {
+	const model = "claude-opus-5-5";
+	expect(modelQuotaExhausted(provider("claudeAgent", ["monthly_spend", "seven_day_sonnet"]), model, now)).toBe(false);
+	expect(modelQuotaExhausted(provider("claudeAgent", ["seven_day_opus"]), model, now)).toBe(true);
+	expect(modelQuotaExhausted(provider("claudeAgent", ["seven_day"]), model, now)).toBe(true);
 	const providers = ["primary", "first", "second"].map((id) => provider(id, []));
 	providers[0]!.usageLimits = { windows: [{ id: "weekly", usedPercent: 100, resetsAt: "2099-01-01T00:00:00Z" }] };
 	const catalog = {

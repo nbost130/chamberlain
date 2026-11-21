@@ -48,9 +48,11 @@ test("Steward drains the same 67 wakes after quota exhaustion and relay restart"
 		server.state.backupAvailable = true;
 		expect((await launchSelection(server.conf, "steward")).launch.modelSelection.instanceId).toBe("backup");
 		await expect(launchSelection(server.conf, "desk")).rejects.toThrow();
-		server.state.busy = true;
+		server.state.startDuringCatalog = true;
 		await restarted.pass();
 		expect(server.posts).toHaveLength(0);
+		expect(server.selection().instanceId).toBe("old");
+		server.state.startDuringCatalog = false;
 		server.state.busy = false;
 		await wake.prepare!(id, url);
 		// Restart between preparation and dispatch with the active generation already on the backup.

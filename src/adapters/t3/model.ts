@@ -86,8 +86,9 @@ async function applyThreadModel(
 ): Promise<ThreadModel> {
 	const request = (method: string, params: unknown) => within(rpc.request(method, params), 15_000, "model selection");
 	const read = async () => (await request("orchestration.getThreadProjection", { threadId })) as Projection;
+	const catalog = await readModelCatalog(rpc);
 	const before = await read();
-	const c = resolveThreadModel(configured, await readModelCatalog(rpc), desk, before.thread?.projectId);
+	const c = resolveThreadModel(configured, catalog, desk, before.thread?.projectId);
 	if (matches(before, c)) return c;
 	if (activeRunOf(before.runs)) throw Error("thread is busy; model switch deferred until it is idle");
 	await request("orchestration.dispatchCommand", {

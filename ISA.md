@@ -47,6 +47,8 @@ No new keys written into the live config before the pinned daemon supports them.
 
 ## Test Strategy
 
+ISC-11 includes a turn starting during catalog discovery and a Claude model with only a different model's quota exhausted. The relay must keep the running turn and the selected model, respectively.
+
 | ISC | type | method | tool |
 | --- | --- | --- | --- |
 | ISC-1 | manual | Compare source call sites with inventory | Source audit |

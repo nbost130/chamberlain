@@ -11,6 +11,14 @@ export function modelQuotaExhausted(provider: Catalog["providers"][number], mode
 			window.usedPercent >= 100 &&
 			(window.resetsAt ? Date.parse(window.resetsAt) > now : age >= 0 && age <= 15 * 60_000),
 	);
+	if (provider.driver === "claudeAgent") {
+		const slug = model.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+		return full.some(({ id }) => {
+			if (id === "five_hour" || id === "seven_day") return true;
+			const scope = id?.startsWith("seven_day_") && id.slice("seven_day_".length);
+			return Boolean(scope && `_${slug}_`.includes(`_${scope}_`));
+		});
+	}
 	if (provider.driver === "cursor") {
 		const apiFull = full.some((window) => window.id === "apiPercentUsed");
 		return (
