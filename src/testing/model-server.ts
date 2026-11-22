@@ -8,7 +8,7 @@ const dispatchType = messageCommand({ threadId: "fixture", text: "", identity: "
 export type BuilderShellThread = {
 	id: string;
 	projectId: string;
-	status: string;
+	status?: string | null;
 	pendingRuntimeRequest?: { id: string; blocking: boolean };
 	pendingBackgroundTasks?: { taskId: string; kind: string }[];
 	archivedAt?: string;

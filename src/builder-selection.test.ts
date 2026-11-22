@@ -184,6 +184,14 @@ test("Sonnet quota falls back to Grok on Mac then Omar, and launch reservations 
 		},
 	});
 	const macPlan = await reserve("mac-job");
+	const denied = await selection("--request-id", "mac-job", "--t3-environment", omar.state.environmentId!);
+	expect(denied.code).toBe(1);
+	expect(denied.stdout).toBe("");
+	expect(denied.stderr).toContain("reservation retained");
+	expect(plan(await selection("--request-id", "mac-job", "--t3-environment", mac.state.environmentId!))).toEqual({
+		...macPlan,
+		reservation: { ...macPlan.reservation, acquired: false },
+	});
 	const omarPlan = await reserve("omar-job");
 	expect(macPlan).toMatchObject({
 		server: mac.name,

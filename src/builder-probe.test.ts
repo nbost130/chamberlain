@@ -38,6 +38,8 @@ test("builder probe counts work on the whole host and supplies the exact eligibl
 	const projectId = s.project.id;
 	s.state.builderShell!.threads = [
 		{ id: "resident", status: "running", projectId },
+		{ id: "missing-status", projectId },
+		{ id: "null-status", status: null, projectId },
 		{ id: "direct", status: "running", projectId },
 		{ id: "other-project", status: "queued", projectId: "different" },
 		{ id: "human", status: "waiting", projectId },
@@ -56,6 +58,8 @@ test("builder probe counts work on the whole host and supplies the exact eligibl
 		observedThreadIds: [
 			"archived-separately",
 			"resident",
+			"missing-status",
+			"null-status",
 			"direct",
 			"other-project",
 			"human",

@@ -60,7 +60,7 @@ function threadIds(snapshot: StreamValue["snapshot"], residents: readonly string
 		if (!text(thread?.id)) return;
 		observed.add(thread.id);
 		if (thread.archivedAt || residentIds.has(thread.id)) continue;
-		const status = thread.status;
+		const status = thread.status ?? "idle";
 		if (!text(status) || !KNOWN.has(status)) return;
 		if (activeThread(thread, status)) active.add(thread.id);
 	}

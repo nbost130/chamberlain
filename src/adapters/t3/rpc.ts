@@ -4,7 +4,7 @@ export type ShellThreadRecord = {
 	id?: string;
 	projectId?: string;
 	title?: string;
-	status?: string;
+	status?: string | null;
 	archivedAt?: string | null;
 	settledAt?: string | null;
 	snoozedUntil?: string | null;

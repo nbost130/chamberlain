@@ -72,7 +72,19 @@ function decide(
 	return { scope: scopeOf(probe), plan: { server: route.server, adapter: probe.adapter, launch }, explanation };
 }
 
-export function reservedPlan(reservation: BuilderReservation<BuilderPlan>, acquired: boolean) {
+export function reservedPlan(
+	reservation: BuilderReservation<BuilderPlan>,
+	acquired: boolean,
+	t3Environments?: readonly string[],
+) {
+	const { adapter, launch } = reservation.plan;
+	if (
+		reservation.status === "pending" &&
+		adapter === "t3" &&
+		t3Environments &&
+		(typeof launch.environmentId !== "string" || !t3Environments.includes(launch.environmentId))
+	)
+		throw Error("reserved environment is outside the launch session’s eligible environments; reservation retained");
 	const { requestId, attemptId, status, threadId } = reservation;
 	return { ...reservation.plan, reservation: { requestId, attemptId, status, acquired, threadId } };
 }
@@ -105,5 +117,5 @@ export async function planBuilder(request: BuilderRequest) {
 		observed,
 		snapshotStartedAt: startedAt,
 	});
-	return reservedPlan(reservation, acquired);
+	return reservedPlan(reservation, acquired, request.t3Environments);
 }

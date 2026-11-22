@@ -89,7 +89,7 @@ async function selection(role: LaunchRole, args: string[]) {
 	const binding = JSON.stringify([role, project]);
 	const reservations = new BuilderReservations<BuilderPlan>(STATE);
 	const existing = requestId && reservations.get(requestId, binding);
-	if (existing && existing.status !== "released") return reservedPlan(existing, false);
+	if (existing && existing.status !== "released") return reservedPlan(existing, false, t3Environments);
 	const config = readConfigFile(CONF);
 	const models = parseModels(config?.models);
 	const selected = models[role];
