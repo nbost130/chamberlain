@@ -108,7 +108,8 @@ test("every shipped thread-launch template requires central preflight and exact 
 		expect(text).not.toContain("orchestrator_capabilities");
 		expect(text).not.toContain("no model");
 		expect(text).not.toContain("Raise its effort");
-		expect(text).toContain("no alternate machine or model");
+		if (role === "butler") expect(text).toContain("reservation.acquired");
+		else expect(text).toContain("no alternate machine or model");
 	}
 	for (const [path, role] of [
 		["README.md", "steward"],
@@ -120,7 +121,8 @@ test("every shipped thread-launch template requires central preflight and exact 
 		expect(text).toContain(`models selection ${role}`);
 		expect(text).toContain("launch.environmentId");
 		expect(text).toContain("launch.modelSelection");
-		expect(text).toContain("no alternate machine or model");
+		if (role === "worker") expect(text).toContain("models confirm");
+		else expect(text).toContain("no alternate machine or model");
 		expect(text).not.toContain("ToolSearch");
 	}
 	const handoff = await Bun.file(new URL("../../../.claude/commands/steward-handoff.md", import.meta.url)).text();

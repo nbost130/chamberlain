@@ -19,7 +19,8 @@ export class ReaderError extends Error {
 export function selectedReader(conf: string, role: ModelRole): ReaderModel {
 	const selected = parseModels(cfg(conf, "models"))[role];
 	if (!selected) throw Error(`models.${role}: configure an explicit reader model`);
-	if (selected.adapter === "t3") throw Error(`models.${role}: requires an isolated reader, not an agent thread`);
+	if (selected.adapter === "t3" || "profile" in selected)
+		throw Error(`models.${role}: requires an isolated reader, not an agent thread`);
 	return selected;
 }
 

@@ -1,6 +1,7 @@
 /** The config document's schema: the files and directories, the scalar and section keys, and the checks a config.json must pass. */
 
-import { parseModels } from "../llm/selection.ts";
+import { parseBuilderProfiles } from "../llm/builder-routing.ts";
+import { type ModelSelections, parseModels } from "../llm/selection.ts";
 import { parseOverhead } from "../overhead/config.ts";
 import { configDir } from "../state-dir.ts";
 import { SchemaTooNewError } from "../store/schema.ts";
@@ -68,6 +69,7 @@ export const SECTIONS = [
 	"judge",
 	"mail",
 	"models",
+	"builderProfiles",
 	"overhead",
 	"activeHold",
 ] as const;
@@ -157,14 +159,34 @@ function checkThreads(t: unknown): void {
 	}
 }
 
+function checkBuilderProfiles(raw: Record<string, unknown>, models: ModelSelections): void {
+	const profiles = parseBuilderProfiles(raw.builderProfiles);
+	for (const role of ["worker", "butler"] as const) {
+		const selection = models[role];
+		if (selection && "profile" in selection && !profiles.has(selection.profile))
+			throw Error(`models.${role}: profile must name a configured builder profile`);
+	}
+	if (Array.isArray(raw.servers)) {
+		const servers = new Set(raw.servers.filter(isObject).map((server) => server.name));
+		for (const [name, profile] of profiles) {
+			for (const [index, { server }] of profile.hosts.entries()) {
+				if (!servers.has(server))
+					throw Error(`builderProfiles.${name}.hosts[${index}]: server must name a configured server`);
+			}
+		}
+	}
+}
+
 /** Pure: a parsed config.json checked, or the first thing wrong with it. A key this build does not know is refused, never ignored. */
 export function parseConfigDoc(raw: unknown): Record<string, unknown> {
 	if (!isObject(raw)) throw new ConfigFileError("config.json: expected a JSON object");
 	checkSchemaVersion(raw.schemaVersion);
 	for (const k of Object.keys(raw)) checkKey(raw, k);
 	checkThreads(raw.threads);
-	const steward = parseModels(raw.models).steward;
+	const models = parseModels(raw.models);
 	try {
+		checkBuilderProfiles(raw, models);
+		const steward = models.steward;
 		parseOverhead(raw.overhead, steward?.adapter === "t3" ? steward.model : undefined);
 	} catch (e) {
 		throw new ConfigFileError((e as Error).message);

@@ -2,12 +2,13 @@
 /** A thread as the shell stream carries it: the fields the adapter reads, and whatever else T3 sends. */
 export type ShellThreadRecord = {
 	id?: string;
+	projectId?: string;
 	title?: string;
 	status?: string;
 	archivedAt?: string | null;
 	settledAt?: string | null;
 	snoozedUntil?: string | null;
-	pendingRuntimeRequest?: { id?: unknown } | null;
+	pendingRuntimeRequest?: { id?: unknown; blocking?: boolean } | null;
 	lineage?: { parentThreadId?: string | null } | null;
 	[field: string]: unknown;
 };
@@ -20,6 +21,9 @@ export type StreamValue = {
 	snapshot: {
 		snapshotSequence?: number;
 		threads?: ShellThreadRecord[];
+		archivedThreads?: ShellThreadRecord[];
+		projects?: unknown[];
+		olderSettled?: unknown;
 		partial?: boolean;
 		complete?: boolean;
 		truncated?: boolean;
@@ -27,6 +31,12 @@ export type StreamValue = {
 		nextCursor?: unknown;
 	};
 };
+export const isPartialShell = (s: StreamValue["snapshot"]): boolean =>
+	s.partial === true ||
+	s.complete === false ||
+	s.truncated === true ||
+	s.hasMore === true ||
+	(s.nextCursor !== undefined && s.nextCursor !== null);
 /** A message from the server: a chunk of stream values, the end of a call, or a protocol failure. */
 type RpcMessage = {
 	_tag?: string;
@@ -133,15 +143,7 @@ export function shellSnapshot(rpc: Rpc, ms = 15000): Promise<{ threads: ShellThr
 				if (v?.kind === "snapshot" && Array.isArray(threads)) {
 					clearTimeout(timer);
 					// A snapshot that says it is not whole is refused, never read as "these are all the threads".
-					const s = v.snapshot;
-					if (
-						s.partial === true ||
-						s.complete === false ||
-						s.truncated === true ||
-						s.hasMore === true ||
-						(s.nextCursor !== undefined && s.nextCursor !== null)
-					)
-						reject(Error("partial snapshot"));
+					if (isPartialShell(v.snapshot)) reject(Error("partial snapshot"));
 					else resolve({ threads });
 					rpc.ws.close();
 				}

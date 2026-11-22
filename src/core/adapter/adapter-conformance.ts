@@ -20,6 +20,7 @@ type CapabilityMethod = {
 	snapshot: "snapshot";
 	alertDesk: "alertDesk";
 	handoffInstruction: "handoffInstruction";
+	probeBuilder: "probeBuilder";
 	threadLinks: "threadLinks";
 };
 
@@ -49,6 +50,7 @@ function capabilityProblems(a: Adapter): string[] {
 		snapshot: a.snapshot,
 		alertDesk: a.alertDesk,
 		handoffInstruction: a.handoffInstruction,
+		probeBuilder: a.probeBuilder,
 		threadLinks: a.threadLinks,
 	};
 	for (const [cap, impl] of Object.entries(methods)) {

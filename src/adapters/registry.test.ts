@@ -24,6 +24,7 @@ describe("the T3 adapter", () => {
 			"stewardProbe",
 			"compact",
 			"snapshot",
+			"probeBuilder",
 		] as const)
 			expect(has(a, cap)).toBe(true);
 	});

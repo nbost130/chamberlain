@@ -53,7 +53,7 @@ const ABOUT: Record<CommandName, string> = {
 	ask: "put one question on the decision queue ('<json>' or - for stdin)",
 	note: "a thread's report to the Steward, held for its next idle moment: --from <title> [--thread <id>] [--server <name>] '<text>' (or - for stdin)",
 	decisions: "decisions repost: post the pinned Decisions view again in its thread (the view key only; no question)",
-	models: "models import <server> [--dry-run] | selection <role>: central model selections",
+	models: "models import | selection <role> | confirm | release: model selection and builder placement",
 	afk: "away mode and the held ledger: enter|status|hold|held|note|close|close-card|brief|exit",
 	decided: "log a self-answer, or list the last ones",
 	ruling: "propose a ruling, record one stated in chat, or list them",

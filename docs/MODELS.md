@@ -24,17 +24,66 @@ Use only option IDs and values that the selected model advertises; omit unsuppor
 
 Model preparation and import read T3's authenticated configuration-stream snapshot. They do not wait for the full configuration endpoint's unrelated remote-network discovery or keep a second catalog on disk. Missing or malformed snapshots refuse execution.
 
-For an existing thread, preflight also checks the project's provider overrides. For a new thread, the launch tool validates the destination project after server-level preflight. Cursor Grok and Composer can use either Cursor quota pool. A full pool only triggers failover when the model has exhausted its applicable pools. A usage window without a reset time requires a sample from the past 15 minutes. With Steward backups configured, the overhead report marks model-priced spend unavailable because the usage ledger does not record which model executed each turn.
+For an existing thread, preflight also checks the project's provider overrides. For a new pinned thread, the launch tool validates the destination project after server-level preflight. Cursor Grok and Composer can use either Cursor quota pool. A full pool only triggers failover when the model has exhausted its applicable pools. A usage window without a reset time requires a sample from the past 15 minutes. With Steward backups configured, the overhead report marks model-priced spend unavailable because the usage ledger does not record which model executed each turn.
 
 Failover happens before dispatch. Existing relay retry and receipt rules still cover a delivery interrupted after its webhook accepted it. The same delivery ID can appear twice in that crash window. A confirmed quota limit cannot by itself prove that a partially executed turn is safe to replay.
 
-Every shipped initial setup and launch prompt runs `chamberlain models selection <role>` before launching. Roles are `steward`, `decisions`, `desk`, `butler` and `worker`. This read-only preflight returns `launch.environmentId` from the authenticated configured server and the exact `launch.modelSelection`, including options. The prompts pass these fields unchanged to T3's existing launch tool, preserving its permission contract, and resolve the project on that environment. A failed preflight or unavailable destination retains the current work without launching. Butler and sweep workers require their own explicit selections; neither inherits a model, falls back to another machine or escalates effort automatically. Desk preflight also rejects unsupported drivers and gatherers; install its hook before the first turn. The existing import migrates pinned threads only; it does not invent Butler or worker selections. Replace previously copied setup, command and sweep templates when upgrading.
+Every shipped initial setup and launch prompt runs `chamberlain models selection <role>` before launching. Roles are `steward`, `decisions`, `desk`, `butler` and `worker`. For a pinned role this read-only preflight returns `launch.environmentId` from the authenticated configured server and the exact `launch.modelSelection`, including options. The prompts pass these fields unchanged to T3's existing launch tool, preserving its permission contract, and resolve the project on that environment. A failed preflight or unavailable destination retains the current work without launching. Butler and sweep workers accept a single-server pin or a shared builder profile. Desk preflight also rejects unsupported drivers and gatherers; install its hook before the first turn. The existing import migrates pinned threads only; it does not invent Butler or worker selections. Replace previously copied setup, command and sweep templates when upgrading.
 
 Before sending, Chamberlain confirms the thread's selection through T3. A busy thread cannot change provider. Decisions also binds the validated selection to the dispatch command. Steward, compaction and Alert Desk retain their existing bound webhook transport and single outbox relay. Chamberlain verifies the exact destination against the selected server's authenticated scheduled-task snapshot: an enabled, unblocked webhook bound to that same thread, using the server's own endpoint or its advertised relay URL. Unknown, mismatched, signed or unbound tasks hold work without spending an attempt. The relay pins that verified URL across preparation and sending; HTTP redirects are refused. T3 uses the bound thread's current model. Configuring a model does not retarget a webhook or grant additional tools.
 
 **Current Alert Desk limitation:** its command allowlist is enforced by a Claude Agent hook. T3's catalog does not advertise an equivalent enforcement capability for other drivers, so desk preparation rejects them. A configured external gatherer is also rejected: its agent definition would introduce a separate model-selection owner. Pending desk work stays queued without consuming delivery attempts. Any future support must enforce the same isolation and central selection within Chamberlain and its adapters; this release makes no upstream T3 changes.
 
 After release/cutover, preserve an existing installation with `chamberlain models import <server>` (from source: `bun src/models.ts import <server>`). Add `--dry-run` to inspect the import without writing any settings. It reads the configured pinned threads' actual T3 selections, validates them and imports missing roles through the existing locked configuration migration writer. Explicit settings, including null, win. A concurrent thread-ID change rejects the import. After import, change `config.json`; T3 thread settings are no longer a parallel selection source.
+
+## Builder placement at launch
+
+To let the Steward place Worker and Butler jobs across machines, put their approved host and model choices in one named profile. Existing single-server selections continue to work. Merge the following keys into the existing configuration, preserving the other roles. In this example the connected servers are named `mac` and `omar`. Replace the provider instance IDs and model IDs with values advertised on each server.
+
+```json
+{
+  "models": {
+    "worker": { "profile": "builders" },
+    "butler": { "profile": "builders" }
+  },
+  "builderProfiles": {
+    "builders": {
+      "hosts": [
+        {
+          "server": "mac",
+          "capacity": 2,
+          "candidates": [
+            { "instanceId": "claude", "model": "preferred-model" },
+            { "instanceId": "cursor", "model": "backup-model" }
+          ]
+        },
+        {
+          "server": "omar",
+          "capacity": 3,
+          "candidates": [{ "instanceId": "local", "model": "local-model" }]
+        }
+      ]
+    }
+  }
+}
+```
+
+Run these commands on the Steward host using its shared Chamberlain state directory. Preview a project by its exact name across hosts or by its host-local ID. The planner checks the authenticated environment, project workspace, provider availability, quota, project overrides and model options. For T3, the host needs its existing model selection operate grant and a read token with `orchestration:read` and `filesystem:read` for project and workspace checks. Set `servers[].builderReadTokenFile` to use a separate read credential, or grant these scopes to the configured read token. Keep token values in secret files.
+
+```sh
+chamberlain models selection worker --project MyProject --explain
+chamberlain models selection worker --project MyProject --request-id "$work_request_id"
+```
+
+T3 can place a thread a user opens interactively in a shared project. For agent-created work, omitting the destination starts the thread on the calling agent’s machine. The Steward sets `t3_thread_launch.environmentId` to the exact `launch.environmentId` returned by Chamberlain. For a delegated child, the corresponding field is `delegate_task.target.environmentId`. Placement happens when the thread is created.
+
+The Steward passes the current T3 environment and its reachable links with launch access as repeated `--t3-environment <id>` flags. This intersects the operator’s profile with destinations the calling session can use. Omit these flags in a standalone preview to inspect the whole profile.
+
+The eligible host with the fewest active jobs plus outstanding placements wins. Optional `capacity` sets a host's maximum for this policy. Host order breaks ties. Candidate order sets model preference on each host. An exhausted or unsupported candidate can give way to the next approved candidate. Waiting threads without active work and configured resident threads do not consume builder slots. If all routes are blocked, selection exits unsuccessfully with host and candidate reasons.
+
+Keep one request ID per work item. Selection records the exact destination before returning a reservation. Save the job brief, title, workspace strategy and request ID together. Start a fresh launch with its returned arguments when `reservation.acquired` is true. Use the returned `reservation.attemptId` as T3’s `clientRequestId`. It stays stable through recovery and changes after a definite failure and release. A repeat returns the recorded plan for reconciliation. After success, run `chamberlain models confirm <request-id> <attempt-id> <thread-id>`. After a definite nonlaunch, use `chamberlain models release <request-id> <attempt-id>` to permit replanning. After a crash or lost response, recover a pending T3 launch by replaying the identical arguments and clientRequestId on the recorded environment and confirming its returned thread. A confirmed reservation supplies the existing thread ID. A timeout or an inconclusive thread search leaves the reservation in place. Other harness adapters must document how to recover an ambiguous launch. The preview command selects without reserving capacity.
+
+Steward, Decisions and Desk keep their configured servers and existing delivery contracts. The shipped builder adapter is T3. Another backend can implement the optional builder probe on its registered adapter, report candidate eligibility and supply its own launch arguments.
 
 ## Isolated readers
 
@@ -59,8 +108,8 @@ Mail currently exposes configuration, status and storage only; its processing pi
 | Steward and compaction (`adapters/t3/index.ts`) | `models.steward`, committed Steward generation (config thread is its mirror), existing wake/compact URLs | T3 selection preparation + existing webhook relay | Selection, rights and destination share one generation; a concurrent switch holds the send without consuming an attempt |
 | Steward handoff launch (`.claude/commands/steward-handoff.md`) | `models.steward` | `models selection steward` preflight + T3 launch tool | Initial turn uses the validated selection and authenticated environment, never the project default; existing triggers remain until switch confirmation |
 | First setup (`README.md`, `docs/decisions-thread-setup.md`, `docs/alert-desk.md`) | `models.steward/decisions/desk` | Role-specific launch preflight + T3 launch tool | Same selection before the first turn; Desk hook installed before launch; Decisions uses the available render tool without a Claude-specific discovery tool |
-| Butler launch (`.claude/commands/steward-butler.md`) | `models.butler` | `models selection butler` preflight + T3 launch tool | Explicit model/options/server, no automatic escalation or machine fallback; ledger records only confirmed launches |
-| Sweep worker launch (`docs/steward-sweep-prompt.md`) | `models.worker` | `models selection worker` preflight + T3 launch tool | Explicit initial selection and environment; failed preflight or unavailable capacity retains work without launching |
+| Butler launch (`.claude/commands/steward-butler.md`) | `models.butler` | `models selection butler` preflight + T3 launch tool | Pinned or profile-based placement; ledger records confirmed launches |
+| Sweep worker launch (`docs/steward-sweep-prompt.md`) | `models.worker` | `models selection worker` preflight + T3 launch tool | Pinned or profile-based placement; failed preflight retains work |
 | Alert Desk (`adapters/t3/index.ts`, `core/desk/`) | `models.desk`, `threads.desk`, `alertDesk` and desk webhook | Same preparation and relay; currently requires `claudeAgent` driver | Other drivers are unsupported because the tool allowlist uses a Claude hook; no silent fallback |
 | Desk gatherer (`core/desk/alert-desk-prompt.ts`, `desk-hook.ts`) | Legacy `alertDesk.gatherer` names an external agent definition | Unsupported by the central selection adapter | Preparation refuses configured gatherers; portable isolation and central selection remain unfinished |
 | Generic classifier (`core/classifier/model-provider.ts`) | `models.classifier`, `sweep.idleParents.classifier` policy | `core/llm/reader.ts` | No tools; redacted bounded state; consent and budgets; failure is unknown |

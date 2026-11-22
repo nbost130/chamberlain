@@ -26,6 +26,7 @@ import type { ServerEntry } from "../config/servers.ts";
 import type { Gate } from "../decide/hold.ts";
 import type { WakeTransport } from "../delivery/deliver.ts";
 import type { Question } from "../items/questions.ts";
+import type { BuilderCandidate, BuilderCandidateStatus, BuilderHostStatus } from "../llm/builder-routing.ts";
 import type { Store } from "../store/store.ts";
 import type { Inspector, StewardProbe, ThreadSnapshot, Transcript } from "./adapter-inspect.ts";
 import type { AnswerOutcome, ListWaitingOptions, ThreadLinks, WaitingCard } from "./adapter-waiting.ts";
@@ -127,7 +128,27 @@ export type OptionalCapability =
 	| "snapshot"
 	| "alertDesk"
 	| "handoffInstruction"
+	| "probeBuilder"
 	| "threadLinks";
+
+export type BuilderProbeRequest = {
+	project: string;
+	workspaceStrategy: "root" | "worktree";
+	candidates: readonly BuilderCandidate[];
+	residentThreadIds: readonly string[];
+};
+export type BuilderLaunch = Readonly<Record<string, unknown>>;
+export type BuilderProbeResult =
+	| {
+			ok: true;
+			environmentId: string;
+			projectId: string;
+			activeThreadIds: readonly string[];
+			observedThreadIds: readonly string[];
+			candidates: readonly BuilderCandidateStatus[];
+			launches: readonly (BuilderLaunch | undefined)[];
+	  }
+	| { ok: false; reason: BuilderHostStatus };
 
 /**
  * The Alert Desk's thread: a second wake receiver, with its own transport and its own busy gate. The core drains the alert inbox
@@ -184,6 +205,8 @@ export interface Adapter {
 	 * cache. Rejects when the server cannot be reached. The held-ledger reconciler closes a hold on a thread only from this.
 	 */
 	snapshot?(): Promise<ThreadSnapshot>;
+	/** Reads the requested project, the host load and each approved model on a fresh authenticated connection. */
+	probeBuilder?(request: BuilderProbeRequest): Promise<BuilderProbeResult>;
 	/** How a compaction request reaches the Steward. Its `send` takes no message. */
 	readonly compact?: WakeTransport;
 	/** The Alert Desk thread: its wake transport and busy gate. */
