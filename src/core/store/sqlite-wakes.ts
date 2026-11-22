@@ -254,14 +254,24 @@ const COUNTING_RECEIPT_SQL = `(
 )`;
 
 function pruneWakes(c: Db, before: number): number {
-	// Steward-lane delivered rows prune only when ledgered and counting-discharged (or unrecoverable).
-	// Unledgered Steward rows never prune. Desk/cancelled prune as before.
-	// A pruned row's receipt goes with it: SQLite reuses the highest row number once that row is deleted, and a new wake under the old number
-	// must never inherit its receipt. (A discharged root that is gone already counts as discharged: steward-discharge.ts.)
+	// Steward-lane delivered prune only when counting-discharged (or unrecoverable); unledgered never. Desk/cancelled as before.
+	// Receipts go with their row (SQLite reuses ids). A claim-kept row keeps descendant proof envelopes too.
 	return c.tx(() => {
 		const n = c.run(
 			`DELETE FROM outbox WHERE status IN ('delivered', 'cancelled') AND finished_at < ?
-			 AND id NOT IN (SELECT m.outbox_id FROM outbox_members m JOIN claims c ON c.delivery_id = m.delivery_id JOIN items i ON i.id = c.item_id WHERE i.state != 'resolved')
+			 AND id NOT IN (
+			   WITH RECURSIVE keep_hop(oid) AS (
+			     SELECT m.outbox_id FROM outbox_members m
+			     JOIN claims c ON c.delivery_id = m.delivery_id
+			     JOIN items i ON i.id = c.item_id
+			     WHERE i.state != 'resolved'
+			     UNION
+			     SELECT m.outbox_id FROM keep_hop
+			     JOIN transfer_items ti ON ti.root_outbox_id = keep_hop.oid OR ti.orig_outbox_id = keep_hop.oid
+			     JOIN outbox_members m ON m.delivery_id = ti.item_id
+			   )
+			   SELECT oid FROM keep_hop
+			 )
 			 AND (
 			   receiver IS NOT NULL
 			   OR status = 'cancelled'

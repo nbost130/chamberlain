@@ -136,8 +136,9 @@ export interface WakeStore {
 	/** The operator's cancel: a pending or dead_letter row becomes a cancelled tombstone, members and all. What it found, or undefined. */
 	cancel(deliveryId: string, now: number): OutboxStatus | undefined;
 	/**
-	 * Deletes delivered and cancelled rows finished before `before`, except those an unresolved claim still names.
-	 * Steward-lane delivered rows also require a discharge (or origin unrecoverable) before they prune (B2).
+	 * Deletes delivered and cancelled rows finished before `before`, except those an unresolved claim still names
+	 * and the descendant envelopes that prove those rows are discharged. Steward-lane delivered rows also require a
+	 * discharge (or origin unrecoverable) before they prune (B2).
 	 */
 	prune(before: number): number;
 }

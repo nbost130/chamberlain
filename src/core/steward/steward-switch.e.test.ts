@@ -102,6 +102,26 @@ describe("E. retention (B2)", () => {
 		expect(stewardStatus(s).join("\n")).not.toMatch(/orig-[AB]/);
 	});
 
+	test("E3c: an unresolved claim that keeps one original must not erase its descendant receipt", () => {
+		const clock = fakeClock();
+		const { s, roots, last } = twoHandoffs(clock.t);
+		s.steward.insertReceipt({ outboxId: last.id, kind: "t3-run", runId: "run-g3", thread: "g3", recordedAt: clock.t });
+		expect(roots.map((id) => isDischarged(s, id))).toEqual([true, true]);
+		s.items.observe({ source: "queue", kind: "question", dedupKey: "Q-keep1", mode: "silenced" });
+		s.claims.claim("queue", {
+			owner: "page",
+			item: "Q-keep1",
+			deliveryId: "orig-A",
+			message: "keep A",
+			t: new Date(clock.t).toISOString(),
+		});
+		clock.advance(40 * DAY);
+		maintain(s, clock.t);
+		expect(s.wakes.find("orig-A")).toBeDefined();
+		expect(isDischarged(s, roots[0]!)).toBe(true);
+		expect(stewardStatus(s).join("\n")).not.toMatch(/orig-A/);
+	});
+
 	test("E3b: a receipt outside the qualifying cutoff leaves originals outstanding after prune", () => {
 		const clock = fakeClock();
 		const { s, roots, last, switchTo } = twoHandoffs(clock.t);
