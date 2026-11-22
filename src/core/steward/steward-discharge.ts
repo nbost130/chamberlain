@@ -32,15 +32,17 @@ export function countingReceipt(store: Store, outboxId: number): boolean {
 /** How far before a switch a retired Steward's run must have completed for a late-found receipt to count (also in COUNTING_RECEIPT_SQL). */
 const RECEIPT_CLOCK_MARGIN_MS = 60_000;
 
-/** Transfer items whose root or orig is this outbox id (open and closed transfers). */
-function itemsForRoot(store: Store, rootOutboxId: number): TransferItem[] {
-	const out: TransferItem[] = [];
+/** Transfer generations advance monotonically. A composed digest can itself be transferred in a later generation. */
+function* descendantItems(store: Store, original: number): Generator<{ item: TransferItem; envelopeId?: number }> {
+	const reached = new Set([original]);
 	for (let g = 0; g <= store.steward.maxGen(); g++) {
 		for (const item of store.steward.itemsOfTransfer(g)) {
-			if (item.rootOutboxId === rootOutboxId || item.origOutboxId === rootOutboxId) out.push(item);
+			if (!reached.has(item.rootOutboxId) && !reached.has(item.origOutboxId)) continue;
+			const envelope = store.wakes.find(item.itemId);
+			if (envelope) reached.add(envelope.id);
+			yield { item, envelopeId: envelope?.id };
 		}
 	}
-	return out;
 }
 
 /**
@@ -53,9 +55,8 @@ export function isDischarged(store: Store, rootOutboxId: number, depth = 0): boo
 	const row = store.wakes.byId(rootOutboxId);
 	if (!row) return true;
 	if (countingReceipt(store, rootOutboxId)) return true;
-	for (const item of itemsForRoot(store, rootOutboxId)) {
-		const env = store.wakes.find(item.itemId);
-		if (env && countingReceipt(store, env.id)) return true;
+	for (const { envelopeId } of descendantItems(store, rootOutboxId)) {
+		if (envelopeId !== undefined && countingReceipt(store, envelopeId)) return true;
 	}
 	return depth < 3 && envelopeOfDischarged(store, row.members, depth);
 }
