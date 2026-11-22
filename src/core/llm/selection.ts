@@ -7,8 +7,9 @@ export const isLaunchRole = (role: string): role is LaunchRole => LAUNCH_ROLES.s
 const MODEL_ROLES = [...LAUNCH_ROLES, "classifier", "mailDriver", "mailEscalate", "mailTop"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 type Options = Record<string, string | boolean>;
-type Candidate = { instanceId: string; model: string; options: Options };
-export type ThreadModel = Candidate & { adapter: "t3"; server: string; fallbacks?: Candidate[] };
+export type BuilderCandidate = { instanceId: string; model: string; options: Options };
+export type ThreadModel = BuilderCandidate & { adapter: "t3"; server: string; fallbacks?: BuilderCandidate[] };
+type BuilderProfileSelection = { profile: string; adapter?: never };
 export type ReaderModel = {
 	adapter: "claude-cli" | "openai-chat";
 	model: string;
@@ -19,8 +20,14 @@ export type ReaderModel = {
 	timeoutMs: number;
 	accountingUsdPerCall?: number;
 };
-type ModelSelection = ThreadModel | ReaderModel;
-export type ModelSelections = Partial<Record<ModelRole, ModelSelection>>;
+type ModelSelection = ThreadModel | ReaderModel | BuilderProfileSelection;
+export type ModelSelections = {
+	[Role in ModelRole]?: Role extends "worker" | "butler"
+		? ThreadModel | BuilderProfileSelection
+		: Role extends LaunchRole
+			? ThreadModel
+			: ReaderModel;
+};
 
 function options(raw: unknown, where: string): Options {
 	if (raw === undefined) return {};
@@ -29,6 +36,15 @@ function options(raw: unknown, where: string): Options {
 		if (!k.trim() || !(typeof v === "boolean" || (typeof v === "string" && v.trim())))
 			throw Error(`${where}: options must have non-empty names and string or boolean values`);
 	return raw as Options;
+}
+
+export function builderCandidate(raw: unknown, where: string): BuilderCandidate {
+	const entry = object(raw, where, ["instanceId", "model", "options"]);
+	return {
+		instanceId: required(entry, "instanceId", where),
+		model: required(entry, "model", where),
+		options: options(entry.options, where),
+	};
 }
 
 function reader(o: Record<string, unknown>, where: string): ReaderModel {
@@ -107,45 +123,43 @@ export function threadModel(o: Record<string, unknown>, where: string): ThreadMo
 	};
 }
 
+function parseRole(role: string, raw: unknown): ModelSelection {
+	const where = `models.${role}`;
+	if (raw && typeof raw === "object" && Object.hasOwn(raw, "profile")) {
+		if (role !== "worker" && role !== "butler") throw Error(`${where}: builder profiles require worker or butler`);
+		const selection = object(raw, where, ["profile"]);
+		return { profile: required(selection, "profile", where) };
+	}
+	const o = object(raw, where, [
+		"adapter",
+		"model",
+		"server",
+		"instanceId",
+		"options",
+		"command",
+		"endpoint",
+		"keyFile",
+		"effort",
+		"timeoutMs",
+		"accountingUsdPerCall",
+		"fallbacks",
+	]);
+	if (!isLaunchRole(role)) return reader(o, where);
+	const { fallbacks, ...primary } = o;
+	const selection = threadModel(primary, where);
+	if (fallbacks !== undefined) {
+		if (!Array.isArray(fallbacks)) throw Error(`${where}.fallbacks: expected an array`);
+		selection.fallbacks = fallbacks.map((raw, index) => builderCandidate(raw, `${where}.fallbacks[${index}]`));
+	}
+	return selection;
+}
+
 export function parseModels(raw: unknown): ModelSelections {
 	if (raw === undefined || raw === null) return {};
 	const rows = object(raw, "models", MODEL_ROLES);
-	const result: ModelSelections = {};
+	const result: Partial<Record<ModelRole, ModelSelection>> = {};
 	for (const [role, rawSelection] of Object.entries(rows)) {
-		if (rawSelection === null) continue;
-		const where = `models.${role}`;
-		const o = object(rawSelection, where, [
-			"adapter",
-			"model",
-			"server",
-			"instanceId",
-			"options",
-			"command",
-			"endpoint",
-			"keyFile",
-			"effort",
-			"timeoutMs",
-			"accountingUsdPerCall",
-			"fallbacks",
-		]);
-		const pinned = isLaunchRole(role);
-		if (pinned) {
-			const { fallbacks, ...primary } = o;
-			const selection = threadModel(primary, where);
-			if (fallbacks !== undefined) {
-				if (!Array.isArray(fallbacks)) throw Error(`${where}.fallbacks: expected an array`);
-				selection.fallbacks = fallbacks.map((raw, index) => {
-					const path = `${where}.fallbacks[${index}]`;
-					const entry = object(raw, path, ["instanceId", "model", "options"]);
-					return {
-						instanceId: required(entry, "instanceId", path),
-						model: required(entry, "model", path),
-						options: options(entry.options, path),
-					};
-				});
-			}
-			result[role] = selection;
-		} else result[role as ModelRole] = reader(o, where);
+		if (rawSelection !== null) result[role as ModelRole] = parseRole(role, rawSelection);
 	}
-	return result;
+	return result as ModelSelections;
 }

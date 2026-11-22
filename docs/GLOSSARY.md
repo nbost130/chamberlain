@@ -34,6 +34,18 @@ the reason is given.
 | Table `events` and the *log* | The append-only log of what the daemon did: `fire`, `skip-*`, `alarm`, `answered`, `state-moved`... Read with SQL by `queue-waits.ts` and the return brief. Since `obs.db` it is the *old* log: every line is also written, typed, to `obs.db` (see [Telemetry](#telemetry-obsdb)), and release C drops this table. | Event log / audit log | Kept. The rows are Chamberlain's own record, not [CloudEvents](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md) (which `id`, `source` and `subject` echo only loosely). |
 | Telemetry database (`obs.db`) | The second SQLite file in the state directory, beside `chamberlain.db`: events, and the logger's counters. WAL, mode 0600, **its own migrations**. Never a table of the ledger database, so a metrics change cannot make an older daemon refuse the ledger and a backup of `chamberlain.db` does not grow with it. | Telemetry store (OpenTelemetry's *signals* are logs, metrics and traces; this holds the logs) | Chamberlain keeps the usual meaning; the name is the file's. |
 
+## Builder placement
+
+| Term | Definition | Standard term | Source or reason |
+| --- | --- | --- | --- |
+| Builder profile (`builderProfiles`, `models.worker.profile`, `models.butler.profile`) | Named placement policy shared by builder roles. Its ordered `hosts` list names each allowed `server`, its optional `capacity` in concurrent jobs, and its ordered model `candidates`. The least-loaded eligible host wins. | Placement policy | [Builder placement at launch](MODELS.md#builder-placement-at-launch) |
+| Builder reservation (table `builder_reservations`) | Durable claim on a host slot for a single builder launch. The Steward records the claim before it opens the thread. | Capacity reservation | [Reservation schema](../src/core/llm/builder-reservations.ts) |
+| `request_id` and `binding` | The request ID identifies one work item across retries. Its binding records the role and project that may use that ID. | Idempotency key and request binding | [Reservation lookup](../src/core/llm/builder-reservations.ts) |
+| `attempt_id` | Identifies one placement attempt. The Steward reuses it as T3’s launch key while reconciling that attempt. Replanning after a release generates a new ID. | Idempotency key for the launch attempt | [Launch recovery](MODELS.md#builder-placement-at-launch) |
+| `scope` and `plan` | Scope identifies the adapter and environment whose load includes the claim. The plan stores the selected server, adapter and exact launch arguments. | Reservation scope and launch plan | [Builder selection](../src/builder-selection.ts) |
+| Reservation `status` and `thread_id` | A `pending` claim holds capacity while its outcome is unknown. A `confirmed` claim identifies the created thread by its thread ID. A `released` claim records a definite nonlaunch and frees its slot. | Reservation lifecycle | [Reservation transitions](../src/core/llm/builder-reservations.ts) |
+| `reconciled_at` | Time in milliseconds since the Unix epoch when a host snapshot first accounted for a confirmed thread. This lets later snapshots count the thread without also counting its reservation. | Reconciliation timestamp | [Load reconciliation](../src/core/llm/builder-reservations.ts) |
+
 ## Items: the one thing that is tracked
 
 | Term | Definition | Standard term | Source or reason |

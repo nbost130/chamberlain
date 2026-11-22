@@ -91,7 +91,6 @@ test("missing configured credentials prevent the HTTP request", async () => {
 	const selection = parseModels({
 		classifier: { adapter: "openai-chat", model: "chosen", endpoint: "http://127.0.0.1:1", keyFile: "absent" },
 	}).classifier!;
-	if (selection.adapter === "t3") throw Error("bad fixture");
 	await expect(readModel(selection, { system: "x", text: "private" }, conf)).rejects.toThrow("credentials unavailable");
 });
 

@@ -15,6 +15,7 @@ import { setting } from "../../core/config/layout.ts";
 import type { ServerEntry } from "../../core/config/servers.ts";
 import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
+import { probeT3Builder } from "./builder-probe.ts";
 import { t3Linker } from "./links.ts";
 import { modelWake } from "./model-wake.ts";
 import { t3Post } from "./post.ts";
@@ -55,6 +56,7 @@ const T3_CAPABILITIES: readonly OptionalCapability[] = [
 	"snapshot",
 	"alertDesk",
 	"handoffInstruction",
+	"probeBuilder",
 	"threadLinks",
 ];
 
@@ -76,13 +78,12 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		env.conf,
 		"steward",
 	);
-	const isBusy = (): Gate => threadGate(env.steward());
 	return {
 		id: "t3",
 		capabilities: [...T3_CAPABILITIES],
 		watch: (sink, signal) => link.watch(sink, signal),
 		wake,
-		isBusy,
+		isBusy: () => threadGate(env.steward()),
 		post: t3Post(env.conf),
 		answer: waiting.answer,
 		listWaiting: waiting.listWaiting,
@@ -95,6 +96,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
 		inspect: link.inspector,
 		snapshot: () => link.snapshot(),
+		probeBuilder: (request) => probeT3Builder(env, srv, request),
 		send: waiting.send,
 		stewardProbe: () => {
 			const id = env.steward();

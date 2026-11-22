@@ -71,6 +71,13 @@ export function openDatabase(path: string, o: OpenOptions, schema: Schema): Data
 	return db;
 }
 
+/** Observes an existing database without creating it or applying migrations. */
+export function openReadOnlyDatabase(path: string): Database {
+	const db = new Database(path, { readonly: true });
+	db.exec("PRAGMA busy_timeout = 10000");
+	return db;
+}
+
 /**
  * The transaction wrapper and query helpers over `db`, opened with `o`. `after(fn)` runs `fn` once the outermost transaction has committed
  * (at once when none is open) and never when it rolls back: the telemetry of a ledger write waits for the write to be real.

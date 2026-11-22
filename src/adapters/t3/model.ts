@@ -3,6 +3,7 @@ import { cfg, readSecret, thread } from "../../core/config/layout.ts";
 import type { ThreadKey } from "../../core/config/layout-schema.ts";
 import { readServers } from "../../core/config/servers.ts";
 import { QuotaExhausted } from "../../core/delivery/deliver.ts";
+import type { BuilderCandidate, BuilderCandidateStatus } from "../../core/llm/builder-routing.ts";
 import { type LaunchRole, parseModels, type ThreadModel } from "../../core/llm/selection.ts";
 import { withoutToken } from "../../core/ops/capability.ts";
 import { within } from "../../core/within.ts";
@@ -21,22 +22,44 @@ type Projection = {
 };
 type Client = Pick<Rpc, "request" | "call">;
 
-export function validateThreadModel(c: ThreadModel, catalog: Catalog, desk = false): void {
+type ModelIssue = {
+	status: Exclude<BuilderCandidateStatus, "eligible" | "project-override">;
+	message: string;
+};
+const validOption = (descriptor: { type: string; options?: { id: string }[] }, value: string | boolean) =>
+	descriptor.type === "boolean" ? typeof value === "boolean" : descriptor.options?.some((o) => o.id === value);
+
+export function threadModelIssue(
+	c: BuilderCandidate,
+	catalog: Catalog,
+	desk = false,
+	enabled?: boolean,
+): ModelIssue | undefined {
 	const provider = catalog.providers.find((p) => p.instanceId === c.instanceId);
-	if (!provider?.enabled || !provider.installed || provider.availability === "unavailable")
-		throw Error("configured provider is unavailable");
+	if (!provider || !(enabled ?? provider.enabled) || !provider.installed || provider.availability === "unavailable")
+		return { status: "provider-unavailable", message: "configured provider is unavailable" };
 	if (provider.auth?.status === "unauthenticated" || provider.status === "error")
-		throw Error("configured provider needs authentication or repair");
+		return { status: "provider-unavailable", message: "configured provider needs authentication or repair" };
 	if (desk && provider.driver !== "claudeAgent")
-		throw Error("Alert Desk requires an adapter enforcing its tool allowlist; this provider is unsupported");
+		return {
+			status: "provider-unavailable",
+			message: "Alert Desk requires an adapter enforcing its tool allowlist; this provider is unsupported",
+		};
 	const model = provider.models.find((m) => m.slug === c.model);
-	if (!model) throw Error("configured model is not in the provider catalog");
+	if (!model) return { status: "model-unavailable", message: "configured model is not in the provider catalog" };
 	for (const [id, value] of Object.entries(c.options)) {
 		const d = model.capabilities?.optionDescriptors?.find((o) => o.id === id);
-		if (!d || (d.type === "boolean" ? typeof value !== "boolean" : !d.options?.some((o) => o.id === value)))
-			throw Error(`configured model does not support option ${id}`);
+		if (!d || !validOption(d, value))
+			return { status: "unsupported-option", message: `configured model does not support option ${id}` };
 	}
-	if (modelQuotaExhausted(provider, c.model)) throw new QuotaExhausted("configured provider quota is exhausted");
+	if (modelQuotaExhausted(provider, c.model))
+		return { status: "quota-exhausted", message: "configured provider quota is exhausted" };
+}
+
+export function validateThreadModel(c: ThreadModel, catalog: Catalog, desk = false): void {
+	const issue = threadModelIssue(c, catalog, desk);
+	if (issue?.status === "quota-exhausted") throw new QuotaExhausted(issue.message);
+	if (issue) throw Error(issue.message);
 }
 
 export function resolveThreadModel(

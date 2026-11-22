@@ -11,19 +11,19 @@ A butler is a short job, never a standing thread. Each one gets a short list, fi
 
 1. **Name one scope.** One sentence, mechanical, with a list that ends, about 10 items at most. Example: watch PRs #12, #15 and #18; for each one that goes green, collect its head SHA and check state; send a batch when about 10 are ready. If the work needs a decision, it is not butler work: do it yourself.
 
-2. **Read the configured selection.** Run `bun {{chamberlain}}/src/models.ts selection butler`. Its JSON contains `server` and `launch`, validated against that server's provider catalog. Missing configuration, credentials, capabilities or quota stops the launch; keep the work pending with the Steward. Only the operator changes the model or effort in `config.json`.
+2. **Select a destination.** Assign the job a stable launch request ID and save it with the exact brief, title and workspace strategy. Run `bun {{chamberlain}}/src/models.ts selection butler --project "<project>" --request-id "<id>"` on the Steward host. When launching through T3, first call `t3_environment_links` and append one `--t3-environment <id>` to selection for the current environment and each reachable linked environment with launch access. If the link inventory fails, retain the work. A routed plan names the adapter, server, launch arguments and reservation. Start a fresh launch only if `reservation.acquired` is true. If selection fails, keep the work pending. Only the operator changes the approved routes.
 
-3. **Resolve the configured machine.** Use `launch.environmentId` for T3 calls and select the intended project's ID on that exact environment. If the environment or project is unavailable, stop and report it; retain the work, with no alternate machine or model. Note any tools that machine lacks in the brief.
+3. **Use the selected project.** A routed T3 plan supplies the host-local `launch.projectId`. For a legacy pin, resolve the project on the returned environment and check capacity. An unavailable project keeps the work pending. Note any tools that machine lacks in the brief.
 
-4. **Launch it.** One `t3_thread_launch` with:
+4. **Launch it.** Use the returned adapter’s launch tool. For T3, call `t3_thread_launch` once with these fields.
    - `title: "Butler: <scope in four words>"`
    - `environmentId` and `modelSelection` copied exactly from `launch`, including every option
    - `projectId` verified on that environment
    - `workspaceStrategy: {type: "root"}`
-   - one fresh `clientRequestId`, reused if this same launch needs reconciliation
+   - `clientRequestId` set to `reservation.attemptId` for a routed launch, or the saved work request ID for a legacy pin
    - `message` set to the brief below, filled in
 
-5. **Record it after T3 confirms the launch.** `bun {{chamberlain}}/src/core/ops/butler.ts start --thread <new thread id> --machine <server from step 2> --model <launch.modelSelection.model> --scope "<scope>"`. It prints the butler id; put that id in the title or your notes. `bun {{chamberlain}}/src/core/ops/butler.ts list` shows who is live. Check it before starting another one for the same scope. An ambiguous launch is reconciled through its existing request id before another is attempted.
+5. **Record the outcome.** For a routed plan, run `chamberlain models confirm <id> <attemptId> <threadId>` after launch confirmation. Release a reservation with `chamberlain models release <id> <attemptId>` only after establishing that no thread was created. For a pending reservation after a crash or lost reply, replay the identical saved T3 launch arguments on its recorded host with the same clientRequestId, then confirm the returned thread. For a confirmed reservation use its threadId. With a harness that cannot reconcile by request ID, keep the work pending until the outcome is established. After confirmation, record the butler with `bun {{chamberlain}}/src/core/ops/butler.ts start --thread <new thread id> --machine <server from step 2> --model <launch.modelSelection.model> --scope "<scope>"`. It prints the butler id; put that id in the title or your notes. `bun {{chamberlain}}/src/core/ops/butler.ts list` shows who is live. Check it before starting another one for the same scope. An ambiguous launch is reconciled through its existing request id before another is attempted.
 
 6. **Stopping.** To stop one, `t3_thread_send` it the word `stop`, then `bun {{chamberlain}}/src/core/ops/butler.ts stop <id> --reason "<why>"`. When a butler reports it has archived itself, record the stop the same way.
 

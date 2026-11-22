@@ -5,6 +5,23 @@ import { messageCommand } from "../adapters/t3/ping.ts";
 
 const dispatchType = messageCommand({ threadId: "fixture", text: "", identity: "steward" }).type;
 
+export type BuilderShellThread = {
+	id: string;
+	projectId: string;
+	status?: string | null;
+	pendingRuntimeRequest?: { id: string; blocking: boolean };
+	pendingBackgroundTasks?: { taskId: string; kind: string }[];
+	archivedAt?: string;
+	blockedOnThreadWait?: boolean;
+};
+
+type BuilderShell = {
+	projects: { id: string; title: string; workspaceRoot: string }[];
+	threads: BuilderShellThread[];
+	archivedThreads?: BuilderShellThread[];
+	partial?: boolean;
+};
+
 export function modelServer() {
 	const conf = mkdtempSync(`${tmpdir()}/chamberlain-model-`);
 	const requests: { tag: string; payload: any }[] = [];
@@ -25,11 +42,17 @@ export function modelServer() {
 		ignoreSelection: false,
 		unauthenticated: false,
 		exhausted: false,
+		quotaWindow: "seven_day",
+		primaryModel: "chosen-model",
 		backupAvailable: false,
+		backupModel: "backup-model",
 		legacyCatalogHangs: false,
 		malformedCatalog: false,
 		emptyCatalog: false,
 		environmentId: crypto.randomUUID() as string | undefined,
+		builderShell: undefined as BuilderShell | undefined,
+		builderOverrides: {} as Record<string, { providerInstances: Record<string, { enabled: boolean }> }>,
+		builderMissingGit: false,
 	};
 	const server = Bun.serve({
 		hostname: "127.0.0.1",
@@ -52,7 +75,22 @@ export function modelServer() {
 				const r = JSON.parse(String(data));
 				if (r._tag !== "Request") return;
 				requests.push({ tag: r.tag, payload: r.payload });
+				if (r.tag === "orchestration.subscribeShell" && state.builderShell) {
+					const snapshot = { kind: "snapshot", snapshot: state.builderShell };
+					ws.send(JSON.stringify({ _tag: "Chunk", requestId: r.id, values: [snapshot] }));
+					return;
+				}
 				let value: any = {};
+				if (r.tag === "filesystem.getMetadata") {
+					const roots = state.builderShell?.projects.map((project) => project.workspaceRoot) ?? [];
+					value = {
+						entries: r.payload.paths.map((path: string) =>
+							roots.includes(path) || (!state.builderMissingGit && roots.includes(path.replace(/\/\.git$/, "")))
+								? { kind: "directory" }
+								: null,
+						),
+					};
+				}
 				if (r.tag === "scheduledTasks.subscribe") {
 					ws.send(JSON.stringify({ _tag: "Chunk", requestId: r.id, values: [{ tasks }] }));
 					return;
@@ -61,13 +99,14 @@ export function modelServer() {
 				if (r.tag === "server.getConfig" || r.tag === "subscribeServerConfig")
 					value = {
 						environment: { environmentId: state.environmentId },
+						settings: { projectSettingsOverrides: state.builderOverrides },
 						providers: [
 							{
 								instanceId: "backup",
 								driver: "alternative",
 								enabled: state.backupAvailable,
 								installed: true,
-								models: [{ slug: "backup-model" }],
+								models: [{ slug: state.backupModel }],
 							},
 							{
 								instanceId: state.instanceId,
@@ -77,12 +116,12 @@ export function modelServer() {
 								auth: { status: state.unauthenticated ? "unauthenticated" : "authenticated" },
 								usageLimits: {
 									windows: [
-										{ id: "seven_day", usedPercent: state.exhausted ? 100 : 0, resetsAt: "2099-01-01T00:00:00Z" },
+										{ id: state.quotaWindow, usedPercent: state.exhausted ? 100 : 0, resetsAt: "2099-01-01T00:00:00Z" },
 									],
 								},
 								models: [
 									{
-										slug: "chosen-model",
+										slug: state.primaryModel,
 										capabilities: {
 											optionDescriptors: [{ id: "reasoningEffort", type: "select", options: [{ id: "high" }] }],
 										},

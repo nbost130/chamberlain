@@ -92,6 +92,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `settledMatch` | How `chamberlain ask` and `chamberlain afk hold` decide a question is already settled ([ARCHITECTURE.md, "Queue first, hold second"](ARCHITECTURE.md#queue-first-hold-second-settled-never-twice)): `{"titleOverlap": true, "ignoreWords": []}`. `titleOverlap: false` matches on exact refs only; `ignoreWords` lists words (a project or product name) that head many unrelated questions and so say nothing about the topic. |
 | `servers` | The T3 servers to watch. See below. |
 | `models` | Explicit provider/model/effort selections for pinned threads and isolated readers. No defaults or silent fallback. See [Model configuration and inventory](MODELS.md). |
+| `builderProfiles` | Named host pools, capacities and ordered model candidates for Worker and Butler. Select a shared profile with `models.worker.profile` or `models.butler.profile`. See [Builder placement at launch](MODELS.md#builder-placement-at-launch). |
 | `overhead` | What the Steward and Chamberlain cost against the work that got done, and the limits that open an investigator thread. Off and neutral by default. See [Overhead monitor](#overhead-monitor). |
 | `web` | The page's bind address and options. See below. |
 | `sweep` | Your own routine checks. See below. |

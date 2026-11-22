@@ -30,6 +30,7 @@ describe("createT3Adapter", () => {
 			"snapshot",
 			"alertDesk",
 			"handoffInstruction",
+			"probeBuilder",
 			"threadLinks",
 		]);
 		expect(a.approvalHint).toBe("The t3_pending_request tool cannot answer it.");
