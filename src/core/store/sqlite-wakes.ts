@@ -268,12 +268,15 @@ function pruneWakes(c: Db, before: number): number {
 			   OR EXISTS (
 			     SELECT 1 FROM steward_deliveries d WHERE d.outbox_id = outbox.id AND (
 			       d.origin = 'unrecoverable'
-			       OR ${COUNTING_RECEIPT_SQL.replaceAll("$oid", "outbox.id")}
 			       OR EXISTS (
-			         SELECT 1 FROM transfer_items ti
-			         JOIN outbox_members m ON m.delivery_id = ti.item_id
-			         WHERE (ti.root_outbox_id = outbox.id OR ti.orig_outbox_id = outbox.id)
-			           AND ${COUNTING_RECEIPT_SQL.replaceAll("$oid", "m.outbox_id")}
+			         WITH RECURSIVE hop(oid) AS (
+			           SELECT outbox.id
+			           UNION
+			           SELECT m.outbox_id FROM hop
+			           JOIN transfer_items ti ON ti.root_outbox_id = hop.oid OR ti.orig_outbox_id = hop.oid
+			           JOIN outbox_members m ON m.delivery_id = ti.item_id
+			         )
+			         SELECT 1 FROM hop WHERE ${COUNTING_RECEIPT_SQL.replaceAll("$oid", "hop.oid")}
 			       )
 			     )
 			   )

@@ -2,12 +2,39 @@
 import { describe, expect, test } from "bun:test";
 import { useStewardSwitchFixtures } from "../../testing/steward-switch-fixtures.ts";
 import { DELIVERED_KEEP_MS } from "../delivery/deliver.ts";
+import { maintain } from "../ops/maintain.ts";
 import { commitSwitch } from "./steward-commit.ts";
-import { releaseWake } from "./steward-discharge.ts";
+import { isDischarged, releaseWake } from "./steward-discharge.ts";
 import { prepareSwitch } from "./steward-prepare.ts";
-import { transferPass } from "./steward-transfer.ts";
+import { stewardStatus } from "./steward-status.ts";
+import { composeTransferBatch, transferPass } from "./steward-transfer.ts";
 
 const { confWorld, memStoreSeeded, fakeClock, writeSwitchRefs, deliverAndLedger } = useStewardSwitchFixtures();
+const DAY = 24 * 3600_000;
+
+function twoHandoffs(now: number) {
+	const w = confWorld();
+	const s = memStoreSeeded(w.conf, now);
+	const roots = ["orig-A", "orig-B"].map((deliveryId) =>
+		deliverAndLedger(s, { deliveryId, message: "payload", at: now, gen: 1 }),
+	);
+	const switchTo = (thread: string, t: number) => {
+		const p = prepareSwitch(s, w.conf, { toThread: thread, live: true, now: t });
+		if (!p.ok) throw new Error(p.error);
+		writeSwitchRefs(w.conf, p.id);
+		expect(commitSwitch(s, w.conf, { id: p.id, live: true, now: t }).ok).toBe(true);
+	};
+	const relayTo = (gen: number, t: number) => {
+		switchTo(`g${gen}`, t);
+		transferPass(s, t);
+		const row = s.wakes.compose(t, (held) => composeTransferBatch(held, t)!, null)!;
+		s.wakes.finish(row.id, "delivered", t);
+		s.steward.insertLedger({ outboxId: row.id, gen, origin: "live" });
+		return row;
+	};
+	expect(relayTo(2, now).members).toHaveLength(2);
+	return { s, roots, last: relayTo(3, now), switchTo };
+}
 
 describe("E. retention (B2)", () => {
 	test("E1: unseen R survives maintain 31 days later; forced switch transfers full payload", () => {
@@ -56,5 +83,43 @@ describe("E. retention (B2)", () => {
 		store.wakes.enqueue({ deliveryId: "cancel-e2", message: "c", queuedAt: clock.t });
 		store.wakes.cancel("cancel-e2", clock.t);
 		expect(store.wakes.prune(before)).toBe(1);
+	});
+
+	test("E3: after two handoffs, day-40 prune keeps both originals settled (#116)", () => {
+		const clock = fakeClock();
+		const { s, roots, last } = twoHandoffs(clock.t);
+		s.steward.insertReceipt({ outboxId: last.id, kind: "t3-run", runId: "run-g3", thread: "g3", recordedAt: clock.t });
+		expect(roots.map((id) => isDischarged(s, id))).toEqual([true, true]);
+		transferPass(s, clock.t);
+		expect(s.steward.transfer(1)?.closedAt).toBeDefined();
+		expect(s.steward.transfer(2)?.closedAt).toBeDefined();
+		expect(stewardStatus(s).join("\n")).not.toMatch(/orig-[AB]/);
+		clock.advance(40 * DAY);
+		maintain(s, clock.t);
+		expect(s.wakes.find("orig-A")).toBeUndefined();
+		expect(s.wakes.find("orig-B")).toBeUndefined();
+		expect(roots.map((id) => isDischarged(s, id))).toEqual([true, true]);
+		expect(stewardStatus(s).join("\n")).not.toMatch(/orig-[AB]/);
+	});
+
+	test("E3b: a receipt outside the qualifying cutoff leaves originals outstanding after prune", () => {
+		const clock = fakeClock();
+		const { s, roots, last, switchTo } = twoHandoffs(clock.t);
+		switchTo("g4", clock.t);
+		s.steward.insertReceipt({
+			outboxId: last.id,
+			kind: "t3-run",
+			runId: "late",
+			thread: "g3",
+			recordedAt: s.steward.transfer(3)!.openedAt + 1,
+		});
+		expect(roots.map((id) => isDischarged(s, id))).toEqual([false, false]);
+		clock.advance(40 * DAY);
+		maintain(s, clock.t);
+		expect(s.wakes.find("orig-A")).toBeDefined();
+		expect(s.wakes.find("orig-B")).toBeDefined();
+		expect(roots.map((id) => isDischarged(s, id))).toEqual([false, false]);
+		expect(stewardStatus(s).join("\n")).toMatch(/orig-A/);
+		expect(stewardStatus(s).join("\n")).toMatch(/orig-B/);
 	});
 });
