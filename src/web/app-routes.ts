@@ -62,13 +62,16 @@ function queueResponse(ctx: Ctx): Response {
 	const open = ranked(states).map((i) => view(d, i));
 	const later = snoozed(states).map((i) => view(d, i));
 	const list = readRulings(d.store);
+	const health = readHealth(d.store);
 	return json({
 		items: open,
 		snoozed: later,
 		cards: (d.mirror?.list() ?? []).map((c) => cardView(d, c)),
 		unreachable: d.mirror?.unreachable?.() ?? [],
-		health: readHealth(d.store) ?? null,
-		healthLimits: HEALTH_CONFIG,
+		health: health ?? null,
+		healthLimits: health?.limits
+			? { ...HEALTH_CONFIG, context: health.limits.watchAt, compactContext: health.limits.compactAt }
+			: HEALTH_CONFIG,
 		overhead: overheadView(readOverheadState(d.store)),
 		inForce: inForceNow(list, ctx.clock()).length,
 		unconfirmed: list.filter((r) => r.status !== "retired" && !r.confirmed).length,

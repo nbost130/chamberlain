@@ -148,10 +148,14 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`setTitle(title)`** renames the Decisions thread.
 - **`transcriptPath()`** points at the Steward's Claude Code transcript for the health check (and may give
   `threadReadKey` so the check can count repeated reads of one thread).
-- **`stewardProbe()`** returns `{ readable, contextTokens?, stalled?, compactBlocked? }` once a minute.
+- **`stewardProbe(threadId?, turnLimit?)`** returns queue and compaction evidence plus the current exact context reading
+  (`{ tokens, window?, source, at }`) or `{ unknown }`. Without a thread id it reads the Steward. Only completed turns
+  with missing measurements count toward the fallback.
 - **`handoffInstruction()`** returns the sentence the hand-off wake carries: how the Steward on this backend starts its own hand-off (T3: run `/steward-handoff`). With it, a HAND OFF verdict from the health check is a wake the daemon queues itself; without it the operator is asked instead (docs/steward-health.md).
 - **`snapshot()`** returns a fresh read of every thread on the server, `{ complete, threads: [{ id, archived, settled, pendingRequestId, status }] }`, taken now over a connection of its own and never from the watcher's cache. It rejects when the server cannot be reached or the answer marks itself partial. Set `complete: true` only when your backend positively proves the list is whole; T3's shell stream gives no such proof, so the T3 adapter always says `false`. The held-ledger reconciler closes a Steward hold on a thread only from a complete snapshot: an unreachable server, a partial answer or an adapter without it leaves that thread unknown. A record it cannot read marks the snapshot `partial`: a thread missing from it is unknown, and a hold that names no server stays unknown while any snapshot that answered is partial or incomplete, since the unreadable record could be a second listing of the thread. Card holds always name their server and never read a snapshot.
 - **`compact`** is a wake transport whose `send` takes no message.
+- **`compactThread(threadId, deliveryId)`** requests compaction on an explicitly guarded thread. It must bind the
+  request to that thread and must never steer an active turn.
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
   gate. With it the core drains the alert inbox into wakes for the `desk` receiver and the one relay sends them to this transport, through its one serial queue (docs/alert-desk.md). The T3 adapter
   reads the `desk-wake-url` secret and `threads.desk` (`readPrivate("desk-wake-url")`, `readPrivate("desk-thread")`); without the URL `wake.ready()` is false and nothing is drained.

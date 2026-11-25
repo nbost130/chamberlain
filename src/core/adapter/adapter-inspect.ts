@@ -110,8 +110,26 @@ export type Inspector = {
 
 // ---- post ----------------------------------------------------------------------------------------
 
-/** What an adapter can tell about the Steward's own thread, read once a minute. */
+/** The newest exact context observation, or why the adapter cannot provide one. Token totals and earlier turns are not observations. */
+export type ContextReading = { tokens: number; window?: number; source: string; at: string } | { unknown: string };
+
+/** What an adapter can tell about a guarded thread, read once a minute. */
 export type StewardProbe = {
+	context?: ContextReading;
+	/** Ordinals of the latest consecutive completed provider turns lacking a projected size, oldest last. */
+	unknownTurns?: readonly number[];
+	/** Latest completed provider turn on the active provider thread, when readable. */
+	completedTurn?: number;
+	/** The completed turn before it, even if provider turn ordinals have gaps. */
+	previousCompletedTurn?: number;
+	/** Historical measurements may have come from outside the projection. Only observed turns count in that case. */
+	partialContextHistory?: boolean;
+	/** False means the provider cannot take a compaction command. Absence means the adapter cannot say. */
+	canCompact?: boolean;
+	/** False when a request that never completed must be treated as failed instead of being retried. */
+	retryLostCompact?: boolean;
+	/** A stable identity for the active provider thread, for deduplicating hand-offs. */
+	contextSession?: string;
 	/** The Steward's context size in tokens, when known: the newest turn's, never an older sample. */
 	contextTokens?: number;
 	/** The ordinal of the turn `contextTokens` was read from. */

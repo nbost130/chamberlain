@@ -20,7 +20,9 @@ import { createHash } from "node:crypto";
 import { readSecret } from "../../core/config/layout.ts";
 import { type PrepareReason, preparationFailed } from "../../core/delivery/preflight.ts";
 import { within as deadline } from "../../core/within.ts";
+import { lookOf } from "./failure.ts";
 import { preflightFailure } from "./model-preflight.ts";
+import { checkProjection } from "./projection.ts";
 import { connect, type Rpc, RpcFailure } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
 
@@ -130,6 +132,8 @@ export function daemonPingRefusal(proj: {
 }
 
 export type RpcPingDeps = {
+	/** Compaction needs a positively idle projection and never steers an active run. */
+	purpose?: "compact";
 	modelSelection?: MessageOptions["modelSelection"];
 	/** Decisions errors must never include text from a provider reply or thread. */
 	safeDiagnostics?: boolean;
@@ -216,7 +220,7 @@ export function createRpcPing(
 					ms,
 					"projection read",
 				)) as { runs?: { id?: string; ordinal?: number; status?: string }[]; turnItems?: { status?: string }[] };
-				const refused = identity === "daemon" ? daemonPingRefusal(proj) : undefined;
+				const refused = pingRefusal(proj, d.purpose, identity);
 				if (refused) return { ok: false, detail: `${NOT_SENT}${refused}` };
 				dispatched = true;
 				await within(
@@ -243,4 +247,19 @@ export function createRpcPing(
 			return { ok: false, detail: sendFailure(e, dispatched, [token]) };
 		}
 	};
+}
+
+function pingRefusal(
+	proj: Parameters<typeof daemonPingRefusal>[0],
+	purpose: RpcPingDeps["purpose"],
+	identity: Identity,
+): string | undefined {
+	if (purpose === "compact") {
+		const checked = checkProjection(proj);
+		if (!checked.runs?.every((run) => run && typeof run.status === "string")) return "thread state unavailable";
+		const { active, waiting } = lookOf(checked.runs, checked.turnItems);
+		if (active || waiting) return "thread is busy";
+		return undefined;
+	}
+	return identity === "daemon" ? daemonPingRefusal(proj) : undefined;
 }
