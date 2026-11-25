@@ -42,12 +42,10 @@ export class DatabaseTooNewError extends SchemaTooNewError {
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o, { migrations: MIGRATIONS, tooNew: (p, found) => new DatabaseTooNewError(p, found) });
 	const c = queries(db, o);
+	// A speed-up only: a store that cannot add it (read-only, or busy) still opens, and the query scans.
 	try {
 		ensureUsageIndex(c);
-	} catch (e) {
-		db.close();
-		throw e;
-	}
+	} catch {}
 	const closers: (() => void)[] = [];
 	return {
 		path,
