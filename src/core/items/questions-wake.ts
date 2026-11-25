@@ -71,6 +71,7 @@ export type AnswerRoute =
 export function answerRoute(i: Question, a: Answer): AnswerRoute {
 	// A direction or a dismissal chose no option, so it has no relay text to send: the Steward always reads it.
 	if (a.kind) return { direct: false };
+	if (i.kind === "idea") return { direct: false };
 	if (!i.options.some((o) => o.route === "thread")) return { direct: false };
 	const o = i.options[a.choice];
 	if (!o || o.label !== a.label) return { direct: false, why: "custom answer" };
@@ -178,6 +179,12 @@ export function answerWake(i: Question, a: Answer, why?: StewardWhy): string {
 	const lines = [
 		...itemLines(i),
 		`choice: ${a.choice + 1}. ${a.label}${a.by === "batch" ? " (accepted with every recommendation)" : ""}`,
+		...(i.kind === "idea"
+			? [
+					"idea: if approved, file an issue and link any predecessor as blocked-by. Approval clears no one-way door.",
+					`idea context: ${i.context.replace(/[<>]{3,}/g, "")}`,
+				]
+			: []),
 		a.note ? `note: ${a.note}` : "note: none",
 		a.ruling
 			? `ruling: saved as ${a.ruling.id}, in force and confirmed by ${principal()}: ${a.ruling.decides}`

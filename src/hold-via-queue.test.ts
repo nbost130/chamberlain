@@ -103,7 +103,7 @@ describe("(a) everything that waits on the operator goes through the queue first
 		const d = scratch();
 		const nu = idOf(ask(d, { urgent: false, kind: "only-you", title: "Waits a while" }));
 		withStore(d, (s) => {
-			// Urgent questions written straight to the store: ask.ts would also post them.
+			// An old idea omitted urgency. It is read as non-urgent alongside an explicitly demoted question.
 			for (const [id, kind] of [
 				["Q-urg01", "idea"],
 				["Q-urg02", "product"],
@@ -117,7 +117,7 @@ describe("(a) everything that waits on the operator goes through the queue first
 					now: Date.now(),
 				});
 			s.items.acknowledge("queue", "Q-urg02", Date.now(), { notNowAt: new Date().toISOString() });
-			expect(ranked(questionStates(s).values()).map((q) => q.id)).toEqual(["Q-urg01", "Q-urg02", nu]);
+			expect(ranked(questionStates(s).values()).map((q) => q.id)).toEqual(["Q-urg02", nu, "Q-urg01"]);
 		});
 	});
 	test("a hold with no --item, an unknown item or an answered item is refused and writes nothing", () => {

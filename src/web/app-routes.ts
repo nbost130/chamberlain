@@ -63,7 +63,8 @@ function queueResponse(ctx: Ctx): Response {
 	const later = snoozed(states).map((i) => view(d, i));
 	const list = readRulings(d.store);
 	return json({
-		items: open,
+		items: open.filter((i) => i.kind !== "idea"),
+		ideas: open.filter((i) => i.kind === "idea"),
 		snoozed: later,
 		cards: (d.mirror?.list() ?? []).map((c) => cardView(d, c)),
 		unreachable: d.mirror?.unreachable?.() ?? [],

@@ -16,15 +16,31 @@ function queueAnswerText(q: QuestionState): string {
 	return `answered "${q.answer?.label ?? "?"}"${note}${ruling}`;
 }
 
-export function queueRecords(store: Store): SettledRecord[] {
+/** A decline is an option convention; dismissal is a separate queue action. */
+function isDecline(q: QuestionState): boolean {
+	return (
+		q.answer?.kind === undefined &&
+		/^(?:no(?:$|[,.!])|decline\b|reject\b|drop\b|pass$)/i.test(q.answer?.label.trim() ?? "")
+	);
+}
+
+const closedAt = (q: QuestionState) => q.dismissal?.t ?? q.answer?.t ?? q.createdAt;
+
+function canMatch(q: QuestionState, ideaDeclineSince?: number): boolean {
+	if (q.status === "open") return false;
+	const ideaLookup = q.kind === "idea" && ideaDeclineSince !== undefined;
+	if (ideaLookup && (q.status === "dismissed" || isDecline(q))) return Date.parse(closedAt(q)) >= ideaDeclineSince;
+	return q.status !== "dismissed";
+}
+
+export function queueRecords(store: Store, ideaDeclineSince?: number): SettledRecord[] {
 	const out: SettledRecord[] = [];
 	for (const q of questionStates(store).values()) {
-		// A dismissed item was never answered: it is not a ruling and answers no later question, so a lookup never sees it.
-		if (q.status === "open" || q.status === "dismissed") continue;
+		if (!canMatch(q, ideaDeclineSince)) continue;
 		// A secret's title and context never enter matching or refusal text.
 		const safe = redactSecretFields(q);
-		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
-		const answer = queueAnswerText(q);
+		const date = String(closedAt(q) ?? "").slice(0, 10);
+		const answer = q.status === "dismissed" ? "dismissed" : queueAnswerText(q);
 		out.push({
 			source: "queue",
 			date,

@@ -26,6 +26,11 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 
 ## Criteria
 
+- [x] ISC-12: Idea filing is silent, requires a recommendation plus cost and evidence, and honors all configured caps in the insert transaction. The CLI tests in `src/ask-ideas.test.ts` fail if two concurrent asks take one slot, a refusal leaves a record, or a filing produces a post or wake.
+- [x] ISC-13: A new idea checks recent idea dismissals and declines, and every other kind retains the existing settled lookup. The CLI tests in `src/ask-ideas.test.ts` fail if dismissal or decline aging produces the wrong admission outcome.
+- [x] ISC-14: Ideas keep a separate count and tab on both queue surfaces. The web tests fail if Waiting counts an idea, a stored idea reads as urgent, or the view key gains additional write authority.
+- [x] ISC-15: Worker suggestions arrive labeled in the Steward digest, and idea approvals reach the Steward with predecessor context and instructions to file an issue. The digest and web tests fail if either message loses those details.
+
 - [x] ISC-11: A confirmed quota limit selects the first usable operator-approved backup for the same role and environment. A busy switch or exhausted list preserves the delivery for retry. Evidence: `src/adapters/t3/quota-failover.test.ts` replays 67 queued wakes across restart, including Desk confinement, quota recovery and one outage alarm.
 
 - [x] ISC-1: Every model-dependent surface, including shipped agent launch templates, is inventoried. Falsifier: an unlisted call site in source or hidden setup templates.
@@ -51,6 +56,9 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 
 | ISC | type | method | tool |
 | --- | --- | --- | --- |
+| ISC-12, ISC-13 | bun-test | Exercise the ask CLI against SQLite, including independent concurrent writers | bun test src/ask-ideas.test.ts |
+| ISC-14 | bun-test | Render both tabs, test queue counts and answer a legacy idea with the view key | bun test src/web/ideas-view.test.ts src/web/inline-view.snoozed-tab.test.ts |
+| ISC-15 | bun-test | Compose a Steward digest and inspect the approval wake | bun test src/core/delivery/note.test.ts src/web/ideas-view.test.ts |
 | ISC-1 | manual | Compare source call sites with inventory | Source audit |
 | ISC-2 | bun-test | Configuration and migration integration tests | bun test src/core/llm |
 | ISC-3 | bun-test | Regression suite | bun test |

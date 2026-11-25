@@ -190,7 +190,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			// An inline frame may not read one item on its own, so it finds this one in the open queue, then in the recent answers.
 			const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
 			testMode(q);
-			const it = (q.items || []).find((x) => x.id === ITEM);
+			const it = [...(q.items || []), ...(q.ideas || [])].find((x) => x.id === ITEM);
 			if (it) { count.textContent = "open"; list.replaceChildren(card(it)); return; }
 			// A snoozed question is not answered and not on the active list: say when it returns. The Decisions view's Snoozed tab brings it back in place; this one-question view links to the full page.
 			const later = (q.snoozed || []).find((x) => x.id === ITEM);
@@ -363,8 +363,10 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			const own = threadLink(it);
 			row.replaceChildren(...(own ? [own] : []), ...extra);
 			tell("dq-ok", text);
-			remaining = Math.max(0, remaining - 1);
-			count.textContent = ITEM ? "done" : remaining ? `${remaining} waiting` : DASH ? "clear" : "0 waiting";
+			if (ITEM || it.kind !== "idea") {
+				remaining = Math.max(0, remaining - 1);
+				count.textContent = ITEM ? "done" : remaining ? `${remaining} waiting` : DASH ? "clear" : "0 waiting";
+			}
 			refresh();
 		}
 		async function send(action, body, said) {
@@ -617,19 +619,19 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		wrap.insertBefore(health, list);
 		const tabs = el("div", "dq-tabs");
 		// Snoozed sits right after Waiting, with a count as Waiting has, so what is put off is one tap from what is waiting.
-		const names = ["Waiting", "Snoozed", "Rulings", "Recent"];
+		const names = ["Waiting", "Snoozed", "Ideas", "Rulings", "Recent"];
+		const queueTabs = new Set(["Waiting", "Snoozed", "Ideas"]);
 		let tab = "Waiting";
 		const btns = names.map((n) => {
 			const b = el("button", "dq-tab", n); b.type = "button";
-			if (n === "Waiting" || n === "Snoozed") b.append(el("span", "dq-tab-n", "…"));
+			if (queueTabs.has(n)) b.append(el("span", "dq-tab-n", "…"));
 			b.addEventListener("click", () => { tab = n; paint(); show(); }); tabs.append(b); return b;
 		});
 		const tabCount = (n, v) => { const b = btns[names.indexOf(n)]; b.querySelector(".dq-tab-n").textContent = String(v); b.setAttribute("aria-label", `${n}, ${v}`); };
 		wrap.insertBefore(tabs, list);
-		const panes = { Waiting: el("div"), Snoozed: el("div"), Rulings: el("div"), Recent: el("div") };
-		panes.Waiting.style.cssText = "display:flex;flex-direction:column;gap:12px";
-		panes.Snoozed.style.cssText = "display:flex;flex-direction:column;gap:12px";
-		list.replaceChildren(panes.Waiting, panes.Snoozed, panes.Rulings, panes.Recent);
+		const panes = Object.fromEntries(names.map((n) => [n, el("div")]));
+		for (const n of queueTabs) panes[n].style.cssText = "display:flex;flex-direction:column;gap:12px";
+		list.replaceChildren(...names.map((n) => panes[n]));
 		const paint = () => { btns.forEach((b, i) => b.classList.toggle("on", names[i] === tab)); for (const n of names) panes[n].style.display = n === tab ? "" : "none"; };
 		// One line per machine the queue can't reach (a sleeping laptop), so "clear" never claims more than it can see.
 		const away = el("div", "dq-msg dq-away");
@@ -652,6 +654,25 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			});
 			panes.Snoozed.replaceChildren(...(nodes.length ? nodes : [el("div", "dq-empty", "Nothing snoozed.")]));
 		}
+		function paintActive(items, snoozed) {
+			const ids = new Set(items.map((i) => i.id));
+			const put = new Set(snoozed.map((i) => i.id));
+			// Keep local confirmations and in-flight picks. Replace a snoozed confirmation when its card returns.
+			for (const [id, c] of cards) if (!ids.has(id) && (!c.dataset.answered || (c.dataset.answered === "snoozed" && !put.has(id)))) { c.remove(); cards.delete(id); }
+			for (const it of items) {
+				const old = cards.get(it.id);
+				const back = old?.dataset.answered === "snoozed";
+				if (old && !back && (old.dataset.answered || !it.mirrored || old.dataset.sig === it.mirrored.sig)) continue;
+				const c = card(it);
+				if (it.mirrored) c.dataset.sig = it.mirrored.sig;
+				cards.set(it.id, c);
+				if (old) old.replaceWith(c); else panes[it.kind === "idea" ? "Ideas" : "Waiting"].append(c);
+			}
+			for (const [n, message] of [["Waiting", "Nothing waiting. The queue is clear."], ["Ideas", "No ideas waiting."]]) {
+				panes[n].querySelector(".dq-empty")?.remove();
+				if (!panes[n].querySelector(".dq-card")) panes[n].append(el("div", "dq-empty", message));
+			}
+		}
 		async function waiting() {
 			try {
 				const q = await (await authFetch(`${BASE}/api/queue`, { cache: "no-store" })).json();
@@ -664,29 +685,19 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 				away.style.display = gone.length ? "" : "none";
 				away.replaceChildren(...gone.map((u) => el("div", "", `${u.server[0].toUpperCase()}${u.server.slice(1)} not reachable since ${hm(u.since)} (asleep?). What waits there may be missing or out of date; it shows when ${u.server} wakes.`)));
 				const items = [...(q.items || []), ...(q.cards || []).map(fromCard)];
+				const ideas = q.ideas || [];
+				const later = q.snoozed || [];
 				remaining = items.length;
 count.textContent = items.length ? `${items.length} waiting` : "clear";
 				tabCount("Waiting", items.length);
-				const ids = new Set(items.map((i) => i.id));
-				const put = new Set((q.snoozed || []).map((i) => i.id));
-				// A card he answered here stays as it is. One he snoozed is a note that it was put off: it stays while the question is snoozed, and goes when the question is in neither list (dismissed from the Snoozed tab, or settled elsewhere).
-				for (const [id, c] of cards) if (!ids.has(id) && (!c.dataset.answered || (c.dataset.answered === "snoozed" && !put.has(id)))) { c.remove(); cards.delete(id); }
-				for (const it of items) {
-					const old = cards.get(it.id);
-					// A mirrored card that changed under the same ID (a new command, reordered options) is redrawn, so he
-					// sees and answers the live version, never the stale one. One he just answered here stays as it is.
-					// A card he snoozed here is a note that it was put off; when the question is back on the list (its time passed, or it was brought back) that note is replaced by the live card.
-					const back = old?.dataset.answered === "snoozed";
-					if (old && !back && (old.dataset.answered || !it.mirrored || old.dataset.sig === it.mirrored.sig)) continue;
-					const c = card(it);
-					if (it.mirrored) c.dataset.sig = it.mirrored.sig;
-					cards.set(it.id, c);
-					if (old) old.replaceWith(c); else panes.Waiting.append(c);
+				tabCount("Ideas", ideas.length);
+				paintActive([...items, ...ideas], later);
+				paintSnoozed(later);
+				if (ITEM && !focused && cards.has(ITEM)) {
+					focused = true;
+					cards.get(ITEM).classList.add("dq-focus");
+					if (ideas.some((it) => it.id === ITEM)) { tab = "Ideas"; paint(); }
 				}
-				panes.Waiting.querySelector(".dq-empty")?.remove();
-				if (!cards.size) panes.Waiting.append(el("div", "dq-empty", "Nothing waiting. The queue is clear."));
-				paintSnoozed(q.snoozed || []);
-				if (ITEM && !focused && cards.has(ITEM)) { focused = true; cards.get(ITEM).classList.add("dq-focus"); }
 			} catch (e) {
 				paintHealth(health, lastHealth ? { ...lastHealth, unknown: [...(lastHealth.unknown || []), "Queue refresh unavailable"] } : null, lastHealthLimits, lastOverhead);
 				count.textContent = "?"; if (!cards.size) bad(panes.Waiting, e);
@@ -719,13 +730,13 @@ count.textContent = items.length ? `${items.length} waiting` : "clear";
 				}));
 			} catch (e) { bad(panes.Recent, e); }
 		}
-		const show = () => (tab === "Waiting" || tab === "Snoozed" ? waiting() : tab === "Rulings" ? rulings() : recent());
+		const show = () => (queueTabs.has(tab) ? waiting() : tab === "Rulings" ? rulings() : recent());
 // A tap that settled a card re-reads the queue, so the Snoozed tab and the counts follow at once.
 refresh = waiting;
 		reload.addEventListener("click", show);
 		paint();
 		waiting();
 		// Keep the count and the open tab current while he is looking; a hidden frame does no work.
-		setInterval(() => { if (document.visibilityState !== "hidden") { waiting(); if (tab !== "Waiting" && tab !== "Snoozed") show(); } }, 20000);
+		setInterval(() => { if (document.visibilityState !== "hidden") { waiting(); if (!queueTabs.has(tab)) show(); } }, 20000);
 	}
 })();

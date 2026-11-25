@@ -9,7 +9,7 @@ const KINDS = [
 ];
 const DEFAULT_TAG = { "only-you": "Only you", product: "Review", ruling: "Ruling", idea: "Idea" };
 const S = {
-	route: "queue", items: [], inForce: 0, unconfirmed: 0, testMode: false, filter: "all", sel: 0,
+	route: "queue", items: [], ideas: [], inForce: 0, unconfirmed: 0, testMode: false, filter: "all", ideaTab: false, sel: 0,
 	pick: {}, note: {}, save: {}, wording: {}, editing: {}, busy: false, total: 0, done: 0,
 	// Items put off until later (the Snoozed section, collapsed until opened), and which item has its snooze choices open.
 	snoozed: [], snoozedOpen: false, panel: {},
@@ -66,11 +66,20 @@ async function load() {
 		} else {
 			const j = await api("/api/queue");
 			S.health = j.health; S.overhead = j.overhead;
-			Object.assign(S, { items: j.items, snoozed: j.snoozed || [], cards: j.cards || [], inForce: j.inForce, unconfirmed: j.unconfirmed, testMode: j.testMode });
+			Object.assign(S, { items: j.items, ideas: j.ideas || [], snoozed: j.snoozed || [], cards: j.cards || [], inForce: j.inForce, unconfirmed: j.unconfirmed, testMode: j.testMode });
 			scheduleReturn();
 			if (!S.total || S.items.length > S.total - S.done) { S.total = S.items.length + S.done; }
 			S.route = r.route;
-			if (r.id) { const k = visible().findIndex((i) => i.id === r.id); if (k >= 0) S.sel = k; else if (r.route === "item") { S.route = "queue"; history.replaceState({}, "", "/"); if (S.snoozed.some((i) => i.id === r.id)) S.snoozedOpen = true; } }
+			if (r.id) {
+				const item = [...S.items, ...S.ideas, ...S.snoozed].find((i) => i.id === r.id);
+				if (item) {
+					S.ideaTab = item.kind === "idea";
+					if (!S.ideaTab && item.kind !== S.filter) S.filter = "all";
+				}
+				const k = visible().findIndex((i) => i.id === r.id);
+				if (k >= 0) S.sel = k;
+				else { S.route = "queue"; history.replaceState({}, "", "/"); if (item?.snooze?.active) S.snoozedOpen = true; }
+			}
 			S.sel = Math.min(S.sel, Math.max(0, visible().length - 1));
 		}
 	} catch (e) { toast(`Could not load: ${e.message}`, true); }
@@ -88,6 +97,7 @@ function scheduleReturn() {
 // An approval, a secret and a card pointer are always urgent, whatever their `urgent` field says (questions.ts alwaysUrgent).
 const urgentOf = (i) => i.urgent !== false || i.secret === true || Boolean(i.cardRequest) || /^\s*(approval|secret)\s*$/i.test(i.tag || "");
 const visible = () => {
+	if (S.ideaTab) return S.ideas;
 	const f = S.filter === "all" ? S.items : S.items.filter((i) => i.kind === S.filter);
 	// Urgent first, grouped in kind order, then the non-urgent ones (urgent: false) in kind order; the server ranks within each kind.
 	const byKind = (list) => KINDS.flatMap((k) => list.filter((i) => i.kind === k.kind));
@@ -111,10 +121,14 @@ function header() {
 	return `<header class="top">
 		<div class="brand">${ICON.list}<b>Decisions</b><span class="pill">${n} waiting</span><span class="sub">${n ? `about ${mins} min to clear` : "nothing waiting"}</span>
 			<a class="rulings-link" href="/rulings" data-nav="/rulings">Rulings <span class="n">${S.inForce}</span></a></div>
-		<nav class="filters" aria-label="Filter">
-			<button type="button" data-filter="all" aria-pressed="${S.filter === "all"}">All ${n}</button>
-			${KINDS.map((k) => `<button type="button" data-filter="${k.kind}" aria-pressed="${S.filter === k.kind}">${k.filter} ${count(k.kind)}</button>`).join("")}
+		<nav class="filters" aria-label="Decision lists">
+			<button type="button" data-list="waiting" aria-pressed="${!S.ideaTab}">Waiting ${n}</button>
+			<button type="button" data-list="ideas" aria-pressed="${S.ideaTab}">Ideas ${S.ideas.length}</button>
 		</nav>
+		${S.ideaTab ? "" : `<nav class="filters" aria-label="Filter">
+			<button type="button" data-filter="all" aria-pressed="${S.filter === "all"}">All ${n}</button>
+			${KINDS.filter((k) => k.kind !== "idea").map((k) => `<button type="button" data-filter="${k.kind}" aria-pressed="${S.filter === k.kind}">${k.filter} ${count(k.kind)}</button>`).join("")}
+		</nav>`}
 		<div class="actions">
 			<button type="button" class="btn-primary" data-act="accept-all" ${batch ? "" : "disabled"}>Accept ${batch} recommendation${batch === 1 ? "" : "s"} <span class="k">Shift Enter</span></button>
 		</div>
@@ -123,7 +137,7 @@ function header() {
 
 function listHtml() {
 	const v = visible();
-	if (!v.length) return `<section class="list" aria-label="Queue"><div class="empty">Nothing waiting on you.<br>New questions from the Steward land here.</div>${snoozedHtml()}</section>`;
+	if (!v.length) return `<section class="list" aria-label="Queue"><div class="empty">${S.ideaTab ? "No ideas waiting." : "Nothing waiting on you.<br>New questions from the Steward land here."}</div>${snoozedHtml()}</section>`;
 	let n = 0;
 	const rowHtml = (i) => {
 		const idx = n++;
@@ -182,10 +196,11 @@ function actionsHtml(i, settles, lead = "") {
 	return `<div class="item-actions" role="group" aria-label="Ways to handle this">${lead}${link}<button type="button" class="mini" data-act="snooze-panel" aria-expanded="${open}" title="Put it off until later; it returns on its own">Snooze</button>${direction}${dismiss}</div>${choices}`;
 }
 function snoozedHtml() {
-	if (!S.snoozed.length) return "";
+	const snoozed = S.snoozed.filter((i) => (i.kind === "idea") === S.ideaTab);
+	if (!snoozed.length) return "";
 	const row = (i) => `<div class="srow" data-snoozed="${esc(i.id)}"><span class="body"><span class="title">${esc(i.title)}</span><span class="meta"><span>${esc(i.thread)}</span><span>returns ${esc(when(i.snooze.until))}</span></span></span>
 		<span class="sact">${threadHref(i) ? `<a class="mini" href="${esc(threadHref(i))}">Open thread</a>` : ""}<button type="button" class="mini" data-act="unsnooze" data-id="${esc(i.id)}">Un-snooze</button></span></div>`;
-	return `<div class="snoozed"><button type="button" class="group snoozed-head" data-act="toggle-snoozed" aria-expanded="${S.snoozedOpen}"><span class="dot"></span>SNOOZED · ${S.snoozed.length}<span class="caret" aria-hidden="true">${S.snoozedOpen ? "▾" : "▸"}</span></button>${S.snoozedOpen ? S.snoozed.map(row).join("") : ""}</div>`;
+	return `<div class="snoozed"><button type="button" class="group snoozed-head" data-act="toggle-snoozed" aria-expanded="${S.snoozedOpen}"><span class="dot"></span>SNOOZED · ${snoozed.length}<span class="caret" aria-hidden="true">${S.snoozedOpen ? "▾" : "▸"}</span></button>${S.snoozedOpen ? snoozed.map(row).join("") : ""}</div>`;
 }
 
 function evidenceHtml(i) {
@@ -240,7 +255,8 @@ function detailHtml() {
 	const kind = KINDS.find((k) => k.kind === i.kind);
 	// The thread link lives in the row of buttons along the bottom (actionsHtml); with no link, the crumbs say where the thread is.
 	const link = threadHref(i) ? "" : `<span class="open">${esc(i.server)} · ${esc(i.threadId || "")}</span>`;
-	const pos = S.done + S.sel + 1, total = S.total || v.length;
+	const done = S.ideaTab ? 0 : S.done;
+	const pos = done + S.sel + 1, total = S.ideaTab ? v.length : S.total || v.length;
 	const mtop = `<div class="mtop"><a href="/" data-nav="/" aria-label="Back to decisions">${ICON.back}</a><span class="pos">${S.sel + 1} of ${v.length}</span><div class="bar" aria-hidden="true">${Array.from({ length: Math.min(total, 12) }, (_, k) => `<span class="${k < S.done ? "done" : k === pos - 1 ? "here" : ""}"></span>`).join("")}</div></div>`;
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
 		<div class="headline"><h1>${esc(i.title)}</h1>${i.context ? contextHtml(i.context) : ""}</div>`;
@@ -288,7 +304,7 @@ async function answerCurrent() {
 		const body = { choice: defaultPick(i), note: S.note[i.id] || undefined, saveRuling: Boolean(S.save[i.id]) };
 		if (S.save[i.id]) body.rulingWording = S.wording[i.id] ?? i.proposedRuling;
 		const r = await api(`/api/items/${encodeURIComponent(i.id)}/answer`, body);
-		S.done++;
+		if (!S.ideaTab) S.done++;
 		toast(`Answered “${i.title}”${r.ruling ? `, and saved ruling ${r.ruling}` : ""}. ${r.to === "thread" ? "It goes straight to its thread." : "Recorded; the wake to the Steward is queued."}`);
 		const onItem = S.route === "item";
 		S.busy = false;
@@ -317,7 +333,7 @@ async function settleCurrent(kind) {
 	try {
 		await api(`/api/items/${encodeURIComponent(i.id)}/${kind}`, { note: note || undefined });
 		delete S.note[i.id];
-		S.done++;
+		if (!S.ideaTab) S.done++;
 		toast(kind === "direction" ? `Direction sent on “${i.title}”. The Steward reads your note; no option was chosen.` : `Dismissed “${i.title}”. It is off the queue and nothing was answered.`);
 		await afterSettle(S.route === "item");
 	} catch (e) { S.busy = false; toast(e.message, true); render(); }
@@ -382,6 +398,7 @@ function cardHtml(c) {
 		${cardDismiss(c)}${armed ? '<div class="from">This is an approval: it needs this second tap, which expires in a minute. Changing the option cancels it.</div>' : ""}</article>`;
 }
 function cardsHtml() {
+	if (S.ideaTab) return "";
 	if (!S.cards.length) return "";
 	return `<section class="cards" aria-label="Waiting in threads"><div class="group"><span class="dot"></span>WAITING IN THREADS · ${S.cards.length}<button type="button" class="linkbtn" data-cact="refresh">Refresh</button></div>${S.cards.map(cardHtml).join("")}</section>`;
 }
@@ -497,7 +514,7 @@ function render() { if (S.route === "rulings") renderRulings(); else renderQueue
 
 // ---- events ----
 app.addEventListener("click", (ev) => {
-	const t = ev.target.closest("[data-nav],[data-sel],[data-filter],[data-act],[data-rfilter],[data-rsel],[data-ract],[data-cact],[data-snooze]");
+	const t = ev.target.closest("[data-nav],[data-sel],[data-list],[data-filter],[data-act],[data-rfilter],[data-rsel],[data-ract],[data-cact],[data-snooze]");
 	if (!t) return;
 	if (t.dataset.nav) { ev.preventDefault(); go(t.dataset.nav); return; }
 	if (t.dataset.sel !== undefined) {
@@ -508,6 +525,7 @@ app.addEventListener("click", (ev) => {
 		return;
 	}
 	if (t.dataset.filter) { S.filter = t.dataset.filter; S.sel = 0; render(); return; }
+	if (t.dataset.list) { S.ideaTab = t.dataset.list === "ideas"; S.sel = 0; render(); return; }
 	if (t.dataset.rfilter) { S.rfilter = t.dataset.rfilter; S.rsel = 0; render(); return; }
 	if (t.dataset.rsel !== undefined) { S.rsel = Number(t.dataset.rsel); render(); if (matchMedia("(max-width: 760px)").matches) document.querySelector(".raside")?.scrollIntoView({ behavior: "smooth" }); return; }
 	if (t.dataset.ract) { rulingAct(t.dataset.ract); return; }
