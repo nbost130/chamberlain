@@ -39,6 +39,7 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			compactAt?: number;
 			config?: Record<string, unknown>;
 			housekeeping?: boolean;
+			stewardTokens?: boolean;
 			gh?: EngineDeps["gh"];
 			ask?: EngineDeps["ask"];
 			classifierProvider?: EngineDeps["classifierProvider"];
@@ -70,6 +71,7 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			dry: o.dry,
 			compactAt: o.compactAt,
 			housekeeping: o.housekeeping ?? false,
+			stewardTokens: o.stewardTokens,
 			gh: o.gh,
 			ask: o.ask,
 			...(o.classifierProvider ? { classifierProvider: o.classifierProvider } : {}),

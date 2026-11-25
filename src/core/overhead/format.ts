@@ -85,7 +85,7 @@ export function formatOverhead(r: OverheadReport): string {
 	const nr = r.limits.noopRate;
 	const prs = (w: WindowMetrics) => prValue(r.prStatus, w.prs === undefined ? undefined : String(w.prs));
 	const out = [
-		`Overhead, rolling ${W} to ${new Date(r.at).toISOString().slice(0, 16)}Z  (Steward priced as ${r.model ?? "unknown"}, ${r.cacheWrite} cache writes)`,
+		`Overhead, rolling ${W} to ${new Date(r.at).toISOString().slice(0, 16)}Z  (recorded turn models, ${r.cacheWrite} cache writes)`,
 		"",
 		`  cost per merged PR   ${W} ${perPr(d, r.prStatus).padEnd(14)} ${B} ${perPr(r.trailing, r.prStatus).padEnd(14)} ${mode(cp.mode)}${cp.limitUsd === undefined ? "" : `, limit ${usd(cp.limitUsd)}`}`,
 		`  PRs merged           ${W} ${prs(d).padEnd(14)} ${B} ${prs(r.trailing)}`,

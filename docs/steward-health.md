@@ -8,10 +8,12 @@ asking the operator once per session through the decision queue.
 
 ## What it reads
 
-- For context, the newest turn of the active provider thread in T3's state database. When the projection has no usable
-  size, the adapter can read the Antigravity conversation database in read-only mode. Otherwise context is unknown.
-- For quality and historical peaks, the native Claude Code transcript when available. Only canonical rows count.
-  Sidechains and API request snapshots are skipped. Quality signals are unavailable without a readable transcript.
+- The context guard uses the newest turn of the active provider thread. While a turn runs, the hourly report can cite
+  the last exact reading on the same provider thread and its sample time. That older size cannot trigger compaction or
+  resolve the outcome of a compaction. The Antigravity adapter can also read its native conversation database.
+- T3's completed turn items supply thread rereads and completed compaction events. Self-transcript reads are available
+  for Claude Code when its native session is identified. The optional native transcript still supplies history and format
+  samples where available.
 
 ## Signals and verdicts
 
@@ -23,12 +25,13 @@ asking the operator once per session through the decision queue.
 
 A self-read made for the hand-off itself, in the two turns after a compaction (recovering what the summary dropped), or to look a wake's own delivery id up for a repeat is the Steward doing what it was told, and does not count. An ordinary lookup of its own transcript does.
 
-Quality counters reset at the latest transcript compaction. Verdicts:
+Quality counters reset at the latest recorded compaction on the active provider thread. A driver without a native
+self-transcript signal reports it as not measured. This alone does not affect the verdict. Verdicts:
 
 - **OK**: nothing elevated and nothing unknown.
 - **WATCH**: something elevated, or something could not be measured (unknown is never OK).
-- **COMPACT**: measured context above the compaction threshold without an elevated quality signal. The daemon
-  sends `/compact` to the Steward's compaction webhook when the queue permits it.
+- **COMPACT**: current context above the compaction threshold without an elevated quality signal. The daemon
+  sends `/compact` to the Steward's compaction webhook when the queue and adapter capability permit it.
 - **HAND OFF**: a quality signal (rereading or format) is past its limit, or the last compaction did not bring the context back under the compaction line (`compact-ineffective`; the daemon records its compactions in state `steward-compact`, so a restart keeps the cooldown, and never compacts again instead of handing off). Compaction does not fix that. The daemon
   starts the hand-off itself, at most once per native session: it queues one wake (kind `handoff`, delivery id
   `steward-handoff:<session>`) telling the Steward to run its hand-off now, with no question to you. The wake is an
@@ -69,53 +72,42 @@ hours). On the question path, a failed submission is retried at the next hourly 
 
 ## Tokens per wake
 
-An optional metric, off until `stewardTokens` is on ([CONFIGURATION.md](CONFIGURATION.md)). It answers what the Steward spends per
-wake and per sweep, going forward and back through history, without a model call: every assistant row of a Claude Code transcript already
-carries the API's `usage` object.
+Turn on `stewardTokens` to collect completed T3 turns hourly. Each row identifies the provider thread and the turn
+ordinal, the delivery id when the run's input carries a verified wake envelope, the start and end times, the model
+when recorded, and the source. The collector reads recent turns across provider switches, including one last read of a
+retired Steward thread. Reads use bounded, read-only SQLite snapshots. Missing counters have no numeric value. A
+projection with a changed schema reports that turn records are unavailable.
 
-**How a transcript is read** (`src/core/steward/steward-tokens.ts`). The transcript is split at each turn-starting prompt into segments:
+| T3 driver | Turn spend counters | Repeat thread reads | Own transcript / format hook | Context |
+| --- | --- | --- | --- | --- |
+| Claude Code (`claudeAgent`) | Reported when complete | Yes | Available with a native session and, for format, a configured hook | Projection |
+| Codex (`codex`) | Reported when complete | Yes | Not measured | Projection |
+| Cursor (`cursor`) | Reported when complete | Yes | Not measured | Projection |
+| Antigravity (`antigravity`) | Reported when complete | Yes | Not measured | Projection or native request |
+| Grok (`grok`) | Unavailable on the observed driver | Yes | Not measured | Projection if a size is published |
+| Other drivers | Available if the projection supplies them | Yes, for recognizable tool items | Not measured | Projection if a size is published |
 
-| Kind | The prompt that starts it |
-| --- | --- |
-| a wake kind (`turn_ended`, `needs_input`, `answer`, `digest`, `sweep`, `failed`, `steward-handoff`, `rights`, ...) | a wake, by its `[chamberlain] <kind>:` header (`[t3-wake] <kind>:` in transcripts from before the rename), recognised only at the start of the prompt or of T3's webhook envelope. The kind is a fixed list (`WAKE_KINDS`); a header naming any other word is stored as `wake`, so no transcript word reaches the database or a report. A sweep is `full` (time for a full supervision sweep) or `findings`. |
-| `start` | the start prompt a new Steward gets (`docs/steward-start.md`) |
-| `compact` | a `/compact` |
-| `notice` | a turn T3 starts itself: a watched pull request's update, a delegated task's result |
-| `message` | any other prompt: the principal's own message, or a report another thread sent. The transcript does not say which. |
+Claude Code and Antigravity have recorded successful explicit compactions. Other drivers may lack verification. A
+recorded refusal overrides the driver's usual capability. When compaction is unsupported or an unverified request
+ages out without running, the Steward hands off.
 
-Background-task notifications, Stop hook feedback, the skill body a slash command expands to, and compaction summaries continue the
-segment in progress. Each row belongs to its parent row's segment (Claude Code links every row to the one before it), so a prompt written
-while an earlier request is still running takes none of that request's rows. A segment sums `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` and `output_tokens` over its
-distinct model requests (a request written as several rows, one per content block, counts once), and records the context (input plus cache
-read plus cache write) at its first and last request. Sidechains (subagents) and API request snapshots are not counted, so a wake's figure is
-the Steward's own thread, not the agents it spawned. A compaction's own summarising request is not in the transcript and is not counted.
+The projection's usage is the main-agent turn total. Chamberlain separates uncached input, cache read, cache write
+and output for reporting and pricing. Reasoning tokens are a separate observation and are never added to output
+again. Model request counts come from native transcript detail. Prices come from `overhead.prices` using each turn's
+recorded model. A missing model, missing price or incomplete turn prevents a full-window spend figure. Fleet share
+and managed spend ratios also need fleet telemetry coverage for the metered turns.
 
-**Storage.** One row per segment in `steward_wake_usage`, keyed by (session, delivery id); a wake from before delivery ids, and any prompt
-that is not a wake, is keyed by its row's uuid. No text is stored. Rows are upserted, so the backfill can run any number of times and the
-open segment of a live transcript is rewritten in place as it grows.
+`chamberlain steward-health tokens` reports the last 24 hours and 7 days, including per-kind token percentiles and
+full-sweep statistics. Use `--json` for the underlying numbers. `chamberlain steward-health flow` reports turns and
+tokens by source, digest flow and thread reads per digest item. Totals with incomplete token coverage are unavailable.
 
-**Collection.** With `stewardTokens` on, the daemon re-reads the current Steward's transcript hourly. When the Steward has changed since the
-last run it reads the previous transcript once more, so a hand-off loses none of the old session's last hour. A previous transcript that
-cannot be read is kept and tried again on the next run until a read succeeds or the file is gone, and each failure is logged as
-`steward-usage-error`.
+Claude Code transcripts remain available as an optional historical source through
+`chamberlain steward-health tokens backfill`. Pass `--dir <folder>` or explicit transcript files if the current
+adapter cannot locate a native transcript. Backfill groups canonical rows by turn-starting prompt, uses parent links
+to assign overlapping requests, and deduplicates requests and tools by id. It supplies historical context trends and
+per-request counts. Use `tokens --transcript` to inspect native detail on its own. The default report prefers the
+projected row where native history covers the same turn. The two sources
+never contribute separate counts for that turn.
 
-**History.** Chamberlain keeps no list of past Steward sessions: `switch-steward` overwrites `threads.steward`. Every Steward of an install runs
-in the same Claude Code project folder, so `chamberlain steward-health tokens backfill` reads every transcript there that received a wake
-(`--dir <folder>` for another folder, or name transcript files). It takes seconds for a few hundred sessions.
-
-**Report.** `chamberlain steward-health tokens` (`--json` for the numbers) shows, for the last 24 hours and the last 7 days: totals by usage
-field; per kind, the number of turns, the median and p90 tokens per turn, the median and p90 requests per turn and the median context at the
-start; the cost of a full sweep wake; and the context trend per session: context at the first and latest wake, the peak, and the growth per
-wake since the last compaction, with how many wakes are left at that rate before the compaction line (`compactTokens`). A context that grows
-steadily wake over wake is the signal to compact or hand off. The cost of a wake is roughly its requests times its context, so both are shown.
-
-**Tool calls.** Each turn also records how many tool calls the Steward made and how many read another thread (`t3_thread_read`, peek,
-`t3x read`): `tool_calls` and `thread_reads` (migration 20; absent for turns measured before it). Only the tool name and the command's verb
-are looked at.
-
-**Flow.** `chamberlain steward-health flow [--days <n>] [--json]` prints, per UTC day: the Steward's turns and tokens by source (`direct`:
-a thread messaging it straight; `notice`: T3 itself, a watched PR or a delegated task's result; `wakes`: Chamberlain), the notes and
-answers held for a digest instead of sent alone, the digests delivered to the Steward and the items they carried, the Steward's thread
-reads per digest item, and its median context at the start of a turn. All of it is counted from the token metric and the outbox, not from
-log lines. Read it as: direct turns falling while notes rise means threads report through the digest; reads per item shows what checking
-digest items costs; the context sets the price of every request, since each one re-reads it.
+New observations use the existing state table. The database schema version is unchanged and earlier releases can
+still open it and read legacy transcript rows.

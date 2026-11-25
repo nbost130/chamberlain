@@ -4,6 +4,7 @@ import { createFakeAdapter } from "../../testing/fake-adapter.ts";
 import type { StewardProbe } from "../adapter/adapter-inspect.ts";
 import { parseContextGuard } from "../config/context-guard.ts";
 import { parseConfigDoc } from "../config/layout-schema.ts";
+import { preparationFailed } from "../delivery/preflight.ts";
 import { guardedHealth, readHealth } from "../steward/steward-health.ts";
 import { healthTicker } from "../steward/steward-health-ticker.ts";
 import { createEngine } from "./engine.ts";
@@ -40,6 +41,58 @@ function known(tokens: number, extra: Partial<StewardProbe> = {}): StewardProbe 
 
 const alerts = (r: ReturnType<typeof rig>, prefix: string) =>
 	r.events.filter((e) => e.event === "alarm" && String(e.key).startsWith(prefix));
+
+test("the normal housekeeping tick collects turn rows without resolving a native transcript", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "stewardMeter", "transcriptPath"] });
+	adapter.probe = known(75_000);
+	let transcriptCalls = 0;
+	adapter.transcriptPath = async () => {
+		transcriptCalls++;
+		throw Error("native history unavailable");
+	};
+	adapter.stewardMeter = () => ({
+		rows: [
+			{
+				session: SESSION,
+				wakeKey: "1",
+				kind: "message",
+				startedAt: NOW - 1000,
+				endedAt: NOW,
+				compactions: 0,
+				source: "turn record",
+			},
+		],
+		quality: { threadRereads: 0 },
+	});
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true, stewardTokens: true });
+	await r.engine.tick();
+	expect(r.store.usage.list()).toMatchObject([{ session: SESSION, wakeKey: "1", source: "turn record" }]);
+	expect(readHealth(r.store)?.verdict).toBe("OK");
+	expect(transcriptCalls).toBe(0);
+	expect(r.events.some((e) => e.event === "steward-usage-error")).toBe(false);
+});
+
+test("health cites the last completed size while the guard ignores an in-progress turn", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "compact"] });
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true });
+	adapter.probe = known(150_000, { contextPending: true });
+	await r.engine.tick();
+	adapter.probe = {
+		...unknown(3, [3, 2, 1]),
+		contextPending: true,
+		lastMeasuredContext: { tokens: 150_000, at: AT, source: "fixture" },
+	};
+	await r.engine.tick();
+	const h = await guardedHealth({
+		probe: adapter.probe,
+		meter: { rows: [], quality: { threadRereads: 0 } },
+		policy: parseContextGuard(undefined),
+	});
+	expect(h).toMatchObject({ tokens: 150_000, usageAt: AT, verdict: "WATCH" });
+	expect(h.report).toContain("turn in progress");
+	expect(alerts(r, "context-unknown:")).toHaveLength(0);
+	expect(r.events.filter((e) => e.event === "fire" && e.kind === "compact")).toHaveLength(0);
+});
 
 test("completed unknown turns raise one alarm and queue one Steward hand-off across ticks and restart", async () => {
 	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "handoffInstruction"] });
@@ -93,6 +146,27 @@ test("a provider that cannot compact is handed off and is never sent a compactio
 	const r = rig({ adapter, steward: STEWARD, housekeeping: true });
 	await r.engine.tick();
 	expect(r.events.filter((e) => e.event === "fire" && e.kind === "compact")).toHaveLength(0);
+	expect(r.store.wakes.find(`steward-handoff:${SESSION}`)).toBeDefined();
+});
+
+test("a typed compaction preflight refusal hands off without posting or retrying", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "compact", "handoffInstruction"] });
+	adapter.probe = known(150_000, { compactions: 0 });
+	let prepares = 0;
+	adapter.compact!.prepare = async () => {
+		prepares++;
+		return preparationFailed("unsupported");
+	};
+	adapter.compact!.send = async () => {
+		throw Error("a refused compaction must not send");
+	};
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true });
+	await r.engine.tick();
+	await r.engine.tick();
+	setSystemTime(NOW + 40 * MIN);
+	await r.engine.tick();
+	expect(prepares).toBe(1);
+	expect(readHealth(r.store)?.report).toContain("cannot compact");
 	expect(r.store.wakes.find(`steward-handoff:${SESSION}`)).toBeDefined();
 });
 

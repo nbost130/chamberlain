@@ -23,7 +23,6 @@ import { collect } from "./collect.ts";
 import { HOUR_MS } from "./config.ts";
 import { summarize } from "./format.ts";
 import type { Investigator } from "./investigator.ts";
-import { priceOf } from "./prices.ts";
 import { type At, elapsedOf, inspect, newBudget, readClocks, reconcile, release, send } from "./reconcile.ts";
 import type { OverheadTickDeps } from "./tick-deps.ts";
 import {
@@ -47,13 +46,12 @@ async function open(
 	at: At,
 ): Promise<void> {
 	const id = `OV-${randomBytes(3).toString("hex")}`;
-	const price = d.model ? priceOf(d.cfg.prices, d.model) : undefined;
 	const rows = d.store.usage.list({ since: at.now - report.windowMs }).filter((r) => r.startedAt < at.now);
 	const brief = investigatorBrief({
 		id,
 		report,
 		rows,
-		...(price ? { price } : {}),
+		prices: d.cfg.prices,
 		cacheWrite: d.cfg.cacheWrite,
 		commands: d.commands,
 		...(d.cfg.investigator.instructions ? { extra: d.cfg.investigator.instructions } : {}),

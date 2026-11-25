@@ -15,7 +15,7 @@
 import { isWake } from "../steward/steward-tokens.ts";
 import type { WakeUsage } from "../store/store-records.ts";
 import type { OverheadConfig } from "./config.ts";
-import { type CacheWrite, type Price, tokensUsd } from "./prices.ts";
+import { type CacheWrite, type PriceTable, recordedTurnUsd } from "./prices.ts";
 
 export type MergedPr = { repo: string; number: number; mergedAt: number; title: string };
 
@@ -72,8 +72,7 @@ export type WindowInput = {
 	usage: readonly WakeUsage[];
 	from: number;
 	to: number;
-	/** The Steward's price from `overhead.prices`. Undefined: no price for its model, so the spend is unavailable. */
-	price?: Price;
+	prices?: PriceTable;
 	cacheWrite: CacheWrite;
 	classifierUsd: number;
 	prs?: number;
@@ -88,14 +87,15 @@ export const usable = (n: number | undefined): n is number => n !== undefined &&
  * The Steward's spend over the rows, or undefined when it cannot be known: no price for its model, no usage rows in the window (nothing was
  * measured, which is not a Steward that cost nothing: a $0 here would become a $0 baseline), or a sum that is not a finite number.
  */
-function stewardSpend(
-	rows: readonly WakeUsage[],
-	price: Price | undefined,
-	cacheWrite: CacheWrite,
-): number | undefined {
-	if (!price || !rows.length) return undefined;
-	const sum = rows.reduce((s, r) => s + tokensUsd(r, price, cacheWrite), 0);
-	return Number.isFinite(sum) ? sum : undefined;
+function stewardSpend(rows: readonly WakeUsage[], prices: PriceTable, cacheWrite: CacheWrite): number | undefined {
+	if (!rows.length) return undefined;
+	let total = 0;
+	for (const row of rows) {
+		const usd = recordedTurnUsd(row, prices, cacheWrite);
+		if (usd === undefined) return undefined;
+		total += usd;
+	}
+	return Number.isFinite(total) ? total : undefined;
 }
 
 /** Pure: one window's numbers. */
@@ -105,7 +105,7 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 	const measured = wakes.filter((r) => r.toolCalls !== undefined);
 	const noop = measured.filter((r) => r.toolCalls === 0).length;
 	const useful = measured.length - noop;
-	const stewardUsd = i.unverified ? undefined : stewardSpend(rows, i.price, i.cacheWrite);
+	const stewardUsd = i.unverified ? undefined : stewardSpend(rows, i.prices ?? {}, i.cacheWrite);
 	const classifierUsd = i.unverified ? undefined : i.classifierUsd;
 	const basisUsd = stewardUsd === undefined || classifierUsd === undefined ? undefined : stewardUsd + classifierUsd;
 	const m: WindowMetrics = {
@@ -213,7 +213,7 @@ function shareCrossing({ spendShare, cfg }: Inputs): Crossing[] {
 			metric: "spendShare",
 			value: spendShare,
 			threshold: t.threshold,
-			detail: `${pct(spendShare)} of the fleet's Claude spend, above ${pct(t.threshold)}`,
+			detail: `${pct(spendShare)} of tracked fleet spend, above ${pct(t.threshold)}`,
 		},
 	];
 }

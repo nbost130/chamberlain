@@ -27,6 +27,25 @@ import { join } from "node:path";
 import { files, SRC, violations } from "./architecture-boundary-scans.test.ts";
 
 describe("the import boundary", () => {
+	test("core Steward metering, health and context policy name no provider driver", () => {
+		const violations = files("core")
+			.filter(
+				(f) =>
+					f.startsWith("core/steward/steward-") ||
+					/\/(?:engine-(?:steward|core-steward|context-guard)|context-guard|adapter-inspect|steward-meter|sqlite-usage|store-records)\.ts$/.test(
+						f,
+					) ||
+					/^core\/overhead\/(?:brief|collect|metrics|prices)\.ts$/.test(f),
+			)
+			.filter(
+				(f) =>
+					!f.endsWith(".test.ts") &&
+					/(?:claude(?:Agent)?|anthropic|codex|openai|cursor|antigravity|grok|xai|gemini)/i.test(
+						readFileSync(join(SRC, f), "utf8"),
+					),
+			);
+		expect(violations).toEqual([]);
+	});
 	test("src/core/ has files, so the scan below is not vacuous", () => {
 		expect(files("core").length).toBeGreaterThan(20);
 		expect(files("adapters").length).toBeGreaterThan(10);

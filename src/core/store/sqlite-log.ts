@@ -1,8 +1,8 @@
-/** The event log, the classifier's dispositions and the Steward's token usage per wake. */
+/** The event log and the classifier's dispositions. */
 
 import { type Db, parse, type Row, required } from "./sqlite-db.ts";
 import type { EventQuery, LogEvent, Store } from "./store.ts";
-import type { Disposition, DispositionKey, DispositionWrite, WakeUsage } from "./store-records.ts";
+import type { Disposition, DispositionKey, DispositionWrite } from "./store-records.ts";
 
 // ---- events -------------------------------------------------------------------------------------
 const toEvent = (r: Row): LogEvent => ({
@@ -188,92 +188,3 @@ export const makeDispositions = (c: Db): Store["dispositions"] => ({
 });
 
 // ---- the Steward's token usage per wake ----------------------------------------------------------------
-const UPSERT_USAGE = `INSERT INTO steward_wake_usage (session, wake_key, kind, variant, delivery_id, started_at, ended_at, requests, input_tokens,
-								cache_read_input_tokens, cache_creation_input_tokens, output_tokens, context_start, context_end, context_peak, compactions,
-								tool_calls, thread_reads)
-							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-							ON CONFLICT (session, wake_key) DO UPDATE SET kind = excluded.kind, variant = excluded.variant, delivery_id = excluded.delivery_id,
-								started_at = excluded.started_at, ended_at = excluded.ended_at, requests = excluded.requests, input_tokens = excluded.input_tokens,
-								cache_read_input_tokens = excluded.cache_read_input_tokens, cache_creation_input_tokens = excluded.cache_creation_input_tokens,
-								output_tokens = excluded.output_tokens, context_start = excluded.context_start, context_end = excluded.context_end,
-								context_peak = excluded.context_peak, compactions = excluded.compactions, tool_calls = excluded.tool_calls,
-								thread_reads = excluded.thread_reads`;
-
-const usageParams = (r: WakeUsage): unknown[] => [
-	r.session,
-	r.wakeKey,
-	r.kind,
-	r.variant ?? null,
-	r.deliveryId ?? null,
-	r.startedAt,
-	r.endedAt,
-	r.requests,
-	r.inputTokens,
-	r.cacheReadInputTokens,
-	r.cacheCreationInputTokens,
-	r.outputTokens,
-	r.contextStart ?? null,
-	r.contextEnd ?? null,
-	r.contextPeak ?? null,
-	r.compactions,
-	r.toolCalls ?? null,
-	r.threadReads ?? null,
-];
-
-const toWakeUsage = (r: Row): WakeUsage => {
-	const opt = (v: unknown) => (v === null || v === undefined ? undefined : (v as number));
-	const w: WakeUsage = {
-		session: r.session as string,
-		wakeKey: r.wake_key as string,
-		kind: r.kind as string,
-		startedAt: r.started_at as number,
-		endedAt: r.ended_at as number,
-		requests: r.requests as number,
-		inputTokens: r.input_tokens as number,
-		cacheReadInputTokens: r.cache_read_input_tokens as number,
-		cacheCreationInputTokens: r.cache_creation_input_tokens as number,
-		outputTokens: r.output_tokens as number,
-		compactions: r.compactions as number,
-	};
-	if (r.variant !== null) w.variant = r.variant as string;
-	if (r.delivery_id !== null) w.deliveryId = r.delivery_id as string;
-	for (const [key, col] of [
-		["contextStart", "context_start"],
-		["contextEnd", "context_end"],
-		["contextPeak", "context_peak"],
-		["toolCalls", "tool_calls"],
-		["threadReads", "thread_reads"],
-	] as const) {
-		const v = opt(r[col]);
-		if (v !== undefined) w[key] = v;
-	}
-	return w;
-};
-
-function listUsage(c: Db, q: { since?: number; session?: string } = {}): WakeUsage[] {
-	const where: string[] = [],
-		p: unknown[] = [];
-	if (q.since !== undefined) {
-		where.push("started_at >= ?");
-		p.push(q.since);
-	}
-	if (q.session !== undefined) {
-		where.push("session = ?");
-		p.push(q.session);
-	}
-	return c
-		.all(
-			`SELECT * FROM steward_wake_usage ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY started_at, session, wake_key`,
-			...p,
-		)
-		.map(toWakeUsage);
-}
-
-export const makeUsage = (c: Db): Store["usage"] => ({
-	upsert(rows: WakeUsage[]) {
-		c.tx(() => {
-			for (const r of rows) c.run(UPSERT_USAGE, ...usageParams(r));
-		});
-	},
-	list: (q) => listUsage(c, q),
-});

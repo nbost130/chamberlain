@@ -9,7 +9,7 @@ const window = (o: { from?: number; to?: number; prs?: number } = {}) =>
 		usage,
 		from: o.from ?? NOW - DAY,
 		to: o.to ?? NOW,
-		price: PRICE,
+		prices: { "test-model": PRICE },
 		cacheWrite: "1h",
 		classifierUsd: 0,
 		...(o.prs === undefined ? {} : { prs: o.prs }),

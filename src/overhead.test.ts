@@ -38,7 +38,7 @@ describe("chamberlain overhead", () => {
 		expect(r.out).toContain("cost per merged PR   24 h not configured");
 		expect(r.out).toContain("NOT CONFIGURED: merged PRs: set overhead.github.owners or overhead.github.repos");
 		expect(r.out).toContain("NOT CONFIGURED: fleet spend");
-		expect(r.out).toContain("UNAVAILABLE: Steward spend: no models.steward");
+		expect(r.out).toContain("UNAVAILABLE: Steward spend: no recorded turns in the window");
 		expect(r.out).toContain("No investigation held.");
 	});
 

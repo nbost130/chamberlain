@@ -31,6 +31,7 @@ export function wake(o: { hoursAgo: number; usd?: number; tools?: number; kind?:
 		startedAt,
 		endedAt: startedAt + 1000,
 		requests: 1,
+		model: MODEL,
 		inputTokens: 0,
 		cacheReadInputTokens: 0,
 		cacheCreationInputTokens: 0,

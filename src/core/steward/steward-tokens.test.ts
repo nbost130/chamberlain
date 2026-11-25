@@ -120,7 +120,8 @@ describe("sums", () => {
 	});
 	test("the whole transcript's requests are each counted exactly once", async () => {
 		const segs = await segments();
-		expect(segs.reduce((a, s) => a + s.requests, 0)).toBe(13);
+		expect(segs.map((s) => s.requests)).not.toContain(undefined);
+		expect(segs.reduce((a, s) => a + (s.requests ?? 0), 0)).toBe(13);
 	});
 });
 
@@ -130,7 +131,7 @@ describe("storage and backfill", () => {
 		const store = memStore();
 		const segs = await segments();
 		store.usage.upsert(segs);
-		expect(store.usage.list()).toEqual(segs);
+		expect(store.usage.list()).toEqual(segs.map((row) => ({ source: "transcript", ...row })));
 		expect(store.usage.list({ session: "other" })).toEqual([]);
 	});
 	test("backfill is idempotent: a rerun writes the same rows, and a transcript that grew updates its last row in place", async () => {

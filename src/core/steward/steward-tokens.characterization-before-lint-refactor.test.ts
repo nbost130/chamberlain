@@ -82,7 +82,7 @@ describe("characterization before the lint refactor", () => {
 		expect(segs[0]).toMatchObject({ requests: 1, inputTokens: 1, outputTokens: 7 });
 	});
 
-	test("negative, missing and non-numeric usage fields count as zero", async () => {
+	test("negative, missing and non-numeric usage fields stay unavailable", async () => {
 		const segs = await segmentTranscript(
 			[
 				user("u1", "go"),
@@ -91,14 +91,18 @@ describe("characterization before the lint refactor", () => {
 			session,
 		);
 		expect(segs[0]).toMatchObject({
-			inputTokens: 0,
-			cacheReadInputTokens: 0,
 			cacheCreationInputTokens: 6,
-			outputTokens: 0,
-			contextStart: 6,
-			contextEnd: 6,
-			contextPeak: 6,
+			unknown: "transcript token fields incomplete",
 		});
+		for (const key of [
+			"inputTokens",
+			"cacheReadInputTokens",
+			"outputTokens",
+			"contextStart",
+			"contextEnd",
+			"contextPeak",
+		])
+			expect(segs[0]?.[key as keyof WakeUsage]).toBeUndefined();
 	});
 
 	test("a segment with no counted request has no context figures, and its times come from its prompt", async () => {

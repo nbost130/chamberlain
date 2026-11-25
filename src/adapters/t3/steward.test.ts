@@ -28,6 +28,7 @@ test("a turn that has just begun and has no usage yet gives NO size, never an ol
 	);
 	expect(p.contextTokens).toBeUndefined();
 	expect(p.contextTurn).toBe(3);
+	expect(p).toMatchObject({ contextPending: true, lastMeasuredContext: { tokens: 120_000, at: COMPLETED } });
 });
 
 test("no turn with a size is no size, never zero", () => {
@@ -121,7 +122,7 @@ test("an explicit compaction refusal only applies to its active provider thread"
 		"insert into orchestration_v2_projection_turn_items values ('err', 'th', null, 'previous', 1, 'error', 'failed', ?)",
 		[JSON.stringify(payload)],
 	);
-	expect(t3Probe(path, "th").canCompact).toBeUndefined();
+	expect(t3Probe(path, "th").canCompact).toBe(true);
 	db.run("update orchestration_v2_projection_turn_items set provider_thread_id = 'primary'");
 	expect(t3Probe(path, "th")).toMatchObject({ canCompact: false, contextTokens: 145_000 });
 	db.close();

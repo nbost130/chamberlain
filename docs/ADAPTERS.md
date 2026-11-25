@@ -94,6 +94,11 @@ notice. Return `{ ok, detail, where: "view" | "notice" }`. Item text is data: qu
 Declare each one you implement in `capabilities` and give it a method; do not declare one you do not implement. Each
 missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITECTURE.md#the-adapter-contract)).
 
+- **`stewardMeter(threadId, since, quality?)`** reads bounded turn observations. It returns rows and optional
+  quality counts, or a fixed unavailable reason. A row carries its source, stable session and turn key, timing,
+  available model and token fields, and tool counts when measured. No prompt or tool argument leaves the adapter.
+  A missing quality signal is omitted. An unsupported but optional signal does not lower the health verdict.
+
 - **`inspect`** (`lastMessage`, `waiting`, `runningSubagents`, `instruction`) reads one thread when a wake is built.
   `lastMessage` and `runningSubagents` may reject (the core logs it and goes on); `instruction` never rejects, it returns a
   state (`complete`, `truncated`, `failed`) that says whether "nothing to report" can be believed, and `waiting` never

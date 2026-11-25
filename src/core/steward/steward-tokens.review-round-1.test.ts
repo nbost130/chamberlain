@@ -18,7 +18,16 @@ describe("review round 1", () => {
 			type: "assistant",
 			uuid,
 			parentUuid,
-			message: { id, model: "m", usage: { input_tokens: 1, cache_read_input_tokens: cacheRead } },
+			message: {
+				id,
+				model: "m",
+				usage: {
+					input_tokens: 1,
+					cache_read_input_tokens: cacheRead,
+					cache_creation_input_tokens: 0,
+					output_tokens: 0,
+				},
+			},
 		});
 
 	test("a header word outside the known kinds, or quoted outside the wake envelope, never becomes a kind", async () => {

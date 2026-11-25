@@ -22,7 +22,7 @@ const DAY_MS = 24 * 3_600_000;
 export type FlowDay = {
 	day: string;
 	turns: { direct: number; notice: number; wakes: number; other: number };
-	tokens: { direct: number; notice: number; wakes: number; other: number };
+	tokens: Record<"direct" | "notice" | "wakes" | "other", number | null>;
 	notesHeld: number;
 	answersHeld: number;
 	digests: number;
@@ -103,7 +103,9 @@ function addTurns(days: Map<string, FlowDay>, rows: WakeUsage[], itemsByDigest: 
 		if (!d) continue;
 		const b = bucketOf(r.kind);
 		d.turns[b]++;
-		d.tokens[b] += totalTokens(r);
+		const total = totalTokens(r);
+		const before = d.tokens[b];
+		d.tokens[b] = total === undefined || before === null ? null : before + total;
 		if (isWake(r.kind) && r.contextStart !== undefined) ctx.set(d.day, [...(ctx.get(d.day) ?? []), r.contextStart]);
 		addDigestReads(reads, d.day, r, itemsByDigest);
 	}
@@ -128,8 +130,8 @@ export function flowReport(store: Store, o: { days?: number; now?: number } = {}
 	return [...days.values()];
 }
 
-const k = (n: number | undefined) =>
-	n === undefined
+const k = (n: number | null | undefined) =>
+	n == null
 		? "-"
 		: n >= 1e6
 			? `${(n / 1e6).toFixed(1)}M`

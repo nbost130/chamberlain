@@ -125,6 +125,7 @@ export type OptionalCapability =
 	| "inspect"
 	| "send"
 	| "stewardProbe"
+	| "stewardMeter"
 	| "compact"
 	| "snapshot"
 	| "alertDesk"
@@ -201,6 +202,7 @@ export interface Adapter {
 	): Promise<{ ok: boolean; detail: string }>;
 	/** The Steward's size, stall and compaction state, or the same read for an explicitly guarded thread. */
 	stewardProbe?(threadId?: string, turnLimit?: number): StewardProbe;
+	stewardMeter?(threadId: string, since: number, quality?: boolean): import("./steward-meter.ts").StewardMeterRead;
 	/** Compacts an explicitly guarded thread. This is separate from the Steward's serialized webhook. */
 	compactThread?(threadId: string, deliveryId: string): Promise<{ ok: boolean }>;
 	/**

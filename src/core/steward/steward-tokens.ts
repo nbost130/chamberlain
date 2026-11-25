@@ -1,5 +1,5 @@
 /**
- * What the Steward spends per wake, from its own Claude Code transcript. No model call: every assistant row of a transcript already carries
+ * Historical per-wake detail from the optional native transcript. No model call: every assistant row of a transcript already carries
  * the API's `usage` object, so the history is exact and can be read back to the first Steward session.
  *
  * A transcript is split into SEGMENTS, one per turn-starting prompt: a wake (its `[chamberlain] <kind>:` or, before the rename,
@@ -15,15 +15,26 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Transcript } from "../adapter/adapter-inspect.ts";
+import type { StewardMeterRead } from "../adapter/steward-meter.ts";
 import type { Store } from "../store/store.ts";
 import type { WakeUsage } from "../store/store-records.ts";
 import { segmentTranscript } from "./steward-segments.ts";
 
 export type { WakeUsage } from "../store/store-records.ts";
 
-/** Every token a segment processed: the four usage fields added. */
-export const totalTokens = (w: WakeUsage): number =>
-	w.inputTokens + w.cacheReadInputTokens + w.cacheCreationInputTokens + w.outputTokens;
+/** The four disjoint billable fields. A partial count is not a total. */
+export function totalTokens(w: WakeUsage): number | undefined {
+	const { inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens } = w;
+	if (
+		w.tokensIncomplete ||
+		inputTokens === undefined ||
+		cacheReadInputTokens === undefined ||
+		cacheCreationInputTokens === undefined ||
+		outputTokens === undefined
+	)
+		return undefined;
+	return inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens;
+}
 
 /** Is this kind a wake Chamberlain sent (as opposed to the start prompt, a compaction, a notice or a message)? */
 export const isWake = (kind: string): boolean => !["start", "compact", "notice", "message", "preamble"].includes(kind);
@@ -41,7 +52,7 @@ async function readTranscript(path: string, session = basename(path, ".jsonl")):
 }
 
 /**
- * The Steward transcripts in one Claude Code project folder: every top-level `<session>.jsonl` that received at least one Chamberlain (or
+ * The Steward transcripts in one native project folder: every top-level `<session>.jsonl` that received at least one Chamberlain (or
  * t3-wake) wake. Chamberlain keeps no list of past Steward sessions (`switch-steward` overwrites `threads.steward`), so this is how the
  * backfill finds them: every Steward of a T3 install ran in the same folder. A file is opened only if its text names a wake header at all.
  */
@@ -91,6 +102,7 @@ export async function backfill(store: Store, paths: string[]): Promise<BackfillR
 
 export const USAGE_KEY = "steward-usage";
 export const USAGE_INTERVAL_MS = 60 * 60_000;
+export const TURN_USAGE_KEY = "steward-turn-usage";
 /** `retry`: transcripts of earlier Stewards whose last read failed, read again on the next run until one succeeds or the file is gone. */
 type UsageState = { at: string; path?: string; retry?: string[] };
 
@@ -144,6 +156,40 @@ export function usageTicker(deps: UsageDeps) {
 		} finally {
 			busy = false;
 		}
+	};
+}
+
+/** Refresh recent completed turns and give the previous thread one last read after a hand-off. */
+export function turnUsageTicker(deps: {
+	store: Store;
+	thread: () => string | undefined;
+	read: (thread: string, since: number) => StewardMeterRead;
+	now?: () => number;
+}) {
+	type State = { at: number; thread: string; retry: string[]; unknown?: string };
+	return () => {
+		const now = (deps.now ?? Date.now)();
+		const thread = deps.thread();
+		const prior = deps.store.state.get<State>(TURN_USAGE_KEY);
+		if (!thread || (prior && now - prior.at < USAGE_INTERVAL_MS)) return;
+		const since = now - 7 * 24 * USAGE_INTERVAL_MS;
+		const owed = new Set([...(prior?.retry ?? []), prior?.thread ?? thread, thread]);
+		const failures = new Map<string, string>();
+		let partial: string | undefined;
+		for (const id of owed) {
+			const measured = deps.read(id, since);
+			if ("rows" in measured) {
+				deps.store.usage.upsert(measured.rows);
+				partial ??= measured.partial;
+			} else failures.set(id, measured.unknown);
+		}
+		const retry = [...failures.keys()].filter((id) => id !== thread);
+		deps.store.state.set(TURN_USAGE_KEY, {
+			at: now,
+			thread,
+			retry,
+			unknown: failures.get(thread) ?? partial,
+		} satisfies State);
 	};
 }
 

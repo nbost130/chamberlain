@@ -115,6 +115,26 @@ test("Decisions shows health report and marks old measurements stale", async () 
 	expect(dq.textContent).toContain("Context: 251000; compact >350000");
 });
 
+test("Decisions shows a sample from an earlier turn and marks unsupported self-reads unavailable", async () => {
+	const dq = run(() => ({
+		items: [],
+		health: {
+			verdict: "OK",
+			at: new Date().toISOString(),
+			tokens: 40_000,
+			contextPending: true,
+			selfReads: 0,
+			threadRereads: 2,
+			readingCoverage: { self: false, threads: true },
+			report: "Context sampled earlier",
+		},
+	}));
+	await settle();
+	expect(dq.textContent).toContain("Last measured context");
+	expect(dq.textContent).toContain("not measured self · 2 repeat");
+	expect(dq.textContent).not.toContain("0 self");
+});
+
 test("a refresh redraws an approval whose command changed under the same ID", async () => {
 	let current = card("true", "sig-1");
 	const dq = run(() => ({ items: [], cards: [current] }));

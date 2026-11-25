@@ -65,6 +65,7 @@ export type CompactState = {
 	used: number;
 	cleared: boolean;
 	failed?: boolean;
+	unsupported?: boolean;
 	compactions?: number;
 	/** How many times this compaction has been sent again because it never ran: at most one, then it is called failed. */
 	resends?: number;
@@ -101,13 +102,13 @@ function watchSteward(c: StewardCheckDeps, st: StewardState, p: StewardProbe): v
 }
 
 /** The compaction request, through the relay: a task whose prompt is /compact, so it takes no message. True when T3 accepted it. Only the log line is shared with wakes. */
-async function sendCompact(c: CompactionDeps, id: string): Promise<boolean> {
+async function sendCompact(c: CompactionDeps, id: string): Promise<"accepted" | "unsupported" | "refused"> {
 	const deliveryId = `compact:${id}:${Date.now()}`;
 	try {
 		const r = await c.compact(deliveryId);
 		if (r.ok) {
 			c.log("delivered", { deliveryId, ...(r.status !== undefined ? { http: r.status } : {}), attempt: 1 });
-			return true;
+			return "accepted";
 		}
 		c.log("deliver-error", {
 			deliveryId,
@@ -115,6 +116,7 @@ async function sendCompact(c: CompactionDeps, id: string): Promise<boolean> {
 			...(r.status !== undefined ? { http: r.status } : {}),
 			...(r.error ? { error: redactUrls(r.error) } : {}),
 		});
+		if (r.prepareReason === "unsupported") return "unsupported";
 	} catch (e) {
 		c.log("deliver-error", {
 			deliveryId,
@@ -122,7 +124,7 @@ async function sendCompact(c: CompactionDeps, id: string): Promise<boolean> {
 			error: redactUrls(e instanceof Error ? e.message : String(e)),
 		});
 	}
-	return false;
+	return "refused";
 }
 
 /**
@@ -133,8 +135,13 @@ function lastCompaction(c: CompactionDeps, p: StewardProbe, id: string): Compact
 	const last = c.compactState.get();
 	if (!last || last.thread !== id || (last.session !== undefined && last.session !== p.contextSession))
 		return undefined;
-	if (p.contextTokens !== undefined && p.contextTokens <= c.compactAt && (!last.cleared || last.failed)) {
-		const { failed: _failed, ...rest } = last;
+	if (
+		!p.contextPending &&
+		p.contextTokens !== undefined &&
+		p.contextTokens <= c.compactAt &&
+		(!last.cleared || last.failed)
+	) {
+		const { failed: _failed, unsupported: _unsupported, ...rest } = last;
 		const next = { ...rest, cleared: true };
 		c.compactState.set(next);
 		return next;
@@ -181,7 +188,7 @@ const mayResend = (p: StewardProbe, last: CompactState) => p.retryLostCompact !=
 
 /** Compacts the Steward `id` when its context has outgrown the limit, unless one went in the cooldown or the backend says one must not go now. */
 async function compactIfNeeded(c: CompactionDeps, st: CompactMemory, p: StewardProbe, id: string): Promise<void> {
-	const used = p.contextTokens;
+	const used = p.contextPending ? undefined : p.contextTokens;
 	const last = lastCompaction(c, p, id);
 	const lost = last && !last.cleared ? last : undefined;
 	if (used === undefined) {
@@ -202,7 +209,14 @@ async function compactIfNeeded(c: CompactionDeps, st: CompactMemory, p: StewardP
 	c.log("fire", { server: "steward", kind: "compact", threadId: id, used });
 	if (c.dry) return;
 	// The request goes out through the relay, the only code that calls a transport. It is recorded only once T3 has accepted it.
-	if (await sendCompact(c, id)) c.compactState.set(acceptedCompaction(p, id, lost));
+	await recordCompactAttempt(c, p, id, lost);
+}
+
+async function recordCompactAttempt(c: CompactionDeps, p: StewardProbe, id: string, lost: CompactState | undefined) {
+	const result = await sendCompact(c, id);
+	if (result === "refused") return;
+	const state = acceptedCompaction(p, id, lost);
+	c.compactState.set(result === "unsupported" ? { ...state, failed: true, unsupported: true } : state);
 }
 
 type CompactMemory = Pick<StewardState, "compactHeldFor" | "attemptAt">;

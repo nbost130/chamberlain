@@ -26,6 +26,10 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 
 ## Criteria
 
+- [x] ISC-18 (#124): Equivalent T3 turns produce equivalent wake rows and quality verdicts across drivers. Falsifier: a driver switch aliases ordinals, a partial reading becomes zero, transcript and projection totals overlap, or a schema change stops the tick. Evidence: `meter.test.ts` and the normal engine housekeeping test replay these cases through the store and health verdict.
+- [x] ISC-19 (#124): Health cites the last measured context during an active turn, while the guard acts on current observations and compaction capability. Falsifier: a stale size triggers compaction, a running turn advances the unknown alarm, or a refused or lost compaction repeats. Evidence: `steward.test.ts` and `engine-context-guard.test.ts`. Decisions DOM regression passes. [DEFERRED-VERIFY] Local browser isolation preflight was blocked.
+- [x] ISC-20 (#124): Metering, health and context policy in core remain independent of drivers. Per-turn spend uses the recorded model and complete counts. Evidence: architecture scan, mixed-model pricing and `bun run checks` (4,185 passed). Six isolated mutations failed their respective tests for source deduplication, running-turn exclusion, typed compaction refusal, provider naming, schema drift and partial pricing.
+
 - [x] ISC-12: The context guard uses the active provider thread's latest exact reading or reports why it is unknown. Falsifier: an earlier turn, a retired provider with a higher ordinal, an aggregate usage counter or an invalid native record crosses a context limit or supplies compaction evidence. Evidence: `steward.test.ts` and `steward-native.test.ts`; stale-order and aggregate-input mutations both failed.
 - [x] ISC-13: The same configured limit drives Steward health and compaction. Missing readings trigger a completed-turn fallback, and explicitly configured threads compact or raise an alarm. Falsifier: an unknown reading reports OK, fallback repeats, a configured thread is ignored or legacy settings change meaning. Evidence: `engine-context-guard.test.ts` and `engine-steward.compaction-state.test.ts`.
 - [x] ISC-14: Idea filing is silent, requires a recommendation plus cost and evidence, and honors all configured caps in the insert transaction. The CLI tests in `src/ask-ideas.test.ts` fail if two concurrent asks take one slot, a refusal leaves a record, or a filing produces a post or wake.
@@ -74,6 +78,9 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-11 | bun-test | Role-specific quota pools, approved backup order, project restrictions, two outages and webhook deliveries on the active generation across restart | bun test src/adapters/t3/model-quota.test.ts src/adapters/t3/quota-failover.test.ts |
 | ISC-12 | bun-test | Exact measurements and stale or invalid provider records | bun test src/adapters/t3 |
 | ISC-13 | bun-test | Shared limits, completed-turn fallback and guarded thread actions | bun test src/core/engine src/core/steward src/core/config |
+| ISC-18 | bun-test | Compare each driver shape, missing fields, switched ordinals, coverage gaps and the two source views | bun test src/adapters/t3/meter.test.ts src/core/steward |
+| ISC-19 | bun-test | Check that active-turn readings remain display-only and unsupported compaction produces one hand-off | bun test src/adapters/t3/steward.test.ts src/core/engine/engine-context-guard.test.ts src/web/inline-view.test.ts |
+| ISC-20 | bun-test | Provider name scan, mixed-model prices and full tests | bun run checks |
 
 ## Readable decision cards (#125)
 

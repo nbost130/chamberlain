@@ -16,6 +16,7 @@ type CapabilityMethod = {
 	inspect: "inspect";
 	send: "send";
 	stewardProbe: "stewardProbe";
+	stewardMeter: "stewardMeter";
 	compact: "compact";
 	snapshot: "snapshot";
 	alertDesk: "alertDesk";
@@ -46,6 +47,7 @@ function capabilityProblems(a: Adapter): string[] {
 		inspect: a.inspect,
 		send: a.send,
 		stewardProbe: a.stewardProbe,
+		stewardMeter: a.stewardMeter,
 		compact: a.compact,
 		snapshot: a.snapshot,
 		alertDesk: a.alertDesk,

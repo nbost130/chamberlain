@@ -17,6 +17,7 @@ import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { probeT3Builder } from "./builder-probe.ts";
 import { t3Linker } from "./links.ts";
+import { t3Meter } from "./meter.ts";
 import { modelWake } from "./model-wake.ts";
 import { createRpcPing } from "./ping.ts";
 import { t3Post } from "./post.ts";
@@ -53,6 +54,7 @@ const T3_CAPABILITIES: readonly OptionalCapability[] = [
 	"inspect",
 	"send",
 	"stewardProbe",
+	"stewardMeter",
 	"compact",
 	"snapshot",
 	"alertDesk",
@@ -71,6 +73,14 @@ const stewardProbeFor =
 		return id ? t3Probe(t3StateDbPath(), id, Date.now(), { base: t3BaseDir(), limit }) : { readable: true };
 	};
 
+function stewardReads(env: AdapterEnv): Pick<Adapter, "stewardProbe" | "stewardMeter" | "transcriptPath"> {
+	return {
+		stewardProbe: stewardProbeFor(env),
+		stewardMeter: (id, since, quality) => t3Meter(t3StateDbPath(), id, since, quality),
+		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
+	};
+}
+
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
 	const link = new T3Link(env, srv);
@@ -86,6 +96,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		webhookWake(() => env.readPrivate("compact-url")),
 		env.conf,
 		"steward",
+		(id) => stewardProbeFor(env)(id).canCompact !== false,
 	);
 	return {
 		id: "t3",
@@ -102,12 +113,11 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 			if (!thread || !srv.operateTokenFile) return "no-token";
 			return t3TitleSetter(env.conf, srv.origin, srv.operateTokenFile, thread)(title);
 		},
-		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
+		...stewardReads(env),
 		inspect: link.inspector,
 		snapshot: () => link.snapshot(),
 		probeBuilder: (request) => probeT3Builder(env, srv, request),
 		send: waiting.send,
-		stewardProbe: stewardProbeFor(env),
 		compactThread: (id, deliveryId) => compactThread(id, "/compact", deliveryId, "daemon"),
 		compact: compactWake,
 		handoffInstruction: () =>

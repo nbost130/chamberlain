@@ -116,6 +116,9 @@ export type ContextReading = { tokens: number; window?: number; source: string; 
 /** What an adapter can tell about a guarded thread, read once a minute. */
 export type StewardProbe = {
 	context?: ContextReading;
+	/** The last exact sample on this session, for display while a turn is active. Never a guard input. */
+	lastMeasuredContext?: Extract<ContextReading, { tokens: number }>;
+	contextPending?: boolean;
 	/** Ordinals of the latest consecutive completed provider turns lacking a projected size, oldest last. */
 	unknownTurns?: readonly number[];
 	/** Latest completed provider turn on the active provider thread, when readable. */
@@ -146,7 +149,7 @@ export type StewardProbe = {
 	compactBlocked?: string;
 };
 
-/** A transcript the health check can measure: Claude Code's JSONL for the Steward's session. */
+/** An optional native transcript the adapter can supply for historical detail. */
 export type Transcript = {
 	path: string;
 	session: string;

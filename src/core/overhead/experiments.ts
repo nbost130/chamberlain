@@ -2,7 +2,7 @@
  * Experiments in Chamberlain's OWN spend. The fleet total already leaves out the sessions of `excludeProjects` / `excludeLabels` (fleet-spend.ts);
  * the numerator must leave out the same things, or a Steward or classifier call made for an experiment counts as overhead against a fleet that
  * does not contain it. Two lookups, both read-only and through the same door as the rest (`lifeos-axi query --sql`):
- * - a Steward usage row belongs to the Claude session it was read from, so a row whose session is an experiment is dropped from every window;
+ * - a Steward usage row with a native telemetry session is dropped from every window when that session belongs to an experiment;
  * - a classifier call belongs to the thread it classified, so its cost is taken off when a session that ran for that thread is an experiment.
  * An id that cannot be looked up stays in the figures. If the lookup FAILS the money figures are unverified, and unverified is "unavailable":
  * a number that may still contain experiments never triggers anything.
@@ -15,6 +15,9 @@ import { BATCH, excludedSql, quoted, SAFE_ID } from "./sql.ts";
 
 export type ClassifierSpend = { threadId: string; at: number; usd: number };
 export type Experiments = { sessions: ReadonlySet<string>; threads: ReadonlySet<string> };
+
+export const usageTelemetrySession = (r: WakeUsage): string | undefined =>
+	r.source === "turn record" ? r.nativeSession : r.session;
 
 const NO_EXPERIMENTS: Experiments = { sessions: new Set(), threads: new Set() };
 
@@ -78,7 +81,9 @@ export async function readExperiments(
 		return { experiments: NO_EXPERIMENTS, unverified: true };
 	}
 	try {
-		const ids = { sessions: own.usage.map((r) => r.session), threads: own.classifier.map((r) => r.threadId) };
+		const sessions = own.usage.map(usageTelemetrySession);
+		if (!sessions.every((s): s is string => s !== undefined)) throw Error("a turn has no native telemetry session");
+		const ids = { sessions, threads: own.classifier.map((r) => r.threadId) };
 		return { experiments: await experimentsAmong(d.cfg, ids, d.query), unverified: false };
 	} catch (e) {
 		unavailable.push(

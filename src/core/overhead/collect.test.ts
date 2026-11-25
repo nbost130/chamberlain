@@ -173,26 +173,28 @@ describe("fails closed", () => {
 
 	test("the Steward's model has no price: the spend is unavailable, not zero, and no cost trigger fires", async () => {
 		const cfg = cfgWith({ triggers: { costPerPr: { mode: "trigger", fixedUsd: 0.01 } } });
-		const r = await run(cfg, storeWith(rows()), { model: "other-model", gh: ghWith(prsAt(5, 1)) });
+		const r = await run(cfg, storeWith(rows().map((r) => ({ ...r, model: "other-model" }))), {
+			gh: ghWith(prsAt(5, 1)),
+		});
 		expect(r.day.stewardUsd).toBeUndefined();
-		expect(r.unavailable.join(" ")).toContain('no price for "other-model" in overhead.prices');
+		expect(r.unavailable.join(" ")).toContain("missing turn usage, recorded model or price");
 		expect(r.crossings).toEqual([]);
 	});
 
 	test("a model named like an Object property has no price: the spend is unavailable, never NaN", async () => {
 		const cfg = cfgWith({ triggers: { costPerPr: { mode: "trigger", fixedUsd: 0.01 } } });
 		for (const model of ["constructor", "toString", "__proto__"]) {
-			const r = await run(cfg, storeWith(rows()), { model, gh: ghWith(prsAt(5, 1)) });
+			const r = await run(cfg, storeWith(rows().map((r) => ({ ...r, model }))), { gh: ghWith(prsAt(5, 1)) });
 			expect(r.day.stewardUsd).toBeUndefined();
 			expect(Number.isNaN(r.day.basisUsd)).toBe(false);
 			expect(r.crossings).toEqual([]);
 		}
 	});
 
-	test("no models.steward at all says so", async () => {
+	test("no current selection still prices turns with recorded models", async () => {
 		const { model: _drop, ...deps } = { model: MODEL };
 		const r = await collect({ store: storeWith(rows()), cfg: cfgWith(), gh: ghWith([]), now: NOW, ...deps });
-		expect(r.unavailable.join(" ")).toContain("no models.steward");
+		expect(r.day.stewardUsd).toBe(90);
 	});
 });
 
@@ -200,6 +202,17 @@ describe("the fleet share", () => {
 	const cfg = cfgWith({
 		fleet: { source: "lifeos", hosts: ["h1", "h2"] },
 		triggers: { spendShare: { mode: "trigger", threshold: 0.3 } },
+	});
+
+	test("spend is priced but fleet ratios are unavailable when its telemetry omits a metered turn", async () => {
+		const projection = { ...wake({ hoursAgo: 1, usd: 12 }), source: "turn record" as const };
+		const r = await run(cfg, storeWith([projection]), {
+			query: async () => answer(["fleet,h1,50000000", "fleet,h2,50000000"]),
+		});
+		expect(r.day.stewardUsd).toBe(12);
+		expect(r.spendShare).toBeUndefined();
+		expect(r.stewardShare).toBeUndefined();
+		expect(r.unavailable.join(" ")).toContain("fleet telemetry does not cover every metered turn");
 	});
 
 	test("is (Steward + the butlers and investigators in Chamberlain's records) / fleet, a share over the window, with a trigger the operator set", async () => {

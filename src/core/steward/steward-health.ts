@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import type { StewardProbe, Transcript } from "../adapter/adapter-inspect.ts";
+import type { StewardMeterRead } from "../adapter/steward-meter.ts";
 import { effectiveLimits, parseContextGuard } from "../config/context-guard.ts";
 import { setting } from "../config/layout.ts";
 import { handoffWake } from "../messages.ts";
@@ -23,6 +24,8 @@ export type Health = {
 	handoffReason?: string;
 	peakTokens?: number;
 	usageAt?: string;
+	contextPending?: boolean;
+	readingCoverage?: { self: boolean; threads: boolean };
 	replies: number;
 	breaks: number;
 	selfReads: number;
@@ -60,8 +63,8 @@ function formatPatternFromEnv(): RegExp | undefined {
 function verdictOf(h: Health, compactAt: number): Health["verdict"] {
 	const { tokens, elevated, unknown } = h;
 	if (elevated.some((e) => e !== "context")) return "HAND OFF";
-	if (tokens !== undefined && tokens > compactAt) return "COMPACT";
-	return elevated.length || unknown.length ? "WATCH" : "OK";
+	if (!h.contextPending && tokens !== undefined && tokens > compactAt) return "COMPACT";
+	return tokens === undefined || elevated.length || unknown.length ? "WATCH" : "OK";
 }
 
 /** Stream only the canonical transcript rows, not API request snapshots or sidechains. */
@@ -121,12 +124,14 @@ function finishHealth(h: Health, policy: ReturnType<typeof parseContextGuard>): 
 export function formatHealth(h: Health): string {
 	const { watchAt, compactAt } = h.limits ?? effectiveLimits(parseContextGuard(undefined));
 	const window = h.window === undefined ? "" : ` of ${h.window}`;
+	const self = h.readingCoverage?.self === false ? "not measured" : h.selfReads;
+	const threads = h.readingCoverage?.threads === false ? "not measured" : h.threadRereads;
 	return [
 		`Steward health: ${h.verdict} (${h.at})`,
-		`Context: ${h.tokens ?? "unknown"}${window} tokens; watch >=${watchAt}, compact >${compactAt}; peak ${h.peakTokens ?? "unknown"}${h.source ? `; source: ${h.source}` : ""}`,
+		`Context: ${h.tokens ?? "unknown"}${window} tokens; watch >=${watchAt}, compact >${compactAt}; peak ${h.peakTokens ?? "unknown"}${h.source ? `; source: ${h.source}` : ""}${h.contextPending ? "; turn in progress" : ""}`,
 		...(h.verdict === "COMPACT" ? [`Compaction needed: context is past ${compactAt} tokens.`] : []),
 		`Format: ${h.breaks}/${h.replies} recent replies broke; threshold >=${HEALTH_CONFIG.formatBreaks} in last ${HEALTH_CONFIG.replies}`,
-		`Rereading: ${h.selfReads} self-transcript reads (>=${HEALTH_CONFIG.selfReads}); ${h.threadRereads} repeat thread reads (>=${HEALTH_CONFIG.threadRereads}, ${HEALTH_CONFIG.windowMs / 60000}m window)`,
+		`Rereading: ${self} self-transcript reads (>=${HEALTH_CONFIG.selfReads}); ${threads} repeat thread reads (>=${HEALTH_CONFIG.threadRereads}, ${HEALTH_CONFIG.windowMs / 60000}m window)`,
 		`Since compaction: ${h.boundary ?? "session start"}; usage sampled ${h.usageAt ?? "unknown"}`,
 		...(h.unknown.length ? [`Unavailable: ${h.unknown.join(", ")}`] : []),
 	].join("\n");
@@ -149,21 +154,54 @@ function unavailableHealth(): Health {
 /** The adapter owns current context. A transcript, if available, still supplies quality signals and historical peaks. */
 export async function guardedHealth(o: {
 	find?: () => Promise<Transcript>;
+	meter?: StewardMeterRead;
 	thread?: string;
 	probe?: StewardProbe;
+	priorContext?: StewardProbe["lastMeasuredContext"];
 	policy: ReturnType<typeof parseContextGuard>;
 }): Promise<Health> {
-	const h = o.find ? await liveHealth(o.find).catch(unavailableHealth) : unavailableHealth();
+	const h = o.meter
+		? await measuredHealth(o.meter, o.find)
+		: o.find
+			? await liveHealth(o.find).catch(unavailableHealth)
+			: unavailableHealth();
 	h.thread = o.thread ?? h.thread;
 	h.session ??= o.probe?.contextSession;
 	h.contextSession = o.probe?.contextSession;
 	h.elevated = h.elevated.filter((signal) => signal !== "context");
-	applyReading(h, o.probe);
+	applyReading(h, o.probe, o.priorContext);
 	return finishHealth(h, o.policy);
 }
 
-function applyReading(h: Health, probe: StewardProbe | undefined) {
-	const reading = probe?.context;
+async function measuredHealth(meter: StewardMeterRead, find?: () => Promise<Transcript>): Promise<Health> {
+	const quality = "rows" in meter ? meter.quality : undefined;
+	const h = unavailableHealth();
+	h.unknown = "unknown" in meter ? [meter.unknown] : quality?.unknown ? [quality.unknown] : [];
+	h.readingCoverage = { self: quality?.selfReads !== undefined, threads: quality?.threadRereads !== undefined };
+	h.selfReads = quality?.selfReads ?? 0;
+	h.threadRereads = quality?.threadRereads ?? 0;
+	h.boundary = quality?.boundary;
+	if (h.selfReads >= HEALTH_CONFIG.selfReads || h.threadRereads >= HEALTH_CONFIG.threadRereads)
+		h.elevated.push("rereading");
+	const pattern = formatPatternFromEnv();
+	if (find && pattern && h.readingCoverage.self) {
+		const format = await liveHealth(find, { formatPattern: pattern }).catch(unavailableHealth);
+		h.replies = format.replies;
+		h.breaks = format.breaks;
+		h.peakTokens = format.peakTokens;
+		if (format.elevated.includes("format")) h.elevated.push("format");
+		if (!format.replies) h.unknown.push("reply hook samples unavailable");
+	}
+	return h;
+}
+
+function applyReading(h: Health, probe: StewardProbe | undefined, priorContext?: StewardProbe["lastMeasuredContext"]) {
+	h.contextPending = probe?.contextPending;
+	const previous = [probe?.lastMeasuredContext, priorContext].sort((a, b) =>
+		(b?.at ?? "").localeCompare(a?.at ?? ""),
+	)[0];
+	const reading =
+		h.contextPending && probe?.context && "unknown" in probe.context ? (previous ?? probe.context) : probe?.context;
 	if (reading || probe?.contextTokens !== undefined) {
 		h.unknown = h.unknown.filter((signal) => signal !== "context usage unavailable");
 		h.tokens = reading ? undefined : probe?.contextTokens;
@@ -175,13 +213,11 @@ function applyReading(h: Health, probe: StewardProbe | undefined) {
 		h.window = reading.window;
 		h.source = reading.source;
 	}
-	if (h.tokens === undefined && !h.unknown.includes("context usage unavailable"))
+	if (h.tokens === undefined && !h.contextPending && !h.unknown.includes("context usage unavailable"))
 		h.unknown.push(reading && "unknown" in reading ? reading.unknown : "context usage unavailable");
 }
 /**
- * Measures the Steward's own Claude Code transcript, wherever the adapter says it is (`Adapter.transcriptPath`).
- * This is the one health signal tied to a provider: another provider's Steward has no such transcript, and an adapter
- * that cannot find one reports it as unavailable, never as OK.
+ * Measures the optional native transcript when that is the adapter's only health source or when a format hook is enabled.
  */
 async function liveHealth(
 	find: () => Promise<Transcript>,
