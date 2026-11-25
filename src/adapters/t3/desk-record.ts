@@ -1,31 +1,51 @@
-/** The Alert Desk as T3's state database records it: which provider its next turn runs on, and what its finished turns ran. Read-only. */
+/** The Alert Desk as T3's state database records it: the project its turns run in, and what its finished turns ran. Read-only and bounded. */
 import { Database } from "bun:sqlite";
-import type { DeskCall, DeskTurn, DeskTurns, ReadDeskTurns } from "../../core/adapter/adapter-desk.ts";
+import type { DeskCall, DeskTurn, DeskTurnRef, DeskTurns } from "../../core/adapter/adapter-desk.ts";
 import { type DeskHookEnv, deskHook } from "./desk-hook.ts";
+import { DESK_DRIVER } from "./desk-policy.ts";
 
-/** The driver whose PreToolUse hooks block a call. A driver with no proven control is not listed: the desk is held on it. */
-const HOOK_DRIVER = "claudeAgent";
-const MAX_ITEMS = 2_000;
+const MAX_ITEMS = 400;
+const MAX_PAYLOAD = 128 * 1024;
 const DONE = new Set(["completed", "failed", "interrupted", "cancelled"]);
+/** Records that are not calls. A type this build does not know is not assumed to be one of them. */
+const NOT_CALLS = new Set([
+	"approval_request",
+	"assistant_message",
+	"checkpoint",
+	"compaction",
+	"error",
+	"handoff",
+	"link_request",
+	"notification",
+	"plan",
+	"reasoning",
+	"run_interrupt_request",
+	"run_interrupt_result",
+	"secret_request",
+	"system_notice",
+	"todo_list",
+	"user_input_request",
+	"user_message",
+]);
 
-const DESK = `select json_extract(payload_json, '$.modelSelection.instanceId') as instance,
-	coalesce(json_extract(payload_json, '$.worktreePath'), (
+const ROOT = `select coalesce(json_extract(payload_json, '$.worktreePath'), (
 		select workspace_root from projection_projects where project_id = json_extract(t.payload_json, '$.projectId')
-	)) as root
-	from orchestration_v2_projection_threads t where thread_id = ?`;
-const DRIVERS = `select distinct driver from orchestration_v2_projection_provider_threads where provider_instance_id = ?`;
+	)) as root from orchestration_v2_projection_threads t where thread_id = ?`;
 /** The desk's own turns and those of the gatherers it started, which run in threads of their own. */
-const TURNS = `select provider_turn_id as id, completed_at as at
-	from orchestration_v2_projection_provider_turns
-	where (thread_id = ?1 or thread_id in (
+const TURNS = `select t.provider_turn_id as id, t.completed_at as at,
+	(select count(*) from orchestration_v2_projection_turn_items i where i.provider_turn_id = t.provider_turn_id) as items
+	from orchestration_v2_projection_provider_turns t
+	where (t.thread_id = ?1 or t.thread_id in (
 		select child_thread_id from orchestration_v2_projection_subagents where thread_id = ?1 and child_thread_id is not null
-	))
-	and completed_at <= ?4 and (completed_at > ?2 or (completed_at = ?2 and provider_turn_id > ?3))
-	order by completed_at, provider_turn_id limit ?5`;
-const ITEMS = `select type, status, payload_json as payload from orchestration_v2_projection_turn_items
-	where provider_turn_id = ? limit ${MAX_ITEMS + 1}`;
+	)) and t.completed_at > ?2 and t.completed_at <= ?3
+	order by t.completed_at, t.provider_turn_id limit ?4`;
+const DRIVER = `select p.driver as driver from orchestration_v2_projection_provider_turns t
+	left join orchestration_v2_projection_provider_threads p on p.provider_thread_id = t.provider_thread_id
+	where t.provider_turn_id = ?`;
+const ITEMS = `select type, status, case when length(payload_json) <= ${MAX_PAYLOAD} then payload_json end as payload
+	from orchestration_v2_projection_turn_items where provider_turn_id = ? limit ${MAX_ITEMS + 1}`;
 
-type Row = { type: string; status: string; payload: string };
+type Row = { type: string; status: string; payload: string | null };
 type Payload = { input?: unknown; output?: unknown; toolName?: unknown };
 
 function withDb<T>(path: string, read: (db: Database) => T): T | undefined {
@@ -40,85 +60,93 @@ function withDb<T>(path: string, read: (db: Database) => T): T | undefined {
 	}
 }
 
-type Desk = { instance: string | null; root: string | null };
-const deskOf = (db: Database, id: string) => db.query<Desk, [string]>(DESK).get(id);
+const rootOf = (db: Database, id: string) => db.query<{ root: string | null }, [string]>(ROOT).get(id)?.root;
 
-/** The hook's environment when the desk's next turn runs where the allowlist is enforced; undefined when that is not proven. */
-export function deskEnforced(
+/** The environment the desk's hook runs with, when the project its next turn runs in has it; undefined when that is not proven. */
+export function deskProjectHook(
 	path: string,
 	threadId: string | undefined,
 	hook: (root: string) => DeskHookEnv | undefined = (root) => deskHook(root),
 ): DeskHookEnv | undefined {
 	if (!threadId) return undefined;
 	return withDb(path, (db) => {
-		const desk = deskOf(db, threadId);
-		if (!desk?.instance || !desk.root) return undefined;
-		const drivers = db.query<{ driver: string | null }, [string]>(DRIVERS).all(desk.instance);
-		// One driver for this provider in all of T3's history. None, or two, does not say which one runs next.
-		return drivers.length === 1 && drivers[0]?.driver === HOOK_DRIVER ? hook(desk.root) : undefined;
+		const root = rootOf(db, threadId);
+		return root ? hook(root) : undefined;
 	});
 }
 
-/** The hook's own refusal. The text must be the whole start of the output: a command that ran gives its own output first. */
-const refusedByHook = (p: Payload) =>
-	typeof p.output === "string" &&
-	p.output.startsWith("Error: PreToolUse:") &&
-	p.output.includes("alert desk allowlist: refused");
+/**
+ * The hook's own refusal. Only the driver that runs the hook writes it, and only for a tool of its own, where the text before a tool's output
+ * is the driver's. Another tool's failure is whatever that tool says, so its refusal is not known from its text.
+ */
+function refusedByHook(row: Row, p: Payload, driver: string | null): boolean | "unknown" {
+	const refusal =
+		row.status === "failed" &&
+		typeof p.output === "string" &&
+		p.output.startsWith("Error: PreToolUse:") &&
+		p.output.includes("alert desk allowlist: refused");
+	if (!refusal || driver !== DESK_DRIVER) return false;
+	const own =
+		row.type === "command_execution" || (typeof p.toolName === "string" && /^[A-Z][A-Za-z]+$/.test(p.toolName));
+	return own || "unknown";
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** A recorded item as the tool call the allowlist would have seen: undefined when it is no call, "unreadable" when the record does not say enough. */
-function callOf(type: string, p: Payload): DeskCall | "unreadable" | undefined {
-	if (type === "command_execution")
-		return typeof p.input === "string" ? { tool: "Bash", input: { command: p.input } } : "unreadable";
-	if (type === "file_change") return { tool: "Write", input: {} };
-	if (type === "web_search") return { tool: "WebSearch", input: {} };
-	// A search is recorded without its directory, and a gatherer without its agent type.
-	if (type === "file_search" || type === "subagent") return "unreadable";
-	if (type !== "dynamic_tool") return undefined;
-	if (typeof p.toolName !== "string" || !isObj(p.input)) return "unreadable";
+function toolCall(p: Payload): DeskCall | undefined {
+	if (typeof p.toolName !== "string" || !isObj(p.input)) return undefined;
 	const { path, ...input } = p.input;
 	// Some drivers name a read's file `path`.
-	return {
-		tool: p.toolName,
-		input: p.toolName === "Read" && input.file_path === undefined ? { ...input, file_path: path } : p.input,
-	};
+	return p.toolName === "Read" && input.file_path === undefined
+		? { tool: "Read", input: { ...input, file_path: path } }
+		: { tool: p.toolName, input: p.input };
 }
 
-function addItem(turn: DeskTurn, { type, status, payload }: Row): void {
-	let p: Payload;
+/** A recorded item as the tool call the allowlist would have seen; undefined when the record does not say enough (a search's directory, a gatherer's type). */
+function callOf(type: string, p: Payload): DeskCall | undefined {
+	if (type === "command_execution" && typeof p.input === "string") return { tool: "Bash", input: { command: p.input } };
+	if (type === "file_change") return { tool: "Write", input: {} };
+	if (type === "web_search") return { tool: "WebSearch", input: {} };
+	return type === "dynamic_tool" ? toolCall(p) : undefined;
+}
+
+function parse(payload: string | null): Payload | undefined {
 	try {
-		p = JSON.parse(payload) as Payload;
+		const p: unknown = JSON.parse(payload ?? "");
+		return isObj(p) ? p : undefined;
 	} catch {
-		turn.unreadable++;
-		return;
+		return undefined;
 	}
-	const call = callOf(type, p);
-	if (!call) return;
-	if (!DONE.has(status) || call === "unreadable") turn.unreadable++;
-	else if (status === "failed" && refusedByHook(p)) turn.refused++;
+}
+
+function addItem(turn: DeskTurn, row: Row, driver: string | null): void {
+	if (NOT_CALLS.has(row.type)) return;
+	const p = parse(row.payload);
+	const refused = p && refusedByHook(row, p, driver);
+	const call = p && DONE.has(row.status) ? callOf(row.type, p) : undefined;
+	if (refused === true) turn.refused++;
+	else if (!call || refused === "unknown") turn.unreadable++;
 	else turn.ran.push(call);
 }
 
-export function deskTurns(
-	path: string,
-	threadId: string | undefined,
-	{ after, until, limit }: Parameters<ReadDeskTurns>[0],
-): DeskTurns | undefined {
-	if (!threadId) return undefined;
-	return withDb(path, (db) => {
-		const desk = deskOf(db, threadId);
-		if (!desk) return undefined;
-		const rows = db
-			.query<{ id: string; at: string }, [string, string, string, string, number]>(TURNS)
-			.all(threadId, after.at, after.id, until, limit);
-		const turns = rows.map(({ id, at }) => {
-			const items = db.query<Row, [string]>(ITEMS).all(id);
-			const turn: DeskTurn = { id, at, ran: [], refused: 0, unreadable: items.length > MAX_ITEMS ? 1 : 0, items: 0 };
-			turn.items = items.length;
-			for (const item of items.slice(0, MAX_ITEMS)) addItem(turn, item);
-			return turn;
-		});
-		return { turns, env: (desk.root && deskHook(desk.root)) || {} };
-	});
+function readTurn(db: Database, { id }: DeskTurnRef): DeskTurn {
+	const items = db.query<Row, [string]>(ITEMS).all(id);
+	const driver = db.query<{ driver: string | null }, [string]>(DRIVER).get(id)?.driver ?? null;
+	const turn: DeskTurn = { ran: [], refused: 0, unreadable: items.length > MAX_ITEMS ? 1 : 0 };
+	for (const item of items.slice(0, MAX_ITEMS)) addItem(turn, item, driver);
+	return turn;
 }
+
+/** The desk's finished turns, for the audit. */
+export const deskTurns = (path: string, threadId: () => string | undefined): DeskTurns => ({
+	list: ({ after, until, limit }) => {
+		const id = threadId();
+		return id
+			? withDb(path, (db) =>
+					db.query<DeskTurnRef, [string, string, string, number]>(TURNS).all(id, after, until, limit),
+				)
+			: undefined;
+	},
+	read: (ref) => withDb(path, (db) => readTurn(db, ref)),
+	env: () => deskProjectHook(path, threadId()) ?? {},
+});

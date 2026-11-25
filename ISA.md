@@ -131,12 +131,12 @@ The local relay tests exercise both sides of the alarm threshold across a databa
 
 | Criterion | Falsifier and probe |
 | --- | --- |
-| DESK-1 | A desk wake is sent while the desk's next turn is on a driver with no proven control, or its driver, thread, project or settings cannot be read, with or without a gatherer. `bun test src/adapters/t3/model.test.ts src/adapters/t3/desk-record.test.ts` |
-| DESK-2 | A hook that is missing, narrower, conditional, in the background, short-lived, of another build, wrapped in a shell, or turned off in any settings file counts as proof. `bun test src/adapters/t3/desk-hook.test.ts` |
-| DESK-3 | A call that ran and the allowlist refuses raises no alarm, a refused call raises one, a turn is judged twice, or a turn that cannot be replayed is called complete. `bun test src/core/desk/desk-audit.test.ts src/adapters/t3/desk-record.test.ts` |
-| DESK-4 | Command, path or alert text reaches an alarm, a log or the database, or a failed audit stops a wake. `bun test src/core/desk/desk-audit.test.ts` |
+| DESK-1 | A wake, a routed answer, a compaction or a recovery reaches the desk thread while the server's catalog does not name a driver with proven control for its next turn, while the wake's webhook is bound to another thread, or while its driver, thread, project or settings cannot be read, with or without a gatherer. `bun test src/adapters/t3/model.test.ts src/adapters/t3/index.test.ts src/adapters/t3/desk-record.test.ts src/core/ops/recover.test.ts` |
+| DESK-2 | A hook that is missing, narrower, conditional, in the background, short-lived, of another build, wrapped in a shell, turned off in any settings file, or in a file that holds anything else counts as proof. `bun test src/adapters/t3/desk-hook.test.ts` |
+| DESK-3 | A call that ran and the allowlist refuses raises no alarm, a refused call raises one, a refusal is taken from text the hook's driver did not write, a turn with no new records is judged twice, a late turn or record is missed inside the window, or a turn that cannot be replayed is called complete. `bun test src/core/desk/desk-audit.test.ts src/adapters/t3/desk-record.test.ts` |
+| DESK-4 | Command, path or alert text reaches an alarm, a log or the database, a pass reads an unbounded record, or a failed audit stops a wake. `bun test src/core/desk/desk-audit.test.ts src/adapters/t3/desk-record.test.ts` |
 
-Evidence for DESK-2: the hook command is read by allowed characters. The first version listed refused ones and missed the backslash; the shell-character cases in `desk-hook.test.ts` failed on it. Independent review and the full checks are pending.
+Evidence: a first review on 18ad6b7 found two senders with no check, stale driver history as proof, settings Claude Code would skip, a quoted name taken as a command, refusal text taken from any tool, unknown record kinds called complete, a cursor that skipped late records, cached operator rules and unbounded reads. Each has a regression test; 53 of 54 reviewer-chosen mutations fail one, and the other is equivalent. Two limits are accepted: a hook that cannot start is only a warning to Claude Code, and the audit applies the rules in force when it runs. A re-check and the full checks are pending.
 
 ## Decisions
 

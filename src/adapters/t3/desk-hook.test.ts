@@ -35,7 +35,7 @@ function world() {
 		project: (v: unknown) => put(`${root}/.claude/settings.json`, v),
 		local: (v: unknown) => put(`${root}/.claude/settings.local.json`, v),
 		user: (v: unknown) => put(`${home}/.claude/settings.json`, v),
-		read: () => deskHook(root, { home, repo, managed }),
+		read: (binary?: string) => deskHook(root, { home, repo, managed: [managed], ...(binary ? { binary } : {}) }),
 	};
 }
 
@@ -55,10 +55,22 @@ describe("a proven hook", () => {
 			w.project(w.entry({ matcher }));
 			expect(w.read()).toEqual({});
 		}
-		for (const command of ["chamberlain desk-allowlist hook", "chamberlain debug desk-allowlist hook"]) {
+		for (const mode of ["desk-allowlist hook", "debug desk-allowlist hook"]) {
 			const w = world();
-			w.local(w.entry({}, { command, timeout: 30 }));
-			expect(w.read()).toEqual({});
+			const binary = `${w.base}/chamberlain`;
+			writeFileSync(binary, "");
+			symlinkSync(binary, `${w.base}/linked`);
+			w.local(w.entry({}, { command: `${w.base}/linked ${mode}`, timeout: 30, async: false }));
+			expect(w.read(binary)).toEqual({});
+			expect(w.read(), "a checkout build does not vouch for a binary").toBeUndefined();
+			writeFileSync(`${w.base}/older`, "");
+			expect(w.read(`${w.base}/older`), "another binary").toBeUndefined();
+			w.local(w.entry({}, { command: binary }));
+			expect(w.read(binary), "the binary with no arguments").toBeUndefined();
+			w.local(w.entry({}, { command: `"${binary} ${mode}"` }));
+			expect(w.read(binary), "one quoted name is not a command and its arguments").toBeUndefined();
+			w.local(w.entry({}, { command: `chamberlain ${mode}` }));
+			expect(w.read(binary), "the name on PATH is not this binary").toBeUndefined();
 		}
 		const w = world();
 		symlinkSync(w.repo, `${w.base}/link`);
@@ -88,6 +100,9 @@ describe("no proof", () => {
 			[(x) => x.user({ disableAllHooks: true })],
 			[(x) => x.put(x.managed, { disableAllHooks: true })],
 			[(x) => x.put(x.managed, { allowManagedHooksOnly: true })],
+			[(x) => x.put(x.managed, { allowManagedHooksOnly: "true" })],
+			[(x) => x.put(x.managed, "{")],
+			[(x) => x.user({ disableAllHooks: "yes" })],
 			[(x) => x.user("{")],
 			[(x) => x.local("{")],
 		];
@@ -98,6 +113,24 @@ describe("no proof", () => {
 			set(x);
 			expect(x.read()).toBeUndefined();
 		}
+		const extras: ((entries: ReturnType<typeof w.entry>["hooks"]["PreToolUse"]) => object)[] = [
+			() => ({ cleanupPeriodDays: "30" }),
+			() => ({ permissions: { allow: [] } }),
+			() => ({ disableAllHooks: false }),
+			(own) => ({ hooks: { PreToolUse: own, PostToolUse: "x" } }),
+			(own) => ({ hooks: { PreToolUse: [...own, { matcher: 7, hooks: [] }] } }),
+			(own) => ({ hooks: { PreToolUse: [...own, "x"] } }),
+			(own) => ({ hooks: { PreToolUse: [{ matcher: "*", hooks: [...own[0]!.hooks, { type: "x" }] }] } }),
+		];
+		for (const extra of extras) {
+			const x = world();
+			const settings = x.entry();
+			x.project({ ...settings, ...extra(settings.hooks.PreToolUse as never) });
+			expect(x.read(), extra.toString()).toBeUndefined();
+		}
+		const schema = world();
+		schema.project({ $schema: "https://example.test/s.json", ...schema.entry() });
+		expect(schema.read()).toEqual({});
 		const user = world();
 		user.user(user.entry());
 		expect(user.read()).toBeUndefined();

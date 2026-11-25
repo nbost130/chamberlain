@@ -226,7 +226,7 @@ export abstract class CoreWork extends CoreSteward {
 		try {
 			deskAuditPass({
 				store: this.store,
-				read: turns,
+				turns,
 				check: this.d.deskCheck,
 				alarm: this.alarm,
 				log: this.log,

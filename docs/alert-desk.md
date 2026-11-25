@@ -83,9 +83,15 @@ commands were grouped, still works, so a hook installed earlier keeps running.
 
 ### A desk the allowlist does not limit is not woken
 
-The hook runs only inside Claude Code, so each desk wake first needs proof that the desk's next turn is limited. Chamberlain reads the thread's
-current provider and the project's own settings. Anything else, or anything it cannot read, holds the wake with the reason `policy` and one alarm.
-Held wakes go out when the proof is back. This applies with or without a `gatherer`. It reads the settings and never changes them.
+The hook runs only inside Claude Code, so each desk wake first needs proof that the desk's next turn is limited. Chamberlain asks the server named
+by `models.desk` which driver the thread's provider has now and whether the webhook is bound to that thread, and reads the project's own settings.
+Anything else, or anything it cannot read, holds the wake with the reason `policy` (or `config`, `auth`, `unreachable`) and one alarm. Held wakes
+go out when the proof is back. This applies with or without a `gatherer`, so a desk with a `gatherer` needs `models.desk` too. Every other message
+Chamberlain would send into the desk's thread (a routed answer, a compaction) needs the same proof, and stalled-thread recovery leaves the desk
+alone. Chamberlain reads the settings and never changes them.
+
+Keep the hook in a `.claude/settings.json` (or `settings.local.json`) of the desk project that holds nothing else: Claude Code skips a whole
+settings file that has one invalid value, so a file with more in it is not proof.
 
 | Provider the desk runs on | Enforced | Audited afterwards |
 | --- | --- | --- |
@@ -93,11 +99,12 @@ Held wakes go out when the proof is back. This applies with or without a `gather
 | Claude Code, hook missing, narrower, conditional, of another build, or turned off in any settings file | no: held | yes |
 | Any other provider | no: held | what it records |
 
-Settings are the proof, not the run itself: Claude Code treats a hook that cannot start as a warning, and a provider changed between the check and
-the turn is not seen. The audit covers both. Each finished turn of the desk and of its gatherers is replayed through the same allowlist two minutes
-later. A call that ran and would have been refused raises one alarm for that turn, with counts and no command text. Turns before the first audit
-pass are not judged. A turn with no records, or with records that do not say enough (a search's directory, a gatherer's type), is logged as not
-complete (`desk-audited`, `complete: false`).
+Two things the proof does not cover: Claude Code treats a hook that cannot start as a warning, and a provider changed between the check and the turn
+is not seen. The audit covers both. Each finished turn of the desk and of its gatherers is replayed through the same allowlist two minutes later. A
+call that ran and would have been refused raises one alarm for that turn, with counts and no command text. Records that arrive within six hours are
+still read. The rules are the ones in force at the replay, so a command you allowed in between passes. Turns before the first audit pass are not
+judged. A turn with no records, or with records that do not say enough (a search's directory, a gatherer's type, a kind this build does not know, one
+over 128 KB), is logged as not complete (`desk-audited`, `complete: false`). `desk-audit-unavailable` is logged once when turns cannot be read.
 
 After you change the desk's provider, send it the output of `chamberlain brief desk`: a new provider session has no standing prompt. An older saved
 copy may list commands the allowlist no longer accepts.

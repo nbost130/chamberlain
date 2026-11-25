@@ -29,6 +29,8 @@ export type { Verdict } from "./desk-verdict.ts";
 const HOME = process.env.HOME ?? "";
 /** The environment the rules read: the hook's own process, or the one a replay is given. */
 type Env = Record<string, string | undefined>;
+/** What a replay passes in place of this process's own environment and cached settings. The hook passes neither. */
+type Rules = { env?: Env; operator?: DeskOperator };
 /** The only places a file may be read from. */
 /** Colon-separated extra directories in DESK_LOG_DIRS. */
 export const logDirsOf = (env: Env = process.env): string[] => [
@@ -54,12 +56,16 @@ const askCommand = (env?: Env) => deskAskCommand(env);
 const hasSlot = (m: string) => /<N(?::[^>]*)?>/.test(m);
 let configured: DeskOperator | undefined;
 /** What the operator configured, read once per process (the hook is one process per call). */
-const operator = () => (configured ??= readOperator(CONF, (m) => console.error(m)));
+function operator(o: Rules): DeskOperator {
+	if (o.operator) return o.operator;
+	configured ??= readOperator(CONF, (m) => console.error(m));
+	return configured;
+}
 
 /** Is this one shell command allowed? `o` is a seam for tests: the morning commands and command shapes, instead of alert-desk.json's. */
 export function checkCommand(
 	cmd: unknown,
-	o: { morning?: readonly string[]; shapes?: ShapeSet; env?: Env } = {},
+	o: { morning?: readonly string[]; shapes?: ShapeSet } & Rules = {},
 ): Verdict {
 	if (typeof cmd !== "string" || !cmd.trim()) return no("no command");
 	// Never trimmed or normalised: the command is matched as it was sent. Surrounding whitespace of any kind (a space, a tab, a newline, a
@@ -68,7 +74,7 @@ export function checkCommand(
 	if (c.length > 9000) return no("the command is too long");
 	if (new RegExp(`^${escRe(askCommand(o.env))} '[^']{1,8000}'$`).test(c)) return ok;
 	// A morning command with no `<N>` slot is the exact string; one with a slot is its anchored full-string pattern, on the same untrimmed input.
-	if ((o.morning ?? operator().morning.commands).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c)))
+	if ((o.morning ?? operator(o).morning.commands).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c)))
 		return ok;
 	const t = tokenize(c);
 	if ("error" in t) return no(t.error);
@@ -76,7 +82,7 @@ export function checkCommand(
 	if (first === undefined) return no("an empty command around a pipe");
 	const pipeFault = pipeRefusal(pipes);
 	if (pipeFault !== undefined) return no(pipeFault);
-	return checkSimple(first, o.shapes ?? operator().shapes);
+	return checkSimple(first, o.shapes ?? operator(o).shapes);
 }
 
 /** Why the pipes after the command are refused, or undefined when there are none or the one is a final `head -n N`, `tail -n N` or `wc -l`. */
@@ -135,13 +141,13 @@ const GATHERER_FIELDS = new Set(["subagent_type", "description", "prompt", "run_
 export function checkTool(
 	tool: unknown,
 	input: Record<string, unknown> | undefined,
-	o: { gatherer?: string; env?: Env } = {},
+	o: { gatherer?: string } & Rules = {},
 ): Verdict {
 	const i = input ?? {};
 	if (typeof tool !== "string" || !tool) return no("no tool name");
 	switch (tool) {
 		case "Bash":
-			return checkCommand(i.command, { env: o.env });
+			return checkCommand(i.command, { env: o.env, operator: o.operator });
 		case "Read":
 			return checkPath(i.file_path, o.env);
 		case "Grep":
@@ -166,8 +172,8 @@ function checkGlob(i: Record<string, unknown>, env?: Env): Verdict {
 }
 
 /** The Agent (or Task) tool: allowed only to start the operator's gatherer, with only the fields a plain gatherer needs. */
-function checkAgent(tool: string, i: Record<string, unknown>, o: { gatherer?: string }): Verdict {
-	const gatherer = "gatherer" in o ? o.gatherer : operator().gatherer;
+function checkAgent(tool: string, i: Record<string, unknown>, o: { gatherer?: string } & Rules): Verdict {
+	const gatherer = "gatherer" in o ? o.gatherer : operator(o).gatherer;
 	if (!gatherer)
 		return no(
 			`${tool}: no gatherer agent is configured (\`gatherer\` in alert-desk.json), so the desk starts no agent`,
