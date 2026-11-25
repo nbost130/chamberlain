@@ -144,6 +144,9 @@ describe("no proof", () => {
 			`env PATH=/x bun ${w.repo}/src/desk-allowlist.ts hook`,
 			`bun "${w.repo}/src/desk-allowlist.ts hook`,
 			`bun $HOMEX/src/desk-allowlist.ts hook`,
+			...["|sh", "&", ";x", "$(x)", "`x`", "<x", "\nx", "\\"].map(
+				(x) => `DESK_LOG_DIRS=/a${x} bun ${w.repo}/src/desk-allowlist.ts hook`,
+			),
 			"chamberlain desk-allowlist check",
 			"/tmp/chamberlain desk-allowlist hook",
 			"",
