@@ -2,8 +2,10 @@ import { afterEach, expect, setSystemTime, test } from "bun:test";
 import { useCoreEngineFixtures } from "../../testing/core-engine-fixtures.ts";
 import { createFakeAdapter } from "../../testing/fake-adapter.ts";
 import type { StewardProbe } from "../adapter/adapter-inspect.ts";
+import { parseContextGuard } from "../config/context-guard.ts";
 import { parseConfigDoc } from "../config/layout-schema.ts";
-import { readHealth } from "../steward/steward-health.ts";
+import { guardedHealth, readHealth } from "../steward/steward-health.ts";
+import { healthTicker } from "../steward/steward-health-ticker.ts";
 import { createEngine } from "./engine.ts";
 
 const { rig } = useCoreEngineFixtures(createEngine);
@@ -66,6 +68,68 @@ test("completed unknown turns raise one alarm and queue one Steward hand-off acr
 	expect(alerts(restarted, "context-unknown:")).toHaveLength(0);
 	expect(r.store.wakes.find(`steward-handoff:${SESSION}`)).toBeDefined();
 	expect(adapter.wakes.filter((wake) => wake.deliveryId === `steward-handoff:${SESSION}`)).toHaveLength(1);
+});
+
+test("a provider with no size history is counted turn by turn, and a turn in progress does not reset the count", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe"] });
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true });
+	for (const turn of [2, 3, 4]) {
+		adapter.probe = { ...unknown(turn), previousCompletedTurn: turn - 1, partialContextHistory: true };
+		await r.engine.tick();
+		expect(alerts(r, "context-unknown:")).toHaveLength(turn === 4 ? 1 : 0);
+		adapter.probe = { ...adapter.probe, contextTurn: turn + 1 };
+		await r.engine.tick();
+	}
+	adapter.probe = known(1000, { completedTurn: 5, contextTurn: 5 });
+	await r.engine.tick();
+	adapter.probe = { ...unknown(6), previousCompletedTurn: 5, partialContextHistory: true };
+	await r.engine.tick();
+	expect(alerts(r, "context-unknown:")).toHaveLength(1);
+});
+
+test("a provider that cannot compact is handed off and is never sent a compaction", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "compact", "handoffInstruction"] });
+	adapter.probe = known(150_000, { canCompact: false, compactions: 0 });
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true });
+	await r.engine.tick();
+	expect(r.events.filter((e) => e.event === "fire" && e.kind === "compact")).toHaveLength(0);
+	expect(r.store.wakes.find(`steward-handoff:${SESSION}`)).toBeDefined();
+});
+
+test("the Steward named in guardedThreads is guarded once, by its own check", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "compact"] });
+	const requests: string[] = [];
+	adapter.probe = known(150_000, { compactions: 0 });
+	adapter.compactThread = async (id) => {
+		requests.push(id);
+		return { ok: true };
+	};
+	const config = { guardedThreads: [{ threadId: STEWARD, action: "compact" }] };
+	const r = rig({ adapter, steward: STEWARD, config, housekeeping: true });
+	await r.engine.tick();
+	expect(requests).toEqual([]);
+	expect(r.events.filter((e) => e.event === "fire" && e.kind === "compact")).toHaveLength(1);
+});
+
+test("a fallback found for one provider session never hands off another", async () => {
+	const handed: string[] = [];
+	const run = async (session: string) => {
+		const r = rig({});
+		const tick = healthTicker({
+			store: r.store,
+			collect: () => guardedHealth({ thread: STEWARD, probe: known(1000), policy: parseContextGuard(undefined) }),
+			contextHandoff: () => ({ thread: STEWARD, session, reason: "fixture" }),
+			handoff: (_h, s) => {
+				handed.push(s);
+			},
+		});
+		await tick();
+		return readHealth(r.store)?.verdict;
+	};
+	expect(await run("an-earlier-session")).not.toBe("HAND OFF");
+	expect(handed).toEqual([]);
+	expect(await run(SESSION)).toBe("HAND OFF");
+	expect(handed).toEqual([SESSION]);
 });
 
 test("a shared window-share limit drives both health and Steward compaction", async () => {
