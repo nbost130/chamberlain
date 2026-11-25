@@ -90,9 +90,12 @@ function listUsage(c: Db, q: UsageQuery = {}): WakeUsage[] {
 			...p,
 		)
 		.map(toWakeUsage);
+	// The index is added at open and may be missing (a busy open). Asked for only when it is there; without it the query scans.
+	const indexed =
+		c.all("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'steward_meter_by_time'").length > 0;
 	const recorded = c
 		.all(
-			`SELECT value FROM state INDEXED BY steward_meter_by_time WHERE ${METER_KEYS} AND updated_at >= ?`,
+			`SELECT value FROM state ${indexed ? "INDEXED BY steward_meter_by_time " : ""}WHERE ${METER_KEYS} AND updated_at >= ?`,
 			q.since ?? 0,
 		)
 		.map((r) => JSON.parse(r.value as string) as WakeUsage);

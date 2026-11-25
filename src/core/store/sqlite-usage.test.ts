@@ -65,6 +65,8 @@ test("recent usage seeks by time in the state index and still reads existing key
 		});
 		expect(usage.list({ since: 1000 })).toEqual([projected]);
 		expect(plans.join("\n")).toMatch(/SEARCH state USING INDEX \w+ \(updated_at>\?\)/);
+		c.run("DROP INDEX steward_meter_by_time");
+		expect(usage.list({ since: 1000 }), "a store opened while the index could not be added").toEqual([projected]);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
