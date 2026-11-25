@@ -183,7 +183,7 @@ async function postAndReport(item: Question): Promise<void> {
 	const { adapter } = homeAdapter({ conf: CONF, state: STATE });
 	const card = await postQuestion(item, adapter);
 	if (!card.ok) {
-		console.error(`${item.id} is on the queue page, but the question did not post: ${card.detail}`);
+		console.error(`${item.id} is on the queue page. Decisions post: ${card.detail}`);
 		process.exit(1);
 	}
 	console.log(

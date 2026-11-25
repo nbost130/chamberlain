@@ -25,6 +25,7 @@
 import type { ServerEntry } from "../config/servers.ts";
 import type { Gate } from "../decide/hold.ts";
 import type { WakeTransport } from "../delivery/deliver.ts";
+import type { PrepareReason } from "../delivery/preflight.ts";
 import type { Question } from "../items/questions.ts";
 import type { BuilderCandidate, BuilderCandidateStatus, BuilderHostStatus } from "../llm/builder-routing.ts";
 import type { Store } from "../store/store.ts";
@@ -112,7 +113,7 @@ export type PostOptions = {
 	/** The page's VIEW key (src/core/ops/capability.ts, `secrets/view-key`), put in the script address the post carries. Never the page's own key: a post is copied into the thread. A view needs it with `queueUrl`; without it the post is a notice. */
 	capability?: string;
 };
-export type PostResult = { ok: boolean; detail: string; where: "view" | "notice" };
+export type PostResult = { ok: boolean; detail: string; where: "view" | "notice"; reason?: PrepareReason };
 
 // ---- the page's waiting cards --------------------------------------------------------------------
 

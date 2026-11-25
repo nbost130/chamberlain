@@ -34,6 +34,7 @@ import { invalidateRights } from "../steward/rights-sent.ts";
 import type { Store } from "../store/store.ts";
 import type { OutboxRow } from "../store/store-wakes.ts";
 import { finalSendMessage, maxAttemptsFromEnv, type WakeResult, type WakeTransport } from "./deliver.ts";
+import { prepareSafely } from "./preflight.ts";
 import { audit } from "./relay-audit.ts";
 import { serially } from "./relay-compose.ts";
 import {
@@ -96,6 +97,7 @@ function relayContext(d: RelayDeps): Ctx {
 		unrouted: new Set(),
 		waitingOn: new Set(),
 		reported: new Set(),
+		preflightReasons: new Map(),
 		run: {
 			lockLost: false,
 			queueTail: Promise.resolve(),
@@ -197,8 +199,8 @@ async function prepareCompact(r: Ctx, transport: WakeTransport): Promise<WakeRes
 	const target =
 		d.conf && gen ? (gen.compactRef ? readNamed(d.conf, gen.compactRef) : undefined) : transport.target?.();
 	if (d.conf && gen && !target) return { ok: false, error: "generation compaction target unavailable" };
-	if (transport.prepare && !(await transport.prepare(gen?.thread, target).catch(() => false)))
-		return { ok: false, error: "model selection unavailable" };
+	const result = await prepareSafely(transport, gen?.thread, target);
+	if (!result.ok) return { ok: false, error: `${result.reason} — ${result.detail}` };
 	if (!d.lock.held()) throw new Error("the relay lock was released during model preparation: nothing is sent");
 	if (store.steward.current()?.gen !== gen?.gen)
 		return { ok: false, error: "Steward changed during model preparation" };

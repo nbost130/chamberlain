@@ -12,7 +12,8 @@ test("encoded view capabilities are scrubbed before RPC diagnostics truncate the
 			s.state.error = `${"x".repeat(130)}${form}`;
 			const result = await repostView(s.conf, "https://example.test", key);
 			expect(result.ok).toBe(false);
-			expect(result.detail).toContain("[token]");
+			expect(result.reason).toBe("unknown");
+			expect(result.detail).not.toContain("xxxxxxxx");
 			expect(result.detail).not.toContain(form.slice(0, 12));
 			expect(result.detail).not.toContain(key);
 		}

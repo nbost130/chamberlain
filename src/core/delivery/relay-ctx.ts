@@ -7,6 +7,7 @@ import type { GenSnapshot } from "../steward/steward-gens.ts";
 import type { Store } from "../store/store.ts";
 import type { HoldClock, OutboxRow, RightsStamp } from "../store/store-wakes.ts";
 import type { WakeResult, WakeTransport } from "./deliver.ts";
+import type { PrepareReason } from "./preflight.ts";
 import type { RelayLock } from "./singleton.ts";
 
 /** The pause before a failed row is tried again: one minute, then four, so a webhook back within about five minutes loses nothing. */
@@ -87,6 +88,8 @@ export type RelayDeps = {
 	 */
 	debounceMs?: number;
 	staleAfterMs?: number;
+	/** How long a busy or unreachable preflight must persist before alarming (default 15 minutes). */
+	preflightAlarmAfterMs?: number;
 	now?: () => number;
 };
 
@@ -157,6 +160,8 @@ export type Ctx = {
 	waitingOn: Set<string>;
 	/** Alerts and notices already raised or logged once, by key. */
 	reported: Set<string>;
+	/** Most recent reported preflight reason per pending row. */
+	preflightReasons: Map<number, PrepareReason>;
 	/** The one POST of a row to its lane's transport. Optional target pins the generation snapshot's wake URL (B1). */
 	post: (l: Lane, row: OutboxRow, target?: string, message?: string) => Promise<WakeResult>;
 	run: {

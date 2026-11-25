@@ -72,6 +72,7 @@ export type EngineDeps = {
 			| "retryAfterMs"
 			| "maxAttempts"
 			| "staleAfterMs"
+			| "preflightAlarmAfterMs"
 			| "now"
 			| "ceilingMs"
 			| "rightsInline"

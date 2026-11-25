@@ -46,6 +46,7 @@ export const SCALARS = {
 	rightsInline: "boolean",
 	rightsNoticeRetries: "posint",
 	wakeDebounceMs: "nonneg",
+	preflightAlarmAfterMs: "nonneg",
 } as const satisfies Record<string, ScalarKind>;
 export type ScalarKey = keyof typeof SCALARS;
 export type ScalarValue<K extends ScalarKey> = (typeof SCALARS)[K] extends "boolean"
