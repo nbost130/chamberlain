@@ -204,6 +204,9 @@ export const EVENTS = {
 	"alert-desk-start": e("info", { offset: int(), skippedBytes: int() }),
 	"alert-desk": e("info", { events: int(), bad: int(), stale: int(), woke: len("woke"), deferred: int() }),
 	"alert-desk-error": failure(),
+	"desk-audited": e("info", { ran: int(), outside: int(), refused: int(), unreadable: int(), complete: bool() }),
+	"desk-audit-unavailable": e("warn", {}),
+	"desk-audit-error": failure(),
 	"alert-triage": e("info", {
 		events: int(),
 		bad: int(),

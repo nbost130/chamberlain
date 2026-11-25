@@ -46,6 +46,7 @@ export const rec = (rc: Env, id: string): ThreadRecord => (rc.st.threads[id] ??=
 export const threadContext = async (rc: Env, id: string): Promise<ThreadContext> => ({
 	stewardId: rc.d.stewardId(),
 	decisionsId: rc.d.decisionsId(),
+	deskId: rc.d.deskId?.(),
 	children: await rc.d.children(id).catch(() => 0),
 });
 export const clearPending = (rc: Env, id: string) => {
@@ -117,7 +118,12 @@ function lookHold(p: Pending, instruction: string, look: RunLook): string | unde
 /** The daemon's own view of the thread, read synchronously right before the ping, against the rules. */
 function liveHold(rc: Env, live: ThreadState, children: number): string | undefined {
 	if (live.status !== "failed") return `the thread is ${live.status}, not failed`;
-	const stop = neverRetryThread(live, { stewardId: rc.d.stewardId(), decisionsId: rc.d.decisionsId(), children });
+	const stop = neverRetryThread(live, {
+		stewardId: rc.d.stewardId(),
+		decisionsId: rc.d.decisionsId(),
+		deskId: rc.d.deskId?.(),
+		children,
+	});
 	if (stop) return stop;
 	if (tripped(rc)) return "outage breaker is tripped";
 	return undefined;

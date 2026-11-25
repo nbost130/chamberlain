@@ -52,6 +52,27 @@ describe("createT3Adapter", () => {
 		expect(a.alertDesk?.isBusy()).toBe("idle");
 	});
 
+	test("a message or a compaction for the desk's thread is refused unsent when its policy cannot be verified", async () => {
+		const a = createT3Adapter(env({ readPrivate: (n) => (n === "desk-thread" ? "desk" : undefined) }));
+		expect(await a.send?.("desk", "text", "seed")).toMatchObject({
+			ok: false,
+			detail: expect.stringContaining("config"),
+		});
+		expect(await a.compactThread?.("desk", "id")).toMatchObject({
+			ok: false,
+			detail: expect.stringContaining("config"),
+		});
+		const card = { threadId: "desk", type: "goal" } as Parameters<NonNullable<typeof a.answer>>[0];
+		expect(await a.answer?.(card, 0, "sig")).toMatchObject({
+			ok: false,
+			kind: "refused",
+			error: expect.stringContaining("config"),
+			maybeSent: false,
+		});
+		const other = await a.send?.("another", "text", "seed");
+		expect(other?.detail).not.toContain("webhook binding");
+	});
+
 	test("the rename reports no-token without the Decisions thread or an operate token", async () => {
 		const noThread = createT3Adapter(env());
 		expect(await noThread.setTitle?.("x")).toBe("no-token");

@@ -54,6 +54,8 @@ describe("neverRetryThread: every excluded case", () => {
 	test("an ordinary failed top-level thread may be retried", () => expect(neverRetryThread(t(), ctx)).toBeUndefined());
 	test("the Steward's thread", () => expect(neverRetryThread(t({ id: "steward" }), ctx)).toMatch(/Steward/));
 	test("the Decisions thread", () => expect(neverRetryThread(t({ id: "decisions" }), ctx)).toMatch(/Decisions/));
+	test("the Alert Desk's thread", () =>
+		expect(neverRetryThread(t({ id: "desk" }), { ...ctx, deskId: "desk" })).toMatch(/Alert Desk/));
 	test("an open card or approval", () =>
 		expect(neverRetryThread(t({ pendingRequestId: "req" }), ctx)).toMatch(/open card/));
 	test("a thread whose status is waiting", () =>

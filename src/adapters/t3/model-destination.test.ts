@@ -60,6 +60,7 @@ test("Steward and Desk retain mismatched wakes then deliver once after the opera
 			webhookWake(() => url),
 			s.conf,
 			role,
+			() => true,
 		);
 		const relay = createRelay({
 			store,

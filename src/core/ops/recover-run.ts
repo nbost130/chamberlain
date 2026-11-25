@@ -119,10 +119,11 @@ function markHandled(rc: Env, runId: string): boolean {
 	return true;
 }
 
-/** The Steward's and the Decisions thread's failures are never the daemon's to handle, and are not outage evidence. */
+/** The Steward's, the Decisions thread's and the Alert Desk's failures are never the daemon's to handle, and are not outage evidence. */
 function loneThread(rc: Env, threadId: string): string | undefined {
 	if (rc.d.stewardId() === threadId) return "the Steward's thread";
 	if (rc.d.decisionsId() === threadId) return "the Decisions thread";
+	if (rc.d.deskId?.() === threadId) return "the Alert Desk's thread";
 	return undefined;
 }
 

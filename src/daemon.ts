@@ -21,6 +21,7 @@ import {
 	type RelayLock,
 	RelayRunningError,
 } from "./core/delivery/singleton.ts";
+import { readOperator } from "./core/desk/alert-desk-prompt.ts";
 import { createEngine } from "./core/engine/engine.ts";
 import { preparePrConfig } from "./core/engine/engine-prepare-pr.ts";
 import { networkFilesystem, RelayLockUnavailableError } from "./core/flock.ts";
@@ -35,6 +36,7 @@ import { checkSwitchNotice } from "./core/steward/steward-notice.ts";
 import { recoverSteward } from "./core/steward/steward-recover.ts";
 import { transferPass } from "./core/steward/steward-transfer.ts";
 import { defaultStore } from "./core/store/default-store.ts";
+import { checkTool } from "./desk-allowlist.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 import { startModules } from "./modules/index.ts";
 import { listRunningRunIdsFromStateDb, parkedSinceFromStateDb } from "./prepare-pr-nm-state.ts";
@@ -171,6 +173,11 @@ function engineDeps(
 				: {}),
 			debounceMs: setting("wakeDebounceMs", CONF) ?? DEFAULT_WAKE_DEBOUNCE_MS,
 			preflightAlarmAfterMs: setting("preflightAlarmAfterMs", CONF),
+		},
+		// What the Alert Desk ran is replayed through the same allowlist its hook runs, with the operator's settings read again for each pass.
+		deskCheck: (env) => {
+			const operator = readOperator(CONF);
+			return ({ tool, input }) => checkTool(tool, input, { env, operator }).ok;
 		},
 		// A question card in a thread the principal is writing in waits `activeHold.windowMinutes` for them before it wakes the Steward (on by default).
 		activeHold: parseActiveHold(cfg(CONF, "activeHold")),

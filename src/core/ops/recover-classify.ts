@@ -162,7 +162,7 @@ export function classifyFailure(
 }
 
 /** What the rules need to know about the world around a thread. */
-export type ThreadContext = { stewardId?: string; decisionsId?: string; children: number };
+export type ThreadContext = { stewardId?: string; decisionsId?: string; deskId?: string; children: number };
 
 /**
  * Pure: why this thread must not be retried by the daemon, or undefined when it may be. A waiting thread is one where a retry
@@ -172,6 +172,7 @@ export type ThreadContext = { stewardId?: string; decisionsId?: string; children
 export function neverRetryThread(t: ThreadState, ctx: ThreadContext): string | undefined {
 	if (ctx.stewardId && t.id === ctx.stewardId) return "the Steward's thread";
 	if (ctx.decisionsId && t.id === ctx.decisionsId) return "the Decisions thread";
+	if (ctx.deskId && t.id === ctx.deskId) return "the Alert Desk's thread";
 	if (t.archived || t.settled || t.snoozed) return "archived, settled or snoozed";
 	if (t.parentThreadId !== null) return "a child thread: its parent is told";
 	if (t.pendingRequestId) return "waiting: an open card or approval";

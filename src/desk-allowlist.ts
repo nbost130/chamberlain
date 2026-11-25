@@ -11,7 +11,7 @@
  * `$`, a backtick or a backslash inside them), whose name has a shape (journalctl, systemctl and docker in code; gh, git and the operator's own as data, `src/core/desk-shapes.ts`) and whose every flag is one that shape lists. The one pipe allowed is a
  * final `head -n N`, `tail -n N` or `wc -l`. Anything else is refused with the first thing wrong.
  *
- * File reads (the Read, Grep and Glob tools) are allowed only under LOG_DIRS, after `..` and symlinks are resolved, and never for a path with a
+ * File reads (the Read, Grep and Glob tools) are allowed only under the log directories (`logDirsOf`), after `..` and symlinks are resolved, and never for a path with a
  * component that names a credential (.env, keys, tokens, ssh, gnupg, aws, passage...). The desk fixes nothing, so the write tools are refused.
  */
 import { existsSync, realpathSync } from "node:fs";
@@ -27,12 +27,16 @@ import { no, ok, type Verdict } from "./desk-verdict.ts";
 export type { Verdict } from "./desk-verdict.ts";
 
 const HOME = process.env.HOME ?? "";
+/** The environment the rules read: the hook's own process, or the one a replay is given. */
+type Env = Record<string, string | undefined>;
+/** What a replay passes in place of this process's own environment and cached settings. The hook passes neither. */
+type Rules = { env?: Env; operator?: DeskOperator };
 /** The only places a file may be read from. */
 /** Colon-separated extra directories in DESK_LOG_DIRS. */
-export const LOG_DIRS = [
+export const logDirsOf = (env: Env = process.env): string[] => [
 	"/var/log",
 	`${HOME}/.cache/alert-desk`,
-	...(process.env.DESK_LOG_DIRS ?? "").split(":").filter(Boolean),
+	...(env.DESK_LOG_DIRS ?? "").split(":").filter(Boolean),
 ];
 /** A path component that names a credential: refused even inside a log directory. */
 const SECRET_NAME =
@@ -47,23 +51,30 @@ const SECRET_NAME =
  * (`readOperator`). Nothing private is built in: with none configured, only the generic shapes above are allowed.
  */
 /** The one command the desk may run to file a decision (DESK_ASK_PATH, else this build's own): the same command the standing prompt is filled with. */
-const askCommand = () => deskAskCommand();
+const askCommand = (env?: Env) => deskAskCommand(env);
 /** Does a morning command have a `<N>` or `<N:a-b>` slot? Without one it is matched as the exact string. */
 const hasSlot = (m: string) => /<N(?::[^>]*)?>/.test(m);
 let configured: DeskOperator | undefined;
 /** What the operator configured, read once per process (the hook is one process per call). */
-const operator = () => (configured ??= readOperator(CONF, (m) => console.error(m)));
+function operator(o: Rules): DeskOperator {
+	if (o.operator) return o.operator;
+	configured ??= readOperator(CONF, (m) => console.error(m));
+	return configured;
+}
 
 /** Is this one shell command allowed? `o` is a seam for tests: the morning commands and command shapes, instead of alert-desk.json's. */
-export function checkCommand(cmd: unknown, o: { morning?: readonly string[]; shapes?: ShapeSet } = {}): Verdict {
+export function checkCommand(
+	cmd: unknown,
+	o: { morning?: readonly string[]; shapes?: ShapeSet } & Rules = {},
+): Verdict {
 	if (typeof cmd !== "string" || !cmd.trim()) return no("no command");
 	// Never trimmed or normalised: the command is matched as it was sent. Surrounding whitespace of any kind (a space, a tab, a newline, a
 	// no-break space, a byte-order mark) is not part of any allowed shape, so it is refused, as the predecessor's exact match refused it.
 	const c = cmd;
 	if (c.length > 9000) return no("the command is too long");
-	if (new RegExp(`^${escRe(askCommand())} '[^']{1,8000}'$`).test(c)) return ok;
+	if (new RegExp(`^${escRe(askCommand(o.env))} '[^']{1,8000}'$`).test(c)) return ok;
 	// A morning command with no `<N>` slot is the exact string; one with a slot is its anchored full-string pattern, on the same untrimmed input.
-	if ((o.morning ?? operator().morning.commands).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c)))
+	if ((o.morning ?? operator(o).morning.commands).some((m) => (hasSlot(m) ? morningPattern(m).test(c) : m === c)))
 		return ok;
 	const t = tokenize(c);
 	if ("error" in t) return no(t.error);
@@ -71,7 +82,7 @@ export function checkCommand(cmd: unknown, o: { morning?: readonly string[]; sha
 	if (first === undefined) return no("an empty command around a pipe");
 	const pipeFault = pipeRefusal(pipes);
 	if (pipeFault !== undefined) return no(pipeFault);
-	return checkSimple(first, o.shapes ?? operator().shapes);
+	return checkSimple(first, o.shapes ?? operator(o).shapes);
 }
 
 /** Why the pipes after the command are refused, or undefined when there are none or the one is a final `head -n N`, `tail -n N` or `wc -l`. */
@@ -101,8 +112,8 @@ function real(p: string): string {
 		return resolve(p);
 	}
 }
-const logDirs = () =>
-	LOG_DIRS.map((d) => {
+const logDirs = (env?: Env) =>
+	logDirsOf(env).map((d) => {
 		try {
 			return realpathSync(d);
 		} catch {
@@ -111,11 +122,11 @@ const logDirs = () =>
 	});
 
 /** May this path be read? Absolute, under a log directory once resolved, and with no component that names a credential. */
-export function checkPath(p: unknown): Verdict {
+export function checkPath(p: unknown, env?: Env): Verdict {
 	if (typeof p !== "string" || !p.startsWith("/")) return no("a read needs an absolute path");
 	const r = real(p);
-	if (!logDirs().some((d) => r === d || r.startsWith(`${d}/`)))
-		return no(`${p} is not under a log directory (${LOG_DIRS.join(", ")})`);
+	if (!logDirs(env).some((d) => r === d || r.startsWith(`${d}/`)))
+		return no(`${p} is not under a log directory (${logDirsOf(env).join(", ")})`);
 	const bad = r.split("/").find((seg) => seg && SECRET_NAME.test(seg));
 	return bad ? no(`${p} has a component (${bad}) that names a credential`) : ok;
 }
@@ -130,19 +141,19 @@ const GATHERER_FIELDS = new Set(["subagent_type", "description", "prompt", "run_
 export function checkTool(
 	tool: unknown,
 	input: Record<string, unknown> | undefined,
-	o: { gatherer?: string } = {},
+	o: { gatherer?: string } & Rules = {},
 ): Verdict {
 	const i = input ?? {};
 	if (typeof tool !== "string" || !tool) return no("no tool name");
 	switch (tool) {
 		case "Bash":
-			return checkCommand(i.command);
+			return checkCommand(i.command, { env: o.env, operator: o.operator });
 		case "Read":
-			return checkPath(i.file_path);
+			return checkPath(i.file_path, o.env);
 		case "Grep":
-			return checkPath(i.path);
+			return checkPath(i.path, o.env);
 		case "Glob":
-			return checkGlob(i);
+			return checkGlob(i, o.env);
 		case "Agent":
 		case "Task":
 			return checkAgent(tool, i, o);
@@ -154,15 +165,15 @@ export function checkTool(
 }
 
 /** A glob pattern that is itself absolute, or climbs, would leave the directory the path check approved. */
-function checkGlob(i: Record<string, unknown>): Verdict {
+function checkGlob(i: Record<string, unknown>, env?: Env): Verdict {
 	if (typeof i.pattern === "string" && (i.pattern.startsWith("/") || i.pattern.split("/").includes("..")))
 		return no("a glob pattern must stay inside the directory it is given");
-	return checkPath(i.path);
+	return checkPath(i.path, env);
 }
 
 /** The Agent (or Task) tool: allowed only to start the operator's gatherer, with only the fields a plain gatherer needs. */
-function checkAgent(tool: string, i: Record<string, unknown>, o: { gatherer?: string }): Verdict {
-	const gatherer = "gatherer" in o ? o.gatherer : operator().gatherer;
+function checkAgent(tool: string, i: Record<string, unknown>, o: { gatherer?: string } & Rules): Verdict {
+	const gatherer = "gatherer" in o ? o.gatherer : operator(o).gatherer;
 	if (!gatherer)
 		return no(
 			`${tool}: no gatherer agent is configured (\`gatherer\` in alert-desk.json), so the desk starts no agent`,

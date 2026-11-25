@@ -2,6 +2,7 @@
 
 import { reconcileItemHolds, reconcileRefHolds } from "../decide/hold-reconcile.ts";
 import { drainDeskPass } from "../desk/alert-triage-engine.ts";
+import { deskAuditPass } from "../desk/desk-audit.ts";
 import { reconcileCardHolds, trackUnverified, unverifiedAlarm } from "../items/card-reconcile.ts";
 import { announceReturns } from "../items/snooze.ts";
 import { obsFor } from "../log.ts";
@@ -218,6 +219,24 @@ export abstract class CoreWork extends CoreSteward {
 		});
 	}
 
+	/** What the desk's turns ran, replayed through its allowlist (desk-audit.ts). A failure is logged: it never stops a wake. */
+	protected auditDesk() {
+		const { turns } = this.deskLane ?? {};
+		if (!turns || !this.d.deskCheck) return;
+		try {
+			deskAuditPass({
+				store: this.store,
+				turns,
+				check: this.d.deskCheck,
+				alarm: this.alarm,
+				log: this.log,
+				now: () => this.d.relay?.now?.() ?? Date.now(),
+			});
+		} catch (e) {
+			this.log("desk-audit-error", { error: String(e).slice(0, 200) });
+		}
+	}
+
 	/** The checks of one housekeeping pass that run only when housekeeping is on, added to the pass's list in order. */
 	protected housekeepingChecks(checks: Promise<unknown>[]) {
 		const { log, healthTick, usageTick } = this;
@@ -226,6 +245,7 @@ export abstract class CoreWork extends CoreSteward {
 			log(event, { ...extra, error: String(e).slice(0, 200) });
 		checks.push(this.holdReconcileTick());
 		this.drainDesk();
+		this.auditDesk();
 		if (!this.DRY && healthTick)
 			checks.push(healthTick().catch((e) => log("steward-health-error", { error: String(e) })));
 		if (usageTick) checks.push(usageTick().catch(failed("steward-usage-error")));

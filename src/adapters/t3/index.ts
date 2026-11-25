@@ -17,6 +17,8 @@ import type { ServerEntry } from "../../core/config/servers.ts";
 import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { probeT3Builder } from "./builder-probe.ts";
+import { guardDesk, guardDeskAnswer } from "./desk-policy.ts";
+import { deskProjectHook, deskTurns } from "./desk-record.ts";
 import { historyGet } from "./history.ts";
 import { t3Linker } from "./links.ts";
 import { modelWake } from "./model-wake.ts";
@@ -87,12 +89,27 @@ const stewardProbeFor =
 		return id ? t3Probe(t3StateDbPath(), id, Date.now(), { base: t3BaseDir(), limit }) : { readable: true };
 	};
 
+const hooked = (threadId: string | undefined) => deskProjectHook(t3StateDbPath(), threadId) !== undefined;
+const deskGuard = (env: AdapterEnv) => ({ conf: env.conf, desk: () => env.readPrivate("desk-thread"), hooked });
+
+/** The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained. */
+const deskLane = (env: AdapterEnv): NonNullable<Adapter["alertDesk"]> => ({
+	wake: modelWake(
+		webhookWake(() => env.readPrivate("desk-wake-url")),
+		env.conf,
+		"desk",
+		hooked,
+	),
+	isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
+	turns: deskTurns(t3StateDbPath(), () => env.readPrivate("desk-thread")),
+});
+
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
 	const link = new T3Link(env, srv);
 	const linker = t3Linker(srv);
 	const waiting = createT3Waiting({ server: srv, conf: env.conf, log: env.log, linker });
-	const compactThread = createRpcPing({ server: srv, conf: env.conf, purpose: "compact" });
+	const compactThread = guardDesk(deskGuard(env), createRpcPing({ server: srv, conf: env.conf, purpose: "compact" }));
 	const wake = modelWake(
 		webhookWake(() => env.readPrivate("wake-url")),
 		env.conf,
@@ -110,7 +127,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		wake,
 		isBusy: () => threadGate(env.steward()),
 		post: t3Post(env.conf),
-		answer: waiting.answer,
+		answer: guardDeskAnswer(deskGuard(env), waiting.answer),
 		listWaiting: waiting.listWaiting,
 		// The rename needs the operate token the page grants (web.json) and the Decisions thread's id; without either it reports why.
 		setTitle: async (title) => {
@@ -122,21 +139,13 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		inspect: t3Inspector(link, srv, env),
 		snapshot: () => link.snapshot(),
 		probeBuilder: (request) => probeT3Builder(env, srv, request),
-		send: waiting.send,
+		send: guardDesk(deskGuard(env), waiting.send),
 		stewardProbe: stewardProbeFor(env),
 		compactThread: (id, deliveryId) => compactThread(id, "/compact", deliveryId, "daemon"),
 		compact: compactWake,
 		handoffInstruction: () =>
 			"Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",
-		// The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained.
-		alertDesk: {
-			wake: modelWake(
-				webhookWake(() => env.readPrivate("desk-wake-url")),
-				env.conf,
-				"desk",
-			),
-			isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
-		},
+		alertDesk: deskLane(env),
 		threadLinks: (threadId) => linker.links(threadId),
 		serverLine: () => t3ServerLine(srv),
 		approvalHint: "The t3_pending_request tool cannot answer it.",
