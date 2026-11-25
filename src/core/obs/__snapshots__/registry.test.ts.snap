@@ -20,6 +20,8 @@ wake.dead-letter-reported.attempts: int
 wake.stale.age_ms: ms <- ageMs
 wake.not-ready.receiver: known(receiver) <- receiver
 wake.preflight-failed.receiver: known(receiver) <- receiver
+wake.preflight-failed.reason: enum(busy|quota|auth|unsupported|config|unreachable|unknown)
+wake.preflight-failed.detail: enum(The thread is active and its model selection cannot change yet.|The preferred provider exhausted its quota and no approved backup is eligible.|The server operate token or provider authentication is missing or refused.|The provider or model does not support the requested execution capability.|Check the configured receiver, server, model selection and webhook binding.|The server connection closed, failed or timed out.|An unrecognized failure prevented preparation.)
 wake.no-receiver.receiver: known(receiver) <- receiver
 wake.receiver-unconfigured.receiver: known(receiver) <- receiver
 wake.receiver-unconfigured.rows: int

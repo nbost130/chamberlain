@@ -44,6 +44,15 @@ type RpcMessage = {
 	values?: StreamValue[];
 	exit?: { _tag?: string; value?: unknown };
 };
+
+export class RpcFailure extends Error {}
+export class RpcDisconnected extends Error {}
+export class TicketRefused extends Error {
+	constructor(readonly status: number) {
+		super(`ticket refused (HTTP ${status})`);
+	}
+}
+
 // ---- minimal Effect-RPC client over /ws -------------------------------------------------------
 export class Rpc {
 	next = 100;
@@ -71,7 +80,18 @@ export class Rpc {
 	}
 	receive(data: string) {
 		this.last = Date.now();
-		for (const m of ([] as RpcMessage[]).concat(JSON.parse(data))) this.handle(m);
+		let messages: RpcMessage[];
+		try {
+			messages = ([] as RpcMessage[]).concat(JSON.parse(data));
+		} catch {
+			// Parsing exceptions can quote the frame. Fail the pending calls without exposing it.
+			this.fail(Error("malformed RPC response"));
+			this.ws.close();
+			return;
+		}
+		for (const m of messages) {
+			if (m && typeof m === "object") this.handle(m);
+		}
 	}
 	private handle(m: RpcMessage) {
 		const p = this.pending.get(String(m.requestId));
@@ -81,7 +101,9 @@ export class Rpc {
 		} else if (m._tag === "Exit" && p) {
 			this.pending.delete(String(m.requestId));
 			if (m.exit?._tag === "Success") p.resolve(m.exit.value);
-			else p.reject(Error(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
+			else if (m.exit?._tag === "Failure")
+				p.reject(new RpcFailure(`rpc failure: ${JSON.stringify(m.exit).slice(0, 20000)}`));
+			else p.reject(Error("unexpected RPC response"));
 		} else if (m._tag === "Defect" || m._tag === "ClientProtocolError") this.ws.close();
 	}
 	call(tag: string, payload: unknown, onChunk?: (v: StreamValue) => void) {
@@ -94,8 +116,8 @@ export class Rpc {
 	request(tag: string, payload: unknown) {
 		return this.call(tag, payload);
 	}
-	fail() {
-		for (const p of this.pending.values()) p.reject(Error("socket closed"));
+	fail(error: Error = new RpcDisconnected("socket closed")) {
+		for (const p of this.pending.values()) p.reject(error);
 		this.pending.clear();
 		clearInterval(this.pinger);
 	}
@@ -103,12 +125,13 @@ export class Rpc {
 
 /** Open an authenticated socket (ticket from a bearer token) and return the client. */
 export async function connect(origin: string, token: string): Promise<Rpc> {
-	const t = await fetch(new URL("/api/auth/websocket-ticket", origin), {
+	const endpoint = new URL("/api/auth/websocket-ticket", origin);
+	const t = await fetch(endpoint, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${token}` },
 		signal: AbortSignal.timeout(10000),
 	});
-	if (!t.ok) throw Error(`ticket refused (HTTP ${t.status})`);
+	if (!t.ok) throw new TicketRefused(t.status);
 	const { ticket } = (await t.json()) as { ticket: string };
 	const url = new URL("/ws", origin);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -119,7 +142,7 @@ export async function connect(origin: string, token: string): Promise<Rpc> {
 	const closed = new Promise<void>((r) => (done = r));
 	await new Promise<void>((res, rej) => {
 		ws.addEventListener("open", () => res());
-		ws.addEventListener("error", () => rej(Error("ws error")));
+		ws.addEventListener("error", () => rej(new RpcDisconnected("ws error")));
 	});
 	ws.addEventListener("close", done);
 	return new Rpc(ws, closed);

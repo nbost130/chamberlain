@@ -20,7 +20,7 @@ async function passOnce(r: Ctx): Promise<string[]> {
 	const ready = composeReady(r, r.clock());
 	const out: string[] = [];
 	// Every receiver's pending rows, oldest first: each receiver's own rows keep their order, and each row goes to its receiver's transport.
-	for (const row of r.store.wakes.rows("pending")) {
+	for (const row of pendingRows(r)) {
 		const l = laneOf(r, row.receiver);
 		if (!l) {
 			logUnrouted(r, row);
@@ -31,6 +31,15 @@ async function passOnce(r: Ctx): Promise<string[]> {
 		for (const s of sent) out.push(...s.members.map((m) => m.deliveryId));
 	}
 	return out;
+}
+
+function pendingRows(r: Ctx): OutboxRow[] {
+	const pending = r.store.wakes.rows("pending");
+	if (r.preflightReasons.size) {
+		const ids = new Set(pending.map((row) => row.id));
+		for (const id of r.preflightReasons.keys()) if (!ids.has(id)) r.preflightReasons.delete(id);
+	}
+	return pending;
 }
 
 /** The lanes whose transport can send now, after composing their held wakes; a lane with work and nowhere to send raises its alarm once a minute. */

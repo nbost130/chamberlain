@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { testRelayLock } from "../../testing/lock.ts";
 import { memStore } from "../../testing/store.ts";
 import { createOutbox } from "./deliver.ts";
+import { type PrepareResult, preparationFailed } from "./preflight.ts";
 import { createRelay } from "./relay.ts";
 
 function world() {
@@ -10,7 +11,7 @@ function world() {
 	const state = { ready: false, t: 1_000_000, sent: 0, freshness: "send" as "send" | "wait" | "cancel" };
 	const wake = {
 		ready: () => true,
-		prepare: async () => state.ready,
+		prepare: async (): Promise<PrepareResult> => (state.ready ? { ok: true } : preparationFailed("config")),
 		send: async () => {
 			state.sent++;
 			return { ok: true };
@@ -62,7 +63,7 @@ test("losing the relay lock during model preparation sends nothing", async () =>
 	const r = world();
 	r.wake.prepare = async () => {
 		r.lock.release();
-		return true;
+		return { ok: true };
 	};
 	await r.relay.pass();
 	expect(r.store.wakes.find("one")?.attempts).toBe(0);

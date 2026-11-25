@@ -18,10 +18,12 @@
  */
 import { createHash } from "node:crypto";
 import { readSecret } from "../../core/config/layout.ts";
+import { type PrepareReason, preparationFailed } from "../../core/delivery/preflight.ts";
 import { within as deadline } from "../../core/within.ts";
 import { lookOf } from "./failure.ts";
+import { preflightFailure } from "./model-preflight.ts";
 import { checkProjection } from "./projection.ts";
-import { connect, type Rpc } from "./rpc.ts";
+import { connect, type Rpc, RpcFailure } from "./rpc.ts";
 import type { T3Server } from "./server.ts";
 
 export type Identity = "steward" | "daemon" | "operator";
@@ -30,7 +32,7 @@ export const IDENTITIES: Record<Identity, { createdBy: "agent" | "user"; creatio
 	daemon: { createdBy: "agent", creationSource: "server" },
 	operator: { createdBy: "user", creationSource: "server" },
 };
-export type PingResult = { ok: boolean; detail: string };
+export type PingResult = { ok: boolean; detail: string; reason?: PrepareReason };
 /** A failure that sent nothing starts its detail with this, so a caller can tell "not sent" from "may have been sent". */
 export const NOT_SENT = "not sent: ";
 
@@ -133,8 +135,8 @@ export type RpcPingDeps = {
 	/** Compaction needs a positively idle projection and never steers an active run. */
 	purpose?: "compact";
 	modelSelection?: MessageOptions["modelSelection"];
-	/** Message capabilities that must be removed before diagnostics are truncated. */
-	scrubError?: (message: string) => string;
+	/** Decisions errors must never include text from a provider reply or thread. */
+	safeDiagnostics?: boolean;
 	server: Pick<T3Server, "name" | "origin" | "operateTokenFile" | "tokenFile">;
 	conf: string;
 	connect?: (origin: string, token: string) => Promise<Pick<Rpc, "request"> & { ws: { close(): void } }>;
@@ -163,6 +165,39 @@ export function openWithin<T extends Pick<Rpc, "request"> & { ws: { close(): voi
 	});
 }
 
+function configuredSendFailure(e: unknown, dispatched: boolean): PingResult {
+	const { reason, detail } = preflightFailure(e);
+	if (!dispatched) return { ok: false, reason, detail: `${NOT_SENT}${reason} — ${detail}` };
+	return {
+		ok: false,
+		reason,
+		detail:
+			e instanceof RpcFailure
+				? `${NOT_SENT}${reason} — The server refused the dispatch.`
+				: `post could not be confirmed: ${reason}`,
+	};
+}
+
+function missingOperateToken(d: RpcPingDeps): PingResult {
+	if (d.safeDiagnostics) {
+		const { reason, detail } = preparationFailed("auth");
+		return { ok: false, reason, detail: `${NOT_SENT}${reason} — ${detail}` };
+	}
+	return {
+		ok: false,
+		detail: `${NOT_SENT}${d.server.name} has no operate token here, so the page can't send to its threads`,
+	};
+}
+
+/** A socket cleanup failure cannot undo a dispatch the server accepted. */
+function closePing(rpc: { ws: { close(): void } }): void {
+	try {
+		rpc.ws.close();
+	} catch {
+		// EMPTY_CATCH_OK: the request outcome is already known independently of cleanup.
+	}
+}
+
 /**
  * The server's ping: sends one message into a thread over its RPC with the server's operate token, steering a run that is
  * going or starting one. A server without an operate token is refused, and the caller falls back.
@@ -175,11 +210,7 @@ export function createRpcPing(
 	const s = d.server;
 	return async (threadId, text, seed, identity = "steward") => {
 		const token = readToken(d.conf, s.operateTokenFile);
-		if (!token)
-			return {
-				ok: false,
-				detail: `${NOT_SENT}${s.name} has no operate token here, so the page can't send to its threads`,
-			};
+		if (!token) return missingOperateToken(d);
 		let dispatched = false;
 		try {
 			const rpc = await openWithin(conn, s.origin, token, ms);
@@ -207,12 +238,13 @@ export function createRpcPing(
 					ms,
 					"send",
 				);
-				return { ok: true, detail: `sent to ${s.name}:${threadId}` };
+				return { ok: true, detail: d.safeDiagnostics ? "sent" : `sent to ${s.name}:${threadId}` };
 			} finally {
-				rpc.ws.close();
+				closePing(rpc);
 			}
 		} catch (e) {
-			return { ok: false, detail: sendFailure(d.scrubError ? d.scrubError(String(e)) : e, dispatched, [token]) };
+			if (d.safeDiagnostics) return configuredSendFailure(e, dispatched);
+			return { ok: false, detail: sendFailure(e, dispatched, [token]) };
 		}
 	};
 }

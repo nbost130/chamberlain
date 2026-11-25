@@ -72,11 +72,11 @@ describe("repostView sends through the Decisions thread's door", () => {
 		const r = await repostView(k.conf, "http://q.test", VIEW);
 		expect(r.ok).toBe(false);
 		expect(r.detail).not.toContain(VIEW);
-		expect(r.detail).toContain("[token]");
+		expect(r).toMatchObject({ reason: "unknown", detail: expect.stringContaining("not sent: unknown") });
 		const missing = keyed(false);
 		const result = await repostView(missing.conf, "http://q.test", VIEW);
 		expect(result.ok).toBe(false);
-		expect(result.detail).toContain("Decisions thread is not set");
+		expect(result).toMatchObject({ reason: "config", detail: expect.stringContaining("not sent: config") });
 		expect(missing.sent()).toBe("");
 	});
 });

@@ -118,10 +118,10 @@ test("wake preflight failure sends nothing and recovers after an operator select
 		"steward",
 	);
 	s.state.unavailable = true;
-	expect(await wake.prepare!(undefined, url)).toBe(false);
+	expect(await wake.prepare!(undefined, url)).toMatchObject({ ok: false, reason: "config" });
 	expect(calls).toBe(0);
 	s.state.unavailable = false;
-	expect(await wake.prepare!(undefined, url)).toBe(true);
+	expect(await wake.prepare!(undefined, url)).toEqual({ ok: true });
 	await wake.send("id", "message");
 	expect(calls).toBe(1);
 });
@@ -133,7 +133,7 @@ test("a desk run by a gatherer has no model to select: its wake preflight passes
 	writeFileSync(`${s.conf}/config.json`, JSON.stringify(config), { mode: 0o600 });
 	const transport = { ready: () => true, send: async () => ({ ok: true }) };
 	const desk = modelWake({ ...transport }, s.conf, "desk");
-	expect(await desk.prepare!("desk-id", "https://relay.example.test/hooks/desk")).toBe(true);
+	expect(await desk.prepare!("desk-id", "https://relay.example.test/hooks/desk")).toEqual({ ok: true });
 	expect(s.requests).toHaveLength(0);
 	await expect(configureThread(s.conf, "desk")).rejects.toThrow("gatherer");
 	const steward = modelWake({ ...transport }, s.conf, "steward");

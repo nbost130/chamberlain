@@ -7,9 +7,8 @@
 import { readFileSync } from "node:fs";
 import type { Adapter, PostOptions, PostResult } from "../../core/adapter/adapter.ts";
 import { CONF, PrincipalPoss } from "../../core/config/config.ts";
-import { thread as configThread } from "../../core/config/layout.ts";
 import { cardTag, type Question } from "../../core/items/questions.ts";
-import { holdsToken, inlineScriptSrc, TOKEN_FILE, withoutToken } from "../../core/ops/capability.ts";
+import { holdsToken, inlineScriptSrc, TOKEN_FILE } from "../../core/ops/capability.ts";
 import { configuredPing } from "./model.ts";
 import type { PingResult } from "./ping.ts";
 
@@ -75,13 +74,13 @@ export async function postCard(i: Question, conf = CONF, base?: string, viewKey?
 	// A view needs the page's address AND the view key: with either missing the operator gets the one-line notice, never a link that cannot work.
 	const view = base !== undefined && viewKey !== undefined;
 	const text = view ? decisionsMessage(i, base, viewKey) : decisionsDownMessage(i);
-	const r = await postConfigured(conf, text, viewKey);
-	return { ok: r.ok, detail: r.detail, where: view ? "view" : "notice" };
+	const r = await postConfigured(conf, text);
+	return { ...r, where: view ? "view" : "notice" };
 }
 
 /** Posts the pinned view again, with no question: `chamberlain decisions repost`. The same door as a question's post, so the same guard on the page's key. */
 export const repostView = (conf: string, base: string, viewKey: string): Promise<PingResult> =>
-	postConfigured(conf, viewRepostMessage(base, viewKey), viewKey);
+	postConfigured(conf, viewRepostMessage(base, viewKey));
 
 /**
  * The page's key for the post's last check, read from the file whatever its mode: a token file the page distrusts (not 0600) still HOLDS a key
@@ -103,15 +102,12 @@ export const t3Post =
 		const text = view
 			? decisionsMessage(item, opts.queueUrl as string, opts.capability as string)
 			: decisionsDownMessage(item);
-		const r = await postConfigured(conf, text, opts.capability);
+		const r = await postConfigured(conf, text);
 		return { ...r, where: view ? "view" : "notice" };
 	};
 
-export async function postConfigured(conf: string, text: string, viewKey?: string): Promise<PingResult> {
-	if (!configThread(conf, "decisions"))
-		return { ok: false, detail: "ask: the Decisions thread is not set (threads.decisions in config.json)" };
+export async function postConfigured(conf: string, text: string): Promise<PingResult> {
 	const pageKey = readPageKey(conf);
 	if (holdsToken(text, pageKey)) throw Error("ask: refusing to post the page's key into the Decisions thread");
-	const r = await configuredPing(conf, "decisions", text, [viewKey, pageKey]);
-	return { ...r, detail: withoutToken(withoutToken(r.detail, viewKey), pageKey) };
+	return configuredPing(conf, "decisions", text);
 }

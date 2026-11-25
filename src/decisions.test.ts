@@ -39,7 +39,7 @@ describe("decisions repost", () => {
 		state.failSend = true;
 		const r = await repost(conf, async () => ({ queueUrl: "http://q.test", capability: "VIEWKEY123" }));
 		expect(r.ok).toBe(false);
-		expect(r.line).toContain("the post failed:");
-		expect(r.line).toContain("send failed");
+		expect(r.line).toContain("Decisions post: not sent: unknown");
+		expect(r.line).not.toContain("send failed");
 	});
 });

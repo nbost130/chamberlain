@@ -27,6 +27,12 @@ test("wrong thread, disabled tasks, unbound tasks, policy blocks and signed hook
 		const url = `${s.config.servers[0]!.origin}/wake`;
 		Object.assign(s.bindWake(url, "steward-id"), change);
 		await expect(configureThread(s.conf, "steward", undefined, url)).rejects.toThrow("webhook");
+		const wake = modelWake(
+			webhookWake(() => url),
+			s.conf,
+			"steward",
+		);
+		expect(await wake.prepare!(undefined, url)).toMatchObject({ ok: false, reason: "config" });
 		expect(s.selection().instanceId).toBe("old");
 		expect(s.posts).toHaveLength(0);
 	}
