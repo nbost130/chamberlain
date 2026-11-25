@@ -65,8 +65,21 @@ test("recent usage seeks by time in the state index and still reads existing key
 		});
 		expect(usage.list({ since: 1000 })).toEqual([projected]);
 		expect(plans.join("\n")).toMatch(/SEARCH state USING INDEX \w+ \(updated_at>\?\)/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a store opened while the usage index could not be added still lists usage", () => {
+	const dir = mkdtempSync(join(tmpdir(), "chamberlain-usage-noindex-"));
+	try {
+		const file = join(dir, "state.sqlite");
+		openStore(file).close();
+		using db = new Database(file);
+		const c = queries(db);
 		c.run("DROP INDEX steward_meter_by_time");
-		expect(usage.list({ since: 1000 }), "a store opened while the index could not be added").toEqual([projected]);
+		c.run("INSERT INTO state VALUES (?, ?, ?)", 'steward-meter:["provider","1"]', JSON.stringify(projected), 2000);
+		expect(makeUsage(c).list({ since: 1000 })).toEqual([projected]);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
