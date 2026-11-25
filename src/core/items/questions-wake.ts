@@ -42,6 +42,12 @@ export const snoozed = (items: Iterable<QuestionState>): QuestionState[] =>
 			(a, b) => (a.snooze?.until ?? "").localeCompare(b.snooze?.until ?? "") || a.createdAt.localeCompare(b.createdAt),
 		);
 
+/** Pure: the open list as the two lists a page shows: ideas have their own and never wait. */
+export const splitIdeas = <T extends { kind: Kind }>(open: readonly T[]) => ({
+	items: open.filter((i) => i.kind !== "idea"),
+	ideas: open.filter((i) => i.kind === "idea"),
+});
+
 /** Pure: what "Accept all recommendations" may answer. Never an only-you item, a secret, or one with no recommendation. */
 export function batchable(i: QuestionState): boolean {
 	return (

@@ -15,6 +15,8 @@ type HealthTickerDeps = {
 	server?: () => string;
 	/** True when the last compaction of this Steward did not bring its context under the line: compaction cannot help, so the verdict is HAND OFF. */
 	compactFailed?: (h: Health) => boolean;
+	/** A context fallback can ask for a hand-off without waiting for the next hourly quality check. */
+	contextHandoff?: () => { thread: string; session: string; reason: string } | undefined;
 };
 
 /** A compaction that left the context above the line is a quality signal compaction cannot fix: the same verdict as any other, with its own line in the report. */
@@ -59,7 +61,9 @@ async function startHandoff(deps: HealthTickerDeps, h: Health, session: string):
 		title: "Steward quality has slipped and needs a handoff",
 		context:
 			h.report +
-			"\nQuality signals (format slips or repeat reads) are past their limits, which compaction does not fix. Recommend /steward-handoff; nothing starts automatically.",
+			(h.handoffReason
+				? "\nRecommend the Steward hand-off procedure."
+				: "\nQuality signals (format slips or repeat reads) are past their limits, which compaction does not fix. Recommend /steward-handoff; nothing starts automatically."),
 		options: [{ label: "Hand off now" }, { label: "Not yet" }],
 		recommended: 0,
 		thread: "Steward",
@@ -81,11 +85,13 @@ export function healthTicker(deps: HealthTickerDeps) {
 	return async () => {
 		const now = (deps.now ?? Date.now)(),
 			prior = readHealth(deps.store);
-		if (busy || (prior && now - Date.parse(prior.at) < HEALTH_CONFIG.intervalMs)) return;
+		const fallback = deps.contextHandoff?.();
+		const urgent = fallback && (fallback.session !== prior?.contextSession || fallback.reason !== prior?.handoffReason);
+		if (busy || (!urgent && prior && now - Date.parse(prior.at) < HEALTH_CONFIG.intervalMs)) return;
 		busy = true;
 		try {
 			const collected = await collectOrUnavailable(deps.collect, now);
-			const h = deps.compactFailed?.(collected) ? escalateFailedCompaction(collected) : collected;
+			const h = applyHandoff(deps, collected, fallback);
 			deps.store.state.set(HEALTH_KEY, h);
 			if (h.verdict !== "HAND OFF" || !h.session) return;
 			await startHandoff(deps, h, h.session);
@@ -93,4 +99,22 @@ export function healthTicker(deps: HealthTickerDeps) {
 			busy = false;
 		}
 	};
+}
+
+function applyHandoff(
+	deps: HealthTickerDeps,
+	h: Health,
+	fallback: ReturnType<NonNullable<HealthTickerDeps["contextHandoff"]>>,
+): Health {
+	if (fallback && fallback.session === h.contextSession && fallback.thread === h.thread) {
+		const next: Health = {
+			...h,
+			session: h.session ?? fallback.session,
+			verdict: "HAND OFF",
+			handoffReason: fallback.reason,
+		};
+		next.report = `${formatHealth(next)}\n${fallback.reason}`;
+		return next;
+	}
+	return deps.compactFailed?.(h) ? escalateFailedCompaction(h) : h;
 }
