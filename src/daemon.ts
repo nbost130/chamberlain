@@ -170,6 +170,7 @@ function engineDeps(
 				? { noticeRetries: setting("rightsNoticeRetries", CONF) as number }
 				: {}),
 			debounceMs: setting("wakeDebounceMs", CONF) ?? DEFAULT_WAKE_DEBOUNCE_MS,
+			preflightAlarmAfterMs: setting("preflightAlarmAfterMs", CONF),
 		},
 		// A question card in a thread the principal is writing in waits `activeHold.windowMinutes` for them before it wakes the Steward (on by default).
 		activeHold: parseActiveHold(cfg(CONF, "activeHold")),

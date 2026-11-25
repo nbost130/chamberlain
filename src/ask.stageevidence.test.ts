@@ -182,7 +182,7 @@ describe("main: the inline view's key", () => {
 			expect(r.err).toContain(
 				"the page has no view key yet: start the page (chamberlain web); posting a notice instead of the view",
 			);
-			expect(r.err).toContain("ask: the Decisions thread is not set (threads.decisions in config.json)");
+			expect(r.err).toContain("Decisions post: not sent: config");
 			expect(r.code).toBe(1);
 		});
 	});

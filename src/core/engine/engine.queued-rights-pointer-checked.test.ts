@@ -87,23 +87,26 @@ describe("a Steward wake queued before the stamps existed is never sent to a new
 		dirs.push(root);
 		const path = `${root}/v${version}.db`;
 		const raw = new Database(path);
-		raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-		for (const m of MIGRATIONS.filter((x) => x.version <= version)) {
-			raw.exec(m.sql);
-			raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
-		}
-		rows.forEach((r, i) => {
-			raw
-				.query(
-					"INSERT INTO outbox (id, delivery_id, message, kind, thread, created_at) VALUES (?, ?, ?, 'needs_input', ?, ?)",
-				)
-				.run(i + 1, r.id, r.message, `t${i + 1}`, Date.now());
-			raw
-				.query(
-					"INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, 'needs_input', ?)",
-				)
-				.run(r.id, i + 1, Date.now(), `t${i + 1}`);
-		});
+		// Commit the fixture once before opening it with the current migration runner.
+		raw.transaction(() => {
+			raw.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+			for (const m of MIGRATIONS.filter((x) => x.version <= version)) {
+				raw.exec(m.sql);
+				raw.query("INSERT INTO migrations (version, name, applied_at) VALUES (?, ?, 'then')").run(m.version, m.name);
+			}
+			rows.forEach((r, i) => {
+				raw
+					.query(
+						"INSERT INTO outbox (id, delivery_id, message, kind, thread, created_at) VALUES (?, ?, ?, 'needs_input', ?, ?)",
+					)
+					.run(i + 1, r.id, r.message, `t${i + 1}`, Date.now());
+				raw
+					.query(
+						"INSERT INTO outbox_members (delivery_id, outbox_id, queued_at, kind, thread) VALUES (?, ?, ?, 'needs_input', ?)",
+					)
+					.run(r.id, i + 1, Date.now(), `t${i + 1}`);
+			});
+		})();
 		raw.close();
 		return openStore(path);
 	}

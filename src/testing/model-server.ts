@@ -27,6 +27,7 @@ export function modelServer() {
 	const requests: { tag: string; payload: any }[] = [];
 	const tasks: any[] = [];
 	const posts: string[] = [];
+	const accepted: string[] = [];
 	let selection: any = { instanceId: "old", model: "old", options: [] };
 	/** Threads created by `thread.create`, with the messages dispatched into them: what strict mode's projection reads. */
 	const made = new Map<string, { id: string }[]>();
@@ -37,6 +38,10 @@ export function modelServer() {
 		busy: false,
 		startDuringCatalog: false,
 		failSend: false,
+		loseSendAck: false,
+		ticketStatus: 200,
+		projectionFailure: undefined as unknown,
+		malformedProjectionFrame: undefined as string | undefined,
 		error: "send failed",
 		unavailable: false,
 		ignoreSelection: false,
@@ -68,7 +73,7 @@ export function modelServer() {
 				if (server.upgrade(req)) return;
 				return new Response("upgrade failed", { status: 400 });
 			}
-			return Response.json({ ticket: "test-ticket" });
+			return Response.json({ ticket: "test-ticket" }, { status: state.ticketStatus });
 		},
 		websocket: {
 			message(ws, data) {
@@ -139,6 +144,20 @@ export function modelServer() {
 					return;
 				}
 				if (r.tag === "orchestration.getThreadProjection") {
+					if (state.malformedProjectionFrame) {
+						ws.send(state.malformedProjectionFrame);
+						return;
+					}
+					if (state.projectionFailure) {
+						ws.send(
+							JSON.stringify({
+								_tag: "Exit",
+								requestId: r.id,
+								exit: { _tag: "Failure", cause: state.projectionFailure },
+							}),
+						);
+						return;
+					}
 					// Strict mode answers as T3 does: a thread nobody created has no projection; one that was has the messages sent into it.
 					if (state.strictThreads && !made.has(r.payload.threadId)) {
 						const cause = `No orchestration projection exists for thread ${r.payload.threadId}.`;
@@ -158,7 +177,14 @@ export function modelServer() {
 					ws.send(JSON.stringify({ _tag: "Exit", requestId: r.id, exit: { _tag: "Failure", cause: state.error } }));
 					return;
 				}
-				if (r.payload.type === dispatchType) made.get(r.payload.threadId)?.push({ id: r.payload.messageId });
+				if (r.payload.type === dispatchType) {
+					accepted.push(r.payload.text);
+					made.get(r.payload.threadId)?.push({ id: r.payload.messageId });
+					if (state.loseSendAck) {
+						ws.close();
+						return;
+					}
+				}
 				ws.send(JSON.stringify({ _tag: "Exit", requestId: r.id, exit: { _tag: "Success", value } }));
 			},
 		},
@@ -187,6 +213,7 @@ export function modelServer() {
 		requests,
 		tasks,
 		posts,
+		accepted,
 		bindWake: (url: string, threadId: string) => {
 			const existing = tasks.find((t) => t.webhook?.url === url);
 			if (existing) {

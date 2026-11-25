@@ -58,11 +58,12 @@ describe("opening the database", () => {
 		expect(s.wakes.rows("pending", "desk")).toEqual([]);
 	});
 
-	test("an upgrade marks every undelivered, unstamped Steward wake legacy whatever its text, and never touches the text", () => {
-		const OLD =
-			"Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
-		const legacy = [{ hash: "", legacy: "unstamped" as const }];
-		for (const version of [7, 8, 9]) {
+	test.each([7, 8, 9])(
+		"an upgrade from v%i marks undelivered, unstamped Steward wakes legacy without changing their text",
+		(version) => {
+			const OLD =
+				"Decision rights: unchanged since your last wake and still in force. They are in decision-rights.md and rulings.jsonl in the config directory (rulings.md before the migration).";
+			const legacy = [{ hash: "", legacy: "unstamped" as const }];
 			const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);
 			dirs.push(d);
 			const path = `${d}/v${version}.db`;
@@ -114,8 +115,8 @@ describe("opening the database", () => {
 			const after = raw(path);
 			expect(() => after.exec("UPDATE outbox SET rights_for = NULL WHERE delivery_id = 'p1'")).toThrow("immutable");
 			after.close();
-		}
-	});
+		},
+	);
 
 	test("a database already at migration 9 keeps its stamps: a stamped pointer is not re-marked", () => {
 		const d = mkdtempSync(`${tmpdir()}/chamberlain-store-`);

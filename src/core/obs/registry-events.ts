@@ -1,4 +1,5 @@
 /** Every event the daemon logs: its level, its fields and the legacy line it replaces. */
+import { PREFLIGHT_DETAILS, PREPARE_REASONS } from "../delivery/preflight.ts";
 import { ERR_TYPE, T } from "./fields.ts";
 import {
 	ATTEMPT,
@@ -44,7 +45,11 @@ export const EVENTS = {
 	"wake.dead-letter-reported": e("error", { attempts: int() }, "deliver-dead-letter-reported"),
 	"wake.stale": e("warn", { age_ms: ms("ageMs") }, "deliver-stale"),
 	"wake.not-ready": e("info", { receiver: RCV }, "deliver-not-ready"),
-	"wake.preflight-failed": e("warn", { receiver: RCV }, "deliver-preflight-failed"),
+	"wake.preflight-failed": e(
+		"warn",
+		{ receiver: RCV, reason: f(T.enm(...PREPARE_REASONS)), detail: f(T.enm(...Object.values(PREFLIGHT_DETAILS))) },
+		"deliver-preflight-failed",
+	),
 	"wake.no-receiver": e("warn", { receiver: RCV }, "deliver-no-receiver"),
 	"wake.receiver-unconfigured": e("warn", { receiver: RCV, rows: int(), held: int() }, "deliver-receiver-unconfigured"),
 	"wake.already-queued": e("info", {}, "deliver-already-queued"),

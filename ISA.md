@@ -97,6 +97,26 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | CARD-5 | bun-test | `bun test src/ask.readability.test.ts` |
 | CARD-6 | repository check | `bun run checks` and source review of the ask and Steward instructions |
 
+## Wake preparation (#127)
+
+| Criterion | Falsifier and probe |
+| --- | --- |
+| PREP-1 | A T3 selection or connection failure loses its reason, an unfamiliar failure looks busy, or a gatherer-run Desk requires a model. Run the T3 model and preflight tests. |
+| PREP-2 | Refused preparation spends an attempt, changes relay order or generation handling, or logs the same row and reason repeatedly. Run the relay and quota failover tests. |
+| PREP-3 | A receiver's ongoing outage alarms twice across restart, a transient failure alarms early, or a successful preflight fails to rearm the alarm. Run the preflight outage tests. |
+| PREP-4 | The preparation event, alarm, database or CLI carries raw error text, or the CLI reports an accepted or unconfirmed dispatch as unsent. Run the preflight and Decisions posting tests. |
+
+### Test strategy
+
+| ISC | Type | Probe |
+| --- | --- | --- |
+| PREP-1 | bun-test | `bun test src/adapters/t3` |
+| PREP-2 | bun-test | `bun test src/core/delivery src/adapters/t3/quota-failover.test.ts` |
+| PREP-3 | bun-test | `bun test src/core/delivery/relay.preflight-logged.test.ts src/adapters/t3/model-preflight.test.ts` |
+| PREP-4 | bun-test | `bun test src/adapters/t3/model-preflight.test.ts src/decisions.test.ts` |
+
+The local relay tests exercise both sides of the alarm threshold across a database reopen, and the T3 fixture exercises all seven reasons through the legacy log, typed event, alarm and recovery. The Decisions probe captures subprocess stderr and verifies an accepted dispatch with a lost reply stays unconfirmed.
+
 ## Decisions
 
 - Direction authorized by the accepted goal. Execution remains inline with an independent final review.

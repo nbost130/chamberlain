@@ -75,6 +75,11 @@ In the windows where one wake is sent more than once (docs/ARCHITECTURE.md, "Del
 receiver sees the same `deliveryId` both times: if it can de-duplicate on it, do; if it cannot, the message `send` receives already
 ends with a `delivery id: ...` line, so the Steward can tell a repeat. Pass the whole `message` on unchanged.
 
+An optional `prepare(threadId?, target?)` checks whether a wake can proceed. Return `{ ok: true }` or
+`{ ok: false, reason, detail, retryAfterMs? }` using the fixed diagnostics in `preflight.ts`. A refusal keeps the row
+queued without spending an attempt. The relay logs changes in the reason and raises a receiver alarm for a persistent
+failure. Preparation can check the destination and model selection, but the relay alone sends the wake.
+
 **`isBusy()`** answers from what you know, synchronously: `"busy"` when the Steward has a turn running or queued,
 `"idle"` when a wake would start at once, `"unknown"` when you cannot tell (which holds like busy, and lets a wake out
 after the 20 minute ceiling). If your backend is asynchronous, keep the last status you saw and refresh it from your

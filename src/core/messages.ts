@@ -4,6 +4,7 @@
  * passes the facts, this returns the text. (The longer standing prompts are the markdown templates in docs/steward-*.md.)
  */
 import { Principal, principal, principalPoss, selfCommand } from "./config/config.ts";
+import type { PrepareFailure } from "./delivery/preflight.ts";
 
 /** One alarm: the line that names it and the sentence that says what it means. */
 export type AlarmText = { title: string; summary: string };
@@ -11,10 +12,12 @@ export type AlarmText = { title: string; summary: string };
 // ---- alarms: the daemon's own failures ----------------------------------------------------------------------
 
 export const alarms = {
-	modelQuota: (role: string): AlarmText => ({
+	wakePreflight: (role: string, { reason, detail }: PrepareFailure): AlarmText => ({
 		title: `Chamberlain is holding ${role} wakes`,
 		summary:
-			"The preferred provider exhausted its quota and no approved backup is eligible. Queued work retries automatically.",
+			reason === "quota"
+				? `${detail} Queued work retries automatically.`
+				: `${reason}: ${detail} Queued work retries automatically.`,
 	}),
 	recoverBreaker: (kind: string, count: number, windowMinutes: number): AlarmText => ({
 		title: `chamberlain: ${count} "${kind}" failures in ${windowMinutes} minutes`,

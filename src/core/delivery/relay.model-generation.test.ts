@@ -23,7 +23,7 @@ test("a generation change during model preparation holds the wake without an att
 			prepare: async (thread) => {
 				prepared.push(thread);
 				store.steward.insertGen({ gen: 2, thread: "new", wakeRef: "new-wake", createdAt: 2 });
-				return true;
+				return { ok: true };
 			},
 			send: async () => {
 				sent++;
@@ -56,7 +56,7 @@ test("compaction binds preparation and target to the committed generation, and h
 		ready: () => true,
 		prepare: async (thread) => {
 			prepared.push(thread);
-			return true;
+			return { ok: true };
 		},
 		send: async (_id, _text, opts) => {
 			targets.push(opts?.target);
@@ -79,7 +79,7 @@ test("compaction binds preparation and target to the committed generation, and h
 		expect(targets).toEqual(["https://example.test/compact"]);
 		compact.prepare = async () => {
 			store.steward.insertGen({ gen: 2, thread: "next", wakeRef: "wake", compactRef: "compact", createdAt: 2 });
-			return true;
+			return { ok: true };
 		};
 		expect(await relay.compact("second")).toMatchObject({
 			ok: false,

@@ -12,14 +12,13 @@ import { crashPoint } from "../crash.ts";
 import { holdable } from "../decide/hold.ts";
 import type { Store } from "../store/store.ts";
 import type { WakeMeta } from "../store/store-wakes.ts";
+import type { PrepareResult } from "./preflight.ts";
 
 /**
  * How one wake reaches the Steward. The adapter owns the transport (a webhook, a socket call); the relay owns everything around it.
  * `ok: true` means the receiver accepted it. Anything else, `ok: false` or a throw, is an attempt that did not deliver: it is counted all
  * the same (a timeout may well have reached the receiver), and the row is tried again after a pause until its attempts run out.
  */
-export class QuotaExhausted extends Error {}
-
 export type WakeResult = {
 	ok: boolean /** The transport's own status, such as an HTTP code. Logged, never interpreted. */;
 	status?: number;
@@ -30,8 +29,8 @@ export type WakeTransport = {
 	ready: () => boolean;
 	/** Capture the destination before async preparation, including transports without a Steward generation. */
 	target?: () => string | undefined;
-	/** Async capability/configuration preflight. False retains work without spending a delivery attempt. */
-	prepare?: (threadId?: string, target?: string) => Promise<boolean>;
+	/** Async capability/configuration preflight. Failure retains work without spending a delivery attempt. */
+	prepare?: (threadId?: string, target?: string) => Promise<PrepareResult>;
 	/** One attempt, with its own deadline. Optional `target` pins the URL to the send's generation snapshot (B1). */
 	send: (deliveryId: string, message: string, opts?: { target?: string }) => Promise<WakeResult>;
 };

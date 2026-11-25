@@ -140,7 +140,8 @@ describe("postCard sends only to the Decisions thread", () => {
 		expect(r.ok).toBe(false);
 		expect(r.detail.length).toBeLessThanOrEqual(300);
 		expect(r.detail).not.toContain(KEY.slice(0, 8));
-		expect(r.detail).toContain("[token]");
+		expect(r.detail).not.toContain("xxxxxxxx");
+		expect(r.reason).toBe("unknown");
 	});
 	test("a key the provider echoes back is not returned in the result", async () => {
 		const { conf, state } = setup(true);
@@ -149,7 +150,7 @@ describe("postCard sends only to the Decisions thread", () => {
 		const r = await postCard(item("Q-abcd"), conf, "http://q.test", KEY);
 		expect(r.ok).toBe(false);
 		expect(r.detail).not.toContain(KEY);
-		expect(r.detail).toContain("[token]");
+		expect(r.reason).toBe("unknown");
 	});
 	test("page down: a notice, still in Decisions, never a card", async () => {
 		const { conf, requests } = setup(true);
@@ -160,7 +161,7 @@ describe("postCard sends only to the Decisions thread", () => {
 		const { conf, sent } = setup(false);
 		const result = await postCard(item("Q-abcd"), conf);
 		expect(result.ok).toBe(false);
-		expect(result.detail).toContain("Decisions thread is not set");
+		expect(result).toMatchObject({ reason: "config", detail: expect.stringContaining("not sent: config") });
 		expect(sent()).toBe("");
 	});
 });

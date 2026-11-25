@@ -26,8 +26,8 @@ export async function repost(conf = CONF, view = inlineView): Promise<Reposted> 
 			ok: false,
 			line: "nothing posted: the queue page is not answering or has no view key (start it: chamberlain web)",
 		};
-	const r = await postConfigured(conf, viewRepostMessage(queueUrl, capability), capability);
-	return { ok: r.ok, line: r.ok ? "the Decisions view was posted again" : `the post failed: ${r.detail}` };
+	const r = await postConfigured(conf, viewRepostMessage(queueUrl, capability));
+	return { ok: r.ok, line: r.ok ? "the Decisions view was posted again" : `Decisions post: ${r.detail}` };
 }
 
 export async function main(argv: string[] = process.argv.slice(2)) {
