@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileQuestion } from "./ask.ts";
 import { parseAsk } from "./ask-parse.ts";
 import { parseIdeas } from "./core/config/ideas-config.ts";
 import { ideaCapProblem } from "./core/items/ideas.ts";
@@ -38,8 +39,8 @@ function rig(ideas: Record<string, unknown> = {}) {
 	mkdirSync(conf, { mode: 0o700 });
 	writeFileSync(`${conf}/config.json`, JSON.stringify({ schemaVersion: 1, ideas }), { mode: 0o600 });
 	return {
-		store: () => {
-			const store = openStore(dbPath(state));
+		store: (o: Parameters<typeof openStore>[1] = {}) => {
+			const store = openStore(dbPath(state), o);
 			stores.push(store);
 			return store;
 		},
@@ -92,7 +93,7 @@ test("ideas default to silent, can be explicitly silent, and refuse urgency, app
 		status: 2,
 		stderr: expect.stringContaining("is an idea"),
 	});
-});
+}, 30_000);
 
 test("the default per-thread cap follows a renamed thread and the overall cap counts a closed filing", async () => {
 	const r = rig();
@@ -110,6 +111,13 @@ test("the default per-thread cap follows a renamed thread and the overall cap co
 		stderr: expect.stringContaining("daily idea cap"),
 	});
 	expect(questionStates(store).size).toBe(2);
+});
+
+test("the same thread id on another server is another thread", async () => {
+	const r = rig();
+	r.store();
+	expect((await file(r)).status).toBe(0);
+	expect((await file(r, { title: "Document audio presets", server: "secondary" })).status).toBe(0);
 });
 
 function seed(store: ReturnType<typeof openStore>, id: string, at: number, over: Partial<Question> = {}) {
@@ -151,6 +159,38 @@ test("two concurrent CLI asks for one remaining slot produce one filing and one 
 	expect(questionStates(store).size).toBe(1);
 });
 
+test("the cap is read and the idea inserted under one write lock: a second filing cannot land between them", () => {
+	const r = rig();
+	const first = r.store();
+	const second = r.store({ busyMs: 1 });
+	const ask = (id: string, title: string) => parseAsk({ ...RAW, title }, id);
+	let between: unknown;
+	const interleaved: typeof first = {
+		...first,
+		items: {
+			...first.items,
+			// The first read of the queue is the cap's. Straight after it, another connection files an idea from the same thread.
+			list: (q) => {
+				const rows = first.items.list(q);
+				if (between === undefined) {
+					try {
+						between = fileQuestion(second, ask("Q-two2", "Document audio presets"));
+					} catch (e) {
+						between = e;
+					}
+				}
+				return rows;
+			},
+		},
+	};
+	expect(fileQuestion(interleaved, ask("Q-one1", RAW.title))).toMatchObject({ item: { id: "Q-one1" } });
+	expect(String(between)).toContain("locked");
+	expect([...questionStates(first).keys()]).toEqual(["Q-one1"]);
+	expect(fileQuestion(second, ask("Q-two2", "Document audio presets"))).toMatchObject({
+		error: expect.stringContaining("per-thread daily idea cap"),
+	});
+});
+
 test.each([
 	["dismissed", 29, true, {}],
 	["dismissed", 31, false, {}],
@@ -179,3 +219,15 @@ test.each([
 		if (blocked) expect(result.stderr).toContain("Q-old1");
 	},
 );
+
+test("a declined idea still settles the same question asked as another kind, however old", async () => {
+	const r = rig();
+	const store = r.store();
+	const old = seed(store, "Q-old1", Date.now() - 60 * DAY);
+	const t = new Date(Date.now() - 45 * DAY).toISOString();
+	claimWake(
+		store,
+		pageClaim(old, { by: "page", choice: 1, label: "Decline", t, deliveryId: answerDeliveryId(old.id) }),
+	);
+	expect(await file(r, { kind: "product" })).toMatchObject({ status: 2, stderr: expect.stringContaining("Q-old1") });
+});

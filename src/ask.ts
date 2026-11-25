@@ -151,7 +151,8 @@ function recordQuestion(store: Store, q: Question, now: number): Filing {
 	return { item };
 }
 
-function fileQuestion(store: Store, q: Question): Filing {
+/** Records a question. An idea's caps, its lookup and its insert share one write lock, so two asks cannot both take the last slot. */
+export function fileQuestion(store: Store, q: Question): Filing {
 	if (q.kind !== "idea") {
 		const error = settledProblem(store, q);
 		return error ? { error } : recordQuestion(store, q, Date.parse(q.createdAt));
