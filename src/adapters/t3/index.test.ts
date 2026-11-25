@@ -62,6 +62,13 @@ describe("createT3Adapter", () => {
 			ok: false,
 			detail: expect.stringContaining("config"),
 		});
+		const card = { threadId: "desk", type: "goal" } as Parameters<NonNullable<typeof a.answer>>[0];
+		expect(await a.answer?.(card, 0, "sig")).toMatchObject({
+			ok: false,
+			kind: "refused",
+			error: expect.stringContaining("config"),
+			maybeSent: false,
+		});
 		const other = await a.send?.("another", "text", "seed");
 		expect(other?.detail).not.toContain("webhook binding");
 	});

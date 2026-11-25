@@ -3,8 +3,8 @@
 /** One tool call that ran, in the words the allowlist hook uses. */
 export type DeskCall = { tool: string; input: Record<string, unknown> };
 
-/** A finished turn: when it finished, and how many records it has now. A count that grows is a turn to read again. */
-export type DeskTurnRef = { id: string; at: string; items: number };
+/** A finished turn: when it finished, how many records it has, and a mark (`rev`) that differs once a record is added or changed. */
+export type DeskTurnRef = { id: string; at: string; items: number; rev: string };
 
 export type DeskTurn = {
 	ran: DeskCall[];

@@ -1,4 +1,5 @@
 /** Whether the Alert Desk's next turn runs where its command allowlist is enforced, asked of the server that will run it. */
+import type { Adapter } from "../../core/adapter/adapter.ts";
 import { cfg } from "../../core/config/layout.ts";
 import { type PrepareFailure, preparationFailed } from "../../core/delivery/preflight.ts";
 import { parseModels } from "../../core/llm/selection.ts";
@@ -53,15 +54,30 @@ async function refusal(
 	}
 }
 
+type Answer = NonNullable<Adapter["answer"]>;
 type Guard = { conf: string; desk: () => string | undefined; hooked: (threadId: string) => boolean };
 
-/** Every other message into the desk's thread (a routed answer, a recovery, a compaction) needs what its wake needs. */
+/** Why nothing may be sent into this thread now: it is the desk's, and its next turn is not proven to be limited. */
+const deskHeld = async (g: Guard, threadId: string): Promise<string | undefined> => {
+	const held = threadId === g.desk() ? await refusal(g.conf, threadId, g.hooked) : undefined;
+	return held && `${NOT_SENT}${held.reason} — ${held.detail}`;
+};
+
+/** Every other message into the desk's thread (a routed answer, a compaction) needs what its wake needs. */
 export const guardDesk =
 	<A extends unknown[], R>(
 		g: Guard,
 		send: (threadId: string, ...rest: A) => Promise<R>,
 	): ((threadId: string, ...rest: A) => Promise<R | { ok: false; detail: string }>) =>
 	async (threadId, ...rest) => {
-		const held = threadId === g.desk() ? await refusal(g.conf, threadId, g.hooked) : undefined;
-		return held ? { ok: false, detail: `${NOT_SENT}${held.reason} — ${held.detail}` } : send(threadId, ...rest);
+		const detail = await deskHeld(g, threadId);
+		return detail ? { ok: false, detail } : send(threadId, ...rest);
+	};
+
+/** So does an answer to a card of the desk's: an accepted goal starts a turn, and any other answer lets one go on. */
+export const guardDeskAnswer =
+	(g: Guard, answer: Answer): Answer =>
+	async (card, choice, sig) => {
+		const error = await deskHeld(g, card.threadId);
+		return error ? { ok: false, kind: "refused", error, maybeSent: false } : answer(card, choice, sig);
 	};

@@ -159,7 +159,7 @@ missing one switches off one feature (the table is in [ARCHITECTURE.md](ARCHITEC
 - **`alertDesk`** is `{ wake, isBusy() }` for the Alert Desk's own thread: a second wake transport (a different webhook) and that thread's own busy
   gate. With it the core drains the alert inbox into wakes for the `desk` receiver and the one relay sends them to this transport, through its one serial queue (docs/alert-desk.md). The T3 adapter
   reads the `desk-wake-url` secret and `threads.desk` (`readPrivate("desk-wake-url")`, `readPrivate("desk-thread")`); without the URL `wake.ready()` is false and nothing is drained. Its `prepare` must refuse with `policy` unless the thread's
-  next turn runs where the desk's command allowlist is enforced. So must `send` and `compactThread` for that thread. An optional `turns` lists the desk's and its gatherers'
+  next turn runs where the desk's command allowlist is enforced. So must `send`, `answer` and `compactThread` for that thread. An optional `turns` lists the desk's and its gatherers'
   finished turns and reads what each ran, for the audit (`src/core/adapter/adapter-desk.ts`); without it the desk is not audited.
 - **`threadLinks(threadId)`** returns `{ ref?, app? }` for one of the server's threads, synchronously, or `undefined` when the id is
   not one the backend issues (then nothing links to it, not even a config prefix): `ref` is the backend's own

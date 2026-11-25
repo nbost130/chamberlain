@@ -17,6 +17,7 @@ const turn = (id: string, over: Partial<Fixture> = {}): Fixture => ({
 	id,
 	at: `2026-01-01T11:00:0${id.slice(-1)}.000Z`,
 	items: 3,
+	rev: "3",
 	ran: [bash("ok")],
 	refused: 0,
 	unreadable: 0,
@@ -121,9 +122,31 @@ test("a turn or a record that appears late, behind what was already judged, is s
 	turns.unshift(turn("t1", { ran: [bash("no")] }));
 	r.pass();
 	expect(r.alarms.map((a) => a[0])).toEqual(["desk-audit:t1"]);
-	turns[1] = turn("t5", { items: 4, ran: [bash("ok"), bash("no")] });
+	turns[1] = turn("t5", { rev: "3 later", ran: [bash("ok"), bash("no")] });
 	r.pass();
 	expect(r.alarms.map((a) => a[0])).toEqual(["desk-audit:t1", "desk-audit:t5"]);
+});
+
+test("a saved state of another shape starts again from now, and does not stop the audit", () => {
+	for (const old of [
+		{ at: "2026-01-01T10:00:00.000Z", id: "x" },
+		"x",
+		7,
+		{ since: "x" },
+		{ since: "x", judged: null },
+	]) {
+		const r = rig(() => [turn("t1")]);
+		r.store.state.set("desk-audit", old);
+		r.pass();
+		expect(r.store.state.get("desk-audit")).toEqual({ since: "2026-01-01T12:00:00.000Z", judged: {} });
+	}
+});
+
+test("turns that cannot be read do not use up the place of one that can", () => {
+	const r = started(() => ["t1", "t2", "t3", "t4"].map((id) => turn(id)));
+	for (const id of ["t1", "t2", "t3"]) r.unreadable.add(id);
+	r.pass();
+	expect(Object.keys(r.store.state.get<{ judged: object }>("desk-audit")?.judged ?? {})).toEqual(["t4"]);
 });
 
 test("a pass reads a few turns, and the next ones take the rest", () => {
@@ -205,7 +228,7 @@ test("the engine audits the desk each housekeeping pass, and a failing read neve
 	lane.turns = {
 		list: () => {
 			if (fail) throw Error("broken");
-			return [{ id: "t1", at: "2026-01-01T11:00:00.000Z", items: 1 }];
+			return [{ id: "t1", at: "2026-01-01T11:00:00.000Z", items: 1, rev: "1" }];
 		},
 		read: () => ({ ran: [bash("no")], refused: 0, unreadable: 0 }),
 		env: () => ({}),

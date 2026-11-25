@@ -25,7 +25,9 @@ function world(over: { worktree?: string } = {}) {
 		`create table ${p}_provider_turns (provider_turn_id text, provider_thread_id text, thread_id text, completed_at text)`,
 	);
 	db.run(`create table ${p}_subagents (thread_id text, child_thread_id text)`);
-	db.run(`create table ${p}_turn_items (provider_turn_id text, type text, status text, payload_json text)`);
+	db.run(
+		`create table ${p}_turn_items (provider_turn_id text, type text, status text, payload_json text, updated_at text)`,
+	);
 	db.run(`insert into ${p}_threads values ('desk', ?)`, [
 		JSON.stringify({ projectId: "pr", worktreePath: over.worktree ?? null }),
 	]);
@@ -35,7 +37,7 @@ function world(over: { worktree?: string } = {}) {
 	const items = (id: string, rows: Item[]) =>
 		db.transaction(() => {
 			for (const [type, status, payload] of rows)
-				db.run(`insert into ${p}_turn_items values (?, ?, ?, ?)`, [
+				db.run(`insert into ${p}_turn_items values (?, ?, ?, ?, 't0')`, [
 					id,
 					type,
 					status,
@@ -51,7 +53,7 @@ function world(over: { worktree?: string } = {}) {
 		session = name;
 	};
 	const turns = deskTurns(path, () => "desk");
-	const read = (id: string) => turns.read({ id, at: "", items: 0 });
+	const read = (id: string) => turns.read({ id, at: "", items: 0, rev: "" });
 	return { path, db, turn, runOn, items, turns, read };
 }
 const at = (n: number) => `2026-01-01T00:00:0${n}.000Z`;
@@ -171,11 +173,14 @@ test("the desk's and its gatherers' finished turns, in order, in the span, with 
 	expect(ids({ until: at(4) })).toEqual(["a", "b", "0c"]);
 	expect(ids({ limit: 2 })).toEqual(["a", "b"]);
 	expect(ids({ after: at(2) })).toEqual(["0c", "late"]);
-	expect(w.turns.list(span())?.[0]).toEqual({ id: "a", at: at(2), items: 1 });
+	expect(w.turns.list(span())?.[0]).toEqual({ id: "a", at: at(2), items: 1, rev: "1 t0" });
+	expect(w.turns.list(span())?.[1]).toEqual({ id: "b", at: at(2), items: 0, rev: "0 " });
+	w.db.run("update orchestration_v2_projection_turn_items set updated_at = 't1' where provider_turn_id = 'a'");
+	expect(w.turns.list(span())?.[0]?.rev).toBe("1 t1");
 	w.items("a", [["reasoning", "completed", {}]]);
 	expect(w.turns.list(span())?.[0]?.items).toBe(2);
 	expect(deskTurns(w.path, () => undefined).list(span())).toBeUndefined();
 	expect(deskTurns("/nowhere", () => "desk").list(span())).toBeUndefined();
-	expect(deskTurns("/nowhere", () => "desk").read({ id: "a", at: "", items: 0 })).toBeUndefined();
+	expect(deskTurns("/nowhere", () => "desk").read({ id: "a", at: "", items: 0, rev: "" })).toBeUndefined();
 	expect(deskTurns("/nowhere", () => "desk").env()).toEqual({});
 });

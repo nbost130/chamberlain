@@ -17,7 +17,7 @@ import type { ServerEntry } from "../../core/config/servers.ts";
 import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { probeT3Builder } from "./builder-probe.ts";
-import { guardDesk } from "./desk-policy.ts";
+import { guardDesk, guardDeskAnswer } from "./desk-policy.ts";
 import { deskProjectHook, deskTurns } from "./desk-record.ts";
 import { historyGet } from "./history.ts";
 import { t3Linker } from "./links.ts";
@@ -127,7 +127,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		wake,
 		isBusy: () => threadGate(env.steward()),
 		post: t3Post(env.conf),
-		answer: waiting.answer,
+		answer: guardDeskAnswer(deskGuard(env), waiting.answer),
 		listWaiting: waiting.listWaiting,
 		// The rename needs the operate token the page grants (web.json) and the Decisions thread's id; without either it reports why.
 		setTitle: async (title) => {

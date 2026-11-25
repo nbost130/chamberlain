@@ -16,7 +16,8 @@ const SETTLE_MS = 2 * 60_000;
 const LIST_MAX = 1_000;
 /** Turns read in one pass. The rest wait for the next minute: a pass must not hold up a wake. */
 const READ_MAX = 3;
-type State = { since: string; judged: Record<string, { at: string; items: number }> };
+const TRY_MAX = 50;
+type State = { since: string; judged: Record<string, { at: string; rev: string }> };
 
 /** Makes the allowlist's verdict for one pass, from the operator's settings as they are now and the installed hook's environment. */
 export type DeskCheck = (env: Record<string, string>) => (call: DeskCall) => boolean;
@@ -58,9 +59,9 @@ function judge(d: Deps, ref: DeskTurnRef, turn: DeskTurn, check: (call: DeskCall
 		d.alarm(`${KEY}:${ref.id}`, a.title, a.summary);
 	}
 	d.store.tx(() => {
-		const state = d.store.state.get<State>(KEY);
-		if (!state) return;
-		state.judged[ref.id] = { at: ref.at, items: ref.items };
+		const state = d.store.state.get<unknown>(KEY);
+		if (!isState(state)) return;
+		state.judged[ref.id] = { at: ref.at, rev: ref.rev };
 		d.store.state.set(KEY, state);
 		d.log("desk-audited", {
 			ran: turn.ran.length,
@@ -71,6 +72,24 @@ function judge(d: Deps, ref: DeskTurnRef, turn: DeskTurn, check: (call: DeskCall
 		});
 	});
 }
+
+/** Judges the first few that can be read. One that cannot does not use up another's place. Says whether any could not. */
+function judgeSome(d: Deps, due: DeskTurnRef[]): boolean {
+	if (!due.length) return false;
+	const check = d.check(d.turns.env());
+	let judged = 0;
+	let unread = false;
+	for (const ref of due.slice(0, TRY_MAX)) {
+		const turn = d.turns.read(ref);
+		if (turn) judge(d, ref, turn, check);
+		else unread = true;
+		if (turn && ++judged === READ_MAX) break;
+	}
+	return unread;
+}
+
+const isState = (v: unknown): v is State =>
+	typeof v === "object" && v !== null && "since" in v && "judged" in v && typeof v.judged === "object" && !!v.judged;
 
 /** Nothing before `since` is judged, and what was judged before the window is forgotten with it. */
 function pruned(state: State, windowStart: string): { state: State; after: string } {
@@ -83,8 +102,8 @@ function pruned(state: State, windowStart: string): { state: State; after: strin
 export function deskAuditPass(d: Deps): void {
 	const now = d.now();
 	const iso = (t: number) => new Date(t).toISOString();
-	const saved = d.store.state.get<State>(KEY);
-	if (!saved) {
+	const saved = d.store.state.get<unknown>(KEY);
+	if (!isState(saved)) {
 		d.store.state.set(KEY, { since: iso(now), judged: {} } satisfies State);
 		return;
 	}
@@ -95,13 +114,7 @@ export function deskAuditPass(d: Deps): void {
 		blind(d, true);
 		if (!refs) return;
 	}
-	const due = refs.filter((ref) => (state.judged[ref.id]?.items ?? -1) < ref.items).slice(0, READ_MAX);
-	const check = due.length ? d.check(d.turns.env()) : () => false;
-	let unread = refs.length === LIST_MAX;
-	for (const ref of due) {
-		const turn = d.turns.read(ref);
-		if (turn) judge(d, ref, turn, check);
-		else unread = true;
-	}
-	blind(d, unread);
+	const due = refs.filter((ref) => state.judged[ref.id]?.rev !== ref.rev);
+	const unread = judgeSome(d, due);
+	blind(d, unread || refs.length === LIST_MAX);
 }

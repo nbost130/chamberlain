@@ -128,6 +128,10 @@ describe("no proof", () => {
 			x.project({ ...settings, ...extra(settings.hooks.PreToolUse as never) });
 			expect(x.read(), extra.toString()).toBeUndefined();
 		}
+		const large = world();
+		large.user({ note: "x".repeat(1_100_000) });
+		large.project(large.entry());
+		expect(large.read()).toBeUndefined();
 		const schema = world();
 		schema.project({ $schema: "https://example.test/s.json", ...schema.entry() });
 		expect(schema.read()).toEqual({});

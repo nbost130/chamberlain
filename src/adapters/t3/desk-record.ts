@@ -33,7 +33,9 @@ const ROOT = `select coalesce(json_extract(payload_json, '$.worktreePath'), (
 	)) as root from orchestration_v2_projection_threads t where thread_id = ?`;
 /** The desk's own turns and those of the gatherers it started, which run in threads of their own. */
 const TURNS = `select t.provider_turn_id as id, t.completed_at as at,
-	(select count(*) from orchestration_v2_projection_turn_items i where i.provider_turn_id = t.provider_turn_id) as items
+	(select count(*) from orchestration_v2_projection_turn_items i where i.provider_turn_id = t.provider_turn_id) as items,
+	(select count(*) || ' ' || coalesce(max(updated_at), '') from orchestration_v2_projection_turn_items i
+		where i.provider_turn_id = t.provider_turn_id) as rev
 	from orchestration_v2_projection_provider_turns t
 	where (t.thread_id = ?1 or t.thread_id in (
 		select child_thread_id from orchestration_v2_projection_subagents where thread_id = ?1 and child_thread_id is not null

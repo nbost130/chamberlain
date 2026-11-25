@@ -3,7 +3,7 @@
  * taken on trust: the Alert Desk reads alert text someone else wrote, and the hook is what limits what that text can make it run. Anything
  * this cannot read, or does not recognise, is "no".
  */
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { COMMANDS, REPO, selfCommand } from "../../core/config/config.ts";
 
@@ -11,6 +11,7 @@ import { COMMANDS, REPO, selfCommand } from "../../core/config/config.ts";
 const HOOK_ENV = /^(DESK_ASK_PATH|DESK_LOG_DIRS)=(.*)$/;
 /** A hook that times out does not block the call, so a short limit is no proof. */
 const MIN_TIMEOUT_S = 5;
+const MAX_SETTINGS = 1024 * 1024;
 const HOOK_KEYS = new Set(["type", "command", "timeout", "async"]);
 const ENTRY_KEYS = new Set(["matcher", "hooks"]);
 /** Claude Code skips a whole settings file that has one invalid value. So the file that proves the hook holds the hook and nothing else. */
@@ -38,6 +39,7 @@ function managedFiles(home: string): string[] {
 /** An absent file sets nothing. One that cannot be read or parsed throws: what it sets is unknown. */
 function settings(path: string): Obj {
 	if (!existsSync(path)) return {};
+	if (statSync(path).size > MAX_SETTINGS) throw Error("settings file is too large to vouch for");
 	const value: unknown = JSON.parse(readFileSync(path, "utf8"));
 	if (!isObj(value)) throw Error("settings file is not an object");
 	return value;
