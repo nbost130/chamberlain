@@ -186,7 +186,9 @@ test("with cards unplaced a ratio is a lower bound under its own name, never an 
 	expect(r).not.toHaveProperty("correctionsPerPr");
 	const shown = formatDistill(r);
 	expect(shown).toContain("Unplaced cards: 2 · cards outside the PR scope: 1");
-	expect(shown).toContain("escalations at least 1.00 (1 of 4 placed) · corrections at least 1.00 (1 of 3 placed)");
+	expect(shown).toContain(
+		"escalations at least 1 over 1 (1 of 4 placed) · corrections at least 1 over 1 (1 of 3 placed)",
+	);
 });
 
 test("an owner is a scope, an excluded repository is not, and names compare without case", async () => {
@@ -227,7 +229,24 @@ test("each figure is zero only when its own cards are placed, and unknown otherw
 		answer(s, card(s, 2, { repo: undefined }, span.from - 1), {});
 	});
 	expect(partly).toMatchObject({ escalationsPerPr: 0, correctionsPerPrAtLeast: 1 });
-	expect(formatDistill(partly)).toContain("escalations 0.00 · corrections at least 1.00 (1 of 2 placed)");
+	expect(formatDistill(partly)).toContain("escalations 0.00 · corrections at least 1 over 1 (1 of 2 placed)");
+});
+
+test("a lower bound is never rounded to zero or past what was counted", async () => {
+	const prs = Array.from({ length: 201 }, (_, i) => pr(repo, i + 1));
+	const pages = async (path: string) => {
+		const from = (Number(new URLSearchParams(path.split("?")[1]).get("page")) - 1) * 100;
+		return { total: prs.length, incomplete: false, items: prs.slice(from, from + 100) };
+	};
+	const r = await reportFor(
+		(s) => {
+			card(s, 1);
+			card(s, 2, { repo: undefined });
+		},
+		{ gh: pages },
+	);
+	expect(r.escalationsPerPrAtLeast).toBeCloseTo(1 / 201, 10);
+	expect(formatDistill(r)).toContain("escalations at least 1 over 201 (1 of 2 placed)");
 });
 
 test("a PR outside the scope, zero PRs, partial PRs and absent config never print ratios", async () => {

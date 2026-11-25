@@ -108,9 +108,10 @@ export async function distillReport(d: {
 	};
 }
 
-function formatRatio(exact: number | undefined, atLeast: number | undefined, scoped: number, total: number): string {
+/** A lower bound is shown as its counts: rounding could turn it into zero, or into more than was counted. */
+function formatRatio(exact: number | undefined, scoped: number, total: number, prs: number): string {
 	if (exact !== undefined) return exact.toFixed(2);
-	return atLeast === undefined ? "unknown" : `at least ${atLeast.toFixed(2)} (${scoped} of ${total} placed)`;
+	return scoped ? `at least ${scoped} over ${prs} (${scoped} of ${total} placed)` : "unknown";
 }
 
 export function formatDistill(r: DistillReport): string {
@@ -127,8 +128,8 @@ export function formatDistill(r: DistillReport): string {
 		`Chat redirections (operator messages): ${r.chatRedirections ?? r.chatStatus}`,
 	];
 	if (r.mergedPrs) {
-		const asked = formatRatio(r.escalationsPerPr, r.escalationsPerPrAtLeast, r.scopedEscalations, r.escalations);
-		const corrected = formatRatio(r.correctionsPerPr, r.correctionsPerPrAtLeast, r.scopedCorrections, r.corrections);
+		const asked = formatRatio(r.escalationsPerPr, r.scopedEscalations, r.escalations, r.mergedPrs);
+		const corrected = formatRatio(r.correctionsPerPr, r.scopedCorrections, r.corrections, r.mergedPrs);
 		lines.push(`Per merged PR: escalations ${asked} · corrections ${corrected}`);
 	}
 	for (const [id, n] of Object.entries(r.correctionsByRuling)) lines.push(`${id}: ${n} corrections`);
