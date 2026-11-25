@@ -6,19 +6,23 @@ import { threadReadKey } from "./transcript.ts";
 
 const ITEM_LIMIT = 2048;
 const ITEM_BUDGET = 12_000;
-/** The unary pluses keep the planner on the turn's own index: by thread and type it would read the whole thread for every turn. */
-const ITEMS = `SELECT type, status, json_extract(payload_json, '$.toolName') AS tool,
+/** Thread/type lookups would scan the whole thread for every turn. Keep this on the turn's index. */
+const ITEMS = `SELECT type, json_extract(payload_json, '$.toolName') AS tool,
 	case when length(json_extract(payload_json, '$.input')) <= 16384
 		then json_extract(payload_json, '$.input') end AS input,
 	json_extract(payload_json, '$.startedAt') AS started
 	FROM orchestration_v2_projection_turn_items
 	WHERE provider_turn_id = ? AND +thread_id = ?
-	AND +type IN ('dynamic_tool', 'command_execution', 'compaction')
+	AND +type IN ('dynamic_tool', 'command_execution')
 	ORDER BY ordinal LIMIT ?`;
+
+/** Read boundaries once with the thread/type index, independently of the budget for tool arguments. */
+const COMPACTED = `SELECT DISTINCT provider_turn_id AS turn FROM orchestration_v2_projection_turn_items
+	WHERE thread_id = ? AND type = 'compaction' AND status = 'completed'
+	AND +provider_turn_id IN (SELECT value FROM json_each(?))`;
 
 type Item = {
 	type: string;
-	status: string;
 	tool: string | null;
 	input: string | null;
 	started: string | null;
@@ -94,30 +98,33 @@ function qualityOf(
 	};
 }
 
-function inspectTurn(t: MeterTurn, items: Item[], limit: number) {
-	const row = turnRow(
-		t,
-		items.some((i) => i.type === "compaction" && i.status === "completed"),
-	);
-	const tools = items.filter((i) => i.type !== "compaction");
+function inspectTurn(t: MeterTurn, items: Item[], limit: number, compacted: boolean) {
+	const row = turnRow(t, compacted);
 	const complete = limit > 0 && items.length <= limit;
-	const truncated = !complete || tools.some((i) => i.input === null);
-	const { reads, selfReads } = observations(tools.slice(0, limit), t, row.deliveryId);
+	const truncated = !complete || items.some((i) => i.input === null);
+	const { reads, selfReads } = observations(items.slice(0, limit), t, row.deliveryId);
 	if (truncated) row.unknown = [row.unknown, "tool fields incomplete"].filter(Boolean).join("; ");
-	if (complete) row.toolCalls = tools.length;
+	if (complete) row.toolCalls = items.length;
 	if (!truncated) row.threadReads = reads.length;
 	return { turn: t, row, reads, selfReads, truncated };
 }
 
 function readMeter(db: Database, thread: string, since: number, quality: boolean): StewardMeterRead {
 	const turns = meterTurns(db, thread, since);
+	const selected = turns.slice(0, TURN_LIMIT);
+	const compacted = new Set(
+		db
+			.query<{ turn: string }, [string, string]>(COMPACTED)
+			.all(thread, JSON.stringify(selected.map((t) => t.id)))
+			.map((row) => row.turn),
+	);
 	const items = db.query<Item, [string, string, number]>(ITEMS);
 	let remaining = ITEM_BUDGET;
-	const records = turns.slice(0, TURN_LIMIT).map((t) => {
+	const records = selected.map((t) => {
 		const limit = Math.min(ITEM_LIMIT, remaining);
 		const rows = limit > 0 ? items.all(t.id, thread, limit + 1) : [];
 		remaining = Math.max(0, remaining - rows.length);
-		return inspectTurn(t, rows, limit);
+		return inspectTurn(t, rows, limit, compacted.has(t.id));
 	});
 	const rows = records.map((r) => r.row).filter((r) => r.startedAt <= r.endedAt);
 	const partial = turns.length > TURN_LIMIT || rows.length !== records.length ? "turn history incomplete" : undefined;

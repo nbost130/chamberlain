@@ -10,6 +10,7 @@ import type { WindowMetrics } from "./metrics.ts";
 import { isHeld, type OverheadState, type OverheadSummary } from "./trigger.ts";
 
 const day = (ms: number) => new Date(ms).toISOString().slice(5, 10);
+const spend = (amount?: number, unpriced?: number) => `${usd(amount)}${unpriced ? ` (${unpriced} unpriced)` : ""}`;
 
 /** A span as a short label: whole days from two days up ("7 d"), hours below that ("24 h", "6 h"). */
 const spanLabel = (ms: number): string =>
@@ -34,6 +35,7 @@ export function summarize(r: OverheadReport): OverheadSummary {
 	if (r.trailing.costPerPr !== undefined) s.costPerPrTrailing = r.trailing.costPerPr;
 	if (r.day.prs !== undefined) s.prsDay = r.day.prs;
 	if (r.day.stewardUsd !== undefined) s.stewardUsdDay = r.day.stewardUsd;
+	if (r.day.unpricedTurns !== undefined) s.unpricedTurnsDay = r.day.unpricedTurns;
 	if (r.day.noopRate !== undefined) s.noopRate = r.day.noopRate;
 	if (r.spendShare !== undefined) s.spendShare = r.spendShare;
 	if (r.stewardShare !== undefined) s.stewardShare = r.stewardShare;
@@ -55,7 +57,7 @@ export function summaryLine(s: OverheadSummary): string {
 		`${perPr(s.costPerPrDay)}/PR ${s.windowLabel}`,
 		`${perPr(s.costPerPrTrailing)}/PR ${s.trailingLabel}`,
 		`${prValue(s.prStatus, s.prsDay === undefined ? undefined : String(s.prsDay))} PRs merged`,
-		`Steward ${usd(s.stewardUsdDay)}`,
+		`Steward ${spend(s.stewardUsdDay, s.unpricedTurnsDay)}`,
 		`no-op ${pct(s.noopRate)}`,
 		`overhead share ${shareText(s.fleetStatus, s.spendShare, s.stewardShare)}`,
 		...(s.managed ? [managedLine(s.managed)] : []),
@@ -89,7 +91,7 @@ export function formatOverhead(r: OverheadReport): string {
 		"",
 		`  cost per merged PR   ${W} ${perPr(d, r.prStatus).padEnd(14)} ${B} ${perPr(r.trailing, r.prStatus).padEnd(14)} ${mode(cp.mode)}${cp.limitUsd === undefined ? "" : `, limit ${usd(cp.limitUsd)}`}`,
 		`  PRs merged           ${W} ${prs(d).padEnd(14)} ${B} ${prs(r.trailing)}`,
-		`  Steward spend        ${W} ${usd(d.stewardUsd).padEnd(14)} ${B} ${usd(r.trailing.stewardUsd)}   (classifier ${usd(d.classifierUsd)} in ${W})`,
+		`  Steward spend        ${W} ${spend(d.stewardUsd, d.unpricedTurns).padEnd(14)} ${B} ${spend(r.trailing.stewardUsd, r.trailing.unpricedTurns)}   (classifier ${usd(d.classifierUsd)} in ${W})`,
 		`  no-op wake rate      ${W} ${pct(d.noopRate).padEnd(14)} ${B} ${pct(r.trailing.noopRate).padEnd(14)} ${mode(nr.mode)}${nr.threshold === undefined ? "" : `, limit ${pct(nr.threshold)}`}  (${d.noop} of ${d.measured} wakes measured, ${d.wakes} wakes)`,
 		`  cost per useful wake ${W} ${usd(d.costPerUsefulWake).padEnd(14)} ${B} ${usd(r.trailing.costPerUsefulWake)}`,
 		`  overhead share       ${W} ${shareText(r.fleetStatus, r.spendShare, r.stewardShare)}  (${shareMode(r.limits.spendShare)})`,
@@ -99,7 +101,7 @@ export function formatOverhead(r: OverheadReport): string {
 	out.push("", `  trend (${W} windows)    day     PRs   $/PR      no-op   Steward`);
 	for (const w of r.trend)
 		out.push(
-			`                         ${day(w.to - 1)}  ${prs(w).padStart(4)}  ${perPr(w, r.prStatus).padEnd(13)} ${pct(w.noopRate).padEnd(9)} ${usd(w.stewardUsd)}`,
+			`                         ${day(w.to - 1)}  ${prs(w).padStart(4)}  ${perPr(w, r.prStatus).padEnd(13)} ${pct(w.noopRate).padEnd(9)} ${spend(w.stewardUsd, w.unpricedTurns)}`,
 		);
 	out.push("");
 	if (r.crossings.length) for (const c of r.crossings) out.push(`  CROSSED: ${c.detail}`);

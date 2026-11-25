@@ -96,8 +96,9 @@ ages out without running, the Steward hands off.
 The projection's usage is the main-agent turn total. Chamberlain separates uncached input, cache read, cache write
 and output for reporting and pricing. Reasoning tokens are a separate observation and are never added to output
 again. Model request counts come from native transcript detail. Prices come from `overhead.prices` using each turn's
-recorded model. A missing model, missing price or incomplete turn prevents a full-window spend figure. Fleet share
-and managed spend ratios also need fleet telemetry coverage for the metered turns.
+executed model. A requested model is not execution evidence. A missing model, missing price or incomplete turn
+prevents a full-window spend figure. If only legacy transcripts lack a model, the report shows the priced subtotal
+and counts the unpriced turns. Cost thresholds and fleet ratios require complete coverage.
 
 `chamberlain steward-health tokens` reports the last 24 hours and 7 days, including per-kind token percentiles and
 full-sweep statistics. Use `--json` for the underlying numbers. `chamberlain steward-health flow` reports turns and
@@ -111,8 +112,8 @@ per-request counts. Use `tokens --transcript` to inspect native detail on its ow
 projected row where native history covers the same turn. The two sources
 never contribute separate counts for that turn.
 
-New observations use the existing state table. The database schema version is unchanged and earlier releases can
-still open it and read legacy transcript rows.
+New observations use the existing state table, with an additive time index for recent reports. The database
+schema version is unchanged and earlier releases can still open it and read legacy transcript rows.
 
 The daemon retains these turn records without automatic pruning. At 300 turns per day, that adds about 109,500
 rows per 365-day year. Hourly refreshes replace rows for previously observed turns.

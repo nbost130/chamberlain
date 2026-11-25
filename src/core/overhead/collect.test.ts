@@ -204,6 +204,18 @@ describe("the fleet share", () => {
 		triggers: { spendShare: { mode: "trigger", threshold: 0.3 } },
 	});
 
+	test("partial legacy spend is labeled in both reports and cannot feed fleet ratios", async () => {
+		const r = await run(
+			cfg,
+			storeWith([wake({ hoursAgo: 1, usd: 10 }), { ...wake({ hoursAgo: 2 }), model: undefined }]),
+			{ query: async () => answer(["fleet,h1,50000000", "fleet,h2,50000000"]) },
+		);
+		expect(formatOverhead(r)).toContain("$10.00 (1 unpriced)");
+		expect(summaryLine(summarize(r))).toContain("$10.00 (1 unpriced)");
+		expect(r.spendShare).toBeUndefined();
+		expect(r.stewardShare).toBeUndefined();
+	});
+
 	test("spend is priced but fleet ratios are unavailable when its telemetry omits a metered turn", async () => {
 		const projection = { ...wake({ hoursAgo: 1, usd: 12 }), source: "turn record" as const };
 		const r = await run(cfg, storeWith([projection]), {

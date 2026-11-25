@@ -12,7 +12,7 @@
 | Antigravity | T3 turn counters | Repeat thread reads | Verified |
 | Grok | Unavailable on the observed driver | Repeat thread reads | Unverified |
 
-Turn prices use the model recorded with the turn, including after a provider switch. A missing recorded model,
+Turn prices use the executed model recorded with the turn, including after a provider switch. A missing executed model,
 price, or complete token count leaves spend unavailable. See [Steward health](steward-health.md) for measurement
 coverage and the hand-off behavior when compaction fails.
 

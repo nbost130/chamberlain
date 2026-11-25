@@ -3,6 +3,7 @@ import { useCoreEngineFixtures } from "../../testing/core-engine-fixtures.ts";
 import { createFakeAdapter } from "../../testing/fake-adapter.ts";
 import { readHealth } from "../steward/steward-health.ts";
 import { createEngine } from "./engine.ts";
+import { COMPACT_STATE_KEY } from "./engine-steward.ts";
 
 const { rig } = useCoreEngineFixtures(createEngine);
 const STEWARD = "steward-test";
@@ -10,6 +11,83 @@ const NOW = Date.parse("2030-01-01T12:00:00.000Z");
 const AT = new Date(NOW).toISOString();
 const MIN = 60_000;
 afterEach(() => setSystemTime());
+
+test("a low running sample after a completed compaction does not persist a failure", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "stewardMeter", "handoffInstruction"] });
+	adapter.stewardMeter = () => ({ rows: [], quality: { threadRereads: 0 } });
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true, compactAt: 100 });
+	setSystemTime(NOW);
+	r.store.state.set(COMPACT_STATE_KEY, {
+		thread: STEWARD,
+		session: "session",
+		at: NOW - 31 * MIN,
+		used: 180,
+		cleared: false,
+		compactions: 4,
+	});
+	adapter.probe = {
+		readable: true,
+		contextSession: "session",
+		contextPending: true,
+		contextTurn: 12,
+		context: { tokens: 40, at: AT, source: "fixture" },
+		contextTokens: 40,
+		compactions: 5,
+		compactionTurn: 11,
+		retryLostCompact: false,
+	};
+	await r.engine.tick();
+	expect(r.store.state.get(COMPACT_STATE_KEY)).not.toHaveProperty("failed", true);
+	expect(readHealth(r.store)?.verdict).toBe("OK");
+	expect(r.store.wakes.find("steward-handoff:session")).toBeUndefined();
+});
+
+test("completed unknown turns still alarm when every poll finds the next turn running", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe"] });
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true });
+	for (let completed = 1; completed <= 29; completed++) {
+		adapter.probe = {
+			readable: true,
+			contextSession: "session",
+			contextPending: true,
+			contextTurn: completed + 1,
+			completedTurn: completed,
+			previousCompletedTurn: completed - 1,
+			context: { unknown: "running" },
+			unknownTurns: Array.from({ length: completed }, (_, i) => completed - i),
+		};
+		await r.engine.tick();
+		const alarms = r.events.filter((e) => e.event === "alarm" && String(e.key).startsWith("context-unknown:"));
+		expect(alarms).toHaveLength(completed < 3 ? 0 : 1);
+	}
+});
+
+test("a known native size does not become a missing completed sample when the next turn is running", async () => {
+	const adapter = createFakeAdapter({ capabilities: ["stewardProbe"] });
+	const r = rig({ adapter, steward: STEWARD, housekeeping: true, config: { contextGuard: { unknownTurns: 1 } } });
+	adapter.probe = {
+		readable: true,
+		contextSession: "session",
+		contextTurn: 1,
+		completedTurn: 1,
+		partialContextHistory: true,
+		context: { tokens: 40, at: AT, source: "native" },
+		contextTokens: 40,
+	};
+	await r.engine.tick();
+	adapter.probe = {
+		readable: true,
+		contextSession: "session",
+		contextPending: true,
+		contextTurn: 2,
+		completedTurn: 1,
+		partialContextHistory: true,
+		context: { unknown: "running" },
+		unknownTurns: [1],
+	};
+	await r.engine.tick();
+	expect(r.events.filter((e) => e.event === "alarm" && String(e.key).startsWith("context-unknown:"))).toHaveLength(0);
+});
 
 test("hourly health only reuses completed context from the same session", async () => {
 	const adapter = createFakeAdapter({ capabilities: ["stewardProbe", "stewardMeter"] });

@@ -24,7 +24,7 @@ import { makeDispositions, makeEvents } from "./sqlite-log.ts";
 import { makePreparePrLinks } from "./sqlite-prepare-pr-links.ts";
 import { makeAway, makeButlers, makeDecisions, makeRulings } from "./sqlite-rulings.ts";
 import { makeStewardSql } from "./sqlite-steward.ts";
-import { makeUsage } from "./sqlite-usage.ts";
+import { ensureUsageIndex, makeUsage } from "./sqlite-usage.ts";
 import { makeWakes } from "./sqlite-wakes.ts";
 import type { Store } from "./store.ts";
 
@@ -42,6 +42,12 @@ export class DatabaseTooNewError extends SchemaTooNewError {
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o, { migrations: MIGRATIONS, tooNew: (p, found) => new DatabaseTooNewError(p, found) });
 	const c = queries(db, o);
+	try {
+		ensureUsageIndex(c);
+	} catch (e) {
+		db.close();
+		throw e;
+	}
 	const closers: (() => void)[] = [];
 	return {
 		path,

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { classifyPrompt } from "../../core/steward/steward-segments.ts";
+import { classifyPrompt, type Prompt } from "../../core/steward/steward-segments.ts";
 import type { WakeUsage } from "../../core/store/store-records.ts";
 import { lastFencedDeliveryId } from "./receipts.ts";
 
@@ -15,8 +15,7 @@ SELECT t.provider_turn_id AS id, t.provider_thread_id AS session, t.ordinal,
 	t.started_at AS started, t.completed_at AS completed, r.requested_at AS requested,
 	p.driver AS driver, json_extract(p.payload_json, '$.nativeThreadRef.nativeId') AS nativeSession,
 	json_extract(t.payload_json, '$.turnTokenUsage') AS usage,
-	coalesce(json_extract(t.payload_json, '$.executedModel'), json_extract(a.payload_json, '$.executedModel'),
-		case when a.provider_instance_id = r.provider_instance_id then json_extract(r.payload_json, '$.modelSelection.model') end) AS model,
+	coalesce(json_extract(t.payload_json, '$.executedModel'), json_extract(a.payload_json, '$.executedModel')) AS model,
 	case when length(m.payload_json) <= ?4 then json_extract(m.payload_json, '$.text') end AS prompt,
 	m.message_id AS message, json_extract(m.payload_json, '$.scheduledTaskId') AS scheduled
 FROM recent t
@@ -78,7 +77,7 @@ function tokenFields(raw: string | null): Partial<WakeUsage> {
 	};
 }
 
-function turnPrompt(t: MeterTurn, haveCompaction: boolean) {
+function turnPrompt(t: MeterTurn, haveCompaction: boolean): Prompt {
 	const prompt = t.prompt ?? "";
 	// Trust a delivery id only from the webhook envelope associated with this run's own user message.
 	const deliveryId =
@@ -86,16 +85,18 @@ function turnPrompt(t: MeterTurn, haveCompaction: boolean) {
 			? lastFencedDeliveryId(prompt)
 			: undefined;
 	if (prompt.trim() === "/compact" || (!prompt && haveCompaction)) return { kind: "compact" };
-	if (deliveryId) {
-		const prefix = /^\/steward-wake\b[\s\S]*?\n\n(?=\[(?:chamberlain|t3-wake)\] )/.exec(prompt.slice(0, 2000));
-		const classified = classifyPrompt(prefix ? prompt.slice(prefix[0].length) : prompt);
-		const kind = classified?.kind;
-		return { kind: kind && kind !== "message" ? kind : "wake", deliveryId, variant: classified?.variant };
-	}
+	if (/^\s*\/steward-handoff(?:\s|$)/.test(prompt)) return { kind: "steward-handoff" };
+	if (deliveryId) return wakePrompt(prompt, deliveryId);
 	const classified = classifyPrompt(prompt);
 	return { kind: classified?.kind === "start" || classified?.kind === "notice" ? classified.kind : "message" };
 }
 
+function wakePrompt(prompt: string, deliveryId: string) {
+	const prefix = /^\/steward-wake\b[\s\S]*?\n\n(?=\[(?:chamberlain|t3-wake)\] )/.exec(prompt.slice(0, 2000));
+	const classified = classifyPrompt(prefix ? prompt.slice(prefix[0].length) : prompt);
+	const kind = classified?.kind;
+	return { kind: kind && kind !== "message" ? kind : "wake", deliveryId, variant: classified?.variant };
+}
 export function turnRow(t: MeterTurn, haveCompaction: boolean): WakeUsage {
 	const { kind, variant, deliveryId } = turnPrompt(t, haveCompaction);
 	const model = t.model && /^[a-z0-9][a-z0-9_.:/@+-]*(?:\[[a-z0-9]+\])?$/i.test(t.model) ? t.model : undefined;

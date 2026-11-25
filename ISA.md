@@ -26,6 +26,8 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 
 ## Criteria
 
+- [x] ISC-22 (#124 fix round): Reproduced compaction, hand-off prompts, capped items, completed-turn alarms, overlapping usage, model provenance, and historical query cases pass through their normal entry points. Falsifier: any of the seven regression probes fails, or a recent usage query scans older state rows. Evidence: eight baseline failures, 102 focused tests passing after fixes, and SQLite's production usage query plan seeks on time.
+
 - [x] ISC-21 (#124 review): Focused tests reject each review mutation across the nine gaps and preserve a valid sample when sessions share timestamps. Falsifier: a mutated build passes its named regression or the new session loses its sample. Evidence: 30 focused tests passed and 12 isolated mutations failed their named regressions. The same-timestamp regression failed before the cache fix.
 
 - [x] ISC-18 (#124): Equivalent T3 turns produce equivalent wake rows and reread counts across drivers, and rereads past the limit hand off only where both kinds are measured (on record, ordinary Stewards elsewhere pass it within hours, 3 to 313 per Steward). Falsifier: a driver switch aliases ordinals, a partial reading becomes zero, transcript and projection totals overlap, a reread count starts a hand-off where self-reads are not measured, a read scans the whole thread for every turn, or a schema change stops the tick. Evidence: `meter.test.ts` and the normal engine housekeeping test replay these cases through the store and health verdict.
@@ -84,6 +86,7 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-19 | bun-test | Check that active-turn readings remain display-only and unsupported compaction produces one hand-off | bun test src/adapters/t3/steward.test.ts src/core/engine/engine-context-guard.test.ts src/web/inline-view.test.ts |
 | ISC-20 | bun-test | Provider name scan, mixed-model prices and full tests | bun run checks |
 | ISC-21 | bun-test | Review regressions for bounds, trust, timing, session identity and retries | bun test src/adapters/t3/meter.test.ts src/core/engine/engine-context-guard.test.ts src/core/engine/engine-steward-context-sample.test.ts src/core/steward/steward-tokens.review-round-1.test.ts |
+| ISC-22 | bun-test | Red-to-green compaction and metering regressions, labeled partial spend and an indexed time seek | bun test src/adapters/t3/meter.test.ts src/core/engine/engine-steward-context-sample.test.ts src/core/store/sqlite-usage.test.ts src/core/overhead |
 
 ## Weekly decision distillation (#121)
 

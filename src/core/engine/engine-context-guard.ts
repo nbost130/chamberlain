@@ -10,12 +10,16 @@ type Episode = { session: string; turn: number; count: number; first: number; an
 type Notice = (key: string, title: string, summary: string) => void;
 type GuardDeps = { store: Store; policy: Policy; alarm: Notice };
 
+function missingCompletedSample(probe: StewardProbe, turn: number) {
+	if (probe.contextPending) return probe.contextTurn !== turn;
+	return probe.context && "unknown" in probe.context && probe.contextTurn === turn;
+}
+
 function episode(prior: Episode | undefined, probe: StewardProbe): Episode | undefined {
-	const { context, contextSession: session, completedTurn: turn, previousCompletedTurn, unknownTurns } = probe;
-	if (probe.contextPending || !context || !session || turn === undefined || !unknownTurns?.includes(turn))
-		return undefined;
-	if (!("unknown" in context) || probe.contextTurn !== turn) return undefined;
-	if (prior?.session === session && prior.turn === turn) return prior;
+	const { contextSession: session, completedTurn: turn, previousCompletedTurn, unknownTurns } = probe;
+	if (!session || turn === undefined || !unknownTurns?.includes(turn)) return undefined;
+	if (!missingCompletedSample(probe, turn)) return undefined;
+	if (prior?.session === session && prior.turn === turn) return prior.count ? prior : undefined;
 	const oldest = unknownTurns.at(-1) ?? turn;
 	const follows =
 		prior?.session === session &&
@@ -29,13 +33,29 @@ function episode(prior: Episode | undefined, probe: StewardProbe): Episode | und
 	};
 }
 
+/** A later projection cannot tell whether the exact native read of this completed turn succeeded. */
+function rememberKnown(store: Store, key: string, probe: StewardProbe, prior: Episode | undefined) {
+	const {
+		context,
+		contextPending,
+		contextSession: session,
+		contextTurn: turn,
+		completedTurn,
+		partialContextHistory,
+	} = probe;
+	if (contextPending || !context || !("tokens" in context)) return;
+	if (partialContextHistory && session && turn !== undefined && turn === completedTurn) {
+		if (prior?.session !== session || prior.turn !== turn || prior.count !== 0)
+			store.state.set(key, { session, turn, count: 0, first: turn } satisfies Episode);
+	} else if (prior) store.state.delete(key);
+}
+
 function watchUnknown({ store, policy, alarm }: GuardDeps, id: string, probe: StewardProbe): string | undefined {
-	if (probe.contextPending) return undefined;
 	const key = `context-unknown:${id}`;
 	const prior = store.state.get<Episode>(key);
 	let next = episode(prior, probe);
 	if (!next) {
-		if (prior && probe.context && "tokens" in probe.context) store.state.delete(key);
+		rememberKnown(store, key, probe, prior);
 		return undefined;
 	}
 	if (next.count >= policy.unknownTurns && !next.announced) {

@@ -66,6 +66,13 @@ const toWakeUsage = (r: Row): WakeUsage => {
 
 type UsageQuery = NonNullable<Parameters<UsageStore["list"]>[0]>;
 
+const METER_KEYS = "key >= 'steward-meter:' AND key < 'steward-meter;'";
+
+/** An additive index over existing keys. Older builds can still open and write the same schema version. */
+export function ensureUsageIndex(c: Db) {
+	c.run(`CREATE INDEX IF NOT EXISTS steward_meter_by_time ON state (updated_at) WHERE ${METER_KEYS}`);
+}
+
 function listUsage(c: Db, q: UsageQuery = {}): WakeUsage[] {
 	const where: string[] = [],
 		p: unknown[] = [];
@@ -85,7 +92,7 @@ function listUsage(c: Db, q: UsageQuery = {}): WakeUsage[] {
 		.map(toWakeUsage);
 	const recorded = c
 		.all(
-			"SELECT value FROM state WHERE key >= 'steward-meter:' AND key < 'steward-meter;' AND updated_at >= ?",
+			`SELECT value FROM state INDEXED BY steward_meter_by_time WHERE ${METER_KEYS} AND updated_at >= ?`,
 			q.since ?? 0,
 		)
 		.map((r) => JSON.parse(r.value as string) as WakeUsage);
@@ -96,27 +103,51 @@ function listUsage(c: Db, q: UsageQuery = {}): WakeUsage[] {
 function reconcileUsage(history: WakeUsage[], recorded: WakeUsage[], q: UsageQuery): WakeUsage[] {
 	const key = (r: WakeUsage) => JSON.stringify([r.session, r.wakeKey]);
 	const replacements = new Set(recorded.map(key));
-	const turns = new Map<string, WakeUsage[]>();
-	for (const r of recorded) {
-		if (r.source !== "turn record" || !r.nativeSession) continue;
-		const rows = turns.get(r.nativeSession) ?? [];
-		rows.push(r);
-		turns.set(r.nativeSession, rows);
-	}
-	const covered = (r: WakeUsage) =>
-		r.source !== "turn record" &&
-		turns.get(r.session)?.some((t) => {
-			const from = t.requestedAt ?? t.startedAt;
-			return (
-				(r.startedAt >= from && r.startedAt <= t.endedAt) ||
-				(Boolean(r.deliveryId) && r.deliveryId === t.deliveryId && r.endedAt >= from && r.startedAt <= t.endedAt)
-			);
-		});
+	const covered = coveredByProjection(recorded);
 	return [...history.filter((r) => !replacements.has(key(r))), ...recorded]
 		.filter((r) => (!q.session || r.session === q.session) && r.startedAt >= (q.since ?? 0) && !covered(r))
 		.sort(
 			(a, b) => a.startedAt - b.startedAt || a.session.localeCompare(b.session) || a.wakeKey.localeCompare(b.wakeKey),
 		);
+}
+
+function coveredByProjection(recorded: WakeUsage[]) {
+	const bySession = new Map<string, WakeUsage[]>();
+	const byDelivery = new Map<string, WakeUsage[]>();
+	for (const row of recorded) {
+		if (row.source !== "turn record") continue;
+		if (row.nativeSession) addToIndex(bySession, row.nativeSession, row);
+		else if (row.deliveryId) addToIndex(byDelivery, row.deliveryId, row);
+	}
+	return (row: WakeUsage) => {
+		if (row.source === "turn record") return false;
+		const matchesSession = bySession
+			.get(row.session)
+			?.some(
+				(turn) =>
+					(row.startedAt >= (turn.requestedAt ?? turn.startedAt) && row.startedAt <= turn.endedAt) ||
+					matchingDelivery(row, turn),
+			);
+		return (
+			matchesSession ||
+			Boolean(row.deliveryId && byDelivery.get(row.deliveryId)?.some((turn) => matchingDelivery(row, turn)))
+		);
+	};
+}
+
+function addToIndex(index: Map<string, WakeUsage[]>, key: string, row: WakeUsage) {
+	const rows = index.get(key);
+	if (rows) rows.push(row);
+	else index.set(key, [row]);
+}
+
+function matchingDelivery(row: WakeUsage, turn: WakeUsage) {
+	return (
+		Boolean(row.deliveryId) &&
+		row.deliveryId === turn.deliveryId &&
+		row.endedAt >= (turn.requestedAt ?? turn.startedAt) &&
+		row.startedAt <= turn.endedAt
+	);
 }
 
 export const makeUsage = (c: Db): UsageStore => ({

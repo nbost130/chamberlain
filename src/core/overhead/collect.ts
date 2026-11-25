@@ -300,6 +300,7 @@ async function fleetMetrics(
 }
 
 function coverageForFleet(d: CollectDeps, m: Own, day: WindowMetrics, notes: Notes): WindowMetrics {
+	if (day.unpricedTurns) return { ...day, stewardUsd: undefined, basisUsd: undefined };
 	if (d.cfg.fleet.source === "off") return day;
 	const covered = m.usage.every(
 		(r) => r.startedAt < day.from || r.startedAt >= day.to || usageTelemetrySession(r) !== undefined,

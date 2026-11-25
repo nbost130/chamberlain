@@ -56,8 +56,9 @@ export type WindowMetrics = {
 	noop: number;
 	useful: number;
 	noopRate?: number;
-	/** The Steward's tokens priced, USD. Undefined when the model has no price: the number is unavailable, never zero. */
+	/** Steward spend in USD. A subtotal when only model-less legacy rows were excluded. */
 	stewardUsd?: number;
+	unpricedTurns?: number;
 	/** Chamberlain's own classifier calls, USD. Undefined when experiments could not be taken out of it (`unverified`). */
 	classifierUsd?: number;
 	/** stewardUsd + classifierUsd: what the cost trigger divides. */
@@ -83,19 +84,23 @@ export type WindowInput = {
 /** A number a limit may be judged on: present and finite. Anything else (undefined, NaN, Infinity) crosses nothing. */
 export const usable = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n);
 
-/**
- * The Steward's spend over the rows, or undefined when it cannot be known: no price for its model, no usage rows in the window (nothing was
- * measured, which is not a Steward that cost nothing: a $0 here would become a $0 baseline), or a sum that is not a finite number.
- */
-function stewardSpend(rows: readonly WakeUsage[], prices: PriceTable, cacheWrite: CacheWrite): number | undefined {
-	if (!rows.length) return undefined;
+/** A subtotal can omit legacy rows that never recorded a model. It cannot be used as a full-window cost basis. */
+function stewardSpend(rows: readonly WakeUsage[], prices: PriceTable, cacheWrite: CacheWrite) {
 	let total = 0;
+	let unpriced = 0;
+	let missingLegacyModel = 0;
 	for (const row of rows) {
 		const usd = recordedTurnUsd(row, prices, cacheWrite);
-		if (usd === undefined) return undefined;
-		total += usd;
+		if (usd !== undefined) total += usd;
+		else {
+			unpriced++;
+			if (row.source === "transcript" && !row.model) missingLegacyModel++;
+		}
 	}
-	return Number.isFinite(total) ? total : undefined;
+	return {
+		stewardUsd: rows.length > unpriced && unpriced === missingLegacyModel && Number.isFinite(total) ? total : undefined,
+		unpricedTurns: unpriced || undefined,
+	};
 }
 
 /** Pure: one window's numbers. */
@@ -105,9 +110,10 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 	const measured = wakes.filter((r) => r.toolCalls !== undefined);
 	const noop = measured.filter((r) => r.toolCalls === 0).length;
 	const useful = measured.length - noop;
-	const stewardUsd = i.unverified ? undefined : stewardSpend(rows, i.prices ?? {}, i.cacheWrite);
+	const { stewardUsd, unpricedTurns } = i.unverified ? {} : stewardSpend(rows, i.prices ?? {}, i.cacheWrite);
 	const classifierUsd = i.unverified ? undefined : i.classifierUsd;
-	const basisUsd = stewardUsd === undefined || classifierUsd === undefined ? undefined : stewardUsd + classifierUsd;
+	const basisUsd =
+		unpricedTurns || stewardUsd === undefined || classifierUsd === undefined ? undefined : stewardUsd + classifierUsd;
 	const m: WindowMetrics = {
 		from: i.from,
 		to: i.to,
@@ -116,14 +122,15 @@ export function windowMetrics(i: WindowInput): WindowMetrics {
 		measured: measured.length,
 		noop,
 		useful,
+		stewardUsd,
+		unpricedTurns,
 	};
 	if (classifierUsd !== undefined) m.classifierUsd = classifierUsd;
 	if (measured.length && !i.unverified) m.noopRate = noop / measured.length;
-	if (stewardUsd !== undefined) m.stewardUsd = stewardUsd;
 	if (basisUsd !== undefined) m.basisUsd = basisUsd;
 	if (i.prs !== undefined) m.prs = i.prs;
 	if (usable(basisUsd) && i.prs) m.costPerPr = basisUsd / i.prs;
-	if (usable(stewardUsd) && useful) m.costPerUsefulWake = stewardUsd / useful;
+	if (!unpricedTurns && usable(stewardUsd) && useful) m.costPerUsefulWake = stewardUsd / useful;
 	return m;
 }
 

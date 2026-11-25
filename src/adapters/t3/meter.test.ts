@@ -1,97 +1,60 @@
-import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { parseContextGuard } from "../../core/config/context-guard.ts";
 import { guardedHealth } from "../../core/steward/steward-health.ts";
 import { segmentTranscript } from "../../core/steward/steward-segments.ts";
 import { totalTokens, turnUsageTicker } from "../../core/steward/steward-tokens.ts";
 import { memStore } from "../../testing/store.ts";
 import { t3Meter } from "./meter.ts";
-import { renderFencedWake } from "./receipts.ts";
+import { base, before, complete, deliver, END, fixture, START, turn } from "./meter-fixture.test.ts";
 
-const START = "2030-01-01T12:00:01.000Z";
-const END = "2030-01-01T12:00:05.000Z";
-const before = Date.parse(START) - 1000;
-const base = "orchestration_v2_projection_";
 const current = { tokens: 75_000, window: 150_000, at: END, source: "provider turn" } as const;
-const deliver = "synthetic-delivery";
-const complete = {
-	usageStatus: "complete",
-	usageScope: "main_agent",
-	inputTokens: 100,
-	cacheCreationTokens: 20,
-	cachedInputTokens: 30,
-	outputTokens: 40,
-	reasoningTokens: 12,
-};
 
-function projection(db: Database, bare = false) {
-	db.exec(`
-		CREATE TABLE ${base}threads (thread_id, active_provider_thread_id);
-		CREATE TABLE ${base}provider_threads (provider_thread_id, thread_id, driver, payload_json);
-		CREATE TABLE ${base}provider_turns (provider_turn_id, provider_thread_id, thread_id, ordinal, run_attempt_id, started_at, completed_at, payload_json);
-		CREATE TABLE ${base}run_attempts (attempt_id, thread_id, run_id, provider_instance_id, payload_json);
-		CREATE TABLE ${base}runs (run_id, thread_id, provider_instance_id, requested_at, payload_json);
-		CREATE TABLE ${base}messages (message_id, thread_id, role, payload_json);
-		CREATE TABLE ${base}turn_items (provider_turn_id, thread_id, ordinal, type, status, payload_json);
-		INSERT INTO ${base}threads VALUES ('fixture-thread', 'fixture-provider');
-		INSERT INTO ${base}run_attempts VALUES ('fixture-attempt', 'fixture-thread', 'fixture-run', 'fixture-instance', '{}');
-	`);
-	const message = "scheduled-task-message:fixture:webhook:delivery:fixture";
-	const body = "[chamberlain] sweep: time for a full supervision sweep";
-	db.run(`INSERT INTO ${base}runs VALUES ('fixture-run', 'fixture-thread', 'fixture-instance', ?, ?)`, [
-		new Date(before).toISOString(),
-		JSON.stringify({ userMessageId: message, modelSelection: { model: "fixture-model" } }),
-	]);
-	db.run(`INSERT INTO ${base}messages VALUES (?, 'fixture-thread', 'user', ?)`, [
-		message,
-		JSON.stringify({
-			scheduledTaskId: "fixture",
-			text: renderFencedWake(bare ? body : `<webhook-data-abc>${body}</webhook-data-abc>`, deliver, "abc"),
-		}),
-	]);
-}
+test("a direct hand-off command exempts its own transcript reads", () =>
+	fixture(async (db, path) => {
+		turn(db, "claudeAgent");
+		db.run(`UPDATE ${base}messages SET payload_json = '{"text":"/steward-handoff"}'`);
+		db.run(`DELETE FROM ${base}turn_items`);
+		for (let ordinal = 0; ordinal < 3; ordinal++)
+			db.run(
+				`INSERT INTO ${base}turn_items VALUES ('fixture-provider', 'fixture-thread', ?, 'command_execution', 'completed', ?)`,
+				[ordinal, JSON.stringify({ startedAt: START, input: "head fixture-native.jsonl" })],
+			);
+		const meter = t3Meter(path, "fixture-thread", before, true);
+		const health = await guardedHealth({
+			meter,
+			probe: { readable: true, context: current },
+			policy: parseContextGuard(undefined),
+		});
+		expect(health).toMatchObject({ selfReads: 0, verdict: "OK" });
+	}));
 
-function turn(db: Database, driver: string, session = "fixture-provider", usage: unknown = complete) {
-	db.run(`INSERT INTO ${base}provider_threads VALUES (?, 'fixture-thread', ?, ?)`, [
-		session,
-		driver,
-		JSON.stringify({ nativeThreadRef: { nativeId: "fixture-native" } }),
-	]);
-	db.run(`INSERT INTO ${base}provider_turns VALUES (?, ?, 'fixture-thread', 1, 'fixture-attempt', ?, ?, ?)`, [
-		session,
-		session,
-		START,
-		END,
-		JSON.stringify({ turnTokenUsage: usage, tokenUsage: { usedTokens: 999_999 } }),
-	]);
-	for (let i = 0; i < 5; i++) {
-		const args =
-			driver === "codex"
-				? { input: "chamberlain debug peek local sample-thread" }
-				: { toolName: "mcp__t3_code__t3_thread_read", input: { threadId: "sample-thread" } };
-		db.run(`INSERT INTO ${base}turn_items VALUES (?, 'fixture-thread', ?, ?, 'completed', ?)`, [
-			session,
-			i,
-			driver === "codex" ? "command_execution" : "dynamic_tool",
-			JSON.stringify({ startedAt: START, ...args }),
-		]);
-	}
-}
+test("a compaction beyond the tool cap still resets reread quality", () =>
+	fixture(async (db, path) => {
+		turn(db, "claudeAgent");
+		db.run(`WITH RECURSIVE seq(n) AS (SELECT 5 UNION ALL SELECT n + 1 FROM seq WHERE n < 2049)
+			INSERT INTO ${base}turn_items SELECT 'fixture-provider', 'fixture-thread', n, 'command_execution', 'completed', '{"input":"pwd"}' FROM seq`);
+		db.run(
+			`INSERT INTO ${base}turn_items VALUES ('fixture-provider', 'fixture-thread', 2050, 'compaction', 'completed', '{}')`,
+		);
+		const meter = t3Meter(path, "fixture-thread", before, true);
+		expect(meter).toMatchObject({ rows: [{ compactions: 1 }], quality: { threadRereads: 0, boundary: END } });
+		const health = await guardedHealth({
+			meter,
+			probe: { readable: true, context: current },
+			policy: parseContextGuard(undefined),
+		});
+		expect(health.verdict).not.toBe("HAND OFF");
+	}));
 
-async function fixture(run: (db: Database, path: string) => void | Promise<void>, bare = false) {
-	const dir = mkdtempSync(join(tmpdir(), "chamberlain-meter-"));
-	try {
-		const path = join(dir, "state.sqlite");
-		using db = new Database(path);
-		projection(db, bare);
-		await run(db, path);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-}
+test("a requested model is not execution evidence", () =>
+	fixture((db, path) => {
+		turn(db, "cursor");
+		db.run(`UPDATE ${base}provider_turns SET payload_json = json_remove(payload_json, '$.executedModel')`);
+		const meter = t3Meter(path, "fixture-thread", before);
+		if (!("rows" in meter)) throw Error(meter.unknown);
+		expect(meter.rows).toHaveLength(1);
+		expect(meter.rows[0]).not.toHaveProperty("model");
+	}));
 
 test.each(["claudeAgent", "cursor", "codex", "antigravity", "grok"])(
 	"%s produces the same wake row and verdict from equivalent records",

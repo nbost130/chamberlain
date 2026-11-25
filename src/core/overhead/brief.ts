@@ -66,7 +66,7 @@ export function investigatorBrief(a: {
 	commands: BriefCommands;
 	extra?: string;
 }): string {
-	const priced = a.report.day.stewardUsd !== undefined;
+	const priced = a.report.day.stewardUsd !== undefined && !a.report.day.unpricedTurns;
 	const weight: Weight = priced ? (row) => recordedTurnUsd(row, a.prices ?? {}, a.cacheWrite) : totalTokens;
 	const show = (n?: number) =>
 		n === undefined ? "unavailable" : priced ? `$${n.toFixed(2)}` : `${Math.round(n / 1000)}k tokens`;

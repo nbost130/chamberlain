@@ -174,7 +174,9 @@ function judgeLast(
 	const readable = p.compactions !== undefined && last.compactions !== undefined;
 	const ran = readable && (p.compactions as number) > (last.compactions as number);
 	const measured =
+		!p.contextPending &&
 		p.contextTokens !== undefined &&
+		p.contextTokens > c.compactAt &&
 		p.contextTurn !== undefined &&
 		p.compactionTurn !== undefined &&
 		p.contextTurn >= p.compactionTurn;
