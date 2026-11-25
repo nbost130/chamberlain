@@ -26,7 +26,9 @@ asking the operator once per session through the decision queue.
 A self-read made for the hand-off itself, in the two turns after a compaction (recovering what the summary dropped), or to look a wake's own delivery id up for a repeat is the Steward doing what it was told, and does not count. An ordinary lookup of its own transcript does.
 
 Quality counters reset at the latest recorded compaction on the active provider thread. A driver without a native
-self-transcript signal reports it as not measured. This alone does not affect the verdict. Verdicts:
+self-transcript signal reports it as not measured. This alone does not affect the verdict. Where self-transcript reads are not measured, repeat thread reads past the limit are
+reported and make the verdict WATCH; they do not hand off, because the limit was set on the driver that measures both and an
+ordinary Steward elsewhere passes it within hours. Verdicts:
 
 - **OK**: nothing elevated and nothing unknown.
 - **WATCH**: something elevated, or something could not be measured (unknown is never OK).

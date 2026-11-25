@@ -137,7 +137,9 @@ test.each(["claudeAgent", "cursor", "codex", "antigravity", "grok"])(
 					throw Error("no native transcript expected");
 				},
 			});
-			expect(health.verdict).toBe("HAND OFF");
+			// The limit hands off only where both kinds of reread are measured; elsewhere it is watched.
+			expect(health.verdict).toBe(driver === "claudeAgent" ? "HAND OFF" : "WATCH");
+			expect(health.elevated).toEqual(["rereading"]);
 			expect(health.threadRereads).toBe(4);
 			if (driver !== "claudeAgent") expect(health.report).toContain("not measured self-transcript reads");
 			store.close();

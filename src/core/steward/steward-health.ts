@@ -62,7 +62,10 @@ function formatPatternFromEnv(): RegExp | undefined {
 /** Context size alone calls for compaction, never a hand-off; only degraded quality signals do. */
 function verdictOf(h: Health, compactAt: number): Health["verdict"] {
 	const { tokens, elevated, unknown } = h;
-	if (elevated.some((e) => e !== "context")) return "HAND OFF";
+	// The reread limit was set where both kinds of reread are measured. Elsewhere it is shown and watched, and starts nothing: on record, an
+	// ordinary Steward passes it within hours, so it would hand off one after another.
+	const acts = (e: string) => e !== "context" && (e !== "rereading" || h.readingCoverage?.self !== false);
+	if (elevated.some(acts)) return "HAND OFF";
 	if (!h.contextPending && tokens !== undefined && tokens > compactAt) return "COMPACT";
 	return tokens === undefined || elevated.length || unknown.length ? "WATCH" : "OK";
 }

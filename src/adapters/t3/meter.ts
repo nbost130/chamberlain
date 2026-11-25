@@ -6,13 +6,14 @@ import { threadReadKey } from "./transcript.ts";
 
 const ITEM_LIMIT = 2048;
 const ITEM_BUDGET = 12_000;
+/** The unary pluses keep the planner on the turn's own index: by thread and type it would read the whole thread for every turn. */
 const ITEMS = `SELECT type, status, json_extract(payload_json, '$.toolName') AS tool,
 	case when length(json_extract(payload_json, '$.input')) <= 16384
 		then json_extract(payload_json, '$.input') end AS input,
 	json_extract(payload_json, '$.startedAt') AS started
 	FROM orchestration_v2_projection_turn_items
-	WHERE provider_turn_id = ? AND thread_id = ?
-	AND type IN ('dynamic_tool', 'command_execution', 'compaction')
+	WHERE provider_turn_id = ? AND +thread_id = ?
+	AND +type IN ('dynamic_tool', 'command_execution', 'compaction')
 	ORDER BY ordinal LIMIT ?`;
 
 type Item = {
