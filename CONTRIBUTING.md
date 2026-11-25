@@ -20,7 +20,7 @@ bun run lint:fix      # Biome's format and import-order fixes
 - `tsc --noEmit`;
 - `knip`: unused files, exports and dependencies (tests count as entry points);
 - `jscpd`: any copy-pasted block of 50 or more tokens fails (`.jscpd.json`);
-- `bun test`.
+- `bun run test` (`bun test` with a 20 s limit per test: many start child processes, and a busy machine slows those).
 
 The hooks run the same checks on less: pre-commit is Biome on the staged files plus the typecheck; pre-push is the typecheck, Biome on everything changed against `origin/main`, knip, jscpd and the full tests, under one lock so pushes from several worktrees queue. The hooks cannot be skipped by setting `LEFTHOOK_EXCLUDE` or `LEFTHOOK_ONLY`; a `git commit --no-verify` is logged to `<git-common-dir>/chamberlain-hooks/bypass.log` by the post-commit hook, and CI runs everything again. (`scripts/hooks.ts` says what git cannot see.)
 

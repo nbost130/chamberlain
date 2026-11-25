@@ -6,6 +6,8 @@ export const PREFLIGHT_DETAILS = {
 	unsupported: "The provider or model does not support the requested execution capability.",
 	config: "Check the configured receiver, server, model selection and webhook binding.",
 	unreachable: "The server connection closed, failed or timed out.",
+	policy:
+		"The desk's provider does not enforce its command allowlist. Use one that runs the hook, or reinstall the hook.",
 	unknown: "An unrecognized failure prevented preparation.",
 } as const;
 

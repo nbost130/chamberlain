@@ -211,6 +211,7 @@ export class Core extends CoreWork {
 			look: async (id) => this.watcherOf(id)?.adapter.inspect?.look?.(id),
 			stewardId: () => this.privateFile("steward-thread"),
 			decisionsId: () => this.privateFile("decisions-thread"),
+			deskId: () => this.privateFile("desk-thread"),
 			state: (id) => this.watcherOf(id)?.states.get(id),
 			children: (id) => this.recoveryChildren(id),
 			readFailure: async (id) => this.watcherOf(id)?.adapter.inspect?.failure?.(id),

@@ -28,6 +28,8 @@ export type RecoverDeps = {
 	setTimer?: (ms: number, fn: () => void) => () => void;
 	stewardId: () => string | undefined;
 	decisionsId: () => string | undefined;
+	/** The Alert Desk's thread: it is sent to only through its own checked wakes. */
+	deskId?: () => string | undefined;
 	/** The newest state the daemon holds for a thread. */
 	state: (threadId: string) => ThreadState | undefined;
 	/** Running children and subagents of a thread. */

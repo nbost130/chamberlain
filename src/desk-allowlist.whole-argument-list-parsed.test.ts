@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { checkCommand, checkPath, checkTool, LOG_DIRS } from "./desk-allowlist.ts";
+import { checkCommand, checkPath, checkTool, logDirsOf } from "./desk-allowlist.ts";
 import { allowed, GATHERER, HOME, MONITOR, OPS, refused } from "./testing/desk-allowlist-fixtures.ts";
 
 describe("the whole argument list is parsed: a flag given twice is refused, in any spelling", () => {
@@ -93,7 +93,7 @@ describe("the whole argument list is parsed: a flag given twice is refused, in a
 describe("file reads", () => {
 	const dir = mkdtempSync(`${tmpdir()}/desk-reads-`);
 	test("only under the named log directories", () => {
-		expect(LOG_DIRS).toContain("/var/log");
+		expect(logDirsOf()).toContain("/var/log");
 		expect(checkPath("/var/log/syslog").ok).toBe(true);
 		expect(checkPath(`${HOME}/.cache/alert-desk/inbox.jsonl`).ok).toBe(true);
 		for (const p of [

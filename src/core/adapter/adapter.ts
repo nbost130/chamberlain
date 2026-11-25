@@ -29,6 +29,7 @@ import type { PrepareReason } from "../delivery/preflight.ts";
 import type { Question } from "../items/questions.ts";
 import type { BuilderCandidate, BuilderCandidateStatus, BuilderHostStatus } from "../llm/builder-routing.ts";
 import type { Store } from "../store/store.ts";
+import type { DeskTurns } from "./adapter-desk.ts";
 import type { Inspector, StewardProbe, ThreadSnapshot, Transcript } from "./adapter-inspect.ts";
 import type { AnswerOutcome, ListWaitingOptions, ThreadLinks, WaitingCard } from "./adapter-waiting.ts";
 import type { StewardMeterRead } from "./steward-meter.ts";
@@ -163,6 +164,8 @@ type AlertDeskLane = {
 	wake: WakeTransport;
 	/** Does the desk thread have a turn running or queued? Like `Adapter.isBusy`, for the desk's thread. */
 	isBusy(): Gate;
+	/** What the desk's finished turns ran, for the audit. Absent: the backend records no calls, and the desk is not audited. */
+	turns?: DeskTurns;
 };
 
 export interface Adapter {

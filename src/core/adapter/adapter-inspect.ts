@@ -63,6 +63,8 @@ export type Inspector = {
 	 * and the core then acts as if the principal were not there. Absent: the adapter cannot say, and `activeHold` never holds its threads' cards.
 	 */
 	principalLastWrite?(threadId: string, since: number): Promise<number | undefined>;
+	/** Counts local operator-authored messages in [from, to), or rejects if the window cannot be read in full. No text leaves the adapter. */
+	countPrincipalMessages?(threadId: string, span: { from: number; to: number }): Promise<number>;
 	/** Subagents the thread itself runs (not separate threads): their completion wakes it. */
 	runningSubagents(threadId: string): Promise<number>;
 	/**

@@ -11,6 +11,7 @@ import type { Candidate } from "../decide/decide.ts";
 import type { GhRead } from "../decide/hold-lookup.ts";
 import type { RelayDeps } from "../delivery/relay-ctx.ts";
 import type { RelayLock } from "../delivery/singleton.ts";
+import type { DeskCheck } from "../desk/desk-audit.ts";
 import type { Question } from "../items/questions.ts";
 import type { Log } from "../log.ts";
 import { threadHappened } from "../messages.ts";
@@ -84,6 +85,8 @@ export type EngineDeps = {
 	ask?: (raw: object) => Promise<void>;
 	/** Shows a question where the operator reads, for a snoozed urgent one that returned. Default: the adapter's one-line notice; the daemon passes the pinned view (ask.ts `postQuestion`). */
 	post?: (item: Question, adapter: Adapter) => Promise<PostResult>;
+	/** The Alert Desk allowlist's verdict on one call (src/desk-allowlist.ts). Absent: the desk is not audited. */
+	deskCheck?: DeskCheck;
 	/** The Steward's compaction size, in tokens. */
 	compactAt?: number;
 	/** Where the full-sweep prompt template lives when the config directory has no sweep-prompt.md. */
