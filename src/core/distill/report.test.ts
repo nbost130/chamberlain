@@ -125,6 +125,22 @@ test("a shared thread title cannot attribute one thread's ruling to another", as
 	expect(r.correctionsByRuling).toEqual({ R2: 1 });
 });
 
+test("cards that do not say which thread they came from share no ruling by name", async () => {
+	const both = await reportFor((s) => {
+		answer(s, card(s, 1), {});
+		answer(s, card(s, 2), {});
+		cite(s, "example thread", ["R1"]);
+	});
+	expect(both.corrections).toBe(2);
+	expect(both.correctionsByRuling).toEqual({});
+	const mixed = await reportFor((s) => {
+		answer(s, card(s, 1, { threadId: "fixture-a" }), {});
+		card(s, 2);
+		cite(s, "example thread", ["R1"]);
+	});
+	expect(mixed.correctionsByRuling).toEqual({});
+});
+
 test("prefers validated explicit scope, then closed and open PR/issue holds linked by card", async () => {
 	const r = await reportFor(
 		(s) => {
@@ -141,7 +157,7 @@ test("prefers validated explicit scope, then closed and open PR/issue holds link
 	expect(r).toMatchObject({ unplaced: 0, outOfScope: 0, escalationsPerPr: 3, correctionsPerPr: 0 });
 });
 
-test("ratios use placed in-scope cards only, and show how many of the totals that is", async () => {
+test("with cards unplaced a ratio is a lower bound under its own name, never an exact one", async () => {
 	const r = await reportFor((s) => {
 		answer(s, card(s, 1), {});
 		answer(s, card(s, 2, { repo: "example/other" }), {});
@@ -160,13 +176,17 @@ test("ratios use placed in-scope cards only, and show how many of the totals tha
 		unplaced: 2,
 		outOfScope: 1,
 		scopedEscalations: 1,
+		unplacedEscalations: 2,
 		scopedCorrections: 1,
-		escalationsPerPr: 1,
-		correctionsPerPr: 1,
+		unplacedCorrections: 1,
+		escalationsPerPrAtLeast: 1,
+		correctionsPerPrAtLeast: 1,
 	});
+	expect(r).not.toHaveProperty("escalationsPerPr");
+	expect(r).not.toHaveProperty("correctionsPerPr");
 	const shown = formatDistill(r);
 	expect(shown).toContain("Unplaced cards: 2 · cards outside the PR scope: 1");
-	expect(shown).toContain("1.00 escalations (1 of 4 counted) · 1.00 corrections (1 of 3 counted)");
+	expect(shown).toContain("escalations at least 1.00 (1 of 4 placed) · corrections at least 1.00 (1 of 3 placed)");
 });
 
 test("an owner is a scope, an excluded repository is not, and names compare without case", async () => {
@@ -184,25 +204,30 @@ test("an owner is a scope, an excluded repository is not, and names compare with
 	expect(r).toMatchObject({ mergedPrs: 1, outOfScope: 2, scopedEscalations: 1, escalationsPerPr: 1 });
 });
 
-test("no in-scope card is zero when every card is placed, and no ratio when one is not", async () => {
+test("each figure is zero only when its own cards are placed, and unknown otherwise", async () => {
 	const other = (s: Store) => card(s, 1, { repo: "example/other" });
 	expect(await reportFor(other)).toMatchObject({ outOfScope: 1, escalationsPerPr: 0, correctionsPerPr: 0 });
-	const r = await reportFor((s) => {
-		other(s);
-		card(s, 2, { repo: undefined });
-	});
-	expect(r).not.toHaveProperty("escalationsPerPr");
-	expect(r).not.toHaveProperty("correctionsPerPr");
-	expect(formatDistill(r)).toContain("not shown, no card could be placed");
-});
-
-test("a correction on an older in-scope card is a ratio on its own", async () => {
-	const r = await reportFor((s) => {
+	const asked = await reportFor((s) => {
 		answer(s, card(s, 1, {}, span.from - 1), {});
 		card(s, 2, { repo: undefined });
 	});
-	expect(r).toMatchObject({ escalations: 1, scopedEscalations: 0, escalationsPerPr: 0, correctionsPerPr: 1 });
-	expect(formatDistill(r)).toContain("0.00 escalations (0 of 1 counted) · 1.00 corrections (1 of 1 counted)");
+	expect(asked).toMatchObject({ escalations: 1, scopedEscalations: 0, unplacedEscalations: 1, correctionsPerPr: 1 });
+	expect(asked).not.toHaveProperty("escalationsPerPr");
+	expect(asked).not.toHaveProperty("escalationsPerPrAtLeast");
+	expect(formatDistill(asked)).toContain("escalations unknown · corrections 1.00");
+	const corrected = await reportFor((s) => {
+		card(s, 1);
+		answer(s, card(s, 2, { repo: undefined }, span.from - 1), {});
+	});
+	expect(corrected).toMatchObject({ escalationsPerPr: 1, unplacedCorrections: 1 });
+	expect(corrected).not.toHaveProperty("correctionsPerPr");
+	expect(formatDistill(corrected)).toContain("escalations 1.00 · corrections unknown");
+	const partly = await reportFor((s) => {
+		answer(s, card(s, 1, {}, span.from - 1), {});
+		answer(s, card(s, 2, { repo: undefined }, span.from - 1), {});
+	});
+	expect(partly).toMatchObject({ escalationsPerPr: 0, correctionsPerPrAtLeast: 1 });
+	expect(formatDistill(partly)).toContain("escalations 0.00 · corrections at least 1.00 (1 of 2 placed)");
 });
 
 test("a PR outside the scope, zero PRs, partial PRs and absent config never print ratios", async () => {

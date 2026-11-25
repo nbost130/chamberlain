@@ -170,11 +170,11 @@ write. Use the raw counts alongside the rates when comparing weeks.
   on the same thread, using its ID or an unambiguous recorded thread name for older decisions.
 - File a question with `"repo": "example/widget"` when known. Otherwise the report uses a PR or issue on a linked hold
   (including closed holds). A card with absent or conflicting evidence is unplaced and is never guessed into a scope.
-- Cards and merged PRs are held to one scope, the owners and repositories in `overhead.github` less its exclusions. Ratios use
-  only cards placed in that scope and print beside the totals they came from, as in `12 of 40 counted`: a ratio over few of
-  the cards is a partial figure, and a rise in placed cards raises it. Unplaced and out-of-scope cards are shown. No ratio is
-  printed with no merged PR, or when nothing is in scope and some cards are unplaced. Rollups are excluded. An incomplete
-  read, or a PR from outside the scope, makes the PR count unavailable.
+- Cards and merged PRs are held to one scope, the owners and repositories in `overhead.github` less its exclusions. Only cards
+  placed in that scope enter a ratio. When some of a figure's cards are unplaced, the report gives a lower bound
+  (`at least`, and `escalationsPerPrAtLeast` in JSON) or, with none placed in scope, no figure. Unplaced and out-of-scope cards
+  are shown. Rollups are excluded. With no merged PR there is no ratio, and an incomplete read, or a PR from outside the
+  scope, makes the PR count unavailable.
 - `distill.chat: true` opts in to counting the operator's own messages during the Steward thread's active tenure. This is
   a proxy for redirections. It uses local adapter history, requires complete coverage, and keeps its count separate from card
   corrections. Chat and question text stay out of the report and history.

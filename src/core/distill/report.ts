@@ -10,7 +10,13 @@ const DEFINITION_VERSION = 1;
 type Github = OverheadConfig["github"];
 type PrCount = { mergedPrs: number | null; prStatus: "ok" | "unavailable" | "not configured" };
 type ChatCount = { chatRedirections?: number; chatStatus: "ok" | "unavailable" | "off" };
-type Ratios = { escalationsPerPr?: number; correctionsPerPr?: number };
+/** Exact when every card of that figure is placed. `AtLeast` when some are not: those could only raise it. */
+type Ratios = {
+	escalationsPerPr?: number;
+	escalationsPerPrAtLeast?: number;
+	correctionsPerPr?: number;
+	correctionsPerPrAtLeast?: number;
+};
 type CardStats = ReturnType<typeof countCards>;
 export type DistillReport = CardStats["counts"] &
 	PrCount &
@@ -30,11 +36,18 @@ function scopeOf(github: Github): (repo: string) => boolean {
 	return (repo) => !excluded.has(repo) && (repos.has(repo) || owners.has(repo.split("/")[0] ?? ""));
 }
 
-/** With nothing in scope and some cards unplaced, zero would be a guess. With every card placed, zero is the count. */
+/** A zero with cards unplaced is a guess, so it is absent. */
+function ratio(figure: "escalations" | "corrections", scoped: number, unplaced: number, prs: number): Ratios {
+	if (!unplaced) return { [`${figure}PerPr`]: scoped / prs };
+	return scoped ? { [`${figure}PerPrAtLeast`]: scoped / prs } : {};
+}
+
 function ratios({ counts }: CardStats, prs: number): Ratios {
-	const { scopedEscalations, scopedCorrections, unplaced } = counts;
-	if (!prs || (!scopedEscalations && !scopedCorrections && unplaced)) return {};
-	return { escalationsPerPr: scopedEscalations / prs, correctionsPerPr: scopedCorrections / prs };
+	if (!prs) return {};
+	return {
+		...ratio("escalations", counts.scopedEscalations, counts.unplacedEscalations, prs),
+		...ratio("corrections", counts.scopedCorrections, counts.unplacedCorrections, prs),
+	};
 }
 
 async function prStats(gh: GhRead, github: Github, span: Span, cards: CardStats): Promise<PrCount & Ratios> {
@@ -95,6 +108,11 @@ export async function distillReport(d: {
 	};
 }
 
+function formatRatio(exact: number | undefined, atLeast: number | undefined, scoped: number, total: number): string {
+	if (exact !== undefined) return exact.toFixed(2);
+	return atLeast === undefined ? "unknown" : `at least ${atLeast.toFixed(2)} (${scoped} of ${total} placed)`;
+}
+
 export function formatDistill(r: DistillReport): string {
 	const from = new Date(r.from).toISOString();
 	const to = new Date(r.to).toISOString();
@@ -108,11 +126,11 @@ export function formatDistill(r: DistillReport): string {
 		`Merged PRs: ${r.mergedPrs ?? r.prStatus}`,
 		`Chat redirections (operator messages): ${r.chatRedirections ?? r.chatStatus}`,
 	];
-	if (r.escalationsPerPr !== undefined && r.correctionsPerPr !== undefined)
-		lines.push(
-			`Per merged PR: ${r.escalationsPerPr.toFixed(2)} escalations (${r.scopedEscalations} of ${r.escalations} counted) · ${r.correctionsPerPr.toFixed(2)} corrections (${r.scopedCorrections} of ${r.corrections} counted)`,
-		);
-	else if (r.mergedPrs) lines.push("Per merged PR: not shown, no card could be placed in the PR scope.");
+	if (r.mergedPrs) {
+		const asked = formatRatio(r.escalationsPerPr, r.escalationsPerPrAtLeast, r.scopedEscalations, r.escalations);
+		const corrected = formatRatio(r.correctionsPerPr, r.correctionsPerPrAtLeast, r.scopedCorrections, r.corrections);
+		lines.push(`Per merged PR: escalations ${asked} · corrections ${corrected}`);
+	}
 	for (const [id, n] of Object.entries(r.correctionsByRuling)) lines.push(`${id}: ${n} corrections`);
 	return lines.join("\n");
 }

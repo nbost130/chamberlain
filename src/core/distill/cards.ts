@@ -41,13 +41,15 @@ function citations(decisions: DecisionRow[], span: Span): Map<string, Set<string
 	return byThread;
 }
 
+/** A card that does not say which thread it came from could be any thread of that name, so it counts as one of its own. */
 function threadAliases(cards: Item[]): Map<string, Set<string>> {
 	const aliases = new Map<string, Set<string>>();
-	for (const { payload } of cards) {
+	for (const { payload, dedupKey } of cards) {
 		const { thread, threadId, server } = payload;
-		if (typeof thread !== "string" || typeof threadId !== "string" || typeof server !== "string") continue;
+		if (typeof thread !== "string") continue;
 		const addresses = aliases.get(thread) ?? new Set<string>();
-		addresses.add(JSON.stringify([server, threadId]));
+		const known = typeof threadId === "string" && typeof server === "string";
+		addresses.add(JSON.stringify(known ? [server, threadId] : [dedupKey]));
 		aliases.set(thread, addresses);
 	}
 	return aliases;
@@ -74,20 +76,24 @@ const cardCounts = () => ({
 	outOfScope: 0,
 	scopedEscalations: 0,
 	scopedCorrections: 0,
+	unplacedEscalations: 0,
+	unplacedCorrections: 0,
 });
 type Counts = ReturnType<typeof cardCounts>;
 
-/** Every figure keeps its own total beside the part a merged-PR ratio may use, so a ratio always shows how much it covers. */
-function countIn(counts: Counts, figure: "escalations" | "corrections", scoped: boolean): void {
-	counts[figure]++;
-	if (scoped) counts[figure === "escalations" ? "scopedEscalations" : "scopedCorrections"]++;
+type Place = "scoped" | "outOfScope" | "unplaced";
+
+/** Every figure keeps its own total beside the part a merged-PR ratio may use and the part that might belong to it. */
+function countIn(counts: Counts, figure: "Escalations" | "Corrections", place: Place): void {
+	counts[figure === "Escalations" ? "escalations" : "corrections"]++;
+	if (place !== "outOfScope") counts[`${place}${figure}`]++;
 }
 
-function place(counts: Counts, repo: string | undefined, inScope: (repo: string) => boolean): boolean {
-	const scoped = repo !== undefined && inScope(repo);
-	if (repo === undefined) counts.unplaced++;
-	else if (!scoped) counts.outOfScope++;
-	return scoped;
+function placed(counts: Counts, repo: string | undefined, inScope: (repo: string) => boolean): Place {
+	if (repo !== undefined && inScope(repo)) return "scoped";
+	const place = repo === undefined ? "unplaced" : "outOfScope";
+	counts[place]++;
+	return place;
 }
 
 function recommendation(card: Item): number | undefined {
@@ -130,6 +136,10 @@ function cardActivity(card: Item, span: Span, answer?: Answer, snoozed = false) 
 	return asked || answered || snooze ? { asked, answered, snooze } : undefined;
 }
 
+function credit(correctionsByRuling: Map<string, number>, ids: Set<string>): void {
+	for (const id of ids) correctionsByRuling.set(id, (correctionsByRuling.get(id) ?? 0) + 1);
+}
+
 /** Output is an aggregate projection: no question, note, decision or ruling text is returned. */
 export function countCards(ledger: DistillLedger, span: Span, inScope: (repo: string) => boolean) {
 	const counts = cardCounts();
@@ -143,14 +153,14 @@ export function countCards(ledger: DistillLedger, span: Span, inScope: (repo: st
 		const activity = cardActivity(card, span, answers.get(card.dedupKey), snoozed.has(card.dedupKey));
 		if (!activity) continue;
 		const { asked, answered, snooze } = activity;
-		const scoped = place(counts, repoOf(card, holds), inScope);
-		if (asked) countIn(counts, "escalations", scoped);
+		const place = placed(counts, repoOf(card, holds), inScope);
+		if (asked) countIn(counts, "Escalations", place);
 		if (snooze) counts.snoozes++;
 		const recommended = recommendation(card);
 		if (recommended === undefined) counts.noRecommendation++;
 		if (!answered || !countAnswer(counts, card, answered, recommended)) continue;
-		countIn(counts, "corrections", scoped);
-		for (const id of rulingIds(card, ids, aliases)) correctionsByRuling.set(id, (correctionsByRuling.get(id) ?? 0) + 1);
+		countIn(counts, "Corrections", place);
+		credit(correctionsByRuling, rulingIds(card, ids, aliases));
 	}
 	return { counts, correctionsByRuling: Object.fromEntries([...correctionsByRuling].sort()) };
 }
