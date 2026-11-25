@@ -5,7 +5,7 @@ export type Obj = Record<string, unknown>;
 
 /** A name that goes into a GitHub search or a database query: letters, digits and a few separators, so nothing in it can change the statement. */
 const SAFE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,80}$/;
-export const SAFE_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
+export const SAFE_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]*\/(?!\.{1,2}$)[A-Za-z0-9._-]+$/;
 
 /** A list of plain names (or, with `SAFE_REPO`, of `owner/name` repositories); left out is an empty list. */
 export function names(o: Obj, k: string, where: string, ok: RegExp = SAFE): string[] {

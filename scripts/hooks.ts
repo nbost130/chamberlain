@@ -175,7 +175,7 @@ const checksOf = (root: string, sha: string): Promise<number> =>
 				["biome on the changed files", () => lint(changedBy(root, sha), dir)],
 				["knip", () => run(["bun", "run", "knip"], dir)],
 				["jscpd", () => run(["bun", "run", "jscpd"], dir)],
-				["tests", () => withLock(() => runTests(["bun", "test"], dir))],
+				["tests", () => withLock(() => runTests(["bun", "run", "test"], dir))],
 			]),
 	);
 

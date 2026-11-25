@@ -75,6 +75,16 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-12 | bun-test | Exact measurements and stale or invalid provider records | bun test src/adapters/t3 |
 | ISC-13 | bun-test | Shared limits, completed-turn fallback and guarded thread actions | bun test src/core/engine src/core/steward src/core/config |
 
+## Weekly decision distillation (#121)
+
+| Criterion | Falsifier and probe |
+| --- | --- |
+| DISTILL-1 | A question's ask, answer, dismissal or snooze is counted outside its window or in the wrong bucket, or a secret's text reaches either output format. `bun test src/core/distill` |
+| DISTILL-2 | A card outside the PR scope enters a ratio, a ratio that leaves out unplaced cards is given as exact or as zero, a PR outside the scope, an incomplete GitHub read or zero shipped PRs yields a ratio, or a rollup enters the denominator. `bun test src/core/distill src/core/overhead/merged-prs.test.ts` |
+| DISTILL-3 | A correction is attributed to a ruling without a decision on the same thread in the window, or is counted twice for that ruling. `bun test src/core/distill` |
+| DISTILL-4 | Chat is read without opt-in, a machine message counts, or any chat text enters the report, history or logs. `bun test src/core/distill src/adapters/t3/principal.test.ts` |
+| DISTILL-5 | A report changes the ledger, a local week is wrong across a clock change, or a rerun creates a duplicate or overwrites an older definition. The existing ledger and telemetry databases remain readable by older builds. `bun test src/distill.test.ts src/core/distill` |
+
 ## Readable decision cards (#125)
 
 | Criterion | Falsifier and probe |

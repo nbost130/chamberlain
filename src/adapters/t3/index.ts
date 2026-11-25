@@ -11,18 +11,21 @@ import type {
 	AdapterFactory,
 	OptionalCapability,
 } from "../../core/adapter/adapter.ts";
+import type { Inspector } from "../../core/adapter/adapter-inspect.ts";
 import { setting } from "../../core/config/layout.ts";
 import type { ServerEntry } from "../../core/config/servers.ts";
 import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { probeT3Builder } from "./builder-probe.ts";
 import { deskEnforced, deskTurns } from "./desk-record.ts";
+import { historyGet } from "./history.ts";
 import { t3Linker } from "./links.ts";
 import { modelWake } from "./model-wake.ts";
 import { createRpcPing } from "./ping.ts";
 import { t3Post } from "./post.ts";
+import { countPrincipalMessages } from "./principal.ts";
 import { queueGate, readStewardQueue } from "./queue.ts";
-import { t3Server } from "./server.ts";
+import { type T3Server, t3Server } from "./server.ts";
 import { t3BaseDir, t3StateDbPath } from "./settings.ts";
 import { t3Probe } from "./steward.ts";
 import { t3TitleSetter } from "./title.ts";
@@ -64,6 +67,19 @@ const T3_CAPABILITIES: readonly OptionalCapability[] = [
 
 /** Idle when no thread id is known yet; otherwise what the thread's queue in T3's state database says. */
 const threadGate = (id: string | undefined): Gate => (id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle");
+
+function t3Inspector(link: T3Link, srv: T3Server, env: AdapterEnv): Inspector {
+	return {
+		...link.inspector,
+		countPrincipalMessages: async (threadId, span) => {
+			const { hostname } = new URL(srv.origin);
+			if (!["127.0.0.1", "[::1]", "localhost"].includes(hostname))
+				throw Error("operator history requires a local T3 server");
+			const get = historyGet(srv.origin, () => env.readPrivate(srv.tokenFile), "error");
+			return countPrincipalMessages(threadId, get, span);
+		},
+	};
+}
 
 const stewardProbeFor =
 	(env: AdapterEnv): NonNullable<Adapter["stewardProbe"]> =>
@@ -116,7 +132,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 			return t3TitleSetter(env.conf, srv.origin, srv.operateTokenFile, thread)(title);
 		},
 		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
-		inspect: link.inspector,
+		inspect: t3Inspector(link, srv, env),
 		snapshot: () => link.snapshot(),
 		probeBuilder: (request) => probeT3Builder(env, srv, request),
 		send: waiting.send,

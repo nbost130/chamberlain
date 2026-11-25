@@ -168,6 +168,14 @@ What the Steward and Chamberlain cost against the work that got done, and the li
 | Investigator, investigation (`investigator`, state key `overhead`) | One T3 thread Chamberlain opens, on the operator's own provider, model and effort, when a trigger is crossed: it finds the cause in code and opens a draft fix PR, never a deploy, and reports to the Steward. An investigation is a *reservation*: *pending* (recorded before any command goes out; the launch outcome is not known), *open* (T3 has its thread and brief) or *closed*. Pending and open both count against `maxOpen`; one is released only by evidence (the launch sent nothing, `chamberlain overhead close <id>`, or, past `ttlHours`, T3 showing the thread idle, archived or gone), never by the clock alone. Past `ttlHours` it is *stale*: reported, still held. | Incident investigation; idempotent request | The cooldown (`cooldownHours`) and `maxOpen` keep it from feeding back: its own spend is not part of the overhead it is investigating. |
 | Price table (`overhead.prices`) | USD per million tokens, per model, for the four usage fields. Shipped empty. | Rate card | A rate is a fact about a vendor's current price list; it goes stale, so the operator owns it. |
 
+### Decision distillation
+
+| Term | Meaning and source |
+| --- | --- |
+| Escalation, correction, unplaced card | A question filed for the operator, an answer that changes a recommended pick or gives a direction on a card with a recommendation, and a card whose repository cannot be identified, respectively. These are Chamberlain's metric definitions. [Weekly decision distillation](OBSERVABILITY.md#weekly-decision-distillation) |
+| Chat redirection | The count of operator-authored messages in Steward threads, used as a proxy and measured separately from card corrections. [Weekly decision distillation](OBSERVABILITY.md#weekly-decision-distillation) |
+| Definition version, weekly history | Version of the measurement rules, stored with the weekly aggregate in `distill_weekly` in `distill.db`. Week boundaries use `distill.timezone`. [Weekly decision distillation](OBSERVABILITY.md#weekly-decision-distillation) |
+
 ## Recovering a failed thread
 
 | Term | Definition | Standard term | Source or reason |

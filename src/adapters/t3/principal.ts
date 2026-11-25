@@ -5,7 +5,7 @@
  * named here (`PERSON_SOURCES`) are known to be. A missing or unknown source is not the principal's: the worst of that is a card that was not held.
  */
 import type { TurnItem } from "../../core/decide/decide.ts";
-import type { HistoryGet } from "./history.ts";
+import { HISTORY_PAGES_MAX, type HistoryGet } from "./history.ts";
 
 const PERSON_SOURCES: ReadonlySet<string> = new Set(["mobile", "web"]);
 /** History pages read before the answer is "cannot tell". A page holds up to 75 conversation items, so this reaches far past any window. */
@@ -45,8 +45,68 @@ function oldest(items: readonly TurnItem[]): number | undefined {
 function localItems(page: Page, threadId: string): TurnItem[] {
 	if (!Array.isArray(page.items)) throw Error("history page had no items");
 	return page.items
-		.filter((r) => r.visibility === "local" || r.sourceThreadId === threadId)
+		.filter((r) => (r.sourceThreadId === undefined ? r.visibility === "local" : r.sourceThreadId === threadId))
 		.flatMap((r) => (r.item ? [r.item] : []));
+}
+
+type PrincipalItem = TurnItem & { threadId?: string; messageId?: string; itemId?: string };
+
+/** Is this a message someone sent in the span? Whose it is must be known: a missing author or source cannot be counted either way. */
+function sentIn(item: PrincipalItem, { from, to }: { from: number; to: number }): boolean {
+	if (item.type !== "user_message") return false;
+	const time = Date.parse(item.updatedAt ?? "");
+	if (!Number.isFinite(time)) throw Error("operator timestamp unavailable");
+	if (time < from || time >= to) return false;
+	if (!item.createdBy || !item.creationSource) throw Error("operator message origin unavailable");
+	return true;
+}
+
+function addMessages(messageIds: Set<string>, items: PrincipalItem[], span: { from: number; to: number }): void {
+	for (const item of items) {
+		if (!sentIn(item, span) || !isPrincipalMessage(item)) continue;
+		const id = item.messageId ?? item.id ?? item.itemId;
+		if (!id) throw Error("operator message identity unavailable");
+		messageIds.add(id);
+	}
+}
+
+/** A fork's snapshot and pages also carry its parent's items. They are not counted, and say nothing about how far back this thread was read. */
+const ownItems = (items: PrincipalItem[], threadId: string) =>
+	items.filter((item) => item.threadId === undefined || item.threadId === threadId);
+
+/** A row that does not say whose it is could hide a message, so a count cannot use the page. */
+function countedPage(page: Page, threadId: string): PrincipalItem[] {
+	const rows = localItems(page, threadId);
+	if (page.items?.some((row) => row.visibility === undefined && row.sourceThreadId === undefined))
+		throw Error("operator history row has no thread");
+	return rows;
+}
+
+/** Count once per local operator message. Nothing from the response is returned except the count. */
+export async function countPrincipalMessages(
+	threadId: string,
+	get: HistoryGet,
+	span: { from: number; to: number },
+): Promise<number> {
+	const base = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
+	const bounded = (await get(`${base}/bounded`)) as Bounded;
+	if (!Array.isArray(bounded.projection?.turnItems)) throw Error("operator history unavailable");
+	let items = ownItems(bounded.projection.turnItems, threadId);
+	let more = bounded.hasMoreHistory;
+	let cursor = bounded.historyCursor;
+	const messageIds = new Set<string>();
+	const visited = new Set<string>();
+	for (let pages = 0; ; pages++) {
+		addMessages(messageIds, items, span);
+		if (more === false || (oldest(items) ?? Infinity) < span.from) return messageIds.size;
+		if (more !== true || !cursor || visited.has(cursor) || pages === HISTORY_PAGES_MAX)
+			throw Error("operator history did not reach the window");
+		visited.add(cursor);
+		const page = (await get(`${base}/history?cursor=${encodeURIComponent(cursor)}&view=conversation`)) as Page;
+		items = ownItems(countedPage(page, threadId), threadId);
+		more = page.hasMoreHistory;
+		cursor = page.nextCursor;
+	}
 }
 
 /**

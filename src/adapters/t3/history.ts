@@ -24,13 +24,14 @@ type Page = { items?: Row[]; nextCursor?: string | null; hasMoreHistory?: boolea
 
 /** Reads over HTTP: T3's history pages have no RPC, and the projection RPC gives no cursor. */
 export const historyGet =
-	(origin: string, readToken: () => string | undefined): HistoryGet =>
+	(origin: string, readToken: () => string | undefined, redirect?: RequestRedirect): HistoryGet =>
 	async (path) => {
 		const token = readToken();
 		if (!token) throw Error("no token");
 		const r = await fetch(new URL(path, origin), {
 			headers: { Authorization: `Bearer ${token}`, "x-t3-orchestration-protocol": "2" },
 			signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+			redirect,
 		});
 		if (!r.ok) throw Error(`${path.split("?")[0]} returned HTTP ${r.status}`);
 		return r.json();
