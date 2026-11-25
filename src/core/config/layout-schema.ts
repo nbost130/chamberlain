@@ -1,5 +1,6 @@
 /** The config document's schema: the files and directories, the scalar and section keys, and the checks a config.json must pass. */
 
+import { distillSettings } from "../distill/window.ts";
 import { parseBuilderProfiles } from "../llm/builder-routing.ts";
 import { type ModelSelections, parseModels } from "../llm/selection.ts";
 import { parseOverhead } from "../overhead/config.ts";
@@ -74,6 +75,7 @@ export const SECTIONS = [
 	"models",
 	"builderProfiles",
 	"overhead",
+	"distill",
 	"activeHold",
 	"contextGuard",
 	"guardedThreads",
@@ -198,6 +200,7 @@ export function parseConfigDoc(raw: unknown): Record<string, unknown> {
 		checkBuilderProfiles(raw, models);
 		const steward = models.steward;
 		parseOverhead(raw.overhead, steward?.adapter === "t3" ? steward.model : undefined);
+		distillSettings(raw.distill);
 	} catch (e) {
 		throw new ConfigFileError((e as Error).message);
 	}

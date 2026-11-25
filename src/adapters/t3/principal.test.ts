@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TurnItem } from "../../core/decide/decide.ts";
-import { isPrincipalMessage, lastPrincipalWrite, readPrincipalLastWrite } from "./principal.ts";
+import { countPrincipalMessages, isPrincipalMessage, lastPrincipalWrite, readPrincipalLastWrite } from "./principal.ts";
 
 const MIN = 60_000;
 const NOW = Date.parse("2026-11-18T22:00:00.000Z");
@@ -118,4 +118,65 @@ describe("readPrincipalLastWrite", () => {
 		};
 		await expect(readPrincipalLastWrite("th", getOver(endless), since)).rejects.toThrow("did not reach back");
 	});
+});
+
+test("counts only local operator messages once across pages, inside half-open bounds", async () => {
+	const operator = msg("mobile", 2, "user", "fixture message text");
+	const get = getOver({
+		bounded: bounded(
+			[operator, msg("web", 0), msg("mcp", 2), msg("server", 1), msg("provider", 3), msg("web", 1, "agent")],
+			true,
+			"c1",
+		),
+		c1: {
+			items: [
+				{ visibility: "local", item: operator },
+				{ sourceThreadId: "th", item: msg("web", 5) },
+				{ visibility: "inherited", sourceThreadId: "fixture-parent", item: msg("web", 4) },
+			],
+			hasMoreHistory: false,
+		},
+	});
+	expect(await countPrincipalMessages("th", get, { from: NOW - 5 * MIN, to: NOW })).toBe(2);
+});
+
+test("a short or broken history is unavailable rather than a partial count", async () => {
+	const partial = {
+		bounded: bounded([msg("mobile", 2)], true, "c1"),
+		c1: { items: [], hasMoreHistory: true, nextCursor: "c1" },
+	};
+	const span = { from: NOW - 5 * MIN, to: NOW };
+	await expect(countPrincipalMessages("th", getOver(partial), span)).rejects.toThrow("did not reach");
+	await expect(countPrincipalMessages("th", getOver({ bounded: {} }), span)).rejects.toThrow("history unavailable");
+});
+
+test("a parent's old item does not end the read before this thread's own messages", async () => {
+	const span = { from: NOW - 5 * MIN, to: NOW };
+	const parent = { ...msg("mobile", 60), threadId: "parent" };
+	const own = { visibility: "local", sourceThreadId: "th", item: msg("web", 3) };
+	const old = { ...msg("web", 90), threadId: "parent", id: "m-old" };
+	const get = getOver({
+		bounded: bounded([parent, msg("mobile", 1)], true, "c1"),
+		c1: {
+			items: [own, { visibility: "local", sourceThreadId: "th", item: old }],
+			hasMoreHistory: true,
+			nextCursor: "c2",
+		},
+		c2: { items: [{ visibility: "local", item: msg("mobile", 4) }], hasMoreHistory: false },
+	});
+	expect(await countPrincipalMessages("th", get, span)).toBe(3);
+});
+
+test("a row or message that does not say whose it is makes the count unavailable", async () => {
+	const span = { from: NOW - 5 * MIN, to: NOW };
+	const page = (row: object) =>
+		getOver({ bounded: bounded([], true, "c1"), c1: { items: [row], hasMoreHistory: false } });
+	const count = (get: ReturnType<typeof getOver>) => countPrincipalMessages("th", get, span);
+	await expect(count(page({ item: msg("web", 2) }))).rejects.toThrow("no thread");
+	expect(await count(page({ visibility: "inherited", item: msg("web", 2) }))).toBe(0);
+	const { creationSource: _s, ...noSource } = msg("web", 2);
+	const { createdBy: _b, ...noAuthor } = msg("web", 2);
+	await expect(count(getOver({ bounded: bounded([noSource]) }))).rejects.toThrow("origin unavailable");
+	await expect(count(getOver({ bounded: bounded([noAuthor]) }))).rejects.toThrow("origin unavailable");
+	expect(await count(getOver({ bounded: bounded([{ ...noSource, updatedAt: at(60) }]) }))).toBe(0);
 });

@@ -55,6 +55,7 @@ export const COMMANDS = {
 	triage: "src/triage.ts",
 	"steward-health": "src/steward-health.ts",
 	overhead: "src/overhead.ts",
+	distill: "src/distill.ts",
 	"desk-allowlist": "src/desk-allowlist.ts",
 	peek: "src/adapters/t3/peek.ts",
 	t3x: "src/adapters/t3/t3x.ts",

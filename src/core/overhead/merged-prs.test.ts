@@ -51,9 +51,16 @@ describe("reading merged PRs", () => {
 		expect(asked).toHaveLength(2);
 	});
 
-	test("an item with no merge time is not a merged PR", async () => {
+	test("a search hit without its merge time makes the count unavailable", async () => {
 		const { gh } = fake({ "user:acme": [{ total: 1, incomplete: false, items: [item("acme/app", 1, null)] }] });
-		expect(await mergedPrs(gh, { owners: ["acme"], repos: [] }, SINCE)).toEqual([]);
+		await expect(mergedPrs(gh, { owners: ["acme"], repos: [] }, SINCE)).rejects.toThrow("unreadable merged PR");
+	});
+
+	test("a bounded window asks GitHub for an ISO time range at second precision", async () => {
+		const { gh, asked } = fake({ "repo:acme/app": [{ total: 0, incomplete: false, items: [] }] });
+		const to = Date.parse("2026-11-17T00:00:00Z");
+		await mergedPrs(gh, { owners: [], repos: ["acme/app"] }, SINCE + 999, to + 999);
+		expect(asked[0]).toContain("merged:2026-11-10T00:00:00Z..2026-11-17T00:00:00Z");
 	});
 
 	test("nothing configured reads nothing", async () => {
@@ -64,6 +71,17 @@ describe("reading merged PRs", () => {
 });
 
 describe("fails closed", () => {
+	test("refuses short pages, missing completeness and duplicate search hits", async () => {
+		const p = item("acme/app", 1, "2026-11-17T10:00:00Z");
+		for (const [reply, error] of [
+			[{ total: 2, incomplete: false, items: [p] }, "incomplete page"],
+			[{ total: 1, items: [p] }, "unexpected reply"],
+			[{ total: 2, incomplete: false, items: [p, p] }, "repeated a merged PR"],
+		] as const) {
+			const { gh } = fake({ "user:acme": [reply] });
+			await expect(mergedPrs(gh, { owners: ["acme"], repos: [] }, SINCE)).rejects.toThrow(error);
+		}
+	});
 	test("a failed read rejects the whole read: a count that is too low is worse than none", async () => {
 		const { gh } = fake({
 			"user:acme": [{ total: 0, incomplete: false, items: [] }],

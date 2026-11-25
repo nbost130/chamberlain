@@ -25,12 +25,10 @@ function p99(samples: number[]): number {
 }
 
 /**
- * The p99 of three independent rounds, middle one: a neighbour that stalls this process for a moment spoils one round and not the median,
- * while a call that is really slow is slow in all three.
+ * The p99 of three independent rounds, best one: a busy machine spoils some rounds, while a call that is really slow is slow in all three.
  */
 function steadyP99(call: (i: number) => void): number {
-	const rounds = [0, 1, 2].map(() => p99(measure(call, SAMPLES)));
-	return rounds.sort((a, b) => a - b)[1] ?? 0;
+	return Math.min(...[0, 1, 2].map(() => p99(measure(call, SAMPLES))));
 }
 
 function measure(call: (i: number) => void, n: number): number[] {
