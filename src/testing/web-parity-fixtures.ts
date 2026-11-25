@@ -58,6 +58,7 @@ export const addresses = (html: string) =>
 const MIN = 60_000;
 /** A question in which every field carries a marker, so whatever the page shows of it can be looked for in the inline card. */
 export const fullQuestion = (over: Record<string, unknown> = {}) => ({
+	details: "Audit-ref-mark",
 	id: "Q-par1",
 	kind: "product",
 	title: "Title-mark",

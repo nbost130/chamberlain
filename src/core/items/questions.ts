@@ -22,6 +22,8 @@ export type Question = {
 	kind: Kind;
 	title: string;
 	context: string;
+	/** Plain text audit references shown behind a collapsed Details toggle. */
+	details?: string;
 	options: Option[];
 	recommended?: number;
 	proposedRuling?: string;
@@ -135,7 +137,7 @@ function withUrgency(q: Question): Question {
  */
 export function askQuestion(store: Store, q: Question, now = Date.now()) {
 	// An approval or a secret is always urgent: a demotion is dropped here, so no path that files a question can store one.
-	const { evidence, ...rest } = withUrgency(q);
+	const { evidence, details, ...rest } = withUrgency(q);
 	store.tx(() => {
 		if (store.items.get(QUEUE, q.id)) return;
 		ledgerEvents(store).asked(q.id);
@@ -145,7 +147,7 @@ export function askQuestion(store: Store, q: Question, now = Date.now()) {
 			dedupKey: q.id,
 			mode: "silenced",
 			...(q.threadId ? { subject: { kind: "thread", id: q.threadId } } : {}),
-			payload: rest,
+			payload: !q.secret && details !== undefined ? { ...rest, details } : rest,
 			now,
 		});
 		if (evidence?.length)

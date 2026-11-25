@@ -19,6 +19,11 @@ const S = {
 };
 const app = document.getElementById("app");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Keep this grammar in step with inline.js. A span consumes its contents as literal text.
+const inlineMarkers = /(?<!\*)\*\*(?!\*)([^\r\n]*?)(?<!\*)\*\*(?!\*)|(?<!\x60)\x60(?!\x60)([^\x60\r\n]+)\x60(?!\x60)/g;
+const inlineHtml = (text) => esc(text).replace(inlineMarkers, (raw, bold, code) =>
+	bold?.trim() ? `<strong>${bold}</strong>` : code?.trim() ? `<code>${code}</code>` : raw);
+const plainLabel = (text) => text.replace(inlineMarkers, (raw, bold, code) => bold?.trim() || code?.trim() ? bold ?? code : raw);
 const ago = (iso) => {
 	const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
 	return m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
@@ -216,7 +221,7 @@ function evidenceHtml(i) {
 
 function doesHtml(i) {
 	const pick = i.options[defaultPick(i)];
-	const settles = `Settles this question only. ${esc(i.thread)} hears “${esc(pick?.label ?? "")}”${S.note[i.id] ? " with your note" : ""}, and nothing else changes.`;
+	const settles = `Settles this question only. ${esc(i.thread)} hears “${inlineHtml(pick?.label ?? "")}”${S.note[i.id] ? " with your note" : ""}, and nothing else changes.`;
 	const wording = S.wording[i.id] ?? i.proposedRuling ?? "";
 	const editing = S.editing[i.id] || !i.proposedRuling;
 	return `<div class="does"><span class="lbl">WHAT YOUR ANSWER DOES</span><span>${settles}</span>
@@ -232,14 +237,14 @@ function doesHtml(i) {
 // Context with no newline stays one paragraph. Otherwise runs of "- " or "• " lines become one list; other lines are paragraphs.
 function contextHtml(text) {
 	const s = String(text);
-	if (!s.includes("\n")) return `<p class="context">${esc(s)}</p>`;
+	if (!s.includes("\n")) return `<p class="context">${inlineHtml(s)}</p>`;
 	let out = "", open = false;
 	for (const raw of s.split("\n")) {
 		const line = raw.replace(/\r$/, "");
 		const b = /^(?:- |• )(.*)$/.exec(line);
-		if (b) { out += (open ? "" : "<ul>") + `<li>${esc(b[1])}</li>`; open = true; continue; }
+		if (b) { out += (open ? "" : "<ul>") + `<li>${inlineHtml(b[1])}</li>`; open = true; continue; }
 		if (open) { out += "</ul>"; open = false; }
-		if (line.trim()) out += `<p>${esc(line)}</p>`;
+		if (line.trim()) out += `<p>${inlineHtml(line)}</p>`;
 	}
 	return `<div class="context">${out}${open ? "</ul>" : ""}</div>`;
 }
@@ -259,7 +264,7 @@ function detailHtml() {
 	const pos = done + S.sel + 1, total = S.ideaTab ? v.length : S.total || v.length;
 	const mtop = `<div class="mtop"><a href="/" data-nav="/" aria-label="Back to decisions">${ICON.back}</a><span class="pos">${S.sel + 1} of ${v.length}</span><div class="bar" aria-hidden="true">${Array.from({ length: Math.min(total, 12) }, (_, k) => `<span class="${k < S.done ? "done" : k === pos - 1 ? "here" : ""}"></span>`).join("")}</div></div>`;
 	const head = `<div class="crumbs"><span class="chip ${i.kind}">${kind.chip}</span><span>${esc(i.thread)}</span><span>${agoLong(i.createdAt)}</span>${i.blocks ? `<span>${esc(i.blocks)}</span>` : ""}${link}</div>
-		<div class="headline"><h1>${esc(i.title)}</h1>${i.context ? contextHtml(i.context) : ""}</div>`;
+		<div class="headline"><h1>${esc(i.title)}</h1>${i.context ? contextHtml(i.context) : ""}${!i.secret && i.details ? `<details class="technical-details"><summary>Details</summary><pre>\n${esc(i.details)}</pre></details>` : ""}</div>`;
 	if (i.cardRequest && !i.secret) {
 		// A card pointer is never answered here: the card is acted on in its own thread. Dismiss stops tracking this item without answering the card.
 		return `${mtop}<section class="detail" aria-label="Selected decision">${head}
@@ -277,9 +282,9 @@ function detailHtml() {
 	}
 	const pick = defaultPick(i);
 	const opts = i.options.map((o, k) => `<label class="opt ${k === pick ? "on" : ""}"><input type="radio" name="opt" value="${k}" ${k === pick ? "checked" : ""}>
-		<span class="txt"><span class="lbl">${esc(o.label)}${k === i.recommended ? '<span class="rec">RECOMMENDED</span>' : ""}</span>${o.detail ? `<span class="det">${esc(o.detail)}</span>` : ""}</span>
+		<span class="txt"><span class="lbl">${inlineHtml(o.label)}${k === i.recommended ? '<span class="rec">RECOMMENDED</span>' : ""}</span>${o.detail ? `<span class="det">${inlineHtml(o.detail)}</span>` : ""}</span>
 		${k < 9 ? `<span class="kbd">${k + 1}</span>` : ""}</label>`).join("");
-	const sl = shortLabel(i.options[pick]?.label ?? "");
+	const sl = shortLabel(plainLabel(i.options[pick]?.label ?? ""));
 	return `${mtop}<section class="detail" aria-label="Selected decision">${head}${evidenceHtml(i)}
 		<fieldset class="answer"><legend class="legend">YOUR ANSWER</legend>${opts}</fieldset>
 		<div class="note"><label for="note">Note to the thread (optional) <span class="kbd">R</span></label><textarea id="note" rows="2" placeholder="Anything the thread should know with your answer.">${esc(S.note[i.id] || "")}</textarea></div>
@@ -391,8 +396,9 @@ function cardHtml(c) {
 		<div class="headline"><h1>${esc(c.header || "Question")}</h1>${c.question ? contextHtml(c.question) : ""}</div>${c.command ? `<pre class="cmd">${esc(c.command)}</pre>` : ""}`;
 	if (!c.answerable) return `<article class="ccard" data-card="${esc(c.id)}">${head}<div class="secret"><span>${esc(c.why || "Answer it in its thread.")}</span></div>${cardDismiss(c)}</article>`;
 	const pick = cardPick(c), armed = armedFor(c);
-	const opts = c.options.map((o, k) => `<label class="opt ${k === pick ? "on" : ""}"><input type="radio" name="copt-${esc(c.id)}" data-cid="${esc(c.id)}" value="${k}" ${k === pick ? "checked" : ""}><span class="txt"><span class="lbl">${esc(o.label)}${k === c.recommended ? '<span class="rec">RECOMMENDED</span>' : ""}</span>${o.detail ? `<span class="det">${esc(o.detail)}</span>` : ""}</span></label>`).join("");
-	const label = pick < 0 ? "Pick an option" : armed ? `Tap again to confirm: ${esc(c.options[pick].label)}` : confirmable(c) ? esc(c.options[pick].label) : `Answer ${esc(c.options[pick].label)}`;
+	const opts = c.options.map((o, k) => `<label class="opt ${k === pick ? "on" : ""}"><input type="radio" name="copt-${esc(c.id)}" data-cid="${esc(c.id)}" value="${k}" ${k === pick ? "checked" : ""}><span class="txt"><span class="lbl">${inlineHtml(o.label)}${k === c.recommended ? '<span class="rec">RECOMMENDED</span>' : ""}</span>${o.detail ? `<span class="det">${inlineHtml(o.detail)}</span>` : ""}</span></label>`).join("");
+	const choice = esc(plainLabel(c.options[pick]?.label ?? ""));
+	const label = pick < 0 ? "Pick an option" : armed ? `Tap again to confirm: ${choice}` : confirmable(c) ? choice : `Answer ${choice}`;
 	return `<article class="ccard" data-card="${esc(c.id)}">${head}<fieldset class="answer"><legend class="legend">YOUR ANSWER</legend>${opts}</fieldset>
 		<div class="buttons"><button type="button" class="btn-answer" data-cact="answer" data-cid="${esc(c.id)}" ${pick < 0 || S.cbusy[c.id] ? "disabled" : ""}>${label}</button></div>
 		${cardDismiss(c)}${armed ? '<div class="from">This is an approval: it needs this second tap, which expires in a minute. Changing the option cancels it.</div>' : ""}</article>`;

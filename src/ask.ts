@@ -5,7 +5,7 @@
  *
  *   bun src/ask.ts '<json>'        or   bun src/ask.ts - < item.json
  *
- * JSON: {kind: "only-you"|"product"|"ruling"|"idea", title, context, options: [{label, detail, route?: "thread"|"steward",
+ * JSON: {kind: "only-you"|"product"|"ruling"|"idea", title, context, details?, options: [{label, detail, route?: "thread"|"steward",
  *        relay?}], recommended?: index, proposedRuling?, proposedExpires?, evidence?: [{type: "image"|"video"|"link", path|url, caption}],
  *        thread, server, threadId?, route?: "thread"|"steward", blocks?, tag?, secret?, urgent?, notSettled?}
  * `urgent: false` marks a question that can wait: it is recorded and listed on the queue page below the urgent ones, but
@@ -27,7 +27,8 @@
  * A thread asking about its own work sets `"route": "thread"` on the item instead: every option without a route of its own then goes
  * straight back to `threadId`, its relay text defaulting to "Carry on with this choice." when it gives none. A plain pick then costs the
  * Steward no turn at all. Mark the odd option that needs oversight `"route": "steward"`.
- * Lines of `context` that start with "- " render as bullets on the queue page and the Decisions view; write a few short ones.
+ * Write 3 or 4 short plain-English `context` bullets with "- ": what it is, why it stopped, and what each button does.
+ * Put technical references in `details` (input alias `technicalRef`), up to 4,000 characters; secret questions cannot have it.
  * Prints the item ID. A secret item posts no card: its value is entered in its own thread, never on a card or the page.
  * A secret (`secret: true` or tag "Secret") with options, or without a `threadId`, is refused before anything is recorded:
  * file a non-secret choice question first, then a secret request in that thread.
@@ -35,7 +36,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { homeAdapter } from "./adapters/index.ts";
-import { IMAGE, parseAsk, VIDEO } from "./ask-parse.ts";
+import { IMAGE, parseAsk, VIDEO, warnReadability } from "./ask-parse.ts";
 import type { Adapter, PostResult } from "./core/adapter/adapter.ts";
 import { CONF, STATE } from "./core/config/config.ts";
 import { parseIdeas } from "./core/config/ideas-config.ts";
@@ -132,7 +133,7 @@ function settledProblem(store: Store, q: Question, ideaDeclineDays?: number, now
 	if (q.notSettled) return;
 	const { matches, skipped } = findSettled(
 		store,
-		{ title: q.title, context: q.context, thread: q.thread, ideaDeclineDays },
+		{ title: q.title, context: q.context, details: q.details, thread: q.thread, ideaDeclineDays },
 		undefined,
 		() => now,
 	);
@@ -226,6 +227,7 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	}
 	const raw = JSON.parse(arg === "-" ? await Bun.stdin.text() : arg);
 	const parsed = parseAsk(raw, newItemId());
+	warnReadability(parsed, console.error);
 	const store = defaultStore();
 	const filed = fileQuestion(store, parsed);
 	if ("error" in filed) {

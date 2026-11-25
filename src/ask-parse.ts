@@ -1,11 +1,48 @@
 /** Reading a question from the command line's JSON: its options, routing, evidence and the checks on them. */
 import { alwaysUrgent, type Evidence, KINDS, type Option, type Question } from "./core/items/questions.ts";
+import { runIdsIn } from "./core/items/settled-text.ts";
 import { expiresProblem, isExpired } from "./core/ops/rulings-expiry.ts";
 
 export const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 export const VIDEO = new Set([".mp4", ".webm", ".mov"]);
 
 type Raw = Record<string, unknown>;
+const MAX_DETAILS = 4000;
+const MAX_CONTEXT_BULLET = 160;
+
+function parseDetails(o: Raw, secret: boolean): string | undefined {
+	const canonical = Object.hasOwn(o, "details");
+	const alias = Object.hasOwn(o, "technicalRef");
+	if (canonical && alias) throw Error('ask: give either "details" or "technicalRef", not both');
+	if (!canonical && !alias) return undefined;
+	if (secret) throw Error("ask: a secret question cannot have details");
+	const field = canonical ? "details" : "technicalRef";
+	const raw = o[field];
+	if (raw == null) return undefined;
+	if (typeof raw !== "string") throw Error(`ask: "${field}" must be a string`);
+	if (raw.length > MAX_DETAILS) throw Error(`ask: "${field}" must be at most ${MAX_DETAILS} characters`);
+	return raw.trim() ? raw : undefined;
+}
+
+/** Advisory only. Static warnings keep the input out of stderr. */
+export function warnReadability(q: Question, warn: (line: string) => void): void {
+	if (q.secret) return;
+	for (const field of ["title", "context"] as const) {
+		const value = q[field];
+		const hasSha = [...value.matchAll(/\b[0-9a-f]{12,}\b/gi)].some(([hex]) => /\d/.test(hex) && /[a-f]/i.test(hex));
+		if (hasSha || runIdsIn(value).length) warn(`ask: ${field} contains a raw run ID or long SHA. Move it to details.`);
+	}
+	const bullets = q.context
+		.split(/\r?\n/)
+		.map((line) => /^\s*(?:- |• )(.*)$/.exec(line)?.[1])
+		.filter((line) => line !== undefined);
+	if (bullets.length > 4)
+		warn("ask: context has more than 4 bullets. Move technical references to details and keep 3 or 4 short bullets.");
+	if (bullets.some((line) => line.length > MAX_CONTEXT_BULLET))
+		warn(
+			`ask: a context bullet is longer than ${MAX_CONTEXT_BULLET} characters. Move technical references to details and shorten the bullet.`,
+		);
+}
 
 /** A text field, trimmed, or undefined when it is absent, null or empty. A value that is not text is refused. */
 function optText(o: Raw, k: string): string | undefined {
@@ -189,6 +226,7 @@ export function parseAsk(
 	// One classification for validation and the filed item: `secret: true` or the tag "Secret".
 	const secret = isSecretAsk(o.secret === true, tag);
 	const context = optText(o, "context") ?? "";
+	const details = parseDetails(o, secret);
 	const options = parseOptions(o, secret);
 	const recommended = parseRecommended(o, options.length);
 	const evidence = (Array.isArray(o.evidence) ? o.evidence : []).map(parseEvidenceItem);
@@ -206,6 +244,7 @@ export function parseAsk(
 		kind,
 		title: reqText(o, "title"),
 		context,
+		...when(details, { details }),
 		options,
 		...when(recommended !== undefined, { recommended }),
 		...when(proposedRuling, { proposedRuling }),

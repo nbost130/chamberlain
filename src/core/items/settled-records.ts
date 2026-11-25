@@ -37,7 +37,7 @@ export function queueRecords(store: Store, ideaDeclineSince?: number): SettledRe
 	const out: SettledRecord[] = [];
 	for (const q of questionStates(store).values()) {
 		if (!canMatch(q, ideaDeclineSince)) continue;
-		// A secret's title and context never enter matching or refusal text.
+		// A secret's title, context and details never enter matching or refusal text.
 		const safe = redactSecretFields(q);
 		const date = String(closedAt(q) ?? "").slice(0, 10);
 		const answer = q.status === "dismissed" ? "dismissed" : queueAnswerText(q);
@@ -47,7 +47,7 @@ export function queueRecords(store: Store, ideaDeclineSince?: number): SettledRe
 			id: q.id,
 			answer,
 			title: safe.title,
-			text: `${safe.title}\n${safe.context ?? ""}\n${safe.blocks ?? ""}`,
+			text: `${safe.title}\n${safe.context ?? ""}\n${safe.details ?? ""}\n${safe.blocks ?? ""}`,
 			thread: q.thread,
 		});
 	}
