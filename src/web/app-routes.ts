@@ -9,7 +9,7 @@ import {
 	sessionOf,
 } from "../core/challenge.ts";
 import { type KeyUsed, notNow, type QuestionState } from "../core/items/questions.ts";
-import { ranked, snoozed } from "../core/items/questions-wake.ts";
+import { ranked, snoozed, splitIdeas } from "../core/items/questions-wake.ts";
 import { readRulings } from "../core/ops/rulings.ts";
 import { confirmRuling, editRuling, retireRuling } from "../core/ops/rulings-change.ts";
 import { isExpired } from "../core/ops/rulings-expiry.ts";
@@ -59,12 +59,11 @@ function queueResponse(ctx: Ctx): Response {
 	const { d } = ctx;
 	// One snapshot for both lists, so an item whose time arrives between two reads is never in neither.
 	const states = [...ctx.state().values()];
-	const open = ranked(states).map((i) => view(d, i));
 	const later = snoozed(states).map((i) => view(d, i));
 	const list = readRulings(d.store);
 	const health = readHealth(d.store);
 	return json({
-		items: open,
+		...splitIdeas(ranked(states).map((i) => view(d, i))),
 		snoozed: later,
 		cards: (d.mirror?.list() ?? []).map((c) => cardView(d, c)),
 		unreachable: d.mirror?.unreachable?.() ?? [],

@@ -7,6 +7,7 @@ import { configDir } from "../state-dir.ts";
 import { SchemaTooNewError } from "../store/schema.ts";
 import { parseActiveHold } from "./active-hold-config.ts";
 import { parseContextGuard, parseGuardedThreads } from "./context-guard.ts";
+import { parseIdeas } from "./ideas-config.ts";
 import { parseSettledMatch } from "./settings-parse.ts";
 
 export const CONFIG_FILE = "config.json";
@@ -75,6 +76,7 @@ export const SECTIONS = [
 	"activeHold",
 	"contextGuard",
 	"guardedThreads",
+	"ideas",
 ] as const;
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
@@ -139,6 +141,7 @@ function checkSection(k: string, val: unknown): void {
 		if (k === "activeHold") parseActiveHold(val);
 		if (k === "contextGuard") parseContextGuard(val);
 		if (k === "guardedThreads") parseGuardedThreads(val);
+		if (k === "ideas") parseIdeas(val);
 	} catch (e) {
 		throw new ConfigFileError((e as Error).message);
 	}

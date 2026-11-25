@@ -197,6 +197,17 @@ function keepsDemotion(o: Raw, secret: boolean, tag: string | undefined, warn: (
 	return false;
 }
 
+function checkIdea(o: Raw, q: Pick<Question, "context" | "options" | "recommended" | "secret" | "tag">): void {
+	if (o.urgent === true) throw Error("ask: an idea cannot be urgent");
+	if (alwaysUrgent(q)) throw Error("ask: an idea cannot be an approval or secret");
+	if (q.recommended === undefined) throw Error("ask: an idea needs a recommended option");
+	for (const field of ["Cost", "Evidence"]) {
+		const named = new RegExp(`^[ \\t]*(?:-[ \\t]+)?${field}:[ \\t]*\\S`, "im");
+		if (!named.test(q.context)) throw Error(`ask: an idea's context must include ${field}: and its value`);
+	}
+	if (q.options.some((option) => option.route === "thread")) throw Error("ask: idea answers go to the Steward");
+}
+
 /**
  * A checked item from the Steward's JSON, or the first thing wrong with it. `warn` hears what was changed rather than
  * refused: an `urgent: false` on an approval or a secret, which is ignored.
@@ -214,6 +225,7 @@ export function parseAsk(
 	const tag = optText(o, "tag");
 	// One classification for validation and the filed item: `secret: true` or the tag "Secret".
 	const secret = isSecretAsk(o.secret === true, tag);
+	const context = optText(o, "context") ?? "";
 	const details = parseDetails(o, secret);
 	const options = parseOptions(o, secret);
 	const recommended = parseRecommended(o, options.length);
@@ -225,12 +237,13 @@ export function parseAsk(
 	checkThreadRouting(o, options, secret);
 	if (o.urgent !== undefined && typeof o.urgent !== "boolean") throw Error('ask: "urgent" must be true or false');
 	const notSettled = optText(o, "notSettled");
-	const keepDemotion = keepsDemotion(o, secret, tag, warn);
+	if (kind === "idea") checkIdea(o, { context, options, recommended, secret, tag });
+	const keepDemotion = kind === "idea" || keepsDemotion(o, secret, tag, warn);
 	return {
 		id,
 		kind,
 		title: reqText(o, "title"),
-		context: optText(o, "context") ?? "",
+		context,
 		...when(details, { details }),
 		options,
 		...when(recommended !== undefined, { recommended }),

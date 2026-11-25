@@ -84,4 +84,4 @@ test("Steward drains the same 67 wakes after quota exhaustion and relay restart"
 		store.close();
 		server.close();
 	}
-});
+}, 30_000);

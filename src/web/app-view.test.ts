@@ -113,13 +113,11 @@ test("a secret or a link request is shown with where to answer it, and Dismiss (
 test("(a) a non-urgent question is listed below every urgent one, under NOT URGENT, and says so", async () => {
 	const html = await list([
 		{ id: "Q-nu-only", kind: "only-you", title: "Waits a while", urgent: false },
-		{ id: "Q-idea1", kind: "idea", title: "An idea" },
 		{ id: "Q-prod1", kind: "product", title: "A product call" },
 	]);
 	const at = (t: string) => html.indexOf(t);
 	expect(at("A product call")).toBeGreaterThan(-1);
-	expect(at("A product call")).toBeLessThan(at("An idea"));
-	expect(at("An idea")).toBeLessThan(at("Waits a while"));
+	expect(at("A product call")).toBeLessThan(at("Waits a while"));
 	expect(html).toMatch(/NOT URGENT · [^<]+/);
 	expect(at("NOT URGENT")).toBeLessThan(at("Waits a while"));
 	expect(html).toContain('<span class="later">not urgent</span>');
@@ -137,7 +135,7 @@ test("(a) an approval, a secret and a card pointer stay under the urgent groups 
 		{ id: "Q-apr01", kind: "only-you", title: "Approval row", tag: "Approval", urgent: false },
 		{ id: "Q-sec01", kind: "only-you", title: "Secret row", secret: true, urgent: false },
 		{ id: "Q-ptr01", kind: "only-you", title: "Pointer row", cardRequest: "req-1", tag: "Approval", urgent: false },
-		{ id: "Q-nu001", kind: "idea", title: "Can wait row", urgent: false },
+		{ id: "Q-nu001", kind: "product", title: "Can wait row", urgent: false },
 	]);
 	const at = (t: string) => html.indexOf(t);
 	for (const t of ["Approval row", "Secret row", "Pointer row"]) {

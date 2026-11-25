@@ -51,6 +51,7 @@ export function openQuestionOf(store: Store, item: string) {
 		usageExit(
 			`afk.ts hold: refused, ${item} is already answered (${queued.answer ? `"${queued.answer.label}"` : "on its card"}). Act on the answer; nothing waits on ${principal()}.`,
 		);
+	if (queued.kind === "idea") usageExit(`afk.ts hold: refused, ${item} is an idea: nothing waits on it.`);
 	return queued;
 }
 
