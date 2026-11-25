@@ -21,7 +21,7 @@ export function queueRecords(store: Store): SettledRecord[] {
 	for (const q of questionStates(store).values()) {
 		// A dismissed item was never answered: it is not a ruling and answers no later question, so a lookup never sees it.
 		if (q.status === "open" || q.status === "dismissed") continue;
-		// A secret's title and context never enter matching or refusal text.
+		// A secret's title, context and details never enter matching or refusal text.
 		const safe = redactSecretFields(q);
 		const date = String(q.answer?.t ?? q.createdAt ?? "").slice(0, 10);
 		const answer = queueAnswerText(q);
@@ -31,7 +31,7 @@ export function queueRecords(store: Store): SettledRecord[] {
 			id: q.id,
 			answer,
 			title: safe.title,
-			text: `${safe.title}\n${safe.context ?? ""}\n${safe.blocks ?? ""}`,
+			text: `${safe.title}\n${safe.context ?? ""}\n${safe.details ?? ""}\n${safe.blocks ?? ""}`,
 			thread: q.thread,
 		});
 	}

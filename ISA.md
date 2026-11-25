@@ -63,6 +63,28 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-10 | bun-test | Lost-outcome, restart, stale-thread, clock-jump, retention and fail-closed scenarios, plus launch idempotence against the fake T3 | bun test src/core/overhead src/adapters/t3/investigator.test.ts |
 | ISC-11 | bun-test | Role-specific quota pools, approved backup order, project restrictions, two outages and webhook deliveries on the active generation across restart | bun test src/adapters/t3/model-quota.test.ts src/adapters/t3/quota-failover.test.ts |
 
+## Readable decision cards (#125)
+
+| Criterion | Falsifier and probe |
+| --- | --- |
+| CARD-1 | Either view interprets card text beyond bold and code, changes accessible labels into markup, or changes filed answer text. Run the queue and inline rendering and answer regressions. |
+| CARD-2 | Either view omits supplied Details, opens it by default, interprets its contents, or shows a toggle for older cards. Run ask and both rendering suites. |
+| CARD-3 | Moving a PR, run or commit reference between context and Details bypasses a prior answer. Run the settled lookup suite with both directions. |
+| CARD-4 | A secret's Details is accepted or leaves storage through a redacted view, or the view key gains authority. Run ask, secret redaction and view-key suites. |
+| CARD-5 | Readability warnings echo an identifier, change a filed question, miss dense input, or flag everyday references. Run the ask CLI suite. |
+| CARD-6 | The ask and Steward instructions omit the field or the short-bullet guidance, or the configuration and glossary disagree. Inspect the documented input contract and run repository checks. |
+
+### Test strategy
+
+| ISC | Type | Probe |
+| --- | --- | --- |
+| CARD-1 | bun-test | `bun test src/web/readable-cards.test.ts src/web/inline-parity.test.ts` |
+| CARD-2 | bun-test | `bun test src/ask.readability.test.ts src/web/readable-cards.test.ts` |
+| CARD-3 | bun-test | `bun test src/core/items/settled.test.ts` |
+| CARD-4 | bun-test | `bun test src/ask.readability.test.ts src/web/secret-view-redact.test.ts src/web/view-key.test.ts` |
+| CARD-5 | bun-test | `bun test src/ask.readability.test.ts` |
+| CARD-6 | repository check | `bun run checks` and source review of the ask and Steward instructions |
+
 ## Decisions
 
 - Direction authorized by the accepted goal. Execution remains inline with an independent final review.
