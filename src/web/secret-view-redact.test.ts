@@ -15,6 +15,7 @@ const { ORIGIN, setup, key } = useWebCapabilityFixtures();
 
 const TITLE = "SYNTH-VIEW-SECRET-TITLE";
 const CONTEXT = "SYNTH-VIEW-SECRET-CONTEXT";
+const DETAILS = "SYNTH-VIEW-SECRET-DETAILS";
 const CAPTION = "SYNTH-VIEW-SECRET-EVIDENCE";
 const OPTION = "SYNTH-VIEW-SECRET-OPTION";
 const LABEL = "SYNTH-CARD-SECRET-LABEL";
@@ -24,6 +25,7 @@ const asState = (over: Partial<QuestionState> & { id: string }): QuestionState =
 		kind: "only-you",
 		title: TITLE,
 		context: CONTEXT,
+		details: DETAILS,
 		options: [{ label: OPTION }],
 		evidence: [{ type: "image", path: "shot.png", caption: CAPTION }],
 		secret: true,
@@ -40,6 +42,7 @@ describe("view() redacts secrets (#102)", () => {
 		const out = view({} as never, asState({ id: "Q-secr" }));
 		expect(out).toMatchObject({ secret: true, title: SECRET_TITLE, context: "", options: [] });
 		expect(out.evidence).toBeUndefined();
+		expect(out).not.toHaveProperty("details");
 		expect(JSON.stringify(out)).not.toContain("SYNTH-VIEW-SECRET");
 	});
 });

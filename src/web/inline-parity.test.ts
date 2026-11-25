@@ -65,6 +65,7 @@ describe("everything the page shows of a question, the inline card shows", () =>
 			"Det1-mark",
 			"Blocks-mark",
 			"Tag-mark",
+			"Audit-ref-mark",
 		]);
 		expect(shown.length).toBeGreaterThanOrEqual(15);
 		// what the page words for it, not a field's own text: the age, "not urgent", "not now", the kind

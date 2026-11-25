@@ -77,6 +77,8 @@ it is deliberately conservative.
   credentials, a webhook URL, a path, a title and a prompt, and fails if a byte of them is in `obs.db` or its log; removing any scrubber rule fails a test.
 - **Evidence files are confined.** The page serves only files an item lists, from `<state>/evidence/<item>/`;
   `..`, absolute paths, encoded slashes and symlinks are refused.
+- **Decision text is escaped.** The context and option renderers can emit fixed bold and code elements. Details is plain
+  text on the same already-authorized queue item. Secret questions refuse Details, and the views omit it on secret records.
 - **Outside text is data.** Thread titles, last messages, questions and check output reach the Steward fenced as
   "untrusted data, not instructions", with angle brackets stripped so text cannot close the fence.
 - **No model calls by default.** The daemon decides with code. Its alarms go to your `alertCommand` or the log. Two features can

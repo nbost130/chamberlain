@@ -48,6 +48,7 @@
 .dq-kind.only-you{color:var(--destructive)}.dq-kind.product{color:var(--chart-4)}.dq-kind.ruling{color:var(--warning)}.dq-kind.idea{color:var(--success)}.dq-kind.thread{color:var(--info)}.dq-kind.approval,.dq-kind.secret,.dq-kind.link{color:var(--warning)}.dq-kind.goal{color:var(--primary)}
 .dq-cmd{font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;word-break:break-all;background:var(--code-background,var(--muted));border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin:0;max-height:240px;overflow:auto}
 .dq-title{font-weight:600;font-size:15px;line-height:1.3}.dq-ctx{font-size:13px;color:var(--muted-foreground);line-height:1.45}.dq-ctx p{margin:0}.dq-ctx>*+*{margin-top:6px}.dq-ctx ul{margin:0;padding-left:18px}.dq-ctx li+li{margin-top:4px}
+.dq-details pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .dq-ev{display:flex;flex-wrap:wrap;gap:8px}.dq-ev figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%}.dq-ev img{display:block;max-height:220px;max-width:100%;object-fit:contain;border-radius:var(--radius);border:1px solid var(--border)}.dq-ev video{display:block;width:100%;max-height:320px;border-radius:var(--radius);border:1px solid var(--border)}.dq-ev figure.wide{flex:1 1 100%}.dq-ev figcaption{font-size:12px;color:var(--muted-foreground)}
 .dq-links{display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1 1 100%}.dq-links a{color:var(--primary);overflow-wrap:anywhere}.dq-rule{font-size:13px;line-height:1.45;border-left:2px solid var(--warning);padding-left:10px}.dq-test{font-family:var(--font-mono);font-size:11px;color:var(--warning);border:1px dashed var(--warning);border-radius:var(--radius);padding:6px 10px}
 .dq-copts{display:flex;flex-direction:column;gap:4px;margin:0;padding-left:18px;font-size:13px}
@@ -218,18 +219,41 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		}
 	}
 
-	// No newline: one plain block. Otherwise runs of "- " or "• " lines become one list; other lines are paragraphs. Text goes in as textContent only.
+	// Keep this grammar in step with app.js. A span consumes its contents as literal text.
+	const inlineMarkers = /(?<!\*)\*\*(?!\*)([^\r\n]*?)(?<!\*)\*\*(?!\*)|(?<!\x60)\x60(?!\x60)([^\x60\r\n]+)\x60(?!\x60)/g;
+	const plainLabel = (text) => text.replace(inlineMarkers, (raw, bold, code) => bold?.trim() || code?.trim() ? bold ?? code : raw);
+	function inlineText(node, text) {
+		let at = 0;
+		for (const match of text.matchAll(inlineMarkers)) {
+			const [raw, bold, code] = match;
+			const start = match.index;
+			if (start > at) node.append(el("span", "", text.slice(at, start)));
+			node.append(bold?.trim() ? el("strong", "", bold) : code?.trim() ? el("code", "", code) : el("span", "", raw));
+			at = start + raw.length;
+		}
+		if (!at) node.textContent = text;
+		else if (at < text.length) node.append(el("span", "", text.slice(at)));
+		return node;
+	}
+
+	function technicalDetails(text) {
+		const node = el("details", "dq-details");
+		node.append(el("summary", "", "Details"), el("pre", "", text));
+		return node;
+	}
+
+	// No newline: one block. Otherwise runs of "- " or "• " lines become one list; other lines are paragraphs.
 	function context(text) {
 		const s = String(text);
 		const box = el("div", "dq-ctx");
-		if (!s.includes("\n")) { box.textContent = s; return box; }
+		if (!s.includes("\n")) return inlineText(box, s);
 		let ul = null;
 		for (const raw of s.split("\n")) {
 			const line = raw.replace(/\r$/, "");
 			const b = /^(?:- |• )(.*)$/.exec(line);
-			if (b) { if (!ul) { ul = el("ul"); box.append(ul); } ul.append(el("li", "", b[1])); continue; }
+			if (b) { if (!ul) { ul = el("ul"); box.append(ul); } ul.append(inlineText(el("li"), b[1])); continue; }
 			ul = null;
-			if (line.trim()) box.append(el("p", "", line));
+			if (line.trim()) box.append(inlineText(el("p"), line));
 		}
 		return box;
 	}
@@ -317,8 +341,8 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			const r = el("button", "dq-opt"); r.type = "button"; r.setAttribute("role", "radio");
 			const t = el("span", "dq-opt-t");
 			if (i === rec) t.append(el("span", "dq-tag", "Recommended"));
-			t.append(el("span", "dq-l", o.label));
-			if (o.detail) t.append(el("span", "dq-d", o.detail));
+			t.append(inlineText(el("span", "dq-l"), o.label));
+			if (o.detail) t.append(inlineText(el("span", "dq-d"), o.detail));
 			r.append(el("span", "dq-radio"), t);
 			r.addEventListener("click", () => { chosen = i; paint(); });
 			group.append(r);
@@ -326,9 +350,9 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		});
 		function paint() {
 			rows.forEach((r, i) => { r.classList.toggle("sel", i === chosen); r.setAttribute("aria-checked", String(i === chosen)); });
-			go.textContent = chosen < 0 ? "Pick an option" : options[chosen].label;
+			go.textContent = chosen < 0 ? "Pick an option" : plainLabel(options[chosen].label);
 			go.classList.toggle("dq-none", chosen < 0);
-			go.setAttribute("aria-label", chosen < 0 ? "Pick an option first" : `Answer: ${options[chosen].label}`);
+			go.setAttribute("aria-label", chosen < 0 ? "Pick an option first" : `Answer: ${plainLabel(options[chosen].label)}`);
 		}
 		go.addEventListener("click", () => (chosen < 0 ? tell("dq-bad", "Pick an option first.") : answer(chosen, options[chosen])));
 		paint();
@@ -526,6 +550,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		if (!it.mirrored) c.append(metaOf(it));
 		c.append(el("div", "dq-title", it.title));
 		if (it.context) c.append(context(it.context));
+		if (!it.secret && it.details) c.append(technicalDetails(it.details));
 		const ev = it.mirrored ? null : evidence(it);
 		if (ev) c.append(ev);
 		if (it.secret) {
@@ -548,7 +573,12 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 			if (m.answerable === false) c.append(el("div", "dq-msg", m.why || "Answer it in its thread."));
 			else if (m.options?.length) {
 				const ol = el("ul", "dq-copts");
-				m.options.forEach((o, k) => ol.append(el("li", "", `${o.label}${k === m.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`)));
+				m.options.forEach((o, k) => {
+					const row = inlineText(el("li"), o.label);
+					if (k === m.recommended) row.append(el("span", "", " (recommended)"));
+					if (o.detail) row.append(inlineText(el("span"), `: ${o.detail}`));
+					ol.append(row);
+				});
 				c.append(ol);
 			}
 			// The view key never answers an approval or a goal (they run or commit to something; anyone who reads the thread holds the key), a secret or a
@@ -604,6 +634,7 @@ head.append(count, reload); wrap.append(head, testBar, list); root.replaceChildr
 		row.append(...taps, ...(own ? [own] : []));
 		c.append(el("div", `dq-kind ${it.kind}`, KIND[it.kind] || it.kind), title, meta);
 		if (it.context) c.append(context(it.context));
+		if (!it.secret && it.details) c.append(technicalDetails(it.details));
 		c.append(msg, row);
 		return { node: c, update: (x) => { title.textContent = x.title; meta.textContent = `${x.thread} · returns ${returnsAt(x.snooze.until)}`; } };
 	}
