@@ -28,10 +28,13 @@ function settings(path: string): Obj {
 	return value;
 }
 
-/** The words of a plain command: double quotes and $HOME only. Anything else a shell would interpret is refused. */
+/** The characters a plain command is made of. A list of what is allowed: a list of what a shell interprets can miss one. */
+const PLAIN = /^[A-Za-z0-9 _./:=",@+-]*$/;
+
+/** The words of a plain command: double quotes and $HOME only. Anything else is refused. */
 function words(command: string, home: string): string[] | undefined {
 	const text = command.replace(/\$\{HOME\}|\$HOME(?![A-Za-z0-9_])/g, home);
-	if (/[`$;|&<>()'*?[\]{}~#!\n\r]/.test(text) || (text.match(/"/g)?.length ?? 0) % 2) return undefined;
+	if (!PLAIN.test(text) || (text.match(/"/g)?.length ?? 0) % 2) return undefined;
 	return [...text.matchAll(/(?:[^\s"]|"[^"]*")+/g)].map((m) => m[0].replaceAll('"', ""));
 }
 
