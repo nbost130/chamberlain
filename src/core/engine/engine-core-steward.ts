@@ -15,7 +15,13 @@ export abstract class CoreSteward extends CoreRights {
 		const key = "steward-context-sample";
 		const prior = this.store.state.get<{ session: string; reading: StewardProbe["lastMeasuredContext"] }>(key);
 		const { contextSession: session, context: reading, contextPending } = probe ?? {};
-		if (session && reading && "tokens" in reading && !contextPending && prior?.reading?.at !== reading.at)
+		if (
+			session &&
+			reading &&
+			"tokens" in reading &&
+			!contextPending &&
+			(prior?.session !== session || prior.reading?.at !== reading.at)
+		)
 			this.store.state.set(key, { session, reading });
 		return prior && prior.session === session ? prior.reading : undefined;
 	}

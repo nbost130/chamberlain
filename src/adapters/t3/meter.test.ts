@@ -225,3 +225,77 @@ test("automatic compaction inside a wake keeps its delivery and resets quality h
 			quality: { threadRereads: 0, boundary: END },
 		});
 	}));
+
+test("inconsistent cache counters omit uncached input and a copied wake envelope has no delivery id", () =>
+	fixture((db, path) => {
+		turn(db, "cursor", "fixture-provider", { ...complete, inputTokens: 49 });
+		db.run(`UPDATE ${base}messages SET payload_json = json_remove(payload_json, '$.scheduledTaskId')`);
+		const measured = t3Meter(path, "fixture-thread", before);
+		if (!("rows" in measured)) throw Error(measured.unknown);
+		const [row] = measured.rows;
+		expect(row).toMatchObject({
+			kind: "message",
+			tokensIncomplete: true,
+			unknown: "turn token fields incomplete",
+			cacheReadInputTokens: 30,
+			cacheCreationInputTokens: 20,
+		});
+		expect(row).not.toHaveProperty("inputTokens");
+		expect(row).not.toHaveProperty("deliveryId");
+	}));
+
+test("per-turn and batch item bounds never turn partial counts into observations", () =>
+	fixture((db, path) => {
+		turn(db, "cursor");
+		db.run(`DELETE FROM ${base}turn_items`);
+		for (const [index, count] of [2049, 2048, 2048, 2048, 2048, 1760, 1].entries()) {
+			const id = `batch-${index}`;
+			db.run(
+				`INSERT INTO ${base}provider_turns SELECT ?, provider_thread_id, thread_id, ?, run_attempt_id, ?, completed_at, payload_json FROM ${base}provider_turns WHERE provider_turn_id = 'fixture-provider'`,
+				[id, index + 2, new Date(Date.parse(START) - index - 1).toISOString()],
+			);
+			db.run(
+				`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ?)
+				INSERT INTO ${base}turn_items SELECT ?, 'fixture-thread', n, 'command_execution', 'completed', ? FROM seq`,
+				[count, id, JSON.stringify({ startedAt: START, input: "chamberlain debug peek local sample-thread" })],
+			);
+		}
+		const measured = t3Meter(path, "fixture-thread", before);
+		if (!("rows" in measured)) throw Error(measured.unknown);
+		const byKey = new Map(measured.rows.map((row) => [row.wakeKey, row]));
+		for (const key of ["2", "7", "8"]) {
+			const row = byKey.get(key);
+			expect(row?.unknown).toContain("tool fields incomplete");
+			expect(row).not.toHaveProperty("toolCalls");
+			expect(row).not.toHaveProperty("threadReads");
+		}
+		expect(byKey.get("3")).toMatchObject({ toolCalls: 2048, threadReads: 2048 });
+	}));
+
+test("repeat reads honor the ten-minute boundary and own-delivery lookups do not count as self-reads", () =>
+	fixture((db, path) => {
+		turn(db, "claudeAgent");
+		db.run(`DELETE FROM ${base}turn_items`);
+		for (const [index, offset] of [0, 600_000, 1_200_001].entries())
+			db.run(
+				`INSERT INTO ${base}turn_items VALUES ('fixture-provider', 'fixture-thread', ?, 'dynamic_tool', 'completed', ?)`,
+				[
+					index,
+					JSON.stringify({
+						startedAt: new Date(Date.parse(START) + offset).toISOString(),
+						toolName: "t3_thread_read",
+						input: { threadId: "sample-thread" },
+					}),
+				],
+			);
+		for (const [index, input] of [`rg ${deliver} fixture-native.jsonl`, "head fixture-native.jsonl"].entries())
+			db.run(
+				`INSERT INTO ${base}turn_items VALUES ('fixture-provider', 'fixture-thread', ?, 'command_execution', 'completed', ?)`,
+				[index + 3, JSON.stringify({ startedAt: START, input })],
+			);
+		db.run(`UPDATE ${base}provider_turns SET completed_at = '2030-01-01T12:21:00.000Z'`);
+		expect(t3Meter(path, "fixture-thread", before, true)).toMatchObject({
+			rows: [{ toolCalls: 5, threadReads: 3, deliveryId: deliver }],
+			quality: { threadRereads: 1, selfReads: 1 },
+		});
+	}));

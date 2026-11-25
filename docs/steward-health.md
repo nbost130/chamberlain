@@ -113,3 +113,6 @@ never contribute separate counts for that turn.
 
 New observations use the existing state table. The database schema version is unchanged and earlier releases can
 still open it and read legacy transcript rows.
+
+The daemon retains these turn records without automatic pruning. At 300 turns per day, that adds about 109,500
+rows per 365-day year. Hourly refreshes replace rows for previously observed turns.

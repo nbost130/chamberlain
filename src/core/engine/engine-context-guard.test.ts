@@ -130,7 +130,7 @@ test("a provider with no size history is counted turn by turn, and a turn in pro
 		adapter.probe = { ...unknown(turn), previousCompletedTurn: turn - 1, partialContextHistory: true };
 		await r.engine.tick();
 		expect(alerts(r, "context-unknown:")).toHaveLength(turn === 4 ? 1 : 0);
-		adapter.probe = { ...adapter.probe, contextTurn: turn + 1 };
+		adapter.probe = known(1000, { contextPending: true, contextTurn: turn + 1, completedTurn: turn });
 		await r.engine.tick();
 	}
 	adapter.probe = known(1000, { completedTurn: 5, contextTurn: 5 });
