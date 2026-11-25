@@ -136,6 +136,8 @@ The local relay tests exercise both sides of the alarm threshold across a databa
 | DESK-3 | A call that ran and the allowlist refuses raises no alarm, a refused call raises one, a turn is judged twice, or a turn that cannot be replayed is called complete. `bun test src/core/desk/desk-audit.test.ts src/adapters/t3/desk-record.test.ts` |
 | DESK-4 | Command, path or alert text reaches an alarm, a log or the database, or a failed audit stops a wake. `bun test src/core/desk/desk-audit.test.ts` |
 
+Evidence for DESK-2: the hook command is read by allowed characters. The first version listed refused ones and missed the backslash; the shell-character cases in `desk-hook.test.ts` failed on it. Independent review and the full checks are pending.
+
 ## Decisions
 
 - Direction authorized by the accepted goal. Execution remains inline with an independent final review.
