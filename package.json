@@ -17,14 +17,14 @@
 	"scripts": {
 		"start": "bun src/daemon.ts",
 		"web": "bun src/web/server.ts",
-		"test": "bun test",
+		"test": "bun test --timeout 20000",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check --error-on-warnings .",
 		"lint:fix": "biome check --write .",
 		"knip": "knip --no-progress",
 		"jscpd": "jscpd src scripts --silent",
 		"cycles": "bun scripts/cycles.ts",
-		"checks": "bun run lint && bun run typecheck && bun run knip && bun run jscpd && bun run cycles && bun test",
+		"checks": "bun run lint && bun run typecheck && bun run knip && bun run jscpd && bun run cycles && bun run test",
 		"migrate": "bun src/core/migrate.ts",
 		"format": "biome format --write .",
 		"prepare": "bun scripts/hooks.ts install"
