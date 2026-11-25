@@ -71,8 +71,24 @@ const cardCounts = () => ({
 	noRecommendation: 0,
 	snoozes: 0,
 	unplaced: 0,
+	outOfScope: 0,
+	scopedEscalations: 0,
+	scopedCorrections: 0,
 });
 type Counts = ReturnType<typeof cardCounts>;
+
+/** Every figure keeps its own total beside the part a merged-PR ratio may use, so a ratio always shows how much it covers. */
+function countIn(counts: Counts, figure: "escalations" | "corrections", scoped: boolean): void {
+	counts[figure]++;
+	if (scoped) counts[figure === "escalations" ? "scopedEscalations" : "scopedCorrections"]++;
+}
+
+function place(counts: Counts, repo: string | undefined, inScope: (repo: string) => boolean): boolean {
+	const scoped = repo !== undefined && inScope(repo);
+	if (repo === undefined) counts.unplaced++;
+	else if (!scoped) counts.outOfScope++;
+	return scoped;
+}
 
 function recommendation(card: Item): number | undefined {
 	const { recommended, options } = card.payload;
@@ -102,7 +118,6 @@ function countAnswer(counts: Counts, card: Item, answer: Answer, recommended: nu
 			if (pick) counts.acceptedPicks++;
 			return false;
 		}
-		counts.corrections++;
 		return true;
 	}
 	return false;
@@ -116,9 +131,8 @@ function cardActivity(card: Item, span: Span, answer?: Answer, snoozed = false) 
 }
 
 /** Output is an aggregate projection: no question, note, decision or ruling text is returned. */
-export function countCards(ledger: DistillLedger, span: Span) {
+export function countCards(ledger: DistillLedger, span: Span, inScope: (repo: string) => boolean) {
 	const counts = cardCounts();
-	const repos = new Set<string>();
 	const correctionsByRuling = new Map<string, number>();
 	const holds = holdRepos(ledger.holds);
 	const ids = citations(ledger.decisions, span);
@@ -129,16 +143,14 @@ export function countCards(ledger: DistillLedger, span: Span) {
 		const activity = cardActivity(card, span, answers.get(card.dedupKey), snoozed.has(card.dedupKey));
 		if (!activity) continue;
 		const { asked, answered, snooze } = activity;
-		const repo = repoOf(card, holds);
-		if (repo) repos.add(repo);
-		else counts.unplaced++;
-		if (asked) counts.escalations++;
+		const scoped = place(counts, repoOf(card, holds), inScope);
+		if (asked) countIn(counts, "escalations", scoped);
 		if (snooze) counts.snoozes++;
 		const recommended = recommendation(card);
 		if (recommended === undefined) counts.noRecommendation++;
-		if (answered && countAnswer(counts, card, answered, recommended))
-			for (const id of rulingIds(card, ids, aliases))
-				correctionsByRuling.set(id, (correctionsByRuling.get(id) ?? 0) + 1);
+		if (!answered || !countAnswer(counts, card, answered, recommended)) continue;
+		countIn(counts, "corrections", scoped);
+		for (const id of rulingIds(card, ids, aliases)) correctionsByRuling.set(id, (correctionsByRuling.get(id) ?? 0) + 1);
 	}
-	return { counts, repos, correctionsByRuling: Object.fromEntries([...correctionsByRuling].sort()) };
+	return { counts, correctionsByRuling: Object.fromEntries([...correctionsByRuling].sort()) };
 }

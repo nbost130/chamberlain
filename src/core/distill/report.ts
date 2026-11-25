@@ -21,22 +21,23 @@ export type DistillReport = CardStats["counts"] &
 		timezone: string;
 		definitionVersion: number;
 		correctionsByRuling: Record<string, number>;
-		scopeMatches?: boolean;
 	};
 
-function compareScope(cards: CardStats, prs: string[]): boolean {
-	const repos = new Set(prs.map((pr) => pr.split("#")[0]?.toLowerCase()));
-	return (
-		cards.counts.unplaced === 0 && repos.size === cards.repos.size && [...cards.repos].every((repo) => repos.has(repo))
-	);
+/** The one repository scope that cards and merged PRs are both held to. */
+function scopeOf(github: Github): (repo: string) => boolean {
+	const lower = (values: string[]) => new Set(values.map((value) => value.toLowerCase()));
+	const [owners, repos, excluded] = [lower(github.owners), lower(github.repos), lower(github.excludeRepos)];
+	return (repo) => !excluded.has(repo) && (repos.has(repo) || owners.has(repo.split("/")[0] ?? ""));
 }
 
-async function prStats(
-	gh: GhRead,
-	github: Github,
-	span: Span,
-	cards: CardStats,
-): Promise<PrCount & Ratios & { scopeMatches?: boolean }> {
+/** With nothing in scope and some cards unplaced, zero would be a guess. With every card placed, zero is the count. */
+function ratios({ counts }: CardStats, prs: number): Ratios {
+	const { scopedEscalations, scopedCorrections, unplaced } = counts;
+	if (!prs || (!scopedEscalations && !scopedCorrections && unplaced)) return {};
+	return { escalationsPerPr: scopedEscalations / prs, correctionsPerPr: scopedCorrections / prs };
+}
+
+async function prStats(gh: GhRead, github: Github, span: Span, cards: CardStats): Promise<PrCount & Ratios> {
 	if (!github.owners.length && !github.repos.length) return { mergedPrs: null, prStatus: "not configured" };
 	try {
 		const rows = await mergedPrs(gh, github, span.from, span.to);
@@ -45,15 +46,9 @@ async function prStats(
 			span,
 			{ ...github, countRollups: false },
 		);
-		const count = prs.length;
-		const scopeMatches = compareScope(cards, prs);
-		const base = { mergedPrs: count, prStatus: "ok" as const, scopeMatches };
-		if (!count || !scopeMatches) return base;
-		return {
-			...base,
-			escalationsPerPr: cards.counts.escalations / count,
-			correctionsPerPr: cards.counts.corrections / count,
-		};
+		const inScope = scopeOf(github);
+		if (!prs.every((pr) => inScope(pr.split("#")[0] ?? ""))) return { mergedPrs: null, prStatus: "unavailable" };
+		return { mergedPrs: prs.length, prStatus: "ok", ...ratios(cards, prs.length) };
 	} catch {
 		return { mergedPrs: null, prStatus: "unavailable" };
 	}
@@ -83,7 +78,7 @@ export async function distillReport(d: {
 	gh: GhRead;
 	readChat?: ChatRead;
 }): Promise<DistillReport> {
-	const cards = countCards(d.ledger, d.span);
+	const cards = countCards(d.ledger, d.span, scopeOf(d.github));
 	const [prs, chat] = await Promise.all([
 		prStats(d.gh, d.github, d.span, cards),
 		chatStats(d.config.chat, d.ledger.stewards, d.readChat),
@@ -108,16 +103,16 @@ export function formatDistill(r: DistillReport): string {
 		`Escalations: ${r.escalations}`,
 		`Corrections: ${r.corrections} (${r.changedPicks} changed picks, ${r.directions} directions)`,
 		`Accepted picks: ${r.acceptedPicks} · picks with notes: ${r.picksWithNote} · dismissals: ${r.dismissals}`,
-		`Cards without a recommendation: ${r.noRecommendation} · snoozed cards: ${r.snoozes} · unplaced cards: ${r.unplaced}`,
+		`Cards without a recommendation: ${r.noRecommendation} · snoozed cards: ${r.snoozes}`,
+		`Unplaced cards: ${r.unplaced} · cards outside the PR scope: ${r.outOfScope}`,
 		`Merged PRs: ${r.mergedPrs ?? r.prStatus}`,
 		`Chat redirections (operator messages): ${r.chatRedirections ?? r.chatStatus}`,
 	];
 	if (r.escalationsPerPr !== undefined && r.correctionsPerPr !== undefined)
 		lines.push(
-			`Per merged PR: ${r.escalationsPerPr.toFixed(2)} escalations · ${r.correctionsPerPr.toFixed(2)} corrections`,
+			`Per merged PR: ${r.escalationsPerPr.toFixed(2)} escalations (${r.scopedEscalations} of ${r.escalations} counted) · ${r.correctionsPerPr.toFixed(2)} corrections (${r.scopedCorrections} of ${r.corrections} counted)`,
 		);
-	else if (r.scopeMatches === false)
-		lines.push("Card and merged PR repository scopes differ or include unplaced cards.");
+	else if (r.mergedPrs) lines.push("Per merged PR: not shown, no card could be placed in the PR scope.");
 	for (const [id, n] of Object.entries(r.correctionsByRuling)) lines.push(`${id}: ${n} corrections`);
 	return lines.join("\n");
 }

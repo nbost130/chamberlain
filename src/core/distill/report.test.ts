@@ -138,14 +138,15 @@ test("prefers validated explicit scope, then closed and open PR/issue holds link
 		},
 		{ gh: ghPage([pr(repo, 1), pr(repo, 2, "Later", iso(span.to))]) },
 	);
-	expect(r).toMatchObject({ scopeMatches: true, escalationsPerPr: 3, correctionsPerPr: 0 });
+	expect(r).toMatchObject({ unplaced: 0, outOfScope: 0, escalationsPerPr: 3, correctionsPerPr: 0 });
 });
 
-test("ambiguous or unidentified cards stay unplaced and suppress otherwise matching ratios", async () => {
+test("ratios use placed in-scope cards only, and show how many of the totals that is", async () => {
 	const r = await reportFor((s) => {
-		card(s, 1);
-		card(s, 2, { repo: undefined, context: "example/widget#2" });
-		const ambiguous = card(s, 3, { repo: undefined });
+		answer(s, card(s, 1), {});
+		answer(s, card(s, 2, { repo: "example/other" }), {});
+		answer(s, card(s, 3, { repo: undefined, context: "example/widget#2" }), {});
+		const ambiguous = card(s, 4, { repo: undefined });
 		appendHeld(s, {
 			item: ambiguous,
 			thread: "example thread",
@@ -153,14 +154,60 @@ test("ambiguous or unidentified cards stay unplaced and suppress otherwise match
 			ref: { pr: `${repo}#1`, issue: "example/other#3" },
 		});
 	});
-	expect(r).toMatchObject({ unplaced: 2, scopeMatches: false, mergedPrs: 1 });
-	expect(r).not.toHaveProperty("escalationsPerPr");
-	expect(r).not.toHaveProperty("correctionsPerPr");
+	expect(r).toMatchObject({
+		escalations: 4,
+		corrections: 3,
+		unplaced: 2,
+		outOfScope: 1,
+		scopedEscalations: 1,
+		scopedCorrections: 1,
+		escalationsPerPr: 1,
+		correctionsPerPr: 1,
+	});
+	const shown = formatDistill(r);
+	expect(shown).toContain("Unplaced cards: 2 · cards outside the PR scope: 1");
+	expect(shown).toContain("1.00 escalations (1 of 4 counted) · 1.00 corrections (1 of 3 counted)");
 });
 
-test("different repositories, zero PRs, partial PRs and absent config never print ratios", async () => {
+test("an owner is a scope, an excluded repository is not, and names compare without case", async () => {
+	const r = await reportFor(
+		(s) => {
+			card(s, 1);
+			card(s, 2, { repo: "example/private" });
+			card(s, 3, { repo: "examples/widget" });
+		},
+		{
+			github: cfgWith({ github: { owners: ["Example"], excludeRepos: ["Example/Private"] } }).github,
+			gh: ghPage([pr("Example/Widget", 1), pr("example/private", 2)]),
+		},
+	);
+	expect(r).toMatchObject({ mergedPrs: 1, outOfScope: 2, scopedEscalations: 1, escalationsPerPr: 1 });
+});
+
+test("no in-scope card is zero when every card is placed, and no ratio when one is not", async () => {
+	const other = (s: Store) => card(s, 1, { repo: "example/other" });
+	expect(await reportFor(other)).toMatchObject({ outOfScope: 1, escalationsPerPr: 0, correctionsPerPr: 0 });
+	const r = await reportFor((s) => {
+		other(s);
+		card(s, 2, { repo: undefined });
+	});
+	expect(r).not.toHaveProperty("escalationsPerPr");
+	expect(r).not.toHaveProperty("correctionsPerPr");
+	expect(formatDistill(r)).toContain("not shown, no card could be placed");
+});
+
+test("a correction on an older in-scope card is a ratio on its own", async () => {
+	const r = await reportFor((s) => {
+		answer(s, card(s, 1, {}, span.from - 1), {});
+		card(s, 2, { repo: undefined });
+	});
+	expect(r).toMatchObject({ escalations: 1, scopedEscalations: 0, escalationsPerPr: 0, correctionsPerPr: 1 });
+	expect(formatDistill(r)).toContain("0.00 escalations (0 of 1 counted) · 1.00 corrections (1 of 1 counted)");
+});
+
+test("a PR outside the scope, zero PRs, partial PRs and absent config never print ratios", async () => {
 	for (const [options, expected] of [
-		[{ gh: ghPage([pr("example/other", 1)]) }, { mergedPrs: 1, scopeMatches: false }],
+		[{ gh: ghPage([pr("example/other", 1)]) }, { mergedPrs: null, prStatus: "unavailable" }],
 		[{ gh: ghPage([]) }, { mergedPrs: 0, prStatus: "ok" }],
 		[
 			{ gh: async () => ({ total: 2, incomplete: false, items: [pr(repo, 1)] }) },
