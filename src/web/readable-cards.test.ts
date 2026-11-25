@@ -90,3 +90,8 @@ test("the rendered label never replaces the filed value in the answer, wake or r
 	expect(messages).toHaveLength(1);
 	expect(messages[0]).toContain(`Their choice: ${label}\nWhat to do: ${relay}`);
 });
+
+test("the answer button on the queue page names the choice in plain text", async () => {
+	const page = await detail("Context", { options: [{ label: "**Ship** `it`" }, { label: "Hold" }], recommended: 0 });
+	expect(page).toContain(">Answer Ship it <span");
+});

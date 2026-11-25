@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { warnReadability } from "./ask-parse.ts";
-import { questionStates } from "./core/items/questions.ts";
+import { askQuestion, questionStates } from "./core/items/questions.ts";
+import { claimWake, pageClaim } from "./core/items/questions-claim.ts";
+import { answerDeliveryId } from "./core/items/questions-wake.ts";
 import { openStore } from "./core/store/sqlite-store.ts";
 import { dbPath } from "./core/store/store.ts";
 import { base, mk, refuses } from "./testing/ask-fixtures.ts";
@@ -71,3 +73,29 @@ test("ordinary short bullets and references stay quiet, as do secret asks", () =
 	warnReadability(mk({ title: RUN, context: `- ${SHA}`, tag: "Secret", threadId: "thread-1", options: [] }), warn);
 	expect(warnings).toEqual([]);
 });
+
+test("ask refuses a question whose Details name the commit of an answered one", async () => {
+	const { conf, state } = world();
+	const store = openStore(dbPath(state));
+	try {
+		const old = mk({ title: "Approve the invoice migration", details: `commit ${SHA}` });
+		askQuestion(store, old);
+		const answer = { choice: 0, label: old.options[0]!.label, by: "page" as const, t: new Date().toISOString() };
+		claimWake(store, pageClaim(old, { ...answer, deliveryId: answerDeliveryId(old.id) }));
+		const raw = { ...base, title: "Pick a colour for the header", context: "", urgent: false };
+		const ask = async (over: Record<string, unknown>) => {
+			const p = Bun.spawn(
+				[process.execPath, new URL("./ask.ts", import.meta.url).pathname, JSON.stringify({ ...raw, ...over })],
+				{ env: { ...process.env, CHAMBERLAIN_CONF: conf, CHAMBERLAIN_STATE: state }, stderr: "pipe", stdout: "ignore" },
+			);
+			const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited]);
+			return { err, code };
+		};
+		const refused = await ask({ details: `head ${SHA}` });
+		expect(refused.code).toBe(2);
+		expect(refused.err).toContain(`commit ${SHA}`);
+		expect((await ask({ details: "head 9f8e7d6c5b4a" })).code).toBe(0);
+	} finally {
+		store.close();
+	}
+}, 30_000);

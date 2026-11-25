@@ -12,7 +12,6 @@ import { sameTopic, titlesOverlap, tokens } from "./settled-title.ts";
 
 test.each([
 	["example/project#317", "PR/issue"],
-	["01ARZ3NDEKTSV4RRFFQ69G5FAV", "run"],
 	["1a2b3c4d5e6f", "commit"],
 ])("moving a %s between context and Details still finds the answer in either direction", (ref, kind) => {
 	for (const [earlier, later] of [
@@ -26,10 +25,23 @@ test.each([
 	}
 });
 
+test("a run ID in Details matches a run given as a field, and two texts that only mention one run do not match", () => {
+	const run = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+	const store = memStore();
+	answered(store, "Q-run1", "Approve the database migration for invoices", { details: run });
+	const held = find(store, { title: "Pick a colour for the header", run }, { titleOverlap: false });
+	expect(held.matches[0]?.why).toStartWith(`run ${run}`);
+	// One run raises many gates: a new question that mentions the run is not the old one.
+	for (const over of [{ details: run }, { context: run }, { context: run.toLowerCase() }])
+		expect(find(store, { title: "Pick a colour for the header", ...over }, { titleOverlap: false }).matches).toEqual(
+			[],
+		);
+});
+
 test("a secret record's Details never supplies settled evidence", () => {
 	const store = memStore();
 	const id = "Q-hush";
-	const ref = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+	const ref = "1a2b3c4d5e6f";
 	answered(store, id, "Secret reference", { secret: true, details: ref });
 	expect(store.items.get("queue", id)?.payload).not.toHaveProperty("details");
 	store.items.patch("queue", id, { details: ref });

@@ -128,7 +128,12 @@ export async function queueUp(base: string, timeoutMs = 3000): Promise<boolean> 
 
 /** Refuses (exit 2, one line per match) a question the principal has already settled. */
 function refuseIfSettled(store: Store, q: Question): void {
-	const { matches, skipped } = findSettled(store, q);
+	const { matches, skipped } = findSettled(store, {
+		title: q.title,
+		context: q.context,
+		details: q.details,
+		thread: q.thread,
+	});
 	for (const k of skipped) console.error(`ask.ts: the settled check could not read ${k}`);
 	if (!matches.length) return;
 	console.error(

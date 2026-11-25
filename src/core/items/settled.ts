@@ -8,8 +8,8 @@
  *
  * The match is deterministic and every match says what it rests on. Precision comes first: a missed paraphrase costs one
  * question, a false match costs a `notSettled` override with a reason. In order:
- *   1. Exact refs that name ONE thing (strong): a commit SHA (7+ hex, with a digit and a letter), a standalone run ULID
- *      or a run ID given as a field, a queue item ID in the title or --item. One shared strong ref is a match.
+ *   1. Exact refs that name ONE thing (strong): a commit SHA (7+ hex, with a digit and a letter), a run ID given as a
+ *      field, a queue item ID in the title or --item. One shared strong ref is a match.
  *   2. Refs that name a SUBJECT (weak): a PR or issue number, a branch, a thread title (12+ characters, two words) that one
  *      side names inside the other's text. One PR gets a new gate question every round, so a weak ref matches only beside
  *      the same topic (sameTopic: three shared distinctive words, and half of the shorter title's).
@@ -27,7 +27,6 @@ import { principal, readSettings, type SettledMatch } from "../config/config.ts"
 import type { Clock } from "../ops/rulings.ts";
 import type { Store } from "../store/store.ts";
 import { decisionRecords, queueRecords, rulingRecords } from "./settled-records.ts";
-import { runIdsIn } from "./settled-text.ts";
 import { names, sameTopic, titlesOverlap, tokens } from "./settled-title.ts";
 
 type SettledSource = "queue" | "ruling" | "decision";
@@ -66,7 +65,7 @@ export type SettledRecord = {
 };
 
 type PrRef = { repo?: string; n: number };
-type Refs = { prs: PrRef[]; shas: string[]; items: string[]; runs: string[]; textRuns: string[]; branches: string[] };
+type Refs = { prs: PrRef[]; shas: string[]; items: string[]; runs: string[]; branches: string[] };
 
 const SLUG = "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+";
 
@@ -83,14 +82,14 @@ function refsIn(text: string): Refs {
 		prs.push({ n: Number(m[1]) });
 	const uniq = prs.filter((p, i) => prs.findIndex((q) => q.n === p.n && q.repo === p.repo) === i);
 	// A SHA has a digit and a letter, so a plain number or a word like "defaced" is not one.
-	const shas = [...text.matchAll(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/gi)]
-		.map((m) => m[0].toLowerCase())
+	const shas = [...text.matchAll(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g)]
+		.map((m) => m[0])
 		.filter((s) => /\d/.test(s) && /[a-f]/.test(s));
 	const items = [...text.matchAll(/(?<![A-Za-z0-9-])(Q-[a-z0-9]{4,16})(?![A-Za-z0-9-])/g)].map(([, item = ""]) => item);
 	const branches = [...text.matchAll(new RegExp(`(${SLUG}):([A-Za-z0-9_./-]{1,200})`, "g"))].map(
 		([, repo = "", ref = ""]) => `${repo.toLowerCase()}:${ref}`,
 	);
-	return { prs: uniq, shas, items, runs: [], textRuns: runIdsIn(text), branches };
+	return { prs: uniq, shas, items, runs: [], branches };
 }
 
 const refLabel = (p: PrRef) => `${p.repo ?? ""}#${p.n}`;
@@ -111,8 +110,7 @@ function sharedRefs(a: Refs, aText: string, b: Refs, bText: string): { strong: s
 	const strong = [
 		...a.shas.filter((s) => b.shas.some((t) => t.startsWith(s) || s.startsWith(t))).map((s) => `commit ${s}`),
 		...a.items.filter((i) => b.items.includes(i)).map((i) => `item ${i}`),
-		// A complete ULID in text is also a run reference. Explicit fields still accept other run ID formats.
-		...a.textRuns.filter((r) => b.textRuns.includes(r)).map((r) => `run ${r}`),
+		// A run ID comes from a field on one side and is found verbatim in the other's field or text.
 		...a.runs.filter((r) => b.runs.includes(r) || bText.includes(r)).map((r) => `run ${r}`),
 		...b.runs.filter((r) => !a.runs.includes(r) && aText.includes(r)).map((r) => `run ${r}`),
 	];
