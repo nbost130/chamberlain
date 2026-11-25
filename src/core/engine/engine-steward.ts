@@ -4,6 +4,7 @@
  * it the few things it reads and writes.
  */
 import type { StewardProbe } from "../adapter/adapter-inspect.ts";
+import { effectiveLimits } from "../config/context-guard.ts";
 import { needsCompact, rightsLost } from "../decide/decide.ts";
 import type { WakeResult } from "../delivery/deliver.ts";
 import type { Log } from "../log.ts";
@@ -16,7 +17,17 @@ const COMPACT_COOLDOWN_MS = 10 * 60_000;
 /** An accepted compaction that never ran (no completed compaction counted, none queued or blocked) this long after is taken as lost, and may be sent again. */
 const COMPACT_LOST_AFTER_MS = 30 * 60_000;
 
-export type StewardCheckDeps = {
+type CompactionDeps = {
+	compactReady: () => boolean;
+	compact: (deliveryId: string) => Promise<WakeResult>;
+	log: Log;
+	raiseAlarm: (key: string, a: AlarmText) => void;
+	dry: boolean;
+	compactAt: number;
+	compactState: { get: () => CompactState | undefined; set: (s: CompactState) => void };
+};
+
+export type StewardCheckDeps = CompactionDeps & {
 	/** A private file in the config directory, or undefined. */
 	privateFile: (name: string) => string | undefined;
 	/** Threads the engine never wakes about: the Steward's own joins it. */
@@ -24,18 +35,10 @@ export type StewardCheckDeps = {
 	/** The home adapter's read of the Steward, or undefined when it has none. */
 	probe: () => StewardProbe | undefined;
 	rightsSent: ReturnType<typeof openRightsSent>;
-	/** Whether a compaction target is configured, and the relay's compaction (the relay is the one code that calls a wake transport). */
-	compactReady: () => boolean;
-	/** The relay's compaction attempt: carries `ok` and a sanitized `error`, not only HTTP status. */
-	compact: (deliveryId: string) => Promise<WakeResult>;
-	log: Log;
 	alarm: (key: string, title: string, summary: string) => void;
-	raiseAlarm: (key: string, a: AlarmText) => void;
-	dry: boolean;
-	/** The Steward's context size, in tokens, past which it is compacted. */
-	compactAt: number;
-	/** The last compaction asked for (`CompactState`), durable. */
-	compactState: { get: () => CompactState | undefined; set: (s: CompactState) => void };
+	compactShare?: number;
+	/** Runs the fallback policy even if no size was read. Returns true when compaction cannot help. */
+	fallback?: (id: string, p: StewardProbe, compactAt: number) => boolean;
 	/** Told, each minute, which thread is the pinned Decisions thread. */
 	onDecisionsThread: (id: string | undefined) => void;
 };
@@ -57,6 +60,7 @@ type StewardState = {
  */
 export type CompactState = {
 	thread: string;
+	session?: string;
 	at: number;
 	used: number;
 	cleared: boolean;
@@ -97,7 +101,7 @@ function watchSteward(c: StewardCheckDeps, st: StewardState, p: StewardProbe): v
 }
 
 /** The compaction request, through the relay: a task whose prompt is /compact, so it takes no message. True when T3 accepted it. Only the log line is shared with wakes. */
-async function sendCompact(c: StewardCheckDeps, id: string): Promise<boolean> {
+async function sendCompact(c: CompactionDeps, id: string): Promise<boolean> {
 	const deliveryId = `compact:${id}:${Date.now()}`;
 	try {
 		const r = await c.compact(deliveryId);
@@ -125,9 +129,10 @@ async function sendCompact(c: StewardCheckDeps, id: string): Promise<boolean> {
  * The last accepted compaction for THIS Steward thread, after noting whether the context is back under the line (a compaction that worked
  * leaves it there, and that also ends a `failed` verdict; a new Steward thread starts clean).
  */
-function lastCompaction(c: StewardCheckDeps, p: StewardProbe, id: string): CompactState | undefined {
+function lastCompaction(c: CompactionDeps, p: StewardProbe, id: string): CompactState | undefined {
 	const last = c.compactState.get();
-	if (!last || last.thread !== id) return undefined;
+	if (!last || last.thread !== id || (last.session !== undefined && last.session !== p.contextSession))
+		return undefined;
 	if (p.contextTokens !== undefined && p.contextTokens <= c.compactAt && (!last.cleared || last.failed)) {
 		const { failed: _failed, ...rest } = last;
 		const next = { ...rest, cleared: true };
@@ -138,7 +143,7 @@ function lastCompaction(c: StewardCheckDeps, p: StewardProbe, id: string): Compa
 }
 
 /** Marks the last compaction failed (once, logged): compacting again would only repeat it, and the health check says HAND OFF. */
-function failCompaction(c: StewardCheckDeps, p: StewardProbe, last: CompactState, id: string): "ineffective" {
+function failCompaction(c: CompactionDeps, p: StewardProbe, last: CompactState, id: string): "ineffective" {
 	if (!last.failed) {
 		c.compactState.set({ ...last, failed: true });
 		c.log("compact-ineffective", { threadId: id, used: p.contextTokens, was: last.used });
@@ -154,32 +159,40 @@ function failCompaction(c: StewardCheckDeps, p: StewardProbe, last: CompactState
  * be read an unseen compaction is not a lost one: the context size judges instead, and it is still over the line, so it is a failure, never a re-send.
  */
 function judgeLast(
-	c: StewardCheckDeps,
+	c: CompactionDeps,
 	p: StewardProbe,
 	last: CompactState,
 	id: string,
 ): "pending" | "ineffective" | "lost" {
 	const readable = p.compactions !== undefined && last.compactions !== undefined;
 	const ran = readable && (p.compactions as number) > (last.compactions as number);
-	const measured = p.contextTurn !== undefined && p.compactionTurn !== undefined && p.contextTurn >= p.compactionTurn;
+	const measured =
+		p.contextTokens !== undefined &&
+		p.contextTurn !== undefined &&
+		p.compactionTurn !== undefined &&
+		p.contextTurn >= p.compactionTurn;
 	if (ran && measured && p.compactBlocked === undefined) return failCompaction(c, p, last, id);
 	const aged = !ran && p.compactBlocked === undefined && Date.now() - last.at >= COMPACT_LOST_AFTER_MS;
 	if (!aged) return "pending";
-	return !readable || (last.resends ?? 0) >= 1 ? failCompaction(c, p, last, id) : "lost";
+	return !readable || !mayResend(p, last) ? failCompaction(c, p, last, id) : "lost";
 }
 
+const mayResend = (p: StewardProbe, last: CompactState) => p.retryLostCompact !== false && (last.resends ?? 0) < 1;
+
 /** Compacts the Steward `id` when its context has outgrown the limit, unless one went in the cooldown or the backend says one must not go now. */
-async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: StewardProbe, id: string): Promise<void> {
+async function compactIfNeeded(c: CompactionDeps, st: CompactMemory, p: StewardProbe, id: string): Promise<void> {
 	const used = p.contextTokens;
 	const last = lastCompaction(c, p, id);
+	const lost = last && !last.cleared ? last : undefined;
+	if (used === undefined) {
+		if (lost && !lost.failed && p.retryLostCompact === false) judgeLast(c, p, lost, id);
+		return;
+	}
 	const since = (t: number | undefined) => t !== undefined && Date.now() - t < COMPACT_COOLDOWN_MS;
 	if (!needsCompact(used, c.compactAt, since(st.attemptAt) || since(last?.at))) return;
-	const lost = last && !last.cleared ? last : undefined;
+	if (lost?.failed) return;
 	if (lost && judgeLast(c, p, lost, id) !== "lost") return;
-	const blocked = p.compactBlocked;
-	if (blocked !== st.compactHeldFor) c.log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
-	st.compactHeldFor = blocked;
-	if (blocked) return;
+	if (heldForCompaction(c.log, st, p.compactBlocked)) return;
 	st.attemptAt = Date.now();
 	if (!c.compactReady()) {
 		c.raiseAlarm("steward-compact", alarms.compactUnavailable(used));
@@ -192,10 +205,24 @@ async function compactIfNeeded(c: StewardCheckDeps, st: StewardState, p: Steward
 	if (await sendCompact(c, id)) c.compactState.set(acceptedCompaction(p, id, lost));
 }
 
+type CompactMemory = Pick<StewardState, "compactHeldFor" | "attemptAt">;
+
+function heldForCompaction(log: Log, memory: CompactMemory, blocked: string | undefined): boolean {
+	if (blocked !== memory.compactHeldFor) log(blocked ? "skip-compact" : "compact-clear", { reason: blocked });
+	memory.compactHeldFor = blocked;
+	return blocked !== undefined;
+}
+
+export function createCompactionCheck(c: CompactionDeps) {
+	const memory: CompactMemory = { compactHeldFor: undefined, attemptAt: undefined };
+	return (p: StewardProbe, id: string, compactAt: number) => compactIfNeeded({ ...c, compactAt }, memory, p, id);
+}
+
 /** The record of a compaction T3 accepted: the size and the completed-compaction count then, and how often it has been sent again. */
 function acceptedCompaction(p: StewardProbe, id: string, lost: CompactState | undefined): CompactState {
 	return {
 		thread: id,
+		...(p.contextSession ? { session: p.contextSession } : {}),
 		at: Date.now(),
 		used: p.contextTokens ?? 0,
 		cleared: false,
@@ -206,6 +233,7 @@ function acceptedCompaction(p: StewardProbe, id: string, lost: CompactState | un
 
 export function createStewardCheck(c: StewardCheckDeps) {
 	const st: StewardState = { compactHeldFor: undefined, queueReadFailures: 0, attemptAt: undefined };
+	const compact = createCompactionCheck(c);
 	/** Once a minute: keep the Steward out of its own wakes, and compact it when its context has outgrown the limit. */
 	async function stewardCheck() {
 		c.onDecisionsThread(c.privateFile("decisions-thread"));
@@ -216,7 +244,12 @@ export function createStewardCheck(c: StewardCheckDeps) {
 		if (!p) return;
 		keepRightsMark(c, p);
 		watchSteward(c, st, p);
-		await compactIfNeeded(c, st, p, id);
+		const window = p.context && "tokens" in p.context ? p.context.window : undefined;
+		const { compactAt } = effectiveLimits(
+			{ compactAt: c.compactAt, watchAt: c.compactAt, share: c.compactShare },
+			window,
+		);
+		if (!c.fallback?.(id, p, compactAt)) await compact(p, id, compactAt);
 	}
 
 	return { check: stewardCheck };

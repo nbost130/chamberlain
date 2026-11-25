@@ -1,53 +1,23 @@
 /** The engine's core, third layer: the tickers it builds and the housekeeping passes they run. */
 
-import { has } from "../adapter/adapter-conformance.ts";
-import { compactTokens } from "../config/config.ts";
 import { reconcileItemHolds, reconcileRefHolds } from "../decide/hold-reconcile.ts";
 import { drainDeskPass } from "../desk/alert-triage-engine.ts";
 import { reconcileCardHolds, trackUnverified, unverifiedAlarm } from "../items/card-reconcile.ts";
 import { announceReturns } from "../items/snooze.ts";
 import { obsFor } from "../log.ts";
 import { alarms } from "../messages.ts";
-import { type Health, handoffDeliveryId, handoffWakeMessage, liveHealth } from "../steward/steward-health.ts";
-import { HEALTH_CONFIG } from "../steward/steward-health-config.ts";
-import { healthTicker } from "../steward/steward-health-ticker.ts";
-import { usageTicker } from "../steward/steward-tokens.ts";
 import { activeHoldFor } from "./engine-active-hold.ts";
-import { CoreRights } from "./engine-core-rights.ts";
+import { CoreSteward } from "./engine-core-steward.ts";
 import { createHeartbeat } from "./engine-heartbeat.ts";
 import { createIdleParents } from "./engine-idle.ts";
 import { createPreparePr } from "./engine-prepare-pr.ts";
-import { COMPACT_STATE_KEY, type CompactState, createStewardCheck } from "./engine-steward.ts";
 import { clip, closeCardCommand } from "./engine-support.ts";
 import { createUndelivered } from "./engine-undelivered.ts";
 
-export abstract class CoreWork extends CoreRights {
+export abstract class CoreWork extends CoreSteward {
 	/** Question cards held for the principal (engine-active-hold.ts); an engine given no `activeHold` never holds one. */
 	protected makeActiveHold() {
 		return activeHoldFor(this, this.d, () => this.chamberlainSkip());
-	}
-
-	protected makeStewardCheck() {
-		return createStewardCheck({
-			privateFile: this.privateFile,
-			exclude: this.EXCLUDE,
-			probe: this.probe,
-			rightsSent: this.rightsSent,
-			compactReady: () => this.relay.compactReady(),
-			compact: (id) => this.relay.compact(id),
-			log: this.log,
-			alarm: this.alarm,
-			raiseAlarm: this.raiseAlarm,
-			dry: this.DRY,
-			compactAt: this.d.compactAt ?? compactTokens(HEALTH_CONFIG.compactContext),
-			compactState: {
-				get: () => this.store.state.get<CompactState>(COMPACT_STATE_KEY),
-				set: (s) => this.store.state.set(COMPACT_STATE_KEY, s),
-			},
-			onDecisionsThread: (id) => {
-				this.decisionsThread = id;
-			},
-		}).check;
 	}
 
 	/** Thread ids that are never idle parents or undelivered targets: Steward, decisions, desk, exclude. */
@@ -128,40 +98,6 @@ export abstract class CoreWork extends CoreRights {
 				return { warn: obs.levels.warn, error: obs.levels.error, ...obs.counters };
 			},
 		}).beat;
-	}
-
-	protected makeHealthTick() {
-		const adapter = this.homeAdapter;
-		if (!has(adapter, "transcriptPath")) return undefined;
-		const ask = this.d.ask;
-		return healthTicker({
-			store: this.store,
-			server: () => this.home.name,
-			collect: () => liveHealth(() => adapter.transcriptPath()),
-			// A compaction that did not bring the context under the line is not repeated: the Steward is handed off instead (steward-health-ticker.ts).
-			compactFailed: (h: Health) => {
-				const s = this.store.state.get<CompactState>(COMPACT_STATE_KEY);
-				return Boolean(s?.failed && s.thread === h.thread);
-			},
-			...(ask ? { ask } : {}),
-			// A HAND OFF verdict starts the hand-off itself when the adapter says how: a wake, as an outbox row like any other, so the relay's attempts and dead-letter rules apply. Without that capability the operator is asked.
-			...(has(adapter, "handoffInstruction")
-				? {
-						handoff: (h: Health, session: string) => {
-							this.outbox.deliver(handoffWakeMessage(h, adapter.handoffInstruction()), handoffDeliveryId(session), {
-								kind: "handoff",
-							});
-						},
-					}
-				: {}),
-		});
-	}
-
-	protected makeUsageTick() {
-		const adapter = this.homeAdapter;
-		return this.d.stewardTokens && has(adapter, "transcriptPath")
-			? usageTicker({ store: this.store, find: () => adapter.transcriptPath() })
-			: undefined;
 	}
 
 	/** Snoozed questions whose time has come (src/core/items/snooze.ts): recorded once, and an urgent one is shown where the operator reads again. */

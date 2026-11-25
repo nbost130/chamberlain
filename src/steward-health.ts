@@ -12,11 +12,10 @@
 
 import { homeAdapter } from "./adapters/index.ts";
 import { has } from "./core/adapter/adapter-conformance.ts";
-import { CONF, compactTokens, STATE } from "./core/config/config.ts";
-import { setting } from "./core/config/layout.ts";
+import { CONF, STATE } from "./core/config/config.ts";
+import { contextGuardConfig, setting, thread } from "./core/config/layout.ts";
 import { flowReport, formatFlow } from "./core/steward/steward-flow.ts";
-import { liveHealth } from "./core/steward/steward-health.ts";
-import { HEALTH_CONFIG } from "./core/steward/steward-health-config.ts";
+import { guardedHealth } from "./core/steward/steward-health.ts";
 import { usageReport } from "./core/steward/steward-report.ts";
 import { backfill, findStewardTranscripts, parseBackfillArgs, transcriptDir } from "./core/steward/steward-tokens.ts";
 import { defaultStore } from "./core/store/default-store.ts";
@@ -51,7 +50,7 @@ async function tokens(argv: string[]) {
 			return;
 		}
 		if (argv.length && argv[0] !== "--json") throw Error(`unknown argument ${argv[0]}`);
-		const r = usageReport(store, { compactAt: compactTokens(HEALTH_CONFIG.compactContext) });
+		const r = usageReport(store, { compactAt: contextGuardConfig(CONF).steward.compactAt });
 		console.log(argv[0] === "--json" ? JSON.stringify(r.windows, null, 2) : r.text);
 	} finally {
 		store.close();
@@ -104,8 +103,13 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	}
 	try {
 		const { adapter } = homeAdapter({ conf: CONF, state: STATE });
-		if (!has(adapter, "transcriptPath")) throw Error(`the ${adapter.id} adapter has no transcript to measure`);
-		console.log((await liveHealth(() => adapter.transcriptPath())).report);
+		const health = await guardedHealth({
+			find: has(adapter, "transcriptPath") ? () => adapter.transcriptPath() : undefined,
+			thread: thread(CONF, "steward"),
+			probe: adapter.stewardProbe?.(),
+			policy: contextGuardConfig(CONF).steward,
+		});
+		console.log(health.report);
 	} catch (e) {
 		console.error(`Steward health: WATCH — measurement unavailable (${String(e)})`);
 		process.exitCode = 1;

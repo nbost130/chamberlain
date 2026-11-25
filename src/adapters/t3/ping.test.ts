@@ -84,6 +84,36 @@ describe("createRpcPing", () => {
 			dispatchMode: { type: "queue_after_active" },
 		});
 	});
+	test("a guarded compaction queues exactly one command for an idle projection and refuses busy or incomplete reads", async () => {
+		const sent: unknown[] = [];
+		let projection: unknown = { runs: [{ id: "r", status: "completed" }], turnItems: [] };
+		const ping = createRpcPing({
+			server,
+			conf: root,
+			purpose: "compact",
+			connect: (async () => ({
+				ws: { close() {} },
+				request: async (method: string, command: unknown) => {
+					if (method === "orchestration.getThreadProjection") return projection;
+					sent.push(command);
+					return {};
+				},
+			})) as never,
+		});
+		expect((await ping("pin", "/compact", "seed", "daemon")).ok).toBe(true);
+		expect(sent).toEqual([
+			expect.objectContaining({ threadId: "pin", text: "/compact", dispatchMode: { type: "queue_after_active" } }),
+		]);
+		for (const p of [
+			{ runs: [{ status: "running" }], turnItems: [] },
+			{ runs: [], turnItems: [{ status: "waiting" }] },
+			{ turnItems: [] },
+		]) {
+			projection = p;
+			expect((await ping("pin", "/compact", "new-seed", "daemon")).ok).toBe(false);
+		}
+		expect(sent).toHaveLength(1);
+	});
 	test("a server without an operate token is refused", async () => {
 		const r = await createRpcPing({
 			server: { ...server, operateTokenFile: undefined },

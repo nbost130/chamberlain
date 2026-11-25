@@ -27,6 +27,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { isPrivateFile, readPrivate } from "../private.ts";
+import { parseContextGuard, parseGuardedThreads } from "./context-guard.ts";
 import { deprecated, type Legacy, legacyThread, legacyValue, readable, readLegacyText } from "./layout-legacy.ts";
 import { readConfigFile } from "./layout-read.ts";
 import {
@@ -97,6 +98,11 @@ export function configValue(conf: string, key: string): Legacy | undefined {
 }
 /** Just the value. */
 export const cfg = (conf: string, key: string): unknown => configValue(conf, key)?.value;
+
+export function contextGuardConfig(conf: string, compactAt = setting("compactTokens", conf)) {
+	const steward = parseContextGuard(cfg(conf, "contextGuard"), compactAt);
+	return { steward, threads: parseGuardedThreads(cfg(conf, "guardedThreads"), steward) };
+}
 
 /** A thread id: `threads.<member>` of config.json, else the legacy file of that name. */
 export function thread(conf: string, member: ThreadKey): string | undefined {

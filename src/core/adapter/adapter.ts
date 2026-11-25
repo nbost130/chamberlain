@@ -198,8 +198,10 @@ export interface Adapter {
 		seed: string,
 		identity?: "steward" | "daemon" | "operator",
 	): Promise<{ ok: boolean; detail: string }>;
-	/** The Steward's size, stall and compaction state. */
-	stewardProbe?(): StewardProbe;
+	/** The Steward's size, stall and compaction state, or the same read for an explicitly guarded thread. */
+	stewardProbe?(threadId?: string, turnLimit?: number): StewardProbe;
+	/** Compacts an explicitly guarded thread. This is separate from the Steward's serialized webhook. */
+	compactThread?(threadId: string, deliveryId: string): Promise<{ ok: boolean }>;
 	/**
 	 * A fresh, whole read of every thread on this adapter's server, taken now over a connection of its own: never the watcher's
 	 * cache. Rejects when the server cannot be reached. The held-ledger reconciler closes a hold on a thread only from this.
