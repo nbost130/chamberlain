@@ -71,6 +71,30 @@ test("receivers have independent alarm lifetimes, with one alarm across reason c
 	store.close();
 });
 
+test("an outage that alternates between busy and unreachable still alarms once it has lasted", async () => {
+	const store = memStore();
+	const alerts: string[] = [];
+	let t = 1_000;
+	let reason: PrepareReason = "busy";
+	const wake = { ready: () => true, prepare: async () => preparationFailed(reason), send: async () => ({ ok: true }) };
+	const { relay } = testRelay(store, wake, {
+		now: () => t,
+		alarm: (dedupKey) => {
+			alerts.push(dedupKey);
+			store.items.observe({ source: "alarm", kind: "alarm", dedupKey });
+		},
+	});
+	store.wakes.enqueue({ deliveryId: "w1", message: "m", queuedAt: t });
+	for (let minute = 0; minute < 16; minute++) {
+		reason = minute % 2 ? "unreachable" : "busy";
+		await relay.pass();
+		if (minute < 15) expect(alerts).toEqual([]);
+		t += 60_000;
+	}
+	expect(alerts).toEqual(["wake-preflight"]);
+	store.close();
+});
+
 test("the relay discards an adapter's raw result detail or thrown cause and honors a retry delay", async () => {
 	const store = memStore();
 	const secret = "synthetic-private-reply";

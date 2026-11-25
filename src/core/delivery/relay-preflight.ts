@@ -6,7 +6,7 @@ import { type Ctx, type Lane, raise } from "./relay-ctx.ts";
 const alarmKeys = (l: Lane) => [l.akey("wake-preflight"), l.akey("model-quota")];
 const timerKey = (l: Lane) => l.akey("wake-preflight-since");
 const DEFAULT_ALARM_AFTER_MS = 15 * 60_000;
-type Interval = { reason: PrepareReason; since: number };
+type Interval = { since: number };
 
 export function clearPreflightAlarm(r: Ctx, l: Lane): void {
 	const open = alarmKeys(l).filter((key) => alarmOpen(r, key));
@@ -28,8 +28,9 @@ function sustained(r: Ctx, l: Lane, reason: PrepareReason, now: number): boolean
 	if (reason !== "busy" && reason !== "unreachable") return true;
 	const key = timerKey(l);
 	const stored = r.store.state.get<Interval>(key);
-	const since = stored?.reason === reason && stored.since <= now ? stored.since : now;
-	if (stored?.reason !== reason || stored.since !== since) r.store.state.set(key, { reason, since });
+	// One outage, whichever of the two reasons it gives at the moment: alternating between them must not restart the wait.
+	const since = stored && stored.since <= now ? stored.since : now;
+	if (stored?.since !== since) r.store.state.set(key, { since });
 	return now - since >= (r.d.preflightAlarmAfterMs ?? DEFAULT_ALARM_AFTER_MS);
 }
 
