@@ -126,17 +126,51 @@ test("wake preflight failure sends nothing and recovers after an operator select
 	expect(calls).toBe(1);
 });
 
-test("a desk run by a gatherer has no model to select: its wake preflight passes without a call, the Steward's still selects", async () => {
+test("a desk run by a gatherer has no model to select: its wake needs only an enforced allowlist, the Steward's still selects", async () => {
 	const s = setup();
 	const config = s.config as Record<string, unknown>;
 	config.alertDesk = { gatherer: { command: ["gather"] } };
 	writeFileSync(`${s.conf}/config.json`, JSON.stringify(config), { mode: 0o600 });
 	const transport = { ready: () => true, send: async () => ({ ok: true }) };
-	const desk = modelWake({ ...transport }, s.conf, "desk");
-	expect(await desk.prepare!("desk-id", "https://relay.example.test/hooks/desk")).toEqual({ ok: true });
+	const asked: unknown[] = [];
+	let enforced = true;
+	const desk = modelWake({ ...transport }, s.conf, "desk", (id) => {
+		asked.push(id);
+		return enforced;
+	});
+	const url = "https://relay.example.test/hooks/desk";
+	expect(await desk.prepare!("desk-id", url)).toEqual({ ok: true });
+	enforced = false;
+	expect(await desk.prepare!("desk-id", url)).toMatchObject({ ok: false, reason: "policy" });
+	expect(await desk.prepare!(undefined, url)).toMatchObject({ ok: false, reason: "policy" });
+	expect(asked).toEqual(["desk-id", "desk-id", "desk-id"]);
+	expect(await modelWake({ ...transport }, s.conf, "desk").prepare!("desk-id", url)).toMatchObject({
+		reason: "policy",
+	});
+	const broken = modelWake({ ...transport }, s.conf, "desk", () => {
+		throw Error("unreadable");
+	});
+	expect(await broken.prepare!("desk-id", url)).toMatchObject({ ok: false });
 	expect(s.requests).toHaveLength(0);
 	await expect(configureThread(s.conf, "desk")).rejects.toThrow("gatherer");
 	const steward = modelWake({ ...transport }, s.conf, "steward");
-	await steward.prepare!("steward-id", `${s.config.servers[0]!.origin}/wake`);
+	expect(await steward.prepare!("steward-id", `${s.config.servers[0]!.origin}/wake`)).not.toMatchObject({
+		reason: "policy",
+	});
 	expect(s.requests.length).toBeGreaterThan(0);
+});
+
+test("a desk with its own model needs the allowlist enforced after its model is selected", async () => {
+	const s = setup();
+	const url = `${s.config.servers[0]!.origin}/wake`;
+	s.bindWake(url, "desk-id");
+	const transport = { ready: () => true, send: async () => ({ ok: true }) };
+	let selectedFirst = false;
+	const desk = modelWake({ ...transport }, s.conf, "desk", () => {
+		selectedFirst = s.selection().instanceId === "other-provider";
+		return false;
+	});
+	expect(await desk.prepare!("desk-id", url)).toMatchObject({ ok: false, reason: "policy" });
+	expect(selectedFirst).toBe(true);
+	expect(await modelWake({ ...transport }, s.conf, "desk", () => true).prepare!("desk-id", url)).toEqual({ ok: true });
 });

@@ -16,6 +16,7 @@ import type { ServerEntry } from "../../core/config/servers.ts";
 import type { Gate } from "../../core/decide/hold.ts";
 import { t3Brief } from "./brief.ts";
 import { probeT3Builder } from "./builder-probe.ts";
+import { deskEnforced, deskTurns } from "./desk-record.ts";
 import { t3Linker } from "./links.ts";
 import { modelWake } from "./model-wake.ts";
 import { createRpcPing } from "./ping.ts";
@@ -71,6 +72,18 @@ const stewardProbeFor =
 		return id ? t3Probe(t3StateDbPath(), id, Date.now(), { base: t3BaseDir(), limit }) : { readable: true };
 	};
 
+/** The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained. */
+const deskLane = (env: AdapterEnv): NonNullable<Adapter["alertDesk"]> => ({
+	wake: modelWake(
+		webhookWake(() => env.readPrivate("desk-wake-url")),
+		env.conf,
+		"desk",
+		(threadId) => deskEnforced(t3StateDbPath(), threadId) !== undefined,
+	),
+	isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
+	turns: (span) => deskTurns(t3StateDbPath(), env.readPrivate("desk-thread"), span),
+});
+
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
 	const link = new T3Link(env, srv);
@@ -112,15 +125,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		compact: compactWake,
 		handoffInstruction: () =>
 			"Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",
-		// The Alert Desk's own webhook and thread (desk-wake-url, desk-thread), made by the operator. Without the URL nothing is drained.
-		alertDesk: {
-			wake: modelWake(
-				webhookWake(() => env.readPrivate("desk-wake-url")),
-				env.conf,
-				"desk",
-			),
-			isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
-		},
+		alertDesk: deskLane(env),
 		threadLinks: (threadId) => linker.links(threadId),
 		serverLine: () => t3ServerLine(srv),
 		approvalHint: "The t3_pending_request tool cannot answer it.",

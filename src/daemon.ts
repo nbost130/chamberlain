@@ -35,6 +35,7 @@ import { checkSwitchNotice } from "./core/steward/steward-notice.ts";
 import { recoverSteward } from "./core/steward/steward-recover.ts";
 import { transferPass } from "./core/steward/steward-transfer.ts";
 import { defaultStore } from "./core/store/default-store.ts";
+import { checkTool } from "./desk-allowlist.ts";
 import { SWEEP_PROMPT_FILE } from "./embedded.ts";
 import { startModules } from "./modules/index.ts";
 import { listRunningRunIdsFromStateDb, parkedSinceFromStateDb } from "./prepare-pr-nm-state.ts";
@@ -172,6 +173,8 @@ function engineDeps(
 			debounceMs: setting("wakeDebounceMs", CONF) ?? DEFAULT_WAKE_DEBOUNCE_MS,
 			preflightAlarmAfterMs: setting("preflightAlarmAfterMs", CONF),
 		},
+		// What the Alert Desk ran is replayed through the same allowlist its hook runs, with the environment the installed hook has.
+		deskCheck: ({ tool, input }, env) => checkTool(tool, input, { env }).ok,
 		// A question card in a thread the principal is writing in waits `activeHold.windowMinutes` for them before it wakes the Steward (on by default).
 		activeHold: parseActiveHold(cfg(CONF, "activeHold")),
 		log,

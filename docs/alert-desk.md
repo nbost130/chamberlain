@@ -81,6 +81,27 @@ The matcher must cover every tool, or the default deny never sees the tool it is
 From a checkout the hook command is `bun <the checkout>/src/desk-allowlist.ts hook`. `chamberlain desk-allowlist hook`, the name before the
 commands were grouped, still works, so a hook installed earlier keeps running.
 
+### A desk the allowlist does not limit is not woken
+
+The hook runs only inside Claude Code, so each desk wake first needs proof that the desk's next turn is limited. Chamberlain reads the thread's
+current provider and the project's own settings. Anything else, or anything it cannot read, holds the wake with the reason `policy` and one alarm.
+Held wakes go out when the proof is back. This applies with or without a `gatherer`. It reads the settings and never changes them.
+
+| Provider the desk runs on | Enforced | Audited afterwards |
+| --- | --- | --- |
+| Claude Code, with this build's hook on every tool in the desk project | yes | yes |
+| Claude Code, hook missing, narrower, conditional, of another build, or turned off in any settings file | no: held | yes |
+| Any other provider | no: held | what it records |
+
+Settings are the proof, not the run itself: Claude Code treats a hook that cannot start as a warning, and a provider changed between the check and
+the turn is not seen. The audit covers both. Each finished turn of the desk and of its gatherers is replayed through the same allowlist two minutes
+later. A call that ran and would have been refused raises one alarm for that turn, with counts and no command text. Turns before the first audit
+pass are not judged. A turn with no records, or with records that do not say enough (a search's directory, a gatherer's type), is logged as not
+complete (`desk-audited`, `complete: false`).
+
+After you change the desk's provider, send it the output of `chamberlain brief desk`: a new provider session has no standing prompt. An older saved
+copy may list commands the allowlist no longer accepts.
+
 Filing a decision is allowed in one spelling only, `<ask command> '<json>'`, matched as the whole string. The ask command is `bun $DESK_ASK_PATH` when
 `DESK_ASK_PATH` is set in the hook's environment, else this build's own: `chamberlain ask` from the standalone binary, `bun <that checkout>/src/ask.ts` from source.
 `chamberlain brief desk` (from a checkout, `bun src/brief.ts desk`) fills the standing prompt with the same command (`{{askCommand}}`), so set
@@ -98,7 +119,7 @@ switch them off; no restart is needed).
 Two things changed on purpose, and a desk that relied on either needs one line of config to behave as before:
 
 - **The morning hour is read in the machine's own time zone** unless `timezone` is set. To keep a zone, set it: `"timezone": "<an IANA zone>"`.
-- **No extra command shapes are built in.** Add a `commandShapes` entry for each allowed wrapper command (the fields are below). External gatherers are unsupported: keeping an old `gatherer` setting deliberately holds Desk execution until the operator removes it or a supported Chamberlain adapter exists.
+- **No extra command shapes are built in.** Add a `commandShapes` entry for each allowed wrapper command (the fields are below). An old `gatherer` setting selects no model for the desk, and its wakes are held unless the allowlist is enforced where the desk runs.
 
 ## Switching it on
 
@@ -145,7 +166,7 @@ flag given twice, in any spelling, is refused, and so is any flag or argument th
 `pr checks`) and `git` (`status`, `log`, `diff`), written in this same format (`src/core/desk-shapes.ts`); `journalctl`, `systemctl` and `docker` are code,
 and none of the five can be redefined. A malformed shape is left out whole, with a warning.
 
-**`gatherer`** is a preserved legacy setting for an external agent. Configuring it now refuses both initial launch preflight and later wakes, because that definition's model is outside central configuration. Unset, the desk reads evidence itself and the Agent tool is refused. The hook's legacy gatherer matcher remains for compatibility tests, not permission to execute an unsupported model path.
+**`gatherer`** is a preserved legacy setting for an external agent. Configuring it refuses the initial launch preflight, because that definition's model is outside central configuration. Later wakes select no model, and need the allowlist to be enforced like any desk wake. Unset, the desk reads evidence itself and the Agent tool is refused. The hook's legacy gatherer matcher remains for compatibility tests, not permission to execute an unsupported model path.
 
 `commandShapes` and `gatherer` widen what the desk may run, so, like `morningCommands`, they are read only when `config.json` is owned by you and no
 group or other user can write it.

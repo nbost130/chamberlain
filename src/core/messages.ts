@@ -19,6 +19,10 @@ export const alarms = {
 				? `${detail} Queued work retries automatically.`
 				: `${reason}: ${detail} Queued work retries automatically.`,
 	}),
+	deskOutsideAllowlist: (outside: number, ran: number): AlarmText => ({
+		title: "The Alert Desk ran something its allowlist refuses",
+		summary: `${outside} of ${ran} calls in one desk turn would have been refused. The desk's provider did not enforce the allowlist. Read that turn and move the desk to one that does.`,
+	}),
 	recoverBreaker: (kind: string, count: number, windowMinutes: number): AlarmText => ({
 		title: `chamberlain: ${count} "${kind}" failures in ${windowMinutes} minutes`,
 		summary: "Automatic retries are stopped until ten quiet minutes pass.",

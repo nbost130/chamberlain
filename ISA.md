@@ -117,6 +117,15 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 
 The local relay tests exercise both sides of the alarm threshold across a database reopen, and the T3 fixture exercises all seven reasons through the legacy log, typed event, alarm and recovery. The Decisions probe captures subprocess stderr and verifies an accepted dispatch with a lost reply stays unconfirmed.
 
+## Alert Desk command lock (#136)
+
+| Criterion | Falsifier and probe |
+| --- | --- |
+| DESK-1 | A desk wake is sent while the desk's next turn is on a driver with no proven control, or its driver, thread, project or settings cannot be read, with or without a gatherer. `bun test src/adapters/t3/model.test.ts src/adapters/t3/desk-record.test.ts` |
+| DESK-2 | A hook that is missing, narrower, conditional, in the background, short-lived, of another build, wrapped in a shell, or turned off in any settings file counts as proof. `bun test src/adapters/t3/desk-hook.test.ts` |
+| DESK-3 | A call that ran and the allowlist refuses raises no alarm, a refused call raises one, a turn is judged twice, or a turn that cannot be replayed is called complete. `bun test src/core/desk/desk-audit.test.ts src/adapters/t3/desk-record.test.ts` |
+| DESK-4 | Command, path or alert text reaches an alarm, a log or the database, or a failed audit stops a wake. `bun test src/core/desk/desk-audit.test.ts` |
+
 ## Decisions
 
 - Direction authorized by the accepted goal. Execution remains inline with an independent final review.
