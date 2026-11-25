@@ -18,10 +18,11 @@ import { t3Brief } from "./brief.ts";
 import { probeT3Builder } from "./builder-probe.ts";
 import { t3Linker } from "./links.ts";
 import { modelWake } from "./model-wake.ts";
+import { createRpcPing } from "./ping.ts";
 import { t3Post } from "./post.ts";
 import { queueGate, readStewardQueue } from "./queue.ts";
 import { t3Server } from "./server.ts";
-import { t3StateDbPath } from "./settings.ts";
+import { t3BaseDir, t3StateDbPath } from "./settings.ts";
 import { t3Probe } from "./steward.ts";
 import { t3TitleSetter } from "./title.ts";
 import { t3Transcript } from "./transcript.ts";
@@ -63,11 +64,19 @@ const T3_CAPABILITIES: readonly OptionalCapability[] = [
 /** Idle when no thread id is known yet; otherwise what the thread's queue in T3's state database says. */
 const threadGate = (id: string | undefined): Gate => (id ? queueGate(readStewardQueue(t3StateDbPath(), id)) : "idle");
 
+const stewardProbeFor =
+	(env: AdapterEnv): NonNullable<Adapter["stewardProbe"]> =>
+	(threadId, limit) => {
+		const id = threadId ?? env.steward();
+		return id ? t3Probe(t3StateDbPath(), id, Date.now(), { base: t3BaseDir(), limit }) : { readable: true };
+	};
+
 export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 	const srv = t3Server(env.server);
 	const link = new T3Link(env, srv);
 	const linker = t3Linker(srv);
 	const waiting = createT3Waiting({ server: srv, conf: env.conf, log: env.log, linker });
+	const compactThread = createRpcPing({ server: srv, conf: env.conf, purpose: "compact" });
 	const wake = modelWake(
 		webhookWake(() => env.readPrivate("wake-url")),
 		env.conf,
@@ -98,10 +107,8 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		snapshot: () => link.snapshot(),
 		probeBuilder: (request) => probeT3Builder(env, srv, request),
 		send: waiting.send,
-		stewardProbe: () => {
-			const id = env.steward();
-			return id ? t3Probe(t3StateDbPath(), id) : { readable: true };
-		},
+		stewardProbe: stewardProbeFor(env),
+		compactThread: (id, deliveryId) => compactThread(id, "/compact", deliveryId, "daemon"),
 		compact: compactWake,
 		handoffInstruction: () =>
 			"Run /steward-handoff now: rebuild the brief, start the fresh Steward thread and retire this one.",

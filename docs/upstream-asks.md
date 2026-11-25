@@ -22,3 +22,6 @@ change. Each is a small supported API that would let the T3 adapter stop. None i
 6. **A stable version document.** `GET /.well-known/t3/environment` returns `serverVersion` and `orchestrationProtocolVersion`, which the
    adapter reads at start to warn when a server is outside the tested range. The ask is to document it as stable and add the database
    migration number as a compatibility hint.
+7. **A current context size for every driver.** Surface the active provider turn's exact context size, window and observation time,
+   with explicit unknowns. ACP's `usage_update` carries `used` and `size`. This would replace the adapter's private Antigravity database
+   read and prevent per-turn token totals from being confused with context size.

@@ -37,6 +37,7 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 			dry?: boolean;
 			capabilities?: readonly OptionalCapability[];
 			compactAt?: number;
+			config?: Record<string, unknown>;
 			housekeeping?: boolean;
 			gh?: EngineDeps["gh"];
 			ask?: EngineDeps["ask"];
@@ -53,6 +54,7 @@ export function useCoreEngineFixtures(makeEngine: (d: EngineDeps) => Engine) {
 		const store = o.store ?? memStore();
 		mkdirSync(conf, { recursive: true, mode: 0o700 });
 		const priv = (name: string, body: string) => writeFileSync(`${conf}/${name}`, body, { mode: 0o600 });
+		if (o.config) priv("config.json", JSON.stringify(o.config));
 		priv("decision-rights.md", "The Steward may merge green PRs. Everything else, ask.");
 		if (o.steward) priv("steward-thread", o.steward);
 		if (o.decisions) priv("decisions-thread", o.decisions);

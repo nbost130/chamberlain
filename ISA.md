@@ -1,6 +1,6 @@
 ---
 phase: climbing
-progress: 9/11
+progress: 11/13
 ---
 
 # Provider-independent model selection
@@ -25,6 +25,9 @@ The existing config document owns provider, model and supported options for ever
 Changing the configured provider restores Decisions without reconfiguring unrelated features or requiring Claude.
 
 ## Criteria
+
+- [x] ISC-12: The context guard uses the active provider thread's latest exact reading or reports why it is unknown. Falsifier: an earlier turn, a retired provider with a higher ordinal, an aggregate usage counter or an invalid native record crosses a context limit or supplies compaction evidence. Evidence: `steward.test.ts` and `steward-native.test.ts`; stale-order and aggregate-input mutations both failed.
+- [x] ISC-13: The same configured limit drives Steward health and compaction. Missing readings trigger a completed-turn fallback, and explicitly configured threads compact or raise an alarm. Falsifier: an unknown reading reports OK, fallback repeats, a configured thread is ignored or legacy settings change meaning. Evidence: `engine-context-guard.test.ts` and `engine-steward.compaction-state.test.ts`.
 
 - [x] ISC-11: A confirmed quota limit selects the first usable operator-approved backup for the same role and environment. A busy switch or exhausted list preserves the delivery for retry. Evidence: `src/adapters/t3/quota-failover.test.ts` replays 67 queued wakes across restart, including Desk confinement, quota recovery and one outage alarm.
 
@@ -62,6 +65,8 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-9 | manual | Release revision and service/config compatibility read-back | Normal release/cutover probes |
 | ISC-10 | bun-test | Lost-outcome, restart, stale-thread, clock-jump, retention and fail-closed scenarios, plus launch idempotence against the fake T3 | bun test src/core/overhead src/adapters/t3/investigator.test.ts |
 | ISC-11 | bun-test | Role-specific quota pools, approved backup order, project restrictions, two outages and webhook deliveries on the active generation across restart | bun test src/adapters/t3/model-quota.test.ts src/adapters/t3/quota-failover.test.ts |
+| ISC-12 | bun-test | Exact measurements and stale or invalid provider records | bun test src/adapters/t3 |
+| ISC-13 | bun-test | Shared limits, completed-turn fallback and guarded thread actions | bun test src/core/engine src/core/steward src/core/config |
 
 ## Readable decision cards (#125)
 
