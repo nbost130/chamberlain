@@ -32,7 +32,7 @@ const press = async (dq: El, text: string) => {
 type Call = { method: string; path: string; body?: unknown };
 
 describe("the tab row", () => {
-	test("Waiting, Snoozed, Rulings, Recent: Snoozed directly after Waiting, each of those two with its count", async () => {
+	test("Waiting, Snoozed and Ideas have separate counts and panes", async () => {
 		const dq = run(() => ({ items: [item("x")], snoozed: [snoozedItem("Q-snz1", "2026-11-15T09:00:00.000Z")] }), {
 			src: SRC,
 		});
@@ -40,6 +40,7 @@ describe("the tab row", () => {
 		expect(tabs(dq).map((b) => b.textContent.replace(/\d+|…/, "").trim())).toEqual([
 			"Waiting",
 			"Snoozed",
+			"Ideas",
 			"Rulings",
 			"Recent",
 		]);
@@ -47,6 +48,19 @@ describe("the tab row", () => {
 		expect(tab(dq, "Snoozed").attrs["aria-label"]).toBe("Snoozed, 1");
 		expect(tab(dq, "Waiting").className).toContain("on");
 		expect(dq.querySelector(".dq-count")!.textContent).toBe("1 waiting"); // what is snoozed is not what is waiting
+	});
+	test("idea cards appear only in Ideas, without affecting the Waiting count", async () => {
+		const idea = { ...item("context"), id: "Q-idea", kind: "idea", urgent: false, title: "Idea to review" };
+		const dq = run(() => ({ items: [item("waiting")], ideas: [idea] }), { src: SRC });
+		await settle();
+		expect(count(tab(dq, "Ideas"))).toBe("1");
+		expect(count(tab(dq, "Waiting"))).toBe("1");
+		expect(pane(dq, 0).textContent).not.toContain(idea.title);
+		expect(pane(dq, 2).style.display).toBe("none");
+		await open(dq, "Ideas");
+		expect(pane(dq, 2).style.display).toBe("");
+		expect(pane(dq, 2).textContent).toContain(idea.title);
+		expect(pane(dq, 2).textContent.toLowerCase()).toContain("not urgent");
 	});
 	test("the old collapsible Snoozed block is gone: nothing snoozed shows outside the tab", async () => {
 		const dq = run(() => ({ items: [], snoozed: [snoozedItem("Q-snz1", "2026-11-15T09:00:00.000Z")] }), { src: SRC });

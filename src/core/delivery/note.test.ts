@@ -98,7 +98,7 @@ describe("chamberlain note", () => {
 		x.w.gate = "busy";
 		const relay = x.relay();
 		queueNote(store, { ...NOTE, text: "first" }, x.w.t);
-		queueNote(store, { ...NOTE, text: "second" }, x.w.t);
+		queueNote(store, { ...NOTE, text: "IDEA: second" }, x.w.t);
 		await relay.pass();
 		expect(x.w.accepted).toHaveLength(0);
 		x.w.gate = "idle";
@@ -107,7 +107,8 @@ describe("chamberlain note", () => {
 		expect(x.w.accepted).toHaveLength(1);
 		const m = x.w.accepted[0]!.message;
 		expect(m).toContain("<<<\nfirst\n>>>");
-		expect(m).toContain("<<<\nsecond\n>>>");
+		expect(m).toContain("sent you this idea suggestion.");
+		expect(m).toContain("<<<\nIDEA: second\n>>>");
 		expect(m).not.toContain("folded");
 	});
 });

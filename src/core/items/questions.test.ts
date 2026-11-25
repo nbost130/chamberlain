@@ -195,8 +195,8 @@ describe("ranked", () => {
 			"Q-only1",
 			"Q-prod2",
 			"Q-prod1",
-			"Q-idea1",
 			"Q-only2",
+			"Q-idea1",
 		]);
 		expect(getQuestion(s, "Q-only2")).toMatchObject({ status: "open", notNowAt: "2026-11-09T12:00:00.000Z" });
 		expect(s.items.get(QUEUE, "Q-only2")?.status).toBe("acknowledged");

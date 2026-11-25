@@ -51,7 +51,8 @@ export function createApp(d: AppDeps) {
 		acceptAll: (ids: unknown) => acceptAll(ctx, ids),
 		recover: () => recover(ctx),
 		/** How many questions wait on the principal: the count the Decisions thread title shows. */
-		openCount: () => ranked(ctx.state().values()).length + (d.mirror?.list().length ?? 0),
+		openCount: () =>
+			ranked(ctx.state().values()).filter((i) => i.kind !== "idea").length + (d.mirror?.list().length ?? 0),
 		idle: async () => {
 			while (ctx.background.size) await Promise.all([...ctx.background]);
 		},

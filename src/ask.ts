@@ -39,8 +39,10 @@ import { homeAdapter } from "./adapters/index.ts";
 import { IMAGE, parseAsk, VIDEO, warnReadability } from "./ask-parse.ts";
 import type { Adapter, PostResult } from "./core/adapter/adapter.ts";
 import { CONF, STATE } from "./core/config/config.ts";
+import { parseIdeas } from "./core/config/ideas-config.ts";
 import { cfg } from "./core/config/layout.ts";
 import { startup } from "./core/config/migrate.ts";
+import { ideaCapProblem } from "./core/items/ideas.ts";
 import {
 	askQuestion,
 	type Evidence,
@@ -127,19 +129,41 @@ export async function queueUp(base: string, timeoutMs = 3000): Promise<boolean> 
 }
 
 /** Refuses (exit 2, one line per match) a question the principal has already settled. */
-function refuseIfSettled(store: Store, q: Question): void {
-	const { matches, skipped } = findSettled(store, {
-		title: q.title,
-		context: q.context,
-		details: q.details,
-		thread: q.thread,
-	});
+function settledProblem(store: Store, q: Question, ideaDeclineDays?: number, now = Date.now()): string | undefined {
+	if (q.notSettled) return;
+	const { matches, skipped } = findSettled(
+		store,
+		{ title: q.title, context: q.context, details: q.details, thread: q.thread, ideaDeclineDays },
+		undefined,
+		() => now,
+	);
 	for (const k of skipped) console.error(`ask.ts: the settled check could not read ${k}`);
 	if (!matches.length) return;
-	console.error(
-		refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join("\n"),
+	return refusalLines("ask.ts", matches, 'add "notSettled": "<why this is a different question>" to the JSON').join(
+		"\n",
 	);
-	process.exit(2);
+}
+
+type Filing = { item: Question } | { error: string };
+
+function recordQuestion(store: Store, q: Question, now: number): Filing {
+	const item = stageEvidence(q);
+	askQuestion(store, item, now);
+	return { item };
+}
+
+/** Records a question. An idea's caps, its lookup and its insert share one write lock, so two asks cannot both take the last slot. */
+export function fileQuestion(store: Store, q: Question): Filing {
+	if (q.kind !== "idea") {
+		const error = settledProblem(store, q);
+		return error ? { error } : recordQuestion(store, q, Date.parse(q.createdAt));
+	}
+	const config = parseIdeas(cfg(CONF, "ideas"));
+	return store.tx(() => {
+		const now = Date.now();
+		const error = ideaCapProblem(store, q, config, now) ?? settledProblem(store, q, config.declineDays, now);
+		return error ? { error } : recordQuestion(store, { ...q, createdAt: new Date(now).toISOString() }, now);
+	});
 }
 
 /** The view key for the view's script address, or undefined, with the reason on stderr: a key that cannot be read (a wrong mode) or is missing never makes a link that would not work. */
@@ -205,9 +229,12 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 	const parsed = parseAsk(raw, newItemId());
 	warnReadability(parsed, console.error);
 	const store = defaultStore();
-	if (!parsed.notSettled) refuseIfSettled(store, parsed);
-	const item = stageEvidence(parsed);
-	askQuestion(store, item, Date.parse(item.createdAt));
+	const filed = fileQuestion(store, parsed);
+	if ("error" in filed) {
+		console.error(filed.error);
+		process.exit(2);
+	}
+	const { item } = filed;
 	if (item.secret) {
 		console.log(`${item.id} (secret: on the page as a link to its thread; no card)`);
 		return;
