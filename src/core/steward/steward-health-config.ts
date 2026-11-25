@@ -1,8 +1,11 @@
 /** The Steward health thresholds. */
+import { parseContextGuard } from "../config/context-guard.ts";
+
+const defaults = parseContextGuard(undefined);
 
 export const HEALTH_CONFIG = {
-	context: 100_000, // Watch threshold, well below the compaction threshold.
-	compactContext: 130_000, // The Steward is one permanent thread that compacts past 130k (every request re-reads the whole context, so a smaller context is cheaper); the daemon's compact threshold defaults to this too. `compactTokens` in config.json overrides it.
+	context: defaults.watchAt,
+	compactContext: defaults.compactAt,
 	replies: 20, // Recent behavior, rather than lifetime mistakes.
 	formatBreaks: 3, // Three slips in the recent window filters isolated mistakes.
 	selfReads: 3, // Repeated reconstruction is a warning; one lookup is ordinary work.

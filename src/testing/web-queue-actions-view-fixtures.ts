@@ -28,7 +28,7 @@ type Call = { path: string; body: any };
 
 /** The page with a queue in it: its taps, typing and timers can be driven, and every request it makes is recorded. */
 export async function page(
-	queue: () => { items: unknown[]; snoozed?: unknown[]; cards?: unknown[] },
+	queue: () => { items: unknown[]; ideas?: unknown[]; snoozed?: unknown[]; cards?: unknown[] },
 	o: {
 		now?: Date;
 		path?: string;

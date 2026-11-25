@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { Transcript } from "../adapter/adapter-inspect.ts";
+import type { StewardProbe, Transcript } from "../adapter/adapter-inspect.ts";
+import { effectiveLimits, parseContextGuard } from "../config/context-guard.ts";
 import { setting } from "../config/layout.ts";
 import { handoffWake } from "../messages.ts";
 import type { Store } from "../store/store.ts";
@@ -12,9 +13,14 @@ export type Health = {
 	at: string;
 	verdict: "OK" | "WATCH" | "COMPACT" | "HAND OFF";
 	session?: string;
+	contextSession?: string;
 	thread?: string;
 	boundary?: string;
 	tokens?: number;
+	window?: number;
+	source?: string;
+	limits?: ReturnType<typeof effectiveLimits>;
+	handoffReason?: string;
 	peakTokens?: number;
 	usageAt?: string;
 	replies: number;
@@ -51,10 +57,11 @@ function formatPatternFromEnv(): RegExp | undefined {
 }
 
 /** Context size alone calls for compaction, never a hand-off; only degraded quality signals do. */
-function verdictOf(tokens: number | undefined, elevated: string[], unknownCount: number): Health["verdict"] {
+function verdictOf(h: Health, compactAt: number): Health["verdict"] {
+	const { tokens, elevated, unknown } = h;
 	if (elevated.some((e) => e !== "context")) return "HAND OFF";
-	if (tokens !== undefined && tokens > HEALTH_CONFIG.compactContext) return "COMPACT";
-	return elevated.length || unknownCount ? "WATCH" : "OK";
+	if (tokens !== undefined && tokens > compactAt) return "COMPACT";
+	return elevated.length || unknown.length ? "WATCH" : "OK";
 }
 
 /** Stream only the canonical transcript rows, not API request snapshots or sidechains. */
@@ -80,7 +87,6 @@ export async function measure(
 	if (tokens === undefined) unknown.add("context usage unavailable");
 	if (opts.formatPattern && !slips.length) unknown.add("reply hook samples unavailable");
 	const elevated = [
-		tokens !== undefined && tokens >= HEALTH_CONFIG.context ? "context" : "",
 		slips.filter(Boolean).length >= HEALTH_CONFIG.formatBreaks ? "format" : "",
 		selfReads >= HEALTH_CONFIG.selfReads || threadRereads >= HEALTH_CONFIG.threadRereads ? "rereading" : "",
 	].filter(Boolean);
@@ -97,33 +103,87 @@ export async function measure(
 		threadRereads,
 		elevated,
 		unknown: [...unknown],
-		verdict: verdictOf(tokens, elevated, unknown.size),
+		verdict: "WATCH",
 		report: "",
 	};
+	return finishHealth(h, parseContextGuard(undefined));
+}
+
+function finishHealth(h: Health, policy: ReturnType<typeof parseContextGuard>): Health {
+	const limits = effectiveLimits(policy, h.window);
+	h.limits = limits;
+	if (h.tokens !== undefined && h.tokens >= limits.watchAt) h.elevated.unshift("context");
+	h.verdict = verdictOf(h, limits.compactAt);
 	h.report = formatHealth(h);
 	return h;
 }
+
 export function formatHealth(h: Health): string {
+	const { watchAt, compactAt } = h.limits ?? effectiveLimits(parseContextGuard(undefined));
+	const window = h.window === undefined ? "" : ` of ${h.window}`;
 	return [
 		`Steward health: ${h.verdict} (${h.at})`,
-		`Context: ${h.tokens ?? "unknown"} tokens; watch >=${HEALTH_CONFIG.context}, compact >${HEALTH_CONFIG.compactContext}; peak ${h.peakTokens ?? "unknown"}`,
-		...(h.verdict === "COMPACT"
-			? [
-					`Compaction needed: context is past ${HEALTH_CONFIG.compactContext} tokens and quality signals are healthy; no hand-off needed.`,
-				]
-			: []),
+		`Context: ${h.tokens ?? "unknown"}${window} tokens; watch >=${watchAt}, compact >${compactAt}; peak ${h.peakTokens ?? "unknown"}${h.source ? `; source: ${h.source}` : ""}`,
+		...(h.verdict === "COMPACT" ? [`Compaction needed: context is past ${compactAt} tokens.`] : []),
 		`Format: ${h.breaks}/${h.replies} recent replies broke; threshold >=${HEALTH_CONFIG.formatBreaks} in last ${HEALTH_CONFIG.replies}`,
 		`Rereading: ${h.selfReads} self-transcript reads (>=${HEALTH_CONFIG.selfReads}); ${h.threadRereads} repeat thread reads (>=${HEALTH_CONFIG.threadRereads}, ${HEALTH_CONFIG.windowMs / 60000}m window)`,
 		`Since compaction: ${h.boundary ?? "session start"}; usage sampled ${h.usageAt ?? "unknown"}`,
 		...(h.unknown.length ? [`Unavailable: ${h.unknown.join(", ")}`] : []),
 	].join("\n");
 }
+
+function unavailableHealth(): Health {
+	return {
+		at: new Date().toISOString(),
+		verdict: "WATCH",
+		replies: 0,
+		breaks: 0,
+		selfReads: 0,
+		threadRereads: 0,
+		elevated: [],
+		unknown: ["Steward transcript unavailable"],
+		report: "",
+	};
+}
+
+/** The adapter owns current context. A transcript, if available, still supplies quality signals and historical peaks. */
+export async function guardedHealth(o: {
+	find?: () => Promise<Transcript>;
+	thread?: string;
+	probe?: StewardProbe;
+	policy: ReturnType<typeof parseContextGuard>;
+}): Promise<Health> {
+	const h = o.find ? await liveHealth(o.find).catch(unavailableHealth) : unavailableHealth();
+	h.thread = o.thread ?? h.thread;
+	h.session ??= o.probe?.contextSession;
+	h.contextSession = o.probe?.contextSession;
+	h.elevated = h.elevated.filter((signal) => signal !== "context");
+	applyReading(h, o.probe);
+	return finishHealth(h, o.policy);
+}
+
+function applyReading(h: Health, probe: StewardProbe | undefined) {
+	const reading = probe?.context;
+	if (reading || probe?.contextTokens !== undefined) {
+		h.unknown = h.unknown.filter((signal) => signal !== "context usage unavailable");
+		h.tokens = reading ? undefined : probe?.contextTokens;
+		h.usageAt = undefined;
+	}
+	if (reading && "tokens" in reading) {
+		h.tokens = reading.tokens;
+		h.usageAt = reading.at;
+		h.window = reading.window;
+		h.source = reading.source;
+	}
+	if (h.tokens === undefined && !h.unknown.includes("context usage unavailable"))
+		h.unknown.push(reading && "unknown" in reading ? reading.unknown : "context usage unavailable");
+}
 /**
  * Measures the Steward's own Claude Code transcript, wherever the adapter says it is (`Adapter.transcriptPath`).
  * This is the one health signal tied to a provider: another provider's Steward has no such transcript, and an adapter
  * that cannot find one reports it as unavailable, never as OK.
  */
-export async function liveHealth(
+async function liveHealth(
 	find: () => Promise<Transcript>,
 	opts: MeasureOptions = { formatPattern: formatPatternFromEnv() },
 ): Promise<Health> {

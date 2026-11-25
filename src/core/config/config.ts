@@ -10,7 +10,7 @@
  */
 
 import { SCHEMA_VERSION } from "../store/schema.ts";
-import { cfg, setting } from "./layout.ts";
+import { cfg } from "./layout.ts";
 import { parseSettledMatch, type Settings } from "./settings-parse.ts";
 
 export type { Settings, SettledMatch } from "./settings-parse.ts";
@@ -133,7 +133,6 @@ export const alertCommand = (): string | undefined => {
 	const v = process.env.CHAMBERLAIN_ALERT_CMD ?? readSettings().alertCommand;
 	return v ? tilde(v) : undefined;
 };
-export const compactTokens = (fallback: number): number => setting("compactTokens") ?? fallback;
 
 /** What wakes call the human: CHAMBERLAIN_PRINCIPAL, then `principalName` in settings.json, then "the operator". */
 export const principal = (): string =>

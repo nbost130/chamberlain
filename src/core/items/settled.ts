@@ -50,6 +50,8 @@ export type Subject = {
 	pr?: string;
 	issue?: string;
 	branch?: string;
+	/** Set only for a new idea: how long a dismissal or decline should prevent a repeat. */
+	ideaDeclineDays?: number;
 };
 
 export type SettledRecord = {
@@ -140,7 +142,7 @@ export function findSettled(
 	clock: Clock = Date.now,
 ): { matches: Settled[]; skipped: string[] } {
 	const { titleOverlap, ignore } = matchSettings(match);
-	const { records, skipped } = readRecords(store, clock());
+	const { records, skipped } = readRecords(store, clock(), s.ideaDeclineDays);
 	const body = `${s.title}\n${s.context ?? ""}\n${s.details ?? ""}`;
 	const mine = subjectRefs(s, body);
 	const matches: Settled[] = [];
@@ -160,11 +162,16 @@ export function findSettled(
 }
 
 /** The records of the three sources; a source that cannot be read is named in `skipped` and the others still count. */
-function readRecords(store: Store, nowMs: number): { records: SettledRecord[]; skipped: string[] } {
+function readRecords(
+	store: Store,
+	nowMs: number,
+	ideaDeclineDays?: number,
+): { records: SettledRecord[]; skipped: string[] } {
 	const skipped: string[] = [];
 	const records: SettledRecord[] = [];
+	const since = ideaDeclineDays === undefined ? undefined : nowMs - ideaDeclineDays * 86_400_000;
 	for (const [name, read] of [
-		["questions", queueRecords],
+		["questions", (st: Store) => queueRecords(st, since)],
 		["rulings", (st: Store) => rulingRecords(st, nowMs)],
 		["decisions", decisionRecords],
 	] as const) {

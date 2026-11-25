@@ -192,6 +192,19 @@ describe("a compaction is judged only once it has run", () => {
 		await w.check();
 		expect(w.compacts()).toBe(1);
 	});
+
+	test("a completed compaction with unknown context stays pending until a measured result", async () => {
+		const box: { state?: CompactState } = { state: sent(31) };
+		const w = world(box);
+		const evidence = { retryLostCompact: false, compactions: 5, compactionTurn: 9, contextTurn: 9 };
+		w.at(NOW, evidence);
+		await w.check();
+		expect(box.state?.failed).toBeUndefined();
+		w.at(NOW + MIN, { ...evidence, contextTokens: 140_000 });
+		await w.check();
+		expect(box.state?.failed).toBe(true);
+		expect(w.compacts()).toBe(0);
+	});
 });
 
 describe("an unreadable compaction count is not a lost compaction (audit round 3, item 8)", () => {

@@ -7,6 +7,8 @@ import { parseOverhead } from "../overhead/config.ts";
 import { configDir } from "../state-dir.ts";
 import { SchemaTooNewError } from "../store/schema.ts";
 import { parseActiveHold } from "./active-hold-config.ts";
+import { parseContextGuard, parseGuardedThreads } from "./context-guard.ts";
+import { parseIdeas } from "./ideas-config.ts";
 import { parseSettledMatch } from "./settings-parse.ts";
 
 export const CONFIG_FILE = "config.json";
@@ -74,6 +76,9 @@ export const SECTIONS = [
 	"overhead",
 	"distill",
 	"activeHold",
+	"contextGuard",
+	"guardedThreads",
+	"ideas",
 ] as const;
 export const THREADS = ["steward", "decisions", "desk"] as const;
 export type ThreadKey = (typeof THREADS)[number];
@@ -130,11 +135,15 @@ function checkSchemaVersion(v: unknown): void {
 /** Pure: a section of config.json is null (none), a list (servers) or an object, and a settledMatch parses. */
 function checkSection(k: string, val: unknown): void {
 	if (val === null) return;
-	if (k === "servers" ? !Array.isArray(val) : !isObject(val))
-		throw new ConfigFileError(`config.json: "${k}" must be ${k === "servers" ? "a list" : "an object"}`);
+	const list = k === "servers" || k === "guardedThreads";
+	if (list ? !Array.isArray(val) : !isObject(val))
+		throw new ConfigFileError(`config.json: "${k}" must be ${list ? "a list" : "an object"}`);
 	try {
 		if (k === "settledMatch") parseSettledMatch(val, "config.json");
 		if (k === "activeHold") parseActiveHold(val);
+		if (k === "contextGuard") parseContextGuard(val);
+		if (k === "guardedThreads") parseGuardedThreads(val);
+		if (k === "ideas") parseIdeas(val);
 	} catch (e) {
 		throw new ConfigFileError((e as Error).message);
 	}

@@ -122,14 +122,15 @@ export const alwaysUrgent = (q: Pick<Question, "secret" | "tag" | "cardRequest">
 	q.secret === true ||
 	(typeof q.cardRequest === "string" && q.cardRequest !== "") ||
 	/^\s*(approval|secret)\s*$/i.test(q.tag ?? "");
-/** Pure: is this item urgent? Absent `urgent` is urgent, and so is every item `alwaysUrgent` names, whatever its field says. */
-export const isUrgent = (q: Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">): boolean =>
-	q.urgent !== false || alwaysUrgent(q);
-/** Pure: the item with an `urgent: false` it may not have removed. Every write and every read of a question goes through it. */
-function withUrgency<T extends Pick<Question, "urgent" | "secret" | "tag" | "cardRequest">>(q: T): T {
+/** Pure: ideas default to silent; approvals, secrets and backend card pointers always take precedence. */
+export const isUrgent = (q: Pick<Question, "kind" | "urgent" | "secret" | "tag" | "cardRequest">): boolean =>
+	alwaysUrgent(q) || (q.kind !== "idea" && q.urgent !== false);
+/** Every read and write exposes effective urgency, including ideas filed before they defaulted to silent. */
+function withUrgency(q: Question): Question {
+	if (!isUrgent(q)) return { ...q, urgent: false };
 	if (q.urgent !== false || !alwaysUrgent(q)) return q;
 	const { urgent: _dropped, ...rest } = q;
-	return rest as T;
+	return rest;
 }
 
 /**

@@ -1,43 +1,7 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { COMPLETED, provider, t3Db, turn, usage } from "../../testing/t3-context-fixture.ts";
 import { t3Probe } from "./steward.ts";
-
-/**
- * A T3 state database with only the Steward's provider turns, each `[ordinal, usedTokens | null]`, and its completed compaction items, each
- * the ordinal of the provider turn that ran it (T3 stores a compaction as a `compaction` turn item on its turn).
- */
-function t3Db(turns: [number, number | null][], compactionsOn: number[] = []): string {
-	const path = join(mkdtempSync(join(tmpdir(), "steward-probe-")), "state.sqlite");
-	const db = new Database(path);
-	db.run(
-		"create table orchestration_v2_projection_provider_turns (provider_turn_id text, thread_id text, ordinal integer, payload_json text)",
-	);
-	db.run(
-		"create table orchestration_v2_projection_turn_items (turn_item_id text, thread_id text, provider_turn_id text, ordinal integer, type text, status text, payload_json text)",
-	);
-	for (const [ordinal, used] of turns)
-		db.run("insert into orchestration_v2_projection_provider_turns values (?, ?, ?, ?)", [
-			`pt${ordinal}`,
-			"th",
-			ordinal,
-			JSON.stringify(used === null ? { status: "running" } : { tokenUsage: { usedTokens: used } }),
-		]);
-	for (const [i, turn] of compactionsOn.entries())
-		db.run("insert into orchestration_v2_projection_turn_items values (?, ?, ?, ?, ?, ?, ?)", [
-			`c${i}`,
-			"th",
-			`pt${turn}`,
-			turn * 1000,
-			"compaction",
-			"completed",
-			"{}",
-		]);
-	db.close();
-	return path;
-}
 
 test("the context size is the newest turn's, and which turn that is", () => {
 	const p = t3Probe(
@@ -98,4 +62,67 @@ test("a database that cannot be read gives no compaction count: no evidence, whi
 	const p = t3Probe("/nonexistent/statev2.sqlite", "th");
 	expect(p.compactions).toBeUndefined();
 	expect(p.contextTokens).toBeUndefined();
+	expect(p.context).toMatchObject({ unknown: expect.any(String) });
+});
+
+test("a provider switch resets ordinal ordering and compaction evidence", () => {
+	const path = t3Db([[308, 380_000]], [308]);
+	const db = new Database(path);
+	provider(db, "replacement", "cursor");
+	db.run("update orchestration_v2_projection_threads set active_provider_thread_id = 'replacement'");
+	turn(db, "replacement", 1, { payload: usage(12_000, 256_000) });
+	expect(t3Probe(path, "th")).toMatchObject({ contextTokens: 12_000, contextTurn: 1, compactions: 0 });
+	expect(t3Probe(path, "th").compactionTurn).toBeUndefined();
+	turn(db, "replacement", 2, { payload: {} });
+	const p = t3Probe(path, "th");
+	expect(p.context).toMatchObject({ unknown: expect.any(String) });
+	expect(p.contextTokens).toBeUndefined();
+	expect(p.unknownTurns).toEqual([2]);
+	db.close();
+});
+
+test.each(["claudeAgent", "codex", "cursor", "grok", "antigravity"])(
+	"%s uses only a current projected size",
+	(driver) => {
+		const path = t3Db();
+		const db = new Database(path);
+		db.run("delete from orchestration_v2_projection_provider_threads");
+		provider(db, "primary", driver);
+		turn(db, "primary", 1, { payload: usage(75_000, 100_000) });
+		expect(t3Probe(path, "th").context).toEqual({
+			tokens: 75_000,
+			window: 100_000,
+			at: COMPLETED,
+			source: "provider turn",
+		});
+		turn(db, "primary", 2, {
+			payload: { turnTokenUsage: { inputTokens: 250_000 }, tokenUsage: { inputTokens: 50_000 } },
+		});
+		expect(t3Probe(path, "th").context).toMatchObject({ unknown: expect.any(String) });
+		turn(db, "primary", 3, { payload: usage(150_000, 100_000) });
+		expect(t3Probe(path, "th").context).toMatchObject({ unknown: expect.any(String) });
+		turn(db, "primary", 4, { payload: usage(75_000, 100_000, "2000-01-01T00:00:00.000Z") });
+		expect(t3Probe(path, "th").context).toMatchObject({ unknown: expect.any(String) });
+		turn(db, "primary", 5, { payload: usage("75000", 100_000) });
+		expect(t3Probe(path, "th").context).toMatchObject({ unknown: expect.any(String) });
+		db.close();
+	},
+);
+
+test("an explicit compaction refusal only applies to its active provider thread", () => {
+	const path = t3Db([[1, 145_000]]);
+	const db = new Database(path);
+	const payload = {
+		failure: {
+			message: "This provider does not support /compact. Start a new thread to continue with a fresh context.",
+		},
+	};
+	db.run(
+		"insert into orchestration_v2_projection_turn_items values ('err', 'th', null, 'previous', 1, 'error', 'failed', ?)",
+		[JSON.stringify(payload)],
+	);
+	expect(t3Probe(path, "th").canCompact).toBeUndefined();
+	db.run("update orchestration_v2_projection_turn_items set provider_thread_id = 'primary'");
+	expect(t3Probe(path, "th")).toMatchObject({ canCompact: false, contextTokens: 145_000 });
+	db.close();
 });

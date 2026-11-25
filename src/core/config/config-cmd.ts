@@ -163,7 +163,16 @@ function describeSection(k: string, value: unknown): string {
 /** The `sections` block of `config show`. */
 function sectionLines(conf: string): string[] {
 	const out: string[] = [];
-	for (const k of ["settledMatch", "servers", "web", "sweep", "alertDesk", "operatingRules", "judge"] as const) {
+	for (const k of [
+		"settledMatch",
+		"servers",
+		"web",
+		"sweep",
+		"alertDesk",
+		"operatingRules",
+		"judge",
+		"ideas",
+	] as const) {
 		const v = configValue(conf, k);
 		if (!v) continue;
 		out.push(

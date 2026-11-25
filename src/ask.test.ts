@@ -48,8 +48,8 @@ describe("parseAsk: the fields", () => {
 			expect(() => parseAsk(raw, ID, NOW)).toThrow("ask: expected a JSON object");
 	});
 	test("a text field is trimmed; a required one that is absent, null or empty, or a field that is not text, is refused", () => {
-		const q = mk({ title: "  Pick  ", context: " - a ", thread: " t ", server: " s ", kind: "idea" });
-		expect([q.title, q.context, q.thread, q.server, q.kind]).toEqual(["Pick", "- a", "t", "s", "idea"]);
+		const q = mk({ title: "  Pick  ", context: " - a ", thread: " t ", server: " s ", kind: "product" });
+		expect([q.title, q.context, q.thread, q.server, q.kind]).toEqual(["Pick", "- a", "t", "s", "product"]);
 		for (const k of ["kind", "title", "thread", "server"])
 			for (const v of [undefined, null, ""]) refuses({ [k]: v }, `ask: "${k}" is required`);
 		refuses({ title: 5 }, 'ask: "title" must be a string');

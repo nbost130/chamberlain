@@ -14,6 +14,10 @@ The T3 adapter **relies on T3 internals** that are not a supported API:
   provider identity, and run timings. Tables: `orchestration_v2_projection_runs`, `_messages`, `_turn_items`,
   `_runtime_requests`, `_provider_turns`, `_threads`, `_provider_threads`, `_provider_sessions`. If a T3 migration changes
   them, the gate reads "unknown", which counts as busy (wakes still go after a 20-minute ceiling) and raises an alarm.
+- When the projection has no current context size, the Antigravity reader may open the active provider instance's conversation
+  SQLite database read-only. It checks the native conversation and turn reference and decodes four numeric fields in the newest
+  `gen_metadata` row. Schema or wire changes and unreadable databases yield unknown. The native table has no supported per-turn
+  timestamp or join key, so Chamberlain checks that the database or its WAL was written at or after the turn started.
 - It answers cards and approvals, renames the Decisions thread and sends to threads with `orchestration.dispatchCommand`:
   `runtime-request.respond`, `thread.metadata.update`, `message.dispatch`.
 - It reads the shell stream (`orchestration.subscribeShell`), thread projections, and the `/bounded` and `/history`
@@ -31,7 +35,7 @@ busy/queued state read and a "thread is waiting on input" event first among them
 - **Delivery is at-least-once.** The webhook cannot de-duplicate, so a wake can arrive twice under one id and the Steward de-duplicates; see [DELIVERY.md](DELIVERY.md).
 - **The page has no authentication** beyond its network binding (see [SECURITY.md](SECURITY.md)), and a tailnet is only as private
   as its members.
-- **Steward health reads a Claude Code transcript.** On another provider it reports "unavailable" (and never "OK").
+- **Transcript quality signals are available only with a Claude Code transcript.** The context guard runs independently of those signals.
 - **A token expires.** the read token (`secrets/read-token`) lasts as long as you minted it for; the daemon alarms at 25 days. A webhook stops
   working if its bound thread is deleted; repeated failed deliveries raise an alarm.
 - **Wake timing is heuristic.** A finished turn with outstanding work is held for a quiet window (three minutes) in case
