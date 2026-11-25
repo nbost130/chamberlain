@@ -1,14 +1,30 @@
 import { has } from "../adapter/adapter-conformance.ts";
+import type { StewardProbe } from "../adapter/adapter-inspect.ts";
 import { contextGuardConfig } from "../config/layout.ts";
 import { guardedHealth, type Health, handoffDeliveryId, handoffWakeMessage } from "../steward/steward-health.ts";
 import { healthTicker } from "../steward/steward-health-ticker.ts";
-import { usageTicker } from "../steward/steward-tokens.ts";
+import { turnUsageTicker, usageTicker } from "../steward/steward-tokens.ts";
 import { guardedThreads, stewardFallback } from "./engine-context-guard.ts";
 import { CoreRights } from "./engine-core-rights.ts";
 import { COMPACT_STATE_KEY, type CompactState, createStewardCheck } from "./engine-steward.ts";
 
 export abstract class CoreSteward extends CoreRights {
 	private contextFallback?: ReturnType<typeof stewardFallback>;
+
+	private stewardContext(probe: StewardProbe | undefined) {
+		const key = "steward-context-sample";
+		const prior = this.store.state.get<{ session: string; reading: StewardProbe["lastMeasuredContext"] }>(key);
+		const { contextSession: session, context: reading, contextPending } = probe ?? {};
+		if (
+			session &&
+			reading &&
+			"tokens" in reading &&
+			!contextPending &&
+			(prior?.session !== session || prior.reading?.at !== reading.at)
+		)
+			this.store.state.set(key, { session, reading });
+		return prior && prior.session === session ? prior.reading : undefined;
+	}
 
 	protected makeStewardCheck() {
 		const { steward: policy, threads } = contextGuardConfig(this.conf, this.d.compactAt);
@@ -22,7 +38,11 @@ export abstract class CoreSteward extends CoreRights {
 		const { check } = createStewardCheck({
 			privateFile: this.privateFile,
 			exclude: this.EXCLUDE,
-			probe: () => this.homeAdapter.stewardProbe?.(undefined, Math.max(policy.unknownTurns, policy.handoffTurns)),
+			probe: () => {
+				const probe = this.homeAdapter.stewardProbe?.(undefined, Math.max(policy.unknownTurns, policy.handoffTurns));
+				this.stewardContext(probe);
+				return probe;
+			},
 			rightsSent: this.rightsSent,
 			compactReady: () => this.relay.compactReady(),
 			compact: (id) => this.relay.compact(id),
@@ -60,13 +80,18 @@ export abstract class CoreSteward extends CoreRights {
 		return healthTicker({
 			store: this.store,
 			server: () => this.home.name,
-			collect: () =>
-				guardedHealth({
+			collect: () => {
+				const thread = this.privateFile("steward-thread");
+				const probe = this.probe();
+				return guardedHealth({
 					find: has(adapter, "transcriptPath") ? () => adapter.transcriptPath() : undefined,
-					thread: this.privateFile("steward-thread"),
-					probe: this.probe(),
+					meter: thread && has(adapter, "stewardMeter") ? adapter.stewardMeter(thread, 0, true) : undefined,
+					thread,
+					probe,
+					priorContext: this.stewardContext(probe),
 					policy,
-				}),
+				});
+			},
 			contextHandoff: () => this.contextFallback?.get(),
 			// A compaction that did not bring the context under the line is not repeated: the Steward is handed off instead (steward-health-ticker.ts).
 			compactFailed: (h: Health) => {
@@ -89,6 +114,14 @@ export abstract class CoreSteward extends CoreRights {
 
 	protected makeUsageTick() {
 		const adapter = this.homeAdapter;
+		if (this.d.stewardTokens && has(adapter, "stewardMeter")) {
+			const tick = turnUsageTicker({
+				store: this.store,
+				thread: () => this.privateFile("steward-thread"),
+				read: (id, since) => adapter.stewardMeter(id, since),
+			});
+			return async () => tick();
+		}
 		return this.d.stewardTokens && has(adapter, "transcriptPath")
 			? usageTicker({ store: this.store, find: () => adapter.transcriptPath() })
 			: undefined;

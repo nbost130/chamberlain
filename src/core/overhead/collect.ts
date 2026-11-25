@@ -15,7 +15,13 @@ import type { Store } from "../store/store.ts";
 import type { WakeUsage } from "../store/store-records.ts";
 import { type LaunchedSpend, type ManagedSection, readSupervision } from "./collect-managed.ts";
 import { DAY_MS, HOUR_MS, type OverheadConfig, perPrConfigured } from "./config.ts";
-import { type ClassifierSpend, type Experiments, exclusionConfigured, readExperiments } from "./experiments.ts";
+import {
+	type ClassifierSpend,
+	type Experiments,
+	exclusionConfigured,
+	readExperiments,
+	usageTelemetrySession,
+} from "./experiments.ts";
 import { type FleetSpend, fleetSpend, type RunQuery } from "./fleet-spend.ts";
 import type { OwnThreads } from "./managed.ts";
 import { mergedPrs } from "./merged-prs.ts";
@@ -29,7 +35,6 @@ import {
 	type WindowMetrics,
 	windowMetrics,
 } from "./metrics.ts";
-import { type Price, priceOf } from "./prices.ts";
 import type { Status } from "./status.ts";
 
 export type { Status } from "./status.ts";
@@ -118,7 +123,12 @@ async function readOwn(d: CollectDeps, notes: Notes): Promise<Own> {
 	const usage = d.store.usage.list({ since });
 	const spend = exclusionConfigured(d.cfg) ? d.store.dispositions.spend(since, [...SENDS_TEXT]) : [];
 	const { experiments, unverified } = await readExperiments(d, { usage, classifier: spend }, notes.unavailable);
-	return { usage: usage.filter((r) => !experiments.sessions.has(r.session)), spend, experiments, unverified };
+	return {
+		usage: usage.filter((r) => !experiments.sessions.has(usageTelemetrySession(r) ?? "")),
+		spend,
+		experiments,
+		unverified,
+	};
 }
 
 /**
@@ -154,14 +164,6 @@ async function readFleet(d: CollectDeps, r: Notes) {
 	}
 }
 
-/** The Steward's price, or the reason it has none. */
-function stewardPrice(d: CollectDeps, unavailable: string[]) {
-	if (!d.model) unavailable.push("Steward spend: no models.steward selection with a single attributable model price");
-	else if (!priceOf(d.cfg.prices, d.model))
-		unavailable.push(`Steward spend: no price for "${d.model}" in overhead.prices`);
-	return d.model ? priceOf(d.cfg.prices, d.model) : undefined;
-}
-
 /**
  * The overhead share, Chamberlain-caused spend (the Steward, its own calls, the butlers and investigators it launched) / the fleet's spend, and the
  * Steward's own share of the same fleet; each undefined when either side is unknown. Experiments are out of the fleet and of the launched threads'
@@ -195,13 +197,13 @@ function limitsOf(cfg: OverheadConfig, baseline: WindowMetrics): OverheadReport[
 }
 
 /** The window function: the metrics of [from, to) over the usage rows, read once for the longest span any window needs. */
-function windowsOf(d: CollectDeps, own: Own, price: Price | undefined, prs: readonly MergedPr[] | undefined) {
+function windowsOf(d: CollectDeps, own: Own, prs: readonly MergedPr[] | undefined) {
 	return (from: number, to: number) =>
 		windowMetrics({
 			usage: own.usage,
 			from,
 			to,
-			...(price ? { price } : {}),
+			prices: d.cfg.prices,
 			cacheWrite: d.cfg.cacheWrite,
 			classifierUsd: classifierUsd(d.store, own, from, to),
 			...(prs ? { prs: countedPrs(prs, { from, to }, d.cfg.github).length } : {}),
@@ -214,19 +216,17 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 	const notes: Notes = { unavailable: [], notConfigured: [] };
 	const W = d.cfg.windowHours * HOUR_MS;
 	const B = d.cfg.baselineDays * DAY_MS;
-	const price = stewardPrice(d, notes.unavailable);
 	const [pr, fl] = await Promise.all([readPrs(d, d.now - Math.max(3 * W, W + B), notes), readFleet(d, notes)]);
-	const window = windowsOf(d, await readOwn(d, notes), price, pr.prs);
+	const measurements = await readOwn(d, notes);
+	const window = windowsOf(d, measurements, pr.prs);
 	const day = window(d.now - W, d.now);
 	const baseline = window(d.now - W - B, d.now - W);
-	const own = { pinned: [], butlers: [], investigators: [], ...d.own };
-	const source = { store: d.store, cfg: d.cfg, own, ...(d.query ? { query: d.query } : {}) };
-	const { launched, causedUsd, managed } = await readSupervision(source, { from: d.now - W, to: d.now }, day, notes);
-	const { overhead: spendShare, steward: stewardShare } = sharesOf(fl.fleet, day, causedUsd);
-	if (fl.fleet?.missingHosts.length)
-		notes.unavailable.push(
-			`spend share and managed ratio: no fleet rows for ${fl.fleet.missingHosts.join(", ")} in the window, so the total is short and neither is judged`,
-		);
+	const { launched, managed, spendShare, stewardShare } = await fleetMetrics(d, {
+		measurements,
+		day,
+		fleet: fl.fleet,
+		notes,
+	});
 	return {
 		at: d.now,
 		...(d.model ? { model: d.model } : {}),
@@ -260,6 +260,54 @@ export async function collect(d: CollectDeps): Promise<OverheadReport> {
 		limits: limitsOf(d.cfg, baseline),
 		prList: pr.prs ? countedPrs(pr.prs, { from: d.now - W, to: d.now }, d.cfg.github) : [],
 	};
+}
+
+async function fleetMetrics(
+	d: CollectDeps,
+	{
+		measurements,
+		day,
+		fleet,
+		notes,
+	}: {
+		measurements: Own;
+		day: WindowMetrics;
+		fleet: FleetSpend | undefined;
+		notes: Notes;
+	},
+) {
+	if (day.stewardUsd === undefined)
+		notes.unavailable.push(
+			day.turns
+				? "Steward spend: missing turn usage, recorded model or price in overhead.prices"
+				: "Steward spend: no recorded turns in the window",
+		);
+	const own = { pinned: [], butlers: [], investigators: [], ...d.own };
+	const source = { store: d.store, cfg: d.cfg, own, ...(d.query ? { query: d.query } : {}) };
+	const fleetDay = coverageForFleet(d, measurements, day, notes);
+	const { launched, causedUsd, managed } = await readSupervision(
+		source,
+		{ from: day.from, to: day.to },
+		fleetDay,
+		notes,
+	);
+	const { overhead: spendShare, steward: stewardShare } = sharesOf(fleet, fleetDay, causedUsd);
+	if (fleet?.missingHosts.length)
+		notes.unavailable.push(
+			`spend share and managed ratio: no fleet rows for ${fleet.missingHosts.join(", ")} in the window, so the total is short and neither is judged`,
+		);
+	return { launched, managed, spendShare, stewardShare };
+}
+
+function coverageForFleet(d: CollectDeps, m: Own, day: WindowMetrics, notes: Notes): WindowMetrics {
+	if (day.unpricedTurns) return { ...day, stewardUsd: undefined, basisUsd: undefined };
+	if (d.cfg.fleet.source === "off") return day;
+	const covered = m.usage.every(
+		(r) => r.startedAt < day.from || r.startedAt >= day.to || usageTelemetrySession(r) !== undefined,
+	);
+	if (covered) return day;
+	notes.unavailable.push("spend share and managed ratio: fleet telemetry does not cover every metered turn");
+	return { ...day, stewardUsd: undefined, basisUsd: undefined };
 }
 
 const coverageOf = (m: ManagedSection): { coverage?: number; unmapped?: number } => ({

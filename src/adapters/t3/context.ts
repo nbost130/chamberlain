@@ -43,6 +43,8 @@ type Active = { session: string; driver: string | null; instance: string | null;
 type ContextFacts = Pick<
 	StewardProbe,
 	| "context"
+	| "contextPending"
+	| "lastMeasuredContext"
 	| "contextTokens"
 	| "contextTurn"
 	| "contextSession"
@@ -121,15 +123,34 @@ function readSnapshot(db: Database, thread: string, base: string, limit: number)
 	const context: ContextReading = newest
 		? newestContext(newest, active, base)
 		: { unknown: "active provider thread has no turns" };
+	const contextPending = Boolean(
+		newest && !newest.completed && !["completed", "failed", "cancelled", "interrupted"].includes(newest.status),
+	);
+	// Read historical projection samples through the same decoder. A native conversation's newest
+	// request cannot identify the earlier turn while another request is running.
+	const lastMeasuredContext = contextPending
+		? turns
+				.slice(1)
+				.map(projection)
+				.find((reading) => reading && "tokens" in reading)
+		: undefined;
 	return {
 		context,
+		contextPending,
+		...(lastMeasuredContext && "tokens" in lastMeasuredContext ? { lastMeasuredContext } : {}),
 		contextSession: session,
 		contextTurn: newest?.ordinal,
-		canCompact: compactUnsupported(db, thread, session),
+		canCompact: compactUnsupported(db, thread, session) ?? compactCapability(driver),
 		retryLostCompact: driver === "claudeAgent",
 		...completion(turns, driver),
 		...("tokens" in context ? { contextTokens: context.tokens } : {}),
 	};
+}
+
+function compactCapability(driver: string | null): boolean | undefined {
+	// These drivers have completed explicit compaction commands. Others may support it,
+	// but missing evidence alone cannot establish a refusal.
+	return driver === "claudeAgent" || driver === "antigravity" ? true : undefined;
 }
 
 export function readContext(db: Database, thread: string, base: string, limit: number): ContextFacts {

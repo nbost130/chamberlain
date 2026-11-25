@@ -2,6 +2,20 @@
 
 `config.json` is the only live settings document. The `models` section selects the execution adapter, provider, model and options for pinned threads and isolated readers. Each T3 role can opt into quota failover with an ordered `fallbacks` array. Edit this document to switch; selections are read for each operation. An omitted or null role is unconfigured, not permission to use Claude.
 
+## Steward metering by driver
+
+| Driver | Turn tokens | Read signals | Explicit compaction |
+| --- | --- | --- | --- |
+| Claude Code | T3 turn counters, plus optional native request detail | Repeat thread reads and own transcript reads | Verified |
+| Codex | T3 turn counters | Repeat thread reads | Unverified for this command path |
+| Cursor | T3 turn counters | Repeat thread reads | Unverified |
+| Antigravity | T3 turn counters | Repeat thread reads | Verified |
+| Grok | Unavailable on the observed driver | Repeat thread reads | Unverified |
+
+Turn prices use the executed model recorded with the turn, including after a provider switch. A missing executed model,
+price, or complete token count leaves spend unavailable. See [Steward health](steward-health.md) for measurement
+coverage and the hand-off behavior when compaction fails.
+
 ## T3 threads and launches
 
 `models.steward`, `models.decisions`, `models.desk`, `models.butler` and `models.worker` have this shape. Values below are placeholders to replace with entries from your T3 server's provider catalog:

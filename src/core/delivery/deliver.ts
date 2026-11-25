@@ -12,7 +12,7 @@ import { crashPoint } from "../crash.ts";
 import { holdable } from "../decide/hold.ts";
 import type { Store } from "../store/store.ts";
 import type { WakeMeta } from "../store/store-wakes.ts";
-import type { PrepareResult } from "./preflight.ts";
+import type { PrepareReason, PrepareResult } from "./preflight.ts";
 
 /**
  * How one wake reaches the Steward. The adapter owns the transport (a webhook, a socket call); the relay owns everything around it.
@@ -23,6 +23,7 @@ export type WakeResult = {
 	ok: boolean /** The transport's own status, such as an HTTP code. Logged, never interpreted. */;
 	status?: number;
 	error?: string;
+	prepareReason?: PrepareReason;
 };
 export type WakeTransport = {
 	/** Is there a place to send to right now? Read fresh on every call. False means nothing is attempted: rows wait (the `wake-not-ready` alarm says why) and no attempt is used. */

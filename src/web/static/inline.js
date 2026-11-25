@@ -111,13 +111,15 @@
 			track.setAttribute("aria-hidden", "true"); fill.style.display = "block"; fill.style.width = `${Math.max(0, Math.min(100, h.tokens / limits.compactContext * 100))}%`; track.append(fill); mini.append(track);
 		}
 		const brief = el("span", "dq-health-brief");
-		if (h) { brief.append(el("span", "", `Slips ${h.replies ? `${h.breaks}/${h.replies}` : "—"}`), el("span", "", `Reads ${h.tokens == null ? "—" : `${h.selfReads} self · ${h.threadRereads} repeat`}`)); }
+		const selfReads = h?.readingCoverage ? (h.readingCoverage.self ? h.selfReads : "not measured") : h?.tokens == null ? "—" : h.selfReads;
+		const threadRereads = h?.readingCoverage ? (h.readingCoverage.threads ? h.threadRereads : "not measured") : h?.tokens == null ? "—" : h.threadRereads;
+		if (h) { brief.append(el("span", "", `Slips ${h.replies ? `${h.breaks}/${h.replies}` : "—"}`), el("span", "", `Reads ${selfReads} self · ${threadRereads} repeat`)); }
 		brief.append(age);
 		top.append(name, badge, mini, el("span", "dq-health-chevron", "›"), brief); root.replaceChildren(top);
 		if (!h) return;
 		if (stale) { root.style.setProperty?.("--health-tone", "var(--warning)"); root.append(el("div", "dq-health-warning", `Last known status: ${h.verdict}. Waiting for a fresh check.`)); }
 		const known = Number.isFinite(h.tokens), hard = limits?.compactContext;
-		const context = el("div", "dq-health-context", "Context used");
+		const context = el("div", "dq-health-context", h.contextPending ? "Last measured context" : "Context used");
 		context.append(el("span", "dq-health-value", known ? `${short(h.tokens)}${hard ? ` / ${short(hard)}` : " tokens"}` : "Unavailable")); root.append(context);
 		if (known && hard > 0) {
 			const track = el("div", "dq-health-track");
@@ -130,8 +132,8 @@
 		const signals = el("div", "dq-health-signals");
 		for (const [label, value, note, elevated] of [
 			["Format slips", h.replies ? `${h.breaks} / ${h.replies}` : "—", h.replies ? "recent replies" : "No reply samples", h.elevated?.includes("format")],
-			["Self reads", h.tokens == null ? "—" : h.selfReads, "since compaction", limits && h.selfReads >= limits.selfReads],
-			["Repeat reads", h.tokens == null ? "—" : h.threadRereads, "since compaction", limits && h.threadRereads >= limits.threadRereads],
+			["Self reads", selfReads, "since compaction", limits && selfReads >= limits.selfReads],
+			["Repeat reads", threadRereads, "since compaction", limits && threadRereads >= limits.threadRereads],
 		]) { const tile = el("div", "dq-health-signal"); tile.append(el("span", "dq-health-label", label), el("strong", "", value), el("span", "dq-health-note", elevated ? "↑ Above threshold" : note)); signals.append(tile); }
 		root.append(signals);
 		if (ov) { const o = el("div", "dq-health-context", "Overhead (24 h)"); o.append(el("span", "dq-health-value", ov.line)); root.append(o); for (const c of ov.crossed || []) root.append(el("div", "dq-health-warning", `Over threshold: ${c}`)); if (ov.open) root.append(el("div", "dq-health-note", `Investigation ${ov.open} is open.`)); for (const u of ov.unavailable || []) root.append(el("div", "dq-health-note", `Unavailable: ${u}`)); }

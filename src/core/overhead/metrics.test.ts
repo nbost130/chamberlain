@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cfgWith, DAY, NOW, PRICE, pr, wake } from "../../testing/overhead-fixtures.ts";
+import { cfgWith, DAY, MODEL, NOW, PRICE, pr, wake } from "../../testing/overhead-fixtures.ts";
 import { costLimit, countedPrs, countMerged, crossings, type WindowMetrics, windowMetrics } from "./metrics.ts";
 import { tokensUsd } from "./prices.ts";
 
@@ -7,9 +7,29 @@ const span = { from: NOW - DAY, to: NOW };
 const github = { rollupTitle: "^Rollup of \\d+ pull requests?", countRollups: false, excludeRepos: [] as string[] };
 
 const day = (o: Partial<Parameters<typeof windowMetrics>[0]> & { usage: ReturnType<typeof wake>[] }) =>
-	windowMetrics({ from: NOW - DAY, to: NOW, price: PRICE, cacheWrite: "1h", classifierUsd: 0, ...o });
+	windowMetrics({ from: NOW - DAY, to: NOW, prices: { [MODEL]: PRICE }, cacheWrite: "1h", classifierUsd: 0, ...o });
 
 describe("pricing", () => {
+	test("unpriced legacy rows leave a labeled subtotal and no full-window cost basis", () => {
+		const priced = wake({ hoursAgo: 1, usd: 10, tools: 1 });
+		const legacy = { ...wake({ hoursAgo: 2, tools: 1 }), source: "transcript" as const, model: undefined };
+		const report = day({ usage: [priced, legacy], prs: 1 });
+		expect(report).toMatchObject({ stewardUsd: 10, unpricedTurns: 1 });
+		expect(report.basisUsd).toBeUndefined();
+		expect(report.costPerPr).toBeUndefined();
+	});
+	test("each turn uses its own recorded model and an incomplete window has unavailable spend", () => {
+		const first = wake({ hoursAgo: 1, usd: 10 });
+		const second = { ...wake({ hoursAgo: 2, usd: 10 }), model: "second" };
+		const prices = { [MODEL]: PRICE, second: { ...PRICE, output: 20 } };
+		expect(day({ usage: [first, second], prices }).stewardUsd).toBe(30);
+		for (const row of [
+			{ ...second, model: undefined },
+			{ ...second, tokensIncomplete: true },
+			{ ...second, outputTokens: undefined },
+		])
+			expect(day({ usage: [first, row], prices }).stewardUsd).toBeUndefined();
+	});
 	test("the four usage fields are priced at the configured rates, per million tokens", () => {
 		const t = {
 			inputTokens: 1_000_000,

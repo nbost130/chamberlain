@@ -204,7 +204,7 @@ describe("what the investigator is told and what is kept", () => {
 
 	test("without a price for the Steward's model the brief ranks and shows tokens, not dollars", async () => {
 		const store = memStore();
-		store.usage.upsert(rows());
+		store.usage.upsert(rows().map((r) => ({ ...r, model: "unpriced-model" })));
 		const t3 = fakeT3();
 		await overheadTicker({
 			store,

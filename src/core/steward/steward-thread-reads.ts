@@ -11,15 +11,14 @@ function runWords(segment: string): string[] {
 }
 
 /** Whether one shell segment runs a thread read: Chamberlain's peek or `t3x read`, as `chamberlain [debug] ...` or `bun .../peek.ts`. */
-function segmentReadsThread(segment: string): boolean {
-	const [path, a, b, c] = runWords(segment);
+function readArgs(segment: string): string[] | undefined {
+	const [path, ...args] = runWords(segment);
 	const cmd = path?.split("/").at(-1);
-	if (cmd === "chamberlain") {
-		const [x, y] = a === "debug" ? [b, c] : [a, b];
-		return x === "peek" || (x === "t3x" && y === "read");
-	}
-	if (cmd !== "bun" || !a) return false;
-	return /(?:^|\/)peek\.ts$/.test(a) || (/(?:^|\/)t3x\.ts$/.test(a) && b === "read");
+	const [first = "", second, ...rest] = cmd === "chamberlain" && args[0] === "debug" ? args.slice(1) : args;
+	const verb = cmd === "bun" ? first.split("/").at(-1)?.replace(/\.ts$/, "") : first;
+	if (cmd !== "bun" && cmd !== "chamberlain") return undefined;
+	if (verb === "peek") return second === undefined ? [] : [second, ...rest];
+	if (verb === "t3x" && second === "read") return rest;
 }
 
 /**
@@ -32,7 +31,15 @@ export const readsThread = (name: string, command: string): boolean =>
 	(name === "Bash" &&
 		unquoted(command)
 			.split(/[;&|\n]+/)
-			.some(segmentReadsThread));
+			.some((segment) => readArgs(segment) !== undefined));
+
+/** A shell read's server and target. Ignore quoted command names and command-looking prose. */
+export function shellThreadRead(command: string): string | undefined {
+	for (const segment of unquoted(command).split(/[;&|\n]+/)) {
+		const [server, thread] = readArgs(segment) ?? [];
+		if (server && thread && /^[\w-]+$/.test(server) && /^[\w:-]+$/.test(thread)) return `${server}:${thread}`;
+	}
+}
 
 /** The command with every quoted string emptied, so a separator or a command name inside quotes is not read as one. */
 const unquoted = (command: string) => command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''");

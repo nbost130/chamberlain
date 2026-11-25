@@ -58,6 +58,7 @@ export type OverheadSummary = {
 	costPerPrTrailing?: number;
 	prsDay?: number;
 	stewardUsdDay?: number;
+	unpricedTurnsDay?: number;
 	noopRate?: number;
 	/** The headline overhead share, and the Steward's own share beside it. */
 	spendShare?: number;

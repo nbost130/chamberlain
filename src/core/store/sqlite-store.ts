@@ -20,10 +20,11 @@ import { makeChallenges } from "./sqlite-challenges.ts";
 import { makeClaims, makeEvidence, makeSequence, makeState } from "./sqlite-claims.ts";
 import { makeHandoffs } from "./sqlite-handoffs.ts";
 import { makeItems } from "./sqlite-items.ts";
-import { makeDispositions, makeEvents, makeUsage } from "./sqlite-log.ts";
+import { makeDispositions, makeEvents } from "./sqlite-log.ts";
 import { makePreparePrLinks } from "./sqlite-prepare-pr-links.ts";
 import { makeAway, makeButlers, makeDecisions, makeRulings } from "./sqlite-rulings.ts";
 import { makeStewardSql } from "./sqlite-steward.ts";
+import { ensureUsageIndex, makeUsage } from "./sqlite-usage.ts";
 import { makeWakes } from "./sqlite-wakes.ts";
 import type { Store } from "./store.ts";
 
@@ -41,6 +42,10 @@ export class DatabaseTooNewError extends SchemaTooNewError {
 export function openStore(path: string, o: OpenOptions = {}): Store {
 	const db = openDatabase(path, o, { migrations: MIGRATIONS, tooNew: (p, found) => new DatabaseTooNewError(p, found) });
 	const c = queries(db, o);
+	// A speed-up only: a store that cannot add it (read-only, or busy) still opens, and the query scans.
+	try {
+		ensureUsageIndex(c);
+	} catch {}
 	const closers: (() => void)[] = [];
 	return {
 		path,

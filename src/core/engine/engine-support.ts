@@ -99,7 +99,7 @@ export type EngineDeps = {
 	activeHoldReadMs?: number;
 	/** Stalled-thread recovery (src/core/ops/recover.ts). OFF unless asked: `true` turns it on for an adapter that can read a failure, look at a thread and send; an object turns it on and overrides its timing (tests). The production launcher turns it on with CHAMBERLAIN_RECOVER=1. */
 	recover?: boolean | Partial<RecoverTiming>;
-	/** The Steward's token usage per wake (src/core/steward/steward-tokens.ts). OFF unless asked (`stewardTokens`): when on, the daemon re-reads the Steward's transcript hourly and upserts its per-wake rows. */
+	/** Collect per-wake measurements hourly from the adapter when `stewardTokens` is on. */
 	stewardTokens?: boolean;
 	/** The overhead monitor's tick (src/core/overhead/tick.ts): measures once a day and may open an investigator. Absent: no measurement. */
 	overheadTick?: () => Promise<unknown>;

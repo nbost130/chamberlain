@@ -32,6 +32,7 @@ import type { Store } from "../store/store.ts";
 import type { DeskTurns } from "./adapter-desk.ts";
 import type { Inspector, StewardProbe, ThreadSnapshot, Transcript } from "./adapter-inspect.ts";
 import type { AnswerOutcome, ListWaitingOptions, ThreadLinks, WaitingCard } from "./adapter-waiting.ts";
+import type { StewardMeterRead } from "./steward-meter.ts";
 
 // ---- the normalized thread -----------------------------------------------------------------------
 
@@ -126,6 +127,7 @@ export type OptionalCapability =
 	| "inspect"
 	| "send"
 	| "stewardProbe"
+	| "stewardMeter"
 	| "compact"
 	| "snapshot"
 	| "alertDesk"
@@ -204,6 +206,7 @@ export interface Adapter {
 	): Promise<{ ok: boolean; detail: string }>;
 	/** The Steward's size, stall and compaction state, or the same read for an explicitly guarded thread. */
 	stewardProbe?(threadId?: string, turnLimit?: number): StewardProbe;
+	stewardMeter?(threadId: string, since: number, quality?: boolean): StewardMeterRead;
 	/** Compacts an explicitly guarded thread. This is separate from the Steward's serialized webhook. */
 	compactThread?(threadId: string, deliveryId: string): Promise<{ ok: boolean }>;
 	/**

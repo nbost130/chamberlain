@@ -134,9 +134,11 @@ test("a desk run by a gatherer has no model to select: its wake needs its webhoo
 	const transport = { ready: () => true, send: async () => ({ ok: true }) };
 	const asked: unknown[] = [];
 	let hooked = true;
-	const desk = modelWake({ ...transport }, s.conf, "desk", (id) => {
-		asked.push(id);
-		return hooked;
+	const desk = modelWake({ ...transport }, s.conf, "desk", {
+		hooked: (id) => {
+			asked.push(id);
+			return hooked;
+		},
 	});
 	const url = "https://relay.example.test/hooks/desk";
 	s.selection().instanceId = s.state.instanceId;
@@ -206,11 +208,15 @@ test("a desk with its own model needs the allowlist enforced after its model is 
 	s.bindWake(url, "desk-id");
 	const transport = { ready: () => true, send: async () => ({ ok: true }) };
 	let selectedFirst = false;
-	const desk = modelWake({ ...transport }, s.conf, "desk", () => {
-		selectedFirst = s.selection().instanceId === "other-provider";
-		return false;
+	const desk = modelWake({ ...transport }, s.conf, "desk", {
+		hooked: () => {
+			selectedFirst = s.selection().instanceId === "other-provider";
+			return false;
+		},
 	});
 	expect(await desk.prepare!("desk-id", url)).toMatchObject({ ok: false, reason: "policy" });
 	expect(selectedFirst).toBe(true);
-	expect(await modelWake({ ...transport }, s.conf, "desk", () => true).prepare!("desk-id", url)).toEqual({ ok: true });
+	expect(await modelWake({ ...transport }, s.conf, "desk", { hooked: () => true }).prepare!("desk-id", url)).toEqual({
+		ok: true,
+	});
 });

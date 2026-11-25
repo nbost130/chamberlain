@@ -10,11 +10,16 @@ type Episode = { session: string; turn: number; count: number; first: number; an
 type Notice = (key: string, title: string, summary: string) => void;
 type GuardDeps = { store: Store; policy: Policy; alarm: Notice };
 
+function missingCompletedSample(probe: StewardProbe, turn: number) {
+	if (probe.contextPending) return probe.contextTurn !== turn;
+	return probe.context && "unknown" in probe.context && probe.contextTurn === turn;
+}
+
 function episode(prior: Episode | undefined, probe: StewardProbe): Episode | undefined {
-	const { context, contextSession: session, completedTurn: turn, previousCompletedTurn, unknownTurns } = probe;
-	if (!context || !session || turn === undefined || !unknownTurns?.includes(turn)) return undefined;
-	if (!("unknown" in context) || probe.contextTurn !== turn) return undefined;
-	if (prior?.session === session && prior.turn === turn) return prior;
+	const { contextSession: session, completedTurn: turn, previousCompletedTurn, unknownTurns } = probe;
+	if (!session || turn === undefined || !unknownTurns?.includes(turn)) return undefined;
+	if (!missingCompletedSample(probe, turn)) return undefined;
+	if (prior?.session === session && prior.turn === turn) return prior.count ? prior : undefined;
 	const oldest = unknownTurns.at(-1) ?? turn;
 	const follows =
 		prior?.session === session &&
@@ -28,12 +33,29 @@ function episode(prior: Episode | undefined, probe: StewardProbe): Episode | und
 	};
 }
 
+/** A later projection cannot tell whether the exact native read of this completed turn succeeded. */
+function rememberKnown(store: Store, key: string, probe: StewardProbe, prior: Episode | undefined) {
+	const {
+		context,
+		contextPending,
+		contextSession: session,
+		contextTurn: turn,
+		completedTurn,
+		partialContextHistory,
+	} = probe;
+	if (contextPending || !context || !("tokens" in context)) return;
+	if (partialContextHistory && session && turn !== undefined && turn === completedTurn) {
+		if (prior?.session !== session || prior.turn !== turn || prior.count !== 0)
+			store.state.set(key, { session, turn, count: 0, first: turn } satisfies Episode);
+	} else if (prior) store.state.delete(key);
+}
+
 function watchUnknown({ store, policy, alarm }: GuardDeps, id: string, probe: StewardProbe): string | undefined {
 	const key = `context-unknown:${id}`;
 	const prior = store.state.get<Episode>(key);
 	let next = episode(prior, probe);
 	if (!next) {
-		if (prior && probe.context && "tokens" in probe.context) store.state.delete(key);
+		rememberKnown(store, key, probe, prior);
 		return undefined;
 	}
 	if (next.count >= policy.unknownTurns && !next.announced) {
@@ -53,18 +75,29 @@ function watchUnknown({ store, policy, alarm }: GuardDeps, id: string, probe: St
 
 type HandoffReason = { thread: string; session: string; reason: string };
 
+function compactionHandoff(id: string, p: StewardProbe, compactAt: number, last?: CompactState) {
+	const used = p.contextPending ? undefined : p.contextTokens;
+	if (used !== undefined && used <= compactAt) return undefined;
+	const pending = last?.thread === id && last.session === p.contextSession && !last.cleared;
+	if ((pending && last.unsupported) || (p.canCompact === false && (pending || used !== undefined)))
+		return { unsupported: true, reason: "This provider cannot compact the thread. The Steward needs a hand-off." };
+	if (pending && last.failed)
+		return {
+			unsupported: false,
+			reason: "The last compaction did not bring the context under the compaction line. The Steward needs a hand-off.",
+		};
+}
+
 export function stewardFallback(d: GuardDeps, lastCompaction: () => CompactState | undefined) {
 	let current: HandoffReason | undefined;
 	return {
 		get: () => current,
 		check: (id: string, p: StewardProbe, compactAt: number) => {
 			const unknown = watchUnknown(d, id, p);
-			const last = lastCompaction();
-			const failedRequest = last?.thread === id && last.session === p.contextSession && !last.cleared;
-			const unsupported = p.canCompact === false && ((p.contextTokens ?? 0) > compactAt || failedRequest);
-			const reason = unsupported ? "This provider cannot compact the thread. The Steward needs a hand-off." : unknown;
+			const compact = compactionHandoff(id, p, compactAt, lastCompaction());
+			const reason = compact?.reason ?? unknown;
 			current = reason && p.contextSession ? { thread: id, session: p.contextSession, reason } : undefined;
-			return unsupported;
+			return compact?.unsupported === true;
 		},
 	};
 }
@@ -114,7 +147,7 @@ function guardedCheck(d: ThreadGuardDeps, thread: GuardedThread) {
 	};
 	return async (p: StewardProbe) => {
 		watchUnknown(d, id, p);
-		if (!p.context || "unknown" in p.context) return checkPending(p);
+		if (p.contextPending || !p.context || "unknown" in p.context) return checkPending(p);
 		const { compactAt } = effectiveLimits(limits, p.context.window);
 		if (p.context.tokens <= compactAt) {
 			if (d.store.state.get<boolean>(warningKey)) d.store.state.delete(warningKey);

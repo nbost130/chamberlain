@@ -26,6 +26,14 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 
 ## Criteria
 
+- [x] ISC-22 (#124 fix round): Reproduced compaction, hand-off prompts, capped items, completed-turn alarms, overlapping usage, model provenance, and historical query cases pass through their normal entry points. Falsifier: any of the seven regression probes fails, or a recent usage query scans older state rows. Evidence: eight baseline failures, 102 focused tests passing after fixes, and SQLite's production usage query plan seeks on time.
+
+- [x] ISC-21 (#124 review): Focused tests reject each review mutation across the nine gaps and preserve a valid sample when sessions share timestamps. Falsifier: a mutated build passes its named regression or the new session loses its sample. Evidence: 30 focused tests passed and 12 isolated mutations failed their named regressions. The same-timestamp regression failed before the cache fix.
+
+- [x] ISC-18 (#124): Equivalent T3 turns produce equivalent wake rows and reread counts across drivers, and rereads past the limit hand off only where both kinds are measured (on record, ordinary Stewards elsewhere pass it within hours, 3 to 313 per Steward). Falsifier: a driver switch aliases ordinals, a partial reading becomes zero, transcript and projection totals overlap, a reread count starts a hand-off where self-reads are not measured, a read scans the whole thread for every turn, or a schema change stops the tick. Evidence: `meter.test.ts` and the normal engine housekeeping test replay these cases through the store and health verdict.
+- [x] ISC-19 (#124): Health cites the last measured context during an active turn, while the guard acts on current observations and compaction capability. Falsifier: a stale size triggers compaction, a running turn advances the unknown alarm, or a refused or lost compaction repeats. Evidence: `steward.test.ts` and `engine-context-guard.test.ts`. Decisions DOM regression passes. [DEFERRED-VERIFY] Local browser isolation preflight was blocked.
+- [x] ISC-20 (#124): Metering, health and context policy in core remain independent of drivers. Per-turn spend uses the recorded model and complete counts. Evidence: architecture scan, mixed-model pricing and `bun run checks` (4,185 passed). Six isolated mutations failed their respective tests for source deduplication, running-turn exclusion, typed compaction refusal, provider naming, schema drift and partial pricing.
+
 - [x] ISC-12: The context guard uses the active provider thread's latest exact reading or reports why it is unknown. Falsifier: an earlier turn, a retired provider with a higher ordinal, an aggregate usage counter or an invalid native record crosses a context limit or supplies compaction evidence. Evidence: `steward.test.ts` and `steward-native.test.ts`; stale-order and aggregate-input mutations both failed.
 - [x] ISC-13: The same configured limit drives Steward health and compaction. Missing readings trigger a completed-turn fallback, and explicitly configured threads compact or raise an alarm. Falsifier: an unknown reading reports OK, fallback repeats, a configured thread is ignored or legacy settings change meaning. Evidence: `engine-context-guard.test.ts` and `engine-steward.compaction-state.test.ts`.
 - [x] ISC-14: Idea filing is silent, requires a recommendation plus cost and evidence, and honors all configured caps in the insert transaction. The CLI tests in `src/ask-ideas.test.ts` fail if two concurrent asks take one slot, a refusal leaves a record, or a filing produces a post or wake.
@@ -74,6 +82,11 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-11 | bun-test | Role-specific quota pools, approved backup order, project restrictions, two outages and webhook deliveries on the active generation across restart | bun test src/adapters/t3/model-quota.test.ts src/adapters/t3/quota-failover.test.ts |
 | ISC-12 | bun-test | Exact measurements and stale or invalid provider records | bun test src/adapters/t3 |
 | ISC-13 | bun-test | Shared limits, completed-turn fallback and guarded thread actions | bun test src/core/engine src/core/steward src/core/config |
+| ISC-18 | bun-test | Compare each driver shape, missing fields, switched ordinals, coverage gaps and the two source views | bun test src/adapters/t3/meter.test.ts src/core/steward |
+| ISC-19 | bun-test | Check that active-turn readings remain display-only and unsupported compaction produces one hand-off | bun test src/adapters/t3/steward.test.ts src/core/engine/engine-context-guard.test.ts src/web/inline-view.test.ts |
+| ISC-20 | bun-test | Provider name scan, mixed-model prices and full tests | bun run checks |
+| ISC-21 | bun-test | Review regressions for bounds, trust, timing, session identity and retries | bun test src/adapters/t3/meter.test.ts src/core/engine/engine-context-guard.test.ts src/core/engine/engine-steward-context-sample.test.ts src/core/steward/steward-tokens.review-round-1.test.ts |
+| ISC-22 | bun-test | Red-to-green compaction and metering regressions, labeled partial spend and an indexed time seek | bun test src/adapters/t3/meter.test.ts src/core/engine/engine-steward-context-sample.test.ts src/core/store/sqlite-usage.test.ts src/core/overhead |
 
 ## Weekly decision distillation (#121)
 

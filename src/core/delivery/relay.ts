@@ -200,7 +200,7 @@ async function prepareCompact(r: Ctx, transport: WakeTransport): Promise<WakeRes
 		d.conf && gen ? (gen.compactRef ? readNamed(d.conf, gen.compactRef) : undefined) : transport.target?.();
 	if (d.conf && gen && !target) return { ok: false, error: "generation compaction target unavailable" };
 	const result = await prepareSafely(transport, gen?.thread, target);
-	if (!result.ok) return { ok: false, error: `${result.reason} — ${result.detail}` };
+	if (!result.ok) return { ok: false, error: `${result.reason} — ${result.detail}`, prepareReason: result.reason };
 	if (!d.lock.held()) throw new Error("the relay lock was released during model preparation: nothing is sent");
 	if (store.steward.current()?.gen !== gen?.gen)
 		return { ok: false, error: "Steward changed during model preparation" };

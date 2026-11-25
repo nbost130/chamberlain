@@ -21,6 +21,7 @@ import { guardDesk, guardDeskAnswer } from "./desk-policy.ts";
 import { deskProjectHook, deskTurns } from "./desk-record.ts";
 import { historyGet } from "./history.ts";
 import { t3Linker } from "./links.ts";
+import { t3Meter } from "./meter.ts";
 import { modelWake } from "./model-wake.ts";
 import { createRpcPing } from "./ping.ts";
 import { t3Post } from "./post.ts";
@@ -58,6 +59,7 @@ const T3_CAPABILITIES: readonly OptionalCapability[] = [
 	"inspect",
 	"send",
 	"stewardProbe",
+	"stewardMeter",
 	"compact",
 	"snapshot",
 	"alertDesk",
@@ -89,6 +91,14 @@ const stewardProbeFor =
 		return id ? t3Probe(t3StateDbPath(), id, Date.now(), { base: t3BaseDir(), limit }) : { readable: true };
 	};
 
+function stewardReads(env: AdapterEnv): Pick<Adapter, "stewardProbe" | "stewardMeter" | "transcriptPath"> {
+	return {
+		stewardProbe: stewardProbeFor(env),
+		stewardMeter: (id, since, quality) => t3Meter(t3StateDbPath(), id, since, quality),
+		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
+	};
+}
+
 const hooked = (threadId: string | undefined) => deskProjectHook(t3StateDbPath(), threadId) !== undefined;
 const deskGuard = (env: AdapterEnv) => ({ conf: env.conf, desk: () => env.readPrivate("desk-thread"), hooked });
 
@@ -98,7 +108,7 @@ const deskLane = (env: AdapterEnv): NonNullable<Adapter["alertDesk"]> => ({
 		webhookWake(() => env.readPrivate("desk-wake-url")),
 		env.conf,
 		"desk",
-		hooked,
+		{ hooked },
 	),
 	isBusy: (): Gate => threadGate(env.readPrivate("desk-thread")),
 	turns: deskTurns(t3StateDbPath(), () => env.readPrivate("desk-thread")),
@@ -119,6 +129,7 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 		webhookWake(() => env.readPrivate("compact-url")),
 		env.conf,
 		"steward",
+		{ canCompact: (id) => stewardProbeFor(env)(id).canCompact !== false },
 	);
 	return {
 		id: "t3",
@@ -135,12 +146,11 @@ export const createT3Adapter: AdapterFactory = (env: AdapterEnv): Adapter => {
 			if (!thread || !srv.operateTokenFile) return "no-token";
 			return t3TitleSetter(env.conf, srv.origin, srv.operateTokenFile, thread)(title);
 		},
-		transcriptPath: () => t3Transcript({ dbPath: t3StateDbPath(), conf: env.conf }),
+		...stewardReads(env),
 		inspect: t3Inspector(link, srv, env),
 		snapshot: () => link.snapshot(),
 		probeBuilder: (request) => probeT3Builder(env, srv, request),
 		send: guardDesk(deskGuard(env), waiting.send),
-		stewardProbe: stewardProbeFor(env),
 		compactThread: (id, deliveryId) => compactThread(id, "/compact", deliveryId, "daemon"),
 		compact: compactWake,
 		handoffInstruction: () =>

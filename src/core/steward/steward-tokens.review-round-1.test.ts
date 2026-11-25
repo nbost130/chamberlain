@@ -7,7 +7,45 @@ import { join } from "node:path";
 import { fixtureText, session } from "../../testing/core-steward-tokens-fixtures.ts";
 import { memStore } from "../../testing/store.ts";
 import { classifyPrompt, segmentTranscript } from "./steward-segments.ts";
-import { parseBackfillArgs, USAGE_INTERVAL_MS, USAGE_KEY, usageTicker } from "./steward-tokens.ts";
+import { parseBackfillArgs, turnUsageTicker, USAGE_INTERVAL_MS, USAGE_KEY, usageTicker } from "./steward-tokens.ts";
+
+test("turn metering revisits the retired thread and retries its final read across a restart", () => {
+	const store = memStore();
+	try {
+		let now = 8 * 24 * USAGE_INTERVAL_MS;
+		let active = "previous";
+		let unavailable = false;
+		const reads: string[] = [];
+		const makeTick = () =>
+			turnUsageTicker({
+				store,
+				now: () => now,
+				thread: () => active,
+				read: (id) => {
+					reads.push(id);
+					return id === "previous" && unavailable ? { unknown: "turn records unavailable" } : { rows: [] };
+				},
+			});
+		const tick = makeTick();
+		tick();
+		expect(reads.splice(0)).toEqual(["previous"]);
+		now += USAGE_INTERVAL_MS;
+		active = "replacement";
+		unavailable = true;
+		tick();
+		expect(reads.splice(0)).toEqual(["previous", "replacement"]);
+		now += USAGE_INTERVAL_MS;
+		unavailable = false;
+		const restarted = makeTick();
+		restarted();
+		expect(reads.splice(0)).toEqual(["previous", "replacement"]);
+		now += USAGE_INTERVAL_MS;
+		restarted();
+		expect(reads).toEqual(["replacement"]);
+	} finally {
+		store.close();
+	}
+});
 
 describe("review round 1", () => {
 	const row = (o: object) => JSON.stringify({ timestamp: "2026-11-10T10:00:00Z", ...o });
@@ -18,7 +56,16 @@ describe("review round 1", () => {
 			type: "assistant",
 			uuid,
 			parentUuid,
-			message: { id, model: "m", usage: { input_tokens: 1, cache_read_input_tokens: cacheRead } },
+			message: {
+				id,
+				model: "m",
+				usage: {
+					input_tokens: 1,
+					cache_read_input_tokens: cacheRead,
+					cache_creation_input_tokens: 0,
+					output_tokens: 0,
+				},
+			},
 		});
 
 	test("a header word outside the known kinds, or quoted outside the wake envelope, never becomes a kind", async () => {

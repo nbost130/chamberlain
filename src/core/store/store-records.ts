@@ -72,11 +72,21 @@ export type WakeUsage = {
 	deliveryId?: string;
 	startedAt: number;
 	endedAt: number;
-	requests: number;
-	inputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	outputTokens: number;
+	requests?: number;
+	inputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	outputTokens?: number;
+	reasoningTokens?: number;
+	tokensIncomplete?: boolean;
+	model?: string;
+	source?: "turn record" | "transcript";
+	/** Fixed diagnostic for unavailable fields; absence of a numeric field never means zero. */
+	unknown?: string;
+	/** The corresponding native history, where an adapter can establish one. */
+	nativeSession?: string;
+	/** Time the input was queued, which can precede provider execution. */
+	requestedAt?: number;
 	contextStart?: number;
 	contextEnd?: number;
 	contextPeak?: number;
@@ -90,5 +100,5 @@ export interface UsageStore {
 	/** Inserts or replaces each row by (session, wake key), in one transaction. A rerun over the same transcript writes the same rows. */
 	upsert(rows: WakeUsage[]): void;
 	/** Rows started at or after `since`, of one session if given, oldest first. */
-	list(q?: { since?: number; session?: string }): WakeUsage[];
+	list(q?: { since?: number; session?: string; transcriptOnly?: boolean }): WakeUsage[];
 }

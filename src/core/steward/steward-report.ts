@@ -2,7 +2,7 @@
 
 import type { Store } from "../store/store.ts";
 import type { WakeUsage } from "../store/store-records.ts";
-import { isWake, totalTokens } from "./steward-tokens.ts";
+import { isWake, TURN_USAGE_KEY, totalTokens } from "./steward-tokens.ts";
 
 /** The nearest-rank percentile of a list (p in 0..100); undefined for an empty list. */
 export function percentile(values: number[], p: number): number | undefined {
@@ -34,19 +34,21 @@ export type WindowStats = {
 	label: string;
 	since: number;
 	segments: number;
-	requests: number;
-	inputTokens: number;
-	cacheReadInputTokens: number;
-	cacheCreationInputTokens: number;
-	outputTokens: number;
+	requests?: number;
+	inputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+	outputTokens?: number;
+	turnsWithoutTokenTotals?: number;
+	collectionUnavailable?: string;
 	kinds: KindStats[];
 	fullSweep?: KindStats;
 	sessions: SessionTrend[];
 };
 
 function kindStats(kind: string, rows: WakeUsage[]): KindStats {
-	const tokens = rows.map(totalTokens),
-		req = rows.map((r) => r.requests),
+	const tokens = rows.map(totalTokens).filter(isMeasured),
+		req = rows.map((r) => r.requests).filter(isMeasured),
 		ctx = rows.flatMap((r) => (r.contextStart === undefined ? [] : [r.contextStart]));
 	return {
 		kind,
@@ -58,6 +60,16 @@ function kindStats(kind: string, rows: WakeUsage[]): KindStats {
 		contextStartP50: percentile(ctx, 50),
 	};
 }
+
+function missingTotals(w: WindowStats): string[] {
+	const lines = w.turnsWithoutTokenTotals
+		? [`  Full token counts unavailable for ${w.turnsWithoutTokenTotals} turns.`]
+		: [];
+	if (w.collectionUnavailable) lines.push(`  Latest collection: ${w.collectionUnavailable}.`);
+	return lines;
+}
+
+const isMeasured = (n: number | undefined): n is number => n !== undefined;
 
 function slope(ys: number[]): number | undefined {
 	if (ys.length < 2) return undefined;
@@ -104,7 +116,11 @@ export function sessionTrends(rows: WakeUsage[]): SessionTrend[] {
 
 export function windowStats(rows: WakeUsage[], label: string, since: number): WindowStats {
 	const inWin = rows.filter((r) => r.startedAt >= since);
-	const sum = (f: (r: WakeUsage) => number) => inWin.reduce((a, r) => a + f(r), 0);
+	const sum = (f: (r: WakeUsage) => number | undefined) => {
+		const values = inWin.map(f);
+		return values.length > 0 && values.every(isMeasured) ? values.reduce((a, n) => a + n, 0) : undefined;
+	};
+	const turnsWithoutTokenTotals = inWin.filter((r) => totalTokens(r) === undefined).length;
 	const kinds = new Map<string, WakeUsage[]>();
 	for (const r of inWin) kinds.set(r.kind, [...(kinds.get(r.kind) ?? []), r]);
 	const full = inWin.filter((r) => r.kind === "sweep" && r.variant === "full");
@@ -113,10 +129,11 @@ export function windowStats(rows: WakeUsage[], label: string, since: number): Wi
 		since,
 		segments: inWin.length,
 		requests: sum((r) => r.requests),
-		inputTokens: sum((r) => r.inputTokens),
-		cacheReadInputTokens: sum((r) => r.cacheReadInputTokens),
-		cacheCreationInputTokens: sum((r) => r.cacheCreationInputTokens),
-		outputTokens: sum((r) => r.outputTokens),
+		inputTokens: sum((r) => (r.tokensIncomplete ? undefined : r.inputTokens)),
+		cacheReadInputTokens: sum((r) => (r.tokensIncomplete ? undefined : r.cacheReadInputTokens)),
+		cacheCreationInputTokens: sum((r) => (r.tokensIncomplete ? undefined : r.cacheCreationInputTokens)),
+		outputTokens: sum((r) => (r.tokensIncomplete ? undefined : r.outputTokens)),
+		...(turnsWithoutTokenTotals ? { turnsWithoutTokenTotals } : {}),
 		kinds: [...kinds.entries()].map(([k, rs]) => kindStats(k, rs)).sort((a, b) => b.wakes - a.wakes),
 		...(full.length ? { fullSweep: kindStats("sweep (full)", full) } : {}),
 		sessions: sessionTrends(inWin),
@@ -142,7 +159,8 @@ export function formatUsage(windows: WindowStats[], o: { compactAt: number; now:
 			continue;
 		}
 		out.push(
-			`  ${w.segments} turns, ${w.requests} model requests; tokens: cache read ${k(w.cacheReadInputTokens)}, cache write ${k(w.cacheCreationInputTokens)}, input ${k(w.inputTokens)}, output ${k(w.outputTokens)}`,
+			`  ${w.segments} turns, ${k(w.requests)} model requests; tokens: cache read ${k(w.cacheReadInputTokens)}, cache write ${k(w.cacheCreationInputTokens)}, input ${k(w.inputTokens)}, output ${k(w.outputTokens)}`,
+			...missingTotals(w),
 			"  kind             turns  tokens p50  p90       requests p50  p90   context at start p50",
 		);
 		const row = (s: KindStats) =>
@@ -150,7 +168,7 @@ export function formatUsage(windows: WindowStats[], o: { compactAt: number; now:
 		for (const s of w.kinds) out.push(row(s));
 		out.push(
 			w.fullSweep
-				? `  A full sweep wake: ${k(w.fullSweep.tokensP50)} tokens (p50), ${k(w.fullSweep.tokensP90)} (p90), ${w.fullSweep.requestsP50} requests (p50), over ${w.fullSweep.wakes}`
+				? `  A full sweep wake: ${k(w.fullSweep.tokensP50)} tokens (p50), ${k(w.fullSweep.tokensP90)} (p90), ${k(w.fullSweep.requestsP50)} requests (p50), over ${w.fullSweep.wakes}`
 				: "  A full sweep wake: none in this window",
 			"  Context trend (context at wake start; growth is per wake since the last compaction):",
 		);
@@ -173,13 +191,15 @@ export function formatUsage(windows: WindowStats[], o: { compactAt: number; now:
 /** The report's windows: the last 24 hours and the last 7 days. */
 export function usageReport(
 	store: Store,
-	o: { now?: number; compactAt: number },
+	o: { now?: number; compactAt: number; transcriptOnly?: boolean },
 ): { text: string; windows: WindowStats[] } {
 	const now = o.now ?? Date.now();
-	const rows = store.usage.list({ since: now - 7 * 24 * 3_600_000 });
+	const rows = store.usage.list({ since: now - 7 * 24 * 3_600_000, transcriptOnly: o.transcriptOnly });
 	const windows = [
 		windowStats(rows, "last 24 h", now - 24 * 3_600_000),
 		windowStats(rows, "last 7 d", now - 7 * 24 * 3_600_000),
 	];
+	const collection = o.transcriptOnly ? undefined : store.state.get<{ unknown?: string }>(TURN_USAGE_KEY);
+	if (collection?.unknown) for (const w of windows) w.collectionUnavailable = collection.unknown;
 	return { text: formatUsage(windows, { compactAt: o.compactAt, now }), windows };
 }

@@ -1,4 +1,4 @@
-/** Cutting the Steward's Claude Code transcript into segments: one wake, the start prompt, a compaction, a notice or a message, each with its token numbers. */
+/** Cutting the Steward's native transcript into segments: one wake, the start prompt, a compaction, a notice or a message. */
 
 import type { WakeUsage } from "../store/store-records.ts";
 import { readsThread } from "./steward-thread-reads.ts";
@@ -7,7 +7,7 @@ import { readsThread } from "./steward-thread-reads.ts";
  * The wake header every Chamberlain wake starts with (`t3-wake` is the name it had before), recognised only where a wake puts it: at the
  * very start of the prompt, or at the start of T3's webhook envelope (`<webhook-data-<id>>`). A header quoted in a message is not a wake.
  */
-const WAKE_HEADER = /(?:^|<webhook-data-[0-9a-f]+>)\[(?:chamberlain|t3-wake)\] ([a-z][a-z0-9_-]*|idle threads):/;
+const WAKE_HEADER = /(?:^|<webhook-data-[A-Za-z0-9]+>)\[(?:chamberlain|t3-wake)\] ([a-z][a-z0-9_-]*|idle threads):/;
 /**
  * The wake kinds Chamberlain (and t3-wake before it) has sent. A header naming any other word is stored as `wake`: the kind is a fixed
  * vocabulary, so no word of a transcript ever reaches the database or a report.
@@ -107,13 +107,21 @@ function promptText(r: Row): string | undefined {
 	return text || (blocks.some((b) => b?.type === "image") ? "[image]" : undefined);
 }
 
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+const num = (v: unknown): number | undefined =>
+	typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
 const ms = (t: unknown): number | undefined => {
 	const v = typeof t === "string" ? Date.parse(t) : Number.NaN;
 	return Number.isFinite(v) ? v : undefined;
 };
 
-type Call = { input: number; cacheRead: number; cacheCreation: number; output: number; context: number };
+type Call = {
+	input?: number;
+	cacheRead?: number;
+	cacheCreation?: number;
+	output?: number;
+	context?: number;
+	model?: string;
+};
 type Open = Omit<
 	WakeUsage,
 	"requests" | "inputTokens" | "cacheReadInputTokens" | "cacheCreationInputTokens" | "outputTokens"
@@ -131,7 +139,7 @@ type Segmenter = {
 	/** The segment a model request started in, by request id: its later rows stay with it. */
 	owner: Map<string, Open>;
 	/**
-	 * The segment each row belongs to, by its uuid. A row belongs to its parent row's segment (Claude Code links every row to the one before
+	 * The segment each row belongs to, by its uuid. A row belongs to its parent row's segment (the transcript links every row to the one before
 	 * it in the conversation), so a prompt written while an earlier request is still running takes none of that request's rows. A row whose
 	 * parent is unknown falls back to the latest prompt.
 	 */
@@ -176,11 +184,21 @@ function scanUser(sg: Segmenter, r: Row, at: number | undefined) {
 }
 
 /** One model request's usage: the four fields, and the context size they make up. */
-function callOf(u: Record<string, unknown>): Call {
+function callOf(u: Record<string, unknown>, model: unknown): Call {
 	const input = num(u.input_tokens),
 		cacheRead = num(u.cache_read_input_tokens),
 		cacheCreation = num(u.cache_creation_input_tokens);
-	return { input, cacheRead, cacheCreation, output: num(u.output_tokens), context: input + cacheRead + cacheCreation };
+	return {
+		input,
+		cacheRead,
+		cacheCreation,
+		output: num(u.output_tokens),
+		context:
+			input === undefined || cacheRead === undefined || cacheCreation === undefined
+				? undefined
+				: input + cacheRead + cacheCreation,
+		...(typeof model === "string" && model ? { model } : {}),
+	};
 }
 
 /** An assistant row: a counted model request goes to the segment it started in, or else to its parent row's. */
@@ -199,7 +217,7 @@ function scanAssistant(sg: Segmenter, r: Row, at: number | undefined) {
 	markRow(sg, r, seg);
 	sg.owner.set(id, seg);
 	// A later row of the same request replaces its usage but keeps its place: the map's order is the order the requests started.
-	seg.calls.set(id, callOf(u));
+	seg.calls.set(id, callOf(u, r.message?.model ?? seg.calls.get(id)?.model));
 	countTools(seg, r.message?.content);
 	if (at !== undefined) {
 		if (!seg.startedAt) seg.startedAt = at;
@@ -243,25 +261,33 @@ function scanSegmentLine(sg: Segmenter, line: string) {
 /** A segment's requests summed, with the context size at its first, last and largest request. */
 function finishSegment({ calls, tools, ...s }: Open): WakeUsage {
 	const list = [...calls.values()];
-	const sum = (f: (c: Call) => number) => list.reduce((a, c) => a + f(c), 0);
+	const sum = (field: "input" | "cacheRead" | "cacheCreation" | "output") =>
+		list.reduce<number | undefined>((total, c) => {
+			const n = c[field];
+			return total === undefined || n === undefined ? undefined : total + n;
+		}, 0);
 	const first = list[0];
 	const last = list.at(-1);
+	const contexts = list.flatMap((c) => (c.context === undefined ? [] : [c.context]));
+	const inputTokens = sum("input");
+	const cacheReadInputTokens = sum("cacheRead");
+	const cacheCreationInputTokens = sum("cacheCreation");
+	const outputTokens = sum("output");
+	const incomplete = [inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens].includes(undefined);
 	return {
 		...s,
+		...(first?.model && list.every((c) => c.model === first.model) ? { model: first.model } : {}),
 		requests: list.length,
-		inputTokens: sum((c) => c.input),
-		cacheReadInputTokens: sum((c) => c.cacheRead),
-		cacheCreationInputTokens: sum((c) => c.cacheCreation),
-		outputTokens: sum((c) => c.output),
+		inputTokens,
+		cacheReadInputTokens,
+		cacheCreationInputTokens,
+		outputTokens,
+		...(incomplete ? { tokensIncomplete: true, unknown: "transcript token fields incomplete" } : {}),
 		toolCalls: tools.size,
 		threadReads: [...tools.values()].filter(Boolean).length,
-		...(first && last
-			? {
-					contextStart: first.context,
-					contextEnd: last.context,
-					contextPeak: Math.max(...list.map((c) => c.context)),
-				}
-			: {}),
+		...(first?.context !== undefined ? { contextStart: first.context } : {}),
+		...(last?.context !== undefined ? { contextEnd: last.context } : {}),
+		...(contexts.length ? { contextPeak: Math.max(...contexts) } : {}),
 	};
 }
 

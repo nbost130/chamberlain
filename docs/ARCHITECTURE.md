@@ -103,10 +103,11 @@ optional ones it has in `capabilities`. The core and the page degrade cleanly wh
 | `answer` | optional | Responds to a waiting card after re-reading it live. | the page shows waiting cards read-only, with where to answer them |
 | `listWaiting` | optional | Everything waiting on the operator in this backend: the card mirror. | the page has no mirror for that server |
 | `setTitle` | optional | Names the Decisions thread: "Decisions · 2 waiting". | no title keeper |
-| `transcriptPath` | optional | Where the Steward's Claude Code transcript is, for the health check. | Steward health reports "unavailable", never "OK" |
+| `transcriptPath` | optional | Native transcript for optional history, per-request detail and format samples. | no native transcript data |
 | `inspect` | optional | Reads of one thread for building a wake: last message, what it waits on, subagents, its latest instruction. | a turn end wakes once per turn with no excerpt or question; there is no report gating |
 | `send` | optional | Sends a message into a thread as the Steward. | an option routed straight to its thread goes to the Steward instead |
 | `stewardProbe` | optional | The Steward's context size, stall and whether a compaction may go. | no stall alarm, no size tracking, no compaction |
+| `stewardMeter` | optional | The backend's normalized completed turns and read counts, with unavailable fields identified. | use optional native history if available |
 | `handoffInstruction` | optional | How the Steward starts its own hand-off on this backend; the health check's HAND OFF verdict queues that wake. | the operator is asked to hand off instead |
 | `compact` | optional | How a compaction request reaches the Steward. | the daemon only alarms that the Steward is over its size |
 | `threadLinks` | optional | Links to one thread: the backend's own reference (`ref`) and the link its app opens from a device (`app`). | a card links to its thread only where the config names a prefix for its server |

@@ -56,12 +56,27 @@ export type TokenCounts = Pick<
 
 /** What the four usage fields cost at a price, in USD. */
 export function tokensUsd(t: TokenCounts, p: Price, cacheWrite: CacheWrite): number {
+	const { inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens } = t;
+	if (
+		inputTokens === undefined ||
+		cacheReadInputTokens === undefined ||
+		cacheCreationInputTokens === undefined ||
+		outputTokens === undefined
+	)
+		return Number.NaN;
 	const write = cacheWrite === "1h" ? p.cacheWrite1h : p.cacheWrite5m;
 	return (
-		(t.inputTokens * p.input +
-			t.cacheReadInputTokens * p.cacheRead +
-			t.cacheCreationInputTokens * write +
-			t.outputTokens * p.output) /
+		(inputTokens * p.input +
+			cacheReadInputTokens * p.cacheRead +
+			cacheCreationInputTokens * write +
+			outputTokens * p.output) /
 		1_000_000
 	);
+}
+
+export function recordedTurnUsd(row: WakeUsage, prices: PriceTable, cacheWrite: CacheWrite): number | undefined {
+	if (!row.model || row.tokensIncomplete) return undefined;
+	const price = priceOf(prices, row.model);
+	const usd = price && tokensUsd(row, price, cacheWrite);
+	return usd !== undefined && Number.isFinite(usd) ? usd : undefined;
 }

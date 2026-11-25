@@ -49,9 +49,13 @@ async function tokens(argv: string[]) {
 			);
 			return;
 		}
-		if (argv.length && argv[0] !== "--json") throw Error(`unknown argument ${argv[0]}`);
-		const r = usageReport(store, { compactAt: contextGuardConfig(CONF).steward.compactAt });
-		console.log(argv[0] === "--json" ? JSON.stringify(r.windows, null, 2) : r.text);
+		const bad = argv.find((arg) => !["--json", "--transcript"].includes(arg));
+		if (bad) throw Error(`unknown argument ${bad}`);
+		const r = usageReport(store, {
+			compactAt: contextGuardConfig(CONF).steward.compactAt,
+			transcriptOnly: argv.includes("--transcript"),
+		});
+		console.log(argv.includes("--json") ? JSON.stringify(r.windows, null, 2) : r.text);
 	} finally {
 		store.close();
 	}
@@ -96,16 +100,20 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 			await tokens(argv.slice(1));
 		} catch (e) {
 			console.error(`Steward tokens: ${String(e)}`);
-			console.error("usage: steward-health tokens [--json] | tokens backfill [--dir <dir>] [<transcript.jsonl> ...]");
+			console.error(
+				"usage: steward-health tokens [--json] [--transcript] | tokens backfill [--dir <dir>] [<transcript.jsonl> ...]",
+			);
 			process.exitCode = 1;
 		}
 		return;
 	}
 	try {
 		const { adapter } = homeAdapter({ conf: CONF, state: STATE });
+		const id = thread(CONF, "steward");
 		const health = await guardedHealth({
 			find: has(adapter, "transcriptPath") ? () => adapter.transcriptPath() : undefined,
-			thread: thread(CONF, "steward"),
+			meter: id && has(adapter, "stewardMeter") ? adapter.stewardMeter(id, 0, true) : undefined,
+			thread: id,
 			probe: adapter.stewardProbe?.(),
 			policy: contextGuardConfig(CONF).steward,
 		});

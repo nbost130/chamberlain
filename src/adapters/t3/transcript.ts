@@ -6,6 +6,7 @@
 import { Database } from "bun:sqlite";
 import type { Transcript } from "../../core/adapter/adapter-inspect.ts";
 import { thread as stewardThread } from "../../core/config/layout.ts";
+import { shellThreadRead } from "../../core/steward/steward-thread-reads.ts";
 
 export function resolveSteward(dbPath: string, conf: string): { thread: string; session: string; project: string } {
 	const thread = stewardThread(conf, "steward");
@@ -38,10 +39,7 @@ export function resolveSteward(dbPath: string, conf: string): { thread: string; 
 export function threadReadKey(tool: string, input: Record<string, unknown>): string | undefined {
 	if (tool.endsWith("t3_thread_read") && typeof input.threadId === "string")
 		return `${input.environmentId ?? "local"}:${input.threadId}`;
-	if (tool === "Bash") {
-		const m = String(input.command ?? "").match(/\bpeek\.ts\s+([\w-]+)\s+([\w:-]+)/);
-		if (m) return `${m[1]}:${m[2]}`;
-	}
+	if (tool === "Bash") return shellThreadRead(String(input.command ?? ""));
 	return undefined;
 }
 

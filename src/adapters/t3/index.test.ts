@@ -26,6 +26,7 @@ describe("createT3Adapter", () => {
 			"inspect",
 			"send",
 			"stewardProbe",
+			"stewardMeter",
 			"compact",
 			"snapshot",
 			"alertDesk",
