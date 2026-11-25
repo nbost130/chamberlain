@@ -5,7 +5,7 @@
  * named here (`PERSON_SOURCES`) are known to be. A missing or unknown source is not the principal's: the worst of that is a card that was not held.
  */
 import type { TurnItem } from "../../core/decide/decide.ts";
-import type { HistoryGet } from "./history.ts";
+import { HISTORY_PAGES_MAX, type HistoryGet } from "./history.ts";
 
 const PERSON_SOURCES: ReadonlySet<string> = new Set(["mobile", "web"]);
 /** History pages read before the answer is "cannot tell". A page holds up to 75 conversation items, so this reaches far past any window. */
@@ -45,8 +45,55 @@ function oldest(items: readonly TurnItem[]): number | undefined {
 function localItems(page: Page, threadId: string): TurnItem[] {
 	if (!Array.isArray(page.items)) throw Error("history page had no items");
 	return page.items
-		.filter((r) => r.visibility === "local" || r.sourceThreadId === threadId)
+		.filter((r) => (r.sourceThreadId === undefined ? r.visibility === "local" : r.sourceThreadId === threadId))
 		.flatMap((r) => (r.item ? [r.item] : []));
+}
+
+type PrincipalItem = TurnItem & { threadId?: string; messageId?: string; itemId?: string };
+
+function addMessages(
+	messageIds: Set<string>,
+	items: PrincipalItem[],
+	threadId: string,
+	{ from, to }: { from: number; to: number },
+): void {
+	for (const item of items) {
+		if (item.threadId !== undefined && item.threadId !== threadId) continue;
+		if (!isPrincipalMessage(item)) continue;
+		const time = Date.parse(item.updatedAt ?? "");
+		if (!Number.isFinite(time)) throw Error("operator timestamp unavailable");
+		if (time < from || time >= to) continue;
+		const id = item.messageId ?? item.id ?? item.itemId;
+		if (!id) throw Error("operator message identity unavailable");
+		messageIds.add(id);
+	}
+}
+
+/** Count once per local operator message. Nothing from the response is returned except the count. */
+export async function countPrincipalMessages(
+	threadId: string,
+	get: HistoryGet,
+	span: { from: number; to: number },
+): Promise<number> {
+	const base = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
+	const bounded = (await get(`${base}/bounded`)) as Bounded;
+	if (!Array.isArray(bounded.projection?.turnItems)) throw Error("operator history unavailable");
+	let items = bounded.projection.turnItems;
+	let more = bounded.hasMoreHistory;
+	let cursor = bounded.historyCursor;
+	const messageIds = new Set<string>();
+	const visited = new Set<string>();
+	for (let pages = 0; ; pages++) {
+		addMessages(messageIds, items, threadId, span);
+		if (more === false || (oldest(items) ?? Infinity) < span.from) return messageIds.size;
+		if (more !== true || !cursor || visited.has(cursor) || pages === HISTORY_PAGES_MAX)
+			throw Error("operator history did not reach the window");
+		visited.add(cursor);
+		const page = (await get(`${base}/history?cursor=${encodeURIComponent(cursor)}&view=conversation`)) as Page;
+		items = localItems(page, threadId);
+		more = page.hasMoreHistory;
+		cursor = page.nextCursor;
+	}
 }
 
 /**

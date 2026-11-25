@@ -7,7 +7,7 @@
  *
  * JSON: {kind: "only-you"|"product"|"ruling"|"idea", title, context, details?, options: [{label, detail, route?: "thread"|"steward",
  *        relay?}], recommended?: index, proposedRuling?, proposedExpires?, evidence?: [{type: "image"|"video"|"link", path|url, caption}],
- *        thread, server, threadId?, route?: "thread"|"steward", blocks?, tag?, secret?, urgent?, notSettled?}
+ *        thread, server, threadId?, repo?, route?: "thread"|"steward", blocks?, tag?, secret?, urgent?, notSettled?}
  * `urgent: false` marks a question that can wait: it is recorded and listed on the queue page below the urgent ones, but
  * nothing is posted where the operator reads, so no notification goes out. Leave it off and the question is urgent.
  * An approval (tag "Approval") or a secret (`secret: true` or tag "Secret") is ALWAYS urgent: `urgent: false` on one is

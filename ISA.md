@@ -63,6 +63,16 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 | ISC-10 | bun-test | Lost-outcome, restart, stale-thread, clock-jump, retention and fail-closed scenarios, plus launch idempotence against the fake T3 | bun test src/core/overhead src/adapters/t3/investigator.test.ts |
 | ISC-11 | bun-test | Role-specific quota pools, approved backup order, project restrictions, two outages and webhook deliveries on the active generation across restart | bun test src/adapters/t3/model-quota.test.ts src/adapters/t3/quota-failover.test.ts |
 
+## Weekly decision distillation (#121)
+
+| Criterion | Falsifier and probe |
+| --- | --- |
+| DISTILL-1 | A question's ask, answer, dismissal or snooze is counted outside its window or in the wrong bucket, or a secret's text reaches either output format. `bun test src/core/distill` |
+| DISTILL-2 | An unplaced card, different repository sets, incomplete GitHub read or zero shipped PRs yields a ratio, or a rollup enters the denominator. `bun test src/core/distill src/core/overhead/merged-prs.test.ts` |
+| DISTILL-3 | A correction is attributed to a ruling without a decision on the same thread in the window, or is counted twice for that ruling. `bun test src/core/distill` |
+| DISTILL-4 | Chat is read without opt-in, a machine message counts, or any chat text enters the report, history or logs. `bun test src/core/distill src/adapters/t3/principal.test.ts` |
+| DISTILL-5 | A report changes the ledger, a local week is wrong across a clock change, or a rerun creates a duplicate or overwrites an older definition. The existing ledger and telemetry databases remain readable by older builds. `bun test src/distill.test.ts src/core/distill` |
+
 ## Readable decision cards (#125)
 
 | Criterion | Falsifier and probe |

@@ -2,6 +2,7 @@
 import { alwaysUrgent, type Evidence, KINDS, type Option, type Question } from "./core/items/questions.ts";
 import { runIdsIn } from "./core/items/settled-text.ts";
 import { expiresProblem, isExpired } from "./core/ops/rulings-expiry.ts";
+import { SAFE_REPO } from "./core/overhead/config-names.ts";
 
 export const IMAGE = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 export const VIDEO = new Set([".mp4", ".webm", ".mov"]);
@@ -149,6 +150,12 @@ function parseRecommended(o: Raw, count: number): number | undefined {
 	return r;
 }
 
+function parseRepo(repo: unknown): string | undefined {
+	if (repo === undefined) return undefined;
+	if (typeof repo !== "string" || !SAFE_REPO.test(repo)) throw Error('ask: "repo" must be an owner/name repository');
+	return repo;
+}
+
 /** Evidence entry number `i + 1`: an image or video with a path, or a link with an http(s) url. */
 function parseEvidenceItem(x: unknown, i: number): Evidence {
 	const e = x as Evidence;
@@ -240,6 +247,7 @@ export function parseAsk(
 		thread: reqText(o, "thread"),
 		server: reqText(o, "server"),
 		...when(optText(o, "threadId"), { threadId: optText(o, "threadId") }),
+		...when(o.repo !== undefined, { repo: parseRepo(o.repo) }),
 		...when(optText(o, "blocks"), { blocks: optText(o, "blocks") }),
 		...when(tag, { tag }),
 		...when(secret, { secret: true }),

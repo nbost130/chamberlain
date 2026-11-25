@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TurnItem } from "../../core/decide/decide.ts";
-import { isPrincipalMessage, lastPrincipalWrite, readPrincipalLastWrite } from "./principal.ts";
+import { countPrincipalMessages, isPrincipalMessage, lastPrincipalWrite, readPrincipalLastWrite } from "./principal.ts";
 
 const MIN = 60_000;
 const NOW = Date.parse("2026-11-18T22:00:00.000Z");
@@ -118,4 +118,34 @@ describe("readPrincipalLastWrite", () => {
 		};
 		await expect(readPrincipalLastWrite("th", getOver(endless), since)).rejects.toThrow("did not reach back");
 	});
+});
+
+test("counts only local operator messages once across pages, inside half-open bounds", async () => {
+	const operator = msg("mobile", 2, "user", "fixture message text");
+	const get = getOver({
+		bounded: bounded(
+			[operator, msg("web", 0), msg("mcp", 2), msg("server", 1), msg("provider", 3), msg("web", 1, "agent")],
+			true,
+			"c1",
+		),
+		c1: {
+			items: [
+				{ visibility: "local", item: operator },
+				{ sourceThreadId: "th", item: msg("web", 5) },
+				{ visibility: "inherited", sourceThreadId: "fixture-parent", item: msg("web", 4) },
+			],
+			hasMoreHistory: false,
+		},
+	});
+	expect(await countPrincipalMessages("th", get, { from: NOW - 5 * MIN, to: NOW })).toBe(2);
+});
+
+test("a short or broken history is unavailable rather than a partial count", async () => {
+	const partial = {
+		bounded: bounded([msg("mobile", 2)], true, "c1"),
+		c1: { items: [], hasMoreHistory: true, nextCursor: "c1" },
+	};
+	const span = { from: NOW - 5 * MIN, to: NOW };
+	await expect(countPrincipalMessages("th", getOver(partial), span)).rejects.toThrow("did not reach");
+	await expect(countPrincipalMessages("th", getOver({ bounded: {} }), span)).rejects.toThrow("history unavailable");
 });

@@ -94,6 +94,7 @@ A number that is not usable (`CHAMBERLAIN_MAX_ATTEMPTS=soon`) is ignored, not re
 | `models` | Explicit provider/model/effort selections for pinned threads and isolated readers. No defaults or silent fallback. See [Model configuration and inventory](MODELS.md). |
 | `builderProfiles` | Named host pools, capacities and ordered model candidates for Worker and Butler. Select a shared profile with `models.worker.profile` or `models.butler.profile`. See [Builder placement at launch](MODELS.md#builder-placement-at-launch). |
 | `overhead` | What the Steward and Chamberlain cost against the work that got done, and the limits that open an investigator thread. Off and neutral by default. See [Overhead monitor](#overhead-monitor). |
+| `distill` | Optional `timezone` (IANA time zone, default `UTC`) and `chat` (boolean, default `false`). See [Weekly decision distillation](OBSERVABILITY.md#weekly-decision-distillation). |
 | `web` | The page's bind address and options. See below. |
 | `sweep` | Your own routine checks. See below. |
 | `alertDesk` | The Alert Desk's settings: its windows and cap, the morning hour, and the commands and gatherer agent it may use. See [alert-desk.md](alert-desk.md). |
@@ -648,6 +649,7 @@ The standalone binary is one command, `chamberlain <name>`; from a checkout each
 | `chamberlain butler start\|stop\|list` | the Steward | The butler ledger. |
 | `chamberlain steward-health` | you | Read-only Steward health report. |
 | `chamberlain overhead [--json]`, `overhead close <id> [--note "<text>"]`, `overhead investigations` | you, the investigator | Measure now and print the overhead numbers, what crossed, what is not configured and what could not be read ([Overhead monitor](#overhead-monitor)); changes nothing and opens no investigation. `close` ends an investigation (the investigator runs it when done); `investigations` lists them. |
+| `chamberlain distill [--days 7] [--json]` | you | Print decision-queue counts and, when comparable, escalations and corrections per merged PR. A seven-day run records the last complete local week. |
 | `chamberlain config migrate\|revert [--dry-run]`, `config show`, `config get <key>` | you | `migrate` MOVES the old file-per-setting layout into `config.json` and `secrets/`; `revert` puts it back so an older build starts; `--dry-run` prints what it would do. `show` prints every key with where its value comes from, every secret by name, and flags any old file written again after the move. `get <key>` prints one value for a script (`threads.steward`, `web.port`), never a secret. See [config-migration.md](config-migration.md). |
 | `chamberlain migrate [--check]` | you | Check every old-layout config file's schema version and upgrade old ones. (The database migrates itself when opened.) |
 | `chamberlain mail [status]` | you | The optional email triage module: says it is off, or prints what is in force and makes `mail.db`. Reads and changes no mailbox yet. |

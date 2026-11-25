@@ -33,6 +33,8 @@ export type Question = {
 	thread: string;
 	server: string;
 	threadId?: string;
+	/** Repository scope for decision metrics, when known. */
+	repo?: string;
 	blocks?: string;
 	/** A short chip on the list: Deploy, Secret, Review, Release. */
 	tag?: string;

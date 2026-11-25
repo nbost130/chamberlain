@@ -157,6 +157,29 @@ Not measured, and not claimed: regressions avoided, attention saved in minutes, 
 | Weekly wake | once a week, one Steward wake (kind `report`) of at most 10 lines: the three metrics furthest past their thresholds, each with its lever, and the `/report` link | text composed by code from the report JSON, sent through the existing outbox; its own cost shows as coordination spend |
 | Never | the report itself in any thread, an email, a push notification | |
 
+### Weekly decision distillation
+
+`chamberlain distill [--days 7] [--json]` reports the last complete Monday-to-Monday week in `distill.timezone`
+(default `UTC`). Other `--days` values report trailing local calendar days up to the time of the run and skip the weekly
+write. Use the raw counts alongside the rates when comparing weeks.
+
+- An escalation is a queue question filed in the window. Answer counts use the answer time, so an older card can contribute a
+  correction this week. A correction is a changed pick or a note with no option on a card with a recommendation. Dismissals,
+  picks with notes, cards without a recommendation and cards snoozed in the window are displayed separately. A snoozed card
+  can subsequently receive an answer. Per-ruling counts credit a correction once to each ruling cited by an in-window decision
+  on the same thread, using its ID or an unambiguous recorded thread name for older decisions.
+- File a question with `"repo": "example/widget"` when known. Otherwise the report uses a PR or issue on a linked hold
+  (including closed holds). A card with absent or conflicting evidence is unplaced. Ratios need identical repository sets
+  among the counted cards and shipped PRs, with every card placed and at least one shipped PR. The PR read uses
+  `overhead.github` and excludes rollups. An incomplete read is unavailable.
+- `distill.chat: true` opts in to counting the operator's own messages during the Steward thread's active tenure. This is
+  a proxy for redirections. It uses local adapter history, requires complete coverage, and keeps its count separate from card
+  corrections. Chat and question text stay out of the report and history.
+
+The command opens the source ledger read-only and upserts one aggregate row in `distill_weekly` per local week start and
+definition version. The table lives in the private `distill.db` sidecar, so its migration leaves both existing databases
+readable by older builds.
+
 ## 6. Collection from three machines
 
 `chamberlain collect` (a one-shot in the release binary, `scripts/build.ts`) runs on **each host** from a user timer every 15 minutes

@@ -18,6 +18,7 @@ The T3 adapter **relies on T3 internals** that are not a supported API:
   `runtime-request.respond`, `thread.metadata.update`, `message.dispatch`.
 - It reads the shell stream (`orchestration.subscribeShell`), thread projections, and the `/bounded` and `/history`
   HTTP views, and matches wait kinds by name (`user_input_request`, `approval_request`, `secret_request`, `*link*`).
+  The optional distill chat count uses the history views on the local server and the same author and source fields as the queue's activity check.
 
 [`upstream-asks.md`](upstream-asks.md) lists the small supported APIs that would remove these dependencies: a
 busy/queued state read and a "thread is waiting on input" event first among them.

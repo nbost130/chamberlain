@@ -30,6 +30,7 @@ const LOAD: Record<CommandName, () => Promise<Tool>> = {
 	triage: () => import("./triage.ts"),
 	"steward-health": () => import("./steward-health.ts"),
 	overhead: () => import("./overhead.ts"),
+	distill: () => import("./distill.ts"),
 	"desk-allowlist": () => import("./desk-allowlist.ts"),
 	peek: () => import("./adapters/t3/peek.ts"),
 	t3x: () => import("./adapters/t3/t3x.ts"),
@@ -67,6 +68,7 @@ const ABOUT: Record<CommandName, string> = {
 	"steward-health": "print the Steward's health; steward-health tokens: its token usage per wake (needs stewardTokens)",
 	overhead:
 		"the Steward's overhead per merged PR, its no-op wake rate and spend share; overhead close <id> ends an investigation; --json",
+	distill: "queue escalations and corrections per merged PR, with weekly history; --days N; --json",
 	"desk-allowlist": "the Alert Desk's command allowlist: hook|check '<command>'",
 	peek: "the end of a thread in plain lines",
 	t3x: "act on a T3 thread by hand: threads|read|respond|send",
