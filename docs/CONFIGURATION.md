@@ -191,6 +191,13 @@ their own thread, so they get the thread link, Snooze and Dismiss, and never Dir
 
 The Decisions view in T3 does these in place with the view key, which may answer, snooze, direct and dismiss a question and nothing else ([SECURITY.md](SECURITY.md)): no page change. The options are a choice list: pick one (the recommended one starts picked), then the answer button under the list, which names it, sends it. Under that, little buttons along the card's bottom edge, one tap each: **Snooze** is one tap for **1 hour** (the default for the view; the full page has the other choices); **Dismiss** is one tap; **Direction** opens a note field in the same card and Send is the next tap. The card then says what happened, or shows the error and keeps its buttons. Un-snooze stays a link to the full page, and a question's optional note on an option answer is written on the full page.
 
+For `chamberlain ask`, write three or four short plain-English `context` bullets explaining what it is, why it stopped and what each button does.
+Both views support `**bold**` and backtick-delimited code in the context and in each option's `label` and `detail`.
+Put commit SHAs, run IDs, paths and rule citations in the optional `details` string. Both views show it as plain text under a collapsed **Details** toggle.
+Use either `details` or its input alias `technicalRef`, with a limit of 4,000 characters. Secret questions refuse either name.
+The settled check looks for references in both context and Details. For ordinary questions, `ask` warns when the title or context contains a raw
+run ULID or long SHA, when context has more than four bullets, or when a bullet exceeds 160 characters. These warnings leave filing and the stored text intact.
+
 **Thread links.** Every card that comes from a thread links to it. The link is the adapter's (`threadLinks` and `mirrorLinks` above
 override it per server, and only for a server that is in `servers`). A server whose environment is not known, and a thread id the
 adapter does not issue (T3: a UUID, `mcp:<uuid>`, `mcp:launch:<64 hex>`, `thread:<kind>:...`, `import:<instance>:<session>`), get no

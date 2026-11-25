@@ -39,10 +39,11 @@ export type Settled = {
 	/** What the match rests on: "commit 1a2b3c4", "PR/issue o/r#12 + topic: billing, invoice, retry", "title overlap: rename, reeve". */
 	why: string;
 };
-/** What is being asked or held. `title` is an ask's title or a hold's text; `context` only adds refs. */
+/** What is being asked or held. `title` is an ask's title or a hold's text; `context` and `details` only add refs. */
 export type Subject = {
 	title: string;
 	context?: string;
+	details?: string;
 	thread?: string;
 	item?: string;
 	run?: string;
@@ -140,7 +141,7 @@ export function findSettled(
 ): { matches: Settled[]; skipped: string[] } {
 	const { titleOverlap, ignore } = matchSettings(match);
 	const { records, skipped } = readRecords(store, clock());
-	const body = `${s.title}\n${s.context ?? ""}`;
+	const body = `${s.title}\n${s.context ?? ""}\n${s.details ?? ""}`;
 	const mine = subjectRefs(s, body);
 	const matches: Settled[] = [];
 	let malformed = 0;
