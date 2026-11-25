@@ -80,8 +80,46 @@ test("the native reader reads the newest request in WAL and accepts a real shrin
 	}
 });
 
+test("a request with no cached input is read: an absent count is zero, and the size check still applies", () => {
+	const fixture = nativeFixture();
+	try {
+		fixture.add(1, metadata({ input: 400_000, cached: [] }));
+		expect(fixture.probe().contextTokens).toBe(410_000);
+		fixture.add(2, metadata({ input: 100_000, cached: [] }));
+		expect(fixture.probe().context).toMatchObject({ unknown: expect.any(String) });
+	} finally {
+		fixture.native.close();
+	}
+});
+
+test("a newest row that carries a multi-megabyte prompt is read, whichever side of the numbers the prompt is on", () => {
+	const fixture = nativeFixture();
+	const numbers = metadata({ cached: field(5, 50_000) });
+	const prompt = new Uint8Array([...varint(2 * 8 + 2), ...varint(3_000_000)]);
+	const body = new Uint8Array(3_000_000).fill(255);
+	try {
+		fixture.add(1, Buffer.concat([prompt, body, numbers]));
+		expect(fixture.probe().contextTokens).toBe(410_000);
+		fixture.add(2, Buffer.concat([numbers, prompt, body]));
+		expect(fixture.probe().contextTokens).toBe(410_000);
+	} finally {
+		fixture.native.close();
+	}
+});
+
+test("a new conversation, whose fixed part is not counted as input, is still read", () => {
+	const fixture = nativeFixture();
+	try {
+		fixture.add(1, metadata({ tokens: 44_000, input: 33_000, cached: [] }));
+		expect(fixture.probe().contextTokens).toBe(44_000);
+	} finally {
+		fixture.native.close();
+	}
+});
+
 test.each([
-	["missing field", metadata({ cached: [] })],
+	["no input", new Uint8Array(field(1, field(9, field(10, [...field(1, 410_000), ...field(4, 480_000)]))))],
+	["no size", new Uint8Array(field(1, field(4, field(2, 410_000))))],
 	["wrong wire type", metadata({ cached: field(5, [0]) })],
 	["disagreement", metadata({ input: 20_000, cached: field(5, 50_000) })],
 	["over window", metadata({ window: 400_000, cached: field(5, 50_000) })],

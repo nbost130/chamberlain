@@ -4,8 +4,13 @@ import { lstatSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const CONVERSATION = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
-const MAX_METADATA_BYTES = 1024 * 1024;
+/** The newest row holds the request's whole prompt (1.6 MB at 480k tokens), so a small limit would refuse exactly the contexts that matter. */
+const MAX_METADATA_BYTES = 32 * 1024 * 1024;
+/** How far a request's input may be from the size, as a share and as a floor: a new conversation's fixed part (about 11k) is not in its input. */
 const INPUT_MARGIN = 0.25;
+const INPUT_MARGIN_FLOOR = 16_000;
+
+class MissingField extends Error {}
 
 class Wire {
 	private offset = 0;
@@ -69,8 +74,19 @@ function field(bytes: Uint8Array, path: readonly number[]): number {
 		if (result !== undefined) throw Error("duplicate field");
 		result = numericValue(wire, type, rest);
 	}
-	if (result === undefined || !Number.isSafeInteger(result)) throw Error("numeric field unavailable");
+	if (result === undefined) throw new MissingField("numeric field unavailable");
+	if (!Number.isSafeInteger(result)) throw Error("numeric field unsafe");
 	return result;
+}
+
+/** A zero is not written in this encoding, so an absent count is zero. Any other fault is still an error. */
+function count(bytes: Uint8Array, path: readonly number[]): number {
+	try {
+		return field(bytes, path);
+	} catch (e) {
+		if (e instanceof MissingField) return 0;
+		throw e;
+	}
 }
 
 function numericValue(wire: Wire, type: number, path: readonly number[]): number {
@@ -97,8 +113,9 @@ function conversationDb(base: string, instance: string, conversation: string): s
 function measure(data: Uint8Array) {
 	const tokens = field(data, [1, 9, 10, 1]);
 	const window = field(data, [1, 9, 10, 4]);
-	const input = field(data, [1, 4, 2]) + field(data, [1, 4, 5]);
-	if (tokens <= 0 || tokens > window || Math.abs(input - tokens) > tokens * INPUT_MARGIN) return undefined;
+	const input = field(data, [1, 4, 2]) + count(data, [1, 4, 5]);
+	const margin = Math.max(tokens * INPUT_MARGIN, INPUT_MARGIN_FLOOR);
+	if (tokens <= 0 || tokens > window || Math.abs(input - tokens) > margin) return undefined;
 	return { tokens, window };
 }
 
