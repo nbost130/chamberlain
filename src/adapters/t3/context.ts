@@ -84,7 +84,9 @@ function newestContext(turn: Turn, active: Active, base: string): ContextReading
 	)
 		return { unknown: "newest turn has no completed native conversation reference" };
 	const native = nativeContext(base, instance, conversation, timestamp(turn.started));
-	return native ? { ...native, at, source: "native request" } : { unknown: "native context unavailable" };
+	return native
+		? { ...native, at, source: "native request", beforeTurnEffects: true }
+		: { unknown: "native context unavailable" };
 }
 
 function completion(turns: Turn[], driver: string | null): ContextFacts {
