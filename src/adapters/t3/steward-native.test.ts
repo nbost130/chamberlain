@@ -68,6 +68,7 @@ test("the native reader reads the newest request in WAL and accepts a real shrin
 	try {
 		fixture.add(1, metadata({ cached: field(5, 50_000) }));
 		expect(fixture.probe().context).toEqual({
+			beforeTurnEffects: true,
 			tokens: 410_000,
 			window: 480_000,
 			at: COMPLETED,

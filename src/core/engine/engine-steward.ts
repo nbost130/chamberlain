@@ -127,6 +127,14 @@ async function sendCompact(c: CompactionDeps, id: string): Promise<"accepted" | 
 	return "refused";
 }
 
+/** Request-input counts on the compaction turn cannot show the reset produced by that turn. */
+function contextAfterCompaction(p: StewardProbe): boolean {
+	if (p.contextPending) return false;
+	const reading = p.context;
+	if (!reading || !("tokens" in reading) || !reading.beforeTurnEffects) return true;
+	return p.contextTurn !== undefined && p.compactionTurn !== undefined && p.contextTurn > p.compactionTurn;
+}
+
 /**
  * The last accepted compaction for THIS Steward thread, after noting whether the context is back under the line (a compaction that worked
  * leaves it there, and that also ends a `failed` verdict; a new Steward thread starts clean).
@@ -136,7 +144,7 @@ function lastCompaction(c: CompactionDeps, p: StewardProbe, id: string): Compact
 	if (!last || last.thread !== id || (last.session !== undefined && last.session !== p.contextSession))
 		return undefined;
 	if (
-		!p.contextPending &&
+		contextAfterCompaction(p) &&
 		p.contextTokens !== undefined &&
 		p.contextTokens <= c.compactAt &&
 		(!last.cleared || last.failed)
@@ -174,7 +182,7 @@ function judgeLast(
 	const readable = p.compactions !== undefined && last.compactions !== undefined;
 	const ran = readable && (p.compactions as number) > (last.compactions as number);
 	const measured =
-		!p.contextPending &&
+		contextAfterCompaction(p) &&
 		p.contextTokens !== undefined &&
 		p.contextTokens > c.compactAt &&
 		p.contextTurn !== undefined &&

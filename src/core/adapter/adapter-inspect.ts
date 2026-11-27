@@ -113,7 +113,9 @@ export type Inspector = {
 // ---- post ----------------------------------------------------------------------------------------
 
 /** The newest exact context observation, or why the adapter cannot provide one. Token totals and earlier turns are not observations. */
-export type ContextReading = { tokens: number; window?: number; source: string; at: string } | { unknown: string };
+export type ContextReading =
+	| { tokens: number; window?: number; source: string; at: string; beforeTurnEffects?: true }
+	| { unknown: string };
 
 /** What an adapter can tell about a guarded thread, read once a minute. */
 export type StewardProbe = {
@@ -141,7 +143,7 @@ export type StewardProbe = {
 	contextTurn?: number;
 	/** How many compactions of the Steward's thread have completed (the daemon's, the harness's own and manual ones alike), when readable. */
 	compactions?: number;
-	/** The ordinal of the turn that ran the newest compaction; that turn's own size is the size after it. */
+	/** The ordinal of the turn that ran the newest compaction. Request inputs on this turn precede its reset. */
 	compactionTurn?: number;
 	/** False when the backend's own record of the Steward could not be read this time. */
 	readable: boolean;

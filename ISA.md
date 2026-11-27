@@ -26,6 +26,8 @@ Changing the configured provider restores Decisions without reconfiguring unrela
 
 ## Criteria
 
+- [x] ISC-23: A Steward compaction verdict uses context measured after the reset. Falsifier: a request sampled in the compaction turn declares success or failure, or a fresh high reading fails to trigger handoff. Evidence: both incident measurements reproduced the false verdict before the fix, then cleared without a handoff after the next request reported the smaller context. A fresh above-limit reading still triggers handoff.
+
 - [x] ISC-22 (#124 fix round): Reproduced compaction, hand-off prompts, capped items, completed-turn alarms, overlapping usage, model provenance, and historical query cases pass through their normal entry points. Falsifier: any of the seven regression probes fails, or a recent usage query scans older state rows. Evidence: eight baseline failures, 102 focused tests passing after fixes, and SQLite's production usage query plan seeks on time.
 
 - [x] ISC-21 (#124 review): Focused tests reject each review mutation across the nine gaps and preserve a valid sample when sessions share timestamps. Falsifier: a mutated build passes its named regression or the new session loses its sample. Evidence: 30 focused tests passed and 12 isolated mutations failed their named regressions. The same-timestamp regression failed before the cache fix.
@@ -66,6 +68,7 @@ ISC-11 includes a turn starting during catalog discovery and a Claude model with
 
 | ISC | type | method | tool |
 | --- | --- | --- | --- |
+| ISC-23 | bun-test | Replay premature verdicts and a genuine failure with synthetic measurements through daemon housekeeping | bun test src/core/engine/engine-steward-context-sample.test.ts |
 | ISC-12, ISC-13 | bun-test | Exercise the ask CLI against SQLite, including independent concurrent writers | bun test src/ask-ideas.test.ts |
 | ISC-14 | bun-test | Render both tabs, test queue counts and answer a legacy idea with the view key | bun test src/web/ideas-view.test.ts src/web/inline-view.snoozed-tab.test.ts |
 | ISC-15 | bun-test | Compose a Steward digest and inspect the approval wake | bun test src/core/delivery/note.test.ts src/web/ideas-view.test.ts |
